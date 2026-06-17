@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "bmad-pro-skills@bmad-method": true,
+    "supabase@claude-plugins-official": true,
+    "vercel@claude-plugins-official": true
+  }
+}
