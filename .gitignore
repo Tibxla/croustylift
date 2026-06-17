@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-ssr/
 build/
+*.tsbuildinfo
 
 # Environment / secrets
 .env
