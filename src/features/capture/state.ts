@@ -48,6 +48,12 @@ export interface CaptureState {
   activeExerciseId: string | null;
   /** Réalisé par exerciseId. */
   progress: Record<string, ExerciseProgress>;
+  /**
+   * Horodatage de CLÔTURE (epoch ms) si la séance a été clôturée, sinon `null`.
+   * Persisté : au remontage (changement d'onglet, reload), une séance clôturée
+   * réaffiche l'écran « Séance terminée » au lieu de repasser « en cours ».
+   */
+  closedAt: number | null;
 }
 
 export type CaptureAction =
@@ -60,7 +66,10 @@ export type CaptureAction =
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
-  | { type: 'reset'; executionId: string };
+  | { type: 'reset'; executionId: string }
+  // Clôture de la séance : fige `closedAt` (epoch ms fourni par le caller, pour
+  // garder le reducer testable). Persisté → la clôture survit au remontage.
+  | { type: 'close'; closedAt: number };
 
 function emptyProgress(): ExerciseProgress {
   return { sets: [], setIds: [], skipped: false };
@@ -105,6 +114,7 @@ export function initialState(session: Session, date = todayIso()): CaptureState 
     startedAt: Date.now(),
     activeExerciseId: null,
     progress: {},
+    closedAt: null,
   };
 }
 
@@ -133,6 +143,8 @@ export function hydratedState(
     startedAt: Date.now(),
     activeExerciseId: null,
     progress,
+    // Le réalisé venu de la base ne porte pas la notion de clôture (locale).
+    closedAt: null,
   };
 }
 
@@ -199,15 +211,22 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'close':
+      // Fige la clôture. Tout le reste (réalisé, ids) est conservé : la séance
+      // close reste consultable et la confirmation se réaffiche au remontage.
+      return { ...state, closedAt: action.closedAt };
+
     case 'reset':
       // Nouvelle séance = nouveau chrono ET nouvelle exécution (id client neuf,
-      // fourni par le caller). L'exécution précédente reste en base.
+      // fourni par le caller). L'exécution précédente reste en base. On lève la
+      // clôture : la séance neuve repart « en cours ».
       return {
         ...state,
         executionId: action.executionId,
         startedAt: Date.now(),
         activeExerciseId: null,
         progress: {},
+        closedAt: null,
       };
 
     default:
@@ -270,6 +289,12 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
       activeExerciseId:
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: normalizeProgress(parsed.progress),
+      // CONSERVE la clôture : une séance clôturée puis quittée (changement
+      // d'onglet) doit rester close au retour, pas repasser « en cours ».
+      closedAt:
+        typeof parsed.closedAt === 'number' && Number.isFinite(parsed.closedAt)
+          ? parsed.closedAt
+          : null,
     };
   } catch {
     return null;

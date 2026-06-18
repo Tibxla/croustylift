@@ -239,6 +239,31 @@ describe('captureReducer — reset', () => {
     const after = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
     expect(after.sessionId).toBe(state.sessionId);
   });
+
+  it('lève la clôture : une séance neuve repart en cours (closedAt null)', () => {
+    const closed = captureReducer(mkState(), { type: 'close', closedAt: 1_700_000 });
+    const after = captureReducer(closed, { type: 'reset', executionId: 'exec-3' });
+    expect(after.closedAt).toBeNull();
+  });
+});
+
+// --- captureReducer — close --------------------------------------------------
+
+describe('captureReducer — close', () => {
+  it('fige closedAt (la clôture survit ainsi au remontage via la persistance)', () => {
+    const state = mkState();
+    expect(state.closedAt).toBeNull();
+    const after = captureReducer(state, { type: 'close', closedAt: 1_700_500 });
+    expect(after.closedAt).toBe(1_700_500);
+  });
+
+  it('conserve le réalisé loggé (la séance close reste consultable)', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId: 's1', set: set1 });
+    const after = captureReducer(state, { type: 'close', closedAt: 1_700_600 });
+    expect(getProgress(after, 'bench-press').sets).toHaveLength(1);
+    expect(after.executionId).toBe(state.executionId);
+  });
 });
 
 // --- progression (statut global via statusOf) --------------------------------
