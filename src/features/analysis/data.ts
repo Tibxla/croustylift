@@ -190,3 +190,29 @@ export async function loadBlocks(): Promise<Block[]> {
 
   return detectBlocks(timeline);
 }
+
+// --- Comparaison de deux blocs d'un exo (cf. issue #6) ------------------------
+
+/** Les données brutes pour comparer les blocs d'un exo : ses exécutions + les blocs. */
+export interface BlockComparisonData {
+  executions: ExerciseExecution[];
+  blocks: Block[];
+}
+
+/**
+ * Charge de quoi comparer les blocs d'un exo : ses exécutions passées et la
+ * liste des blocs de l'user (lus en parallèle). Le DÉCOUPAGE par bloc, les
+ * pentes %/semaine et le verdict sont calculés par le domaine pur
+ * (`summarizeBlocks` / `compareBlocks`) à partir de ces données ; cette couche
+ * ne fait que les charger. Les blocs ne dépendent pas de l'exo (ils suivent la
+ * config de template, cf. ADR 0001), seules les exécutions sont filtrées par exo.
+ */
+export async function loadBlockComparisonData(
+  exerciseId: string,
+): Promise<BlockComparisonData> {
+  const [executions, blocks] = await Promise.all([
+    loadExerciseExecutions(exerciseId),
+    loadBlocks(),
+  ]);
+  return { executions, blocks };
+}

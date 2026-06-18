@@ -4,8 +4,9 @@
 //
 // Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
 // secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
-// Toujours hors périmètre : la comparaison de blocs (feature « Should » qui
-// demande des mois de données).
+// Plus, repliée par exo, la comparaison de deux blocs (cf. issue #6) : quel
+// volume fait le plus progresser. Elle reste secondaire (un dépliant discret
+// sous la carte), la courbe primaire restant le héros.
 //
 // L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `AnalysisList`
 // est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
@@ -15,6 +16,7 @@ import { loadAnalyses, type ExerciseAnalysis } from './data';
 import { E1rmChart } from './E1rmChart';
 import { SecondaryChart } from './SecondaryChart';
 import { ProgressionBadge } from './ProgressionBadge';
+import { BlockComparisonPanel } from './BlockComparisonPanel';
 
 type LoadState =
   | { phase: 'loading' }
@@ -135,7 +137,49 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
           <SecondaryChart curve={secondaryCurve} />
         </div>
       )}
+
+      <CompareBlocksDisclosure exerciseId={analysis.exerciseId} />
     </section>
+  );
+}
+
+// Dépliant « Comparer deux blocs » : replié par défaut (feature secondaire qui
+// demande des mois de données et un réseau), il ne charge la comparaison qu'à
+// l'ouverture. La carte reste légère tant qu'on ne le déplie pas.
+function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
+      >
+        <span>Comparer deux blocs</span>
+        <svg
+          viewBox="0 0 20 20"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={`transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M5 8l5 5 5-5" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          <BlockComparisonPanel exerciseId={exerciseId} />
+        </div>
+      )}
+    </div>
   );
 }
 
