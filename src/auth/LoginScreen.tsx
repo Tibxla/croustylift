@@ -3,6 +3,9 @@ import { useAuth } from './useAuth'
 
 type Mode = 'signin' | 'signup'
 
+/** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
+const MIN_PASSWORD_LENGTH = 8
+
 /** Traduit les messages d'erreur Supabase courants en français lisible. */
 function frenchError(message: string): string {
   const m = message.toLowerCase()
@@ -13,10 +16,13 @@ function frenchError(message: string): string {
     return 'Email non confirmé. Vérifie ta boîte de réception.'
   }
   if (m.includes('user already registered') || m.includes('already been registered')) {
-    return 'Un compte existe déjà avec cet email.'
+    // Message non-énumérant : ne pas confirmer l'existence d'une adresse (cohérent
+    // avec le login neutre). Supabase n'ouvre pas de session si l'email existe déjà ;
+    // l'utilisateur reçoit un mail s'il s'agit bien d'un compte connu.
+    return "Si un compte peut être créé, tu recevras un email pour confirmer."
   }
   if (m.includes('password should be at least')) {
-    return 'Le mot de passe est trop court (6 caractères minimum).'
+    return 'Le mot de passe est trop court (8 caractères minimum).'
   }
   if (m.includes('unable to validate email') || m.includes('invalid email')) {
     return 'Adresse email invalide.'
@@ -42,6 +48,10 @@ export function LoginScreen() {
     e.preventDefault()
     setError(null)
     setInfo(null)
+    if (isSignup && password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Le mot de passe est trop court (${MIN_PASSWORD_LENGTH} caractères minimum).`)
+      return
+    }
     setSubmitting(true)
     try {
       if (isSignup) {
@@ -62,18 +72,18 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center px-6">
+    <main className="flex min-h-screen items-center justify-center bg-bg px-6 text-ink">
       <div className="w-full max-w-sm">
         <header className="mb-8 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">Croustylift</h1>
-          <p className="mt-2 text-sm text-neutral-400">
+          <p className="mt-2 text-sm text-ink-muted">
             {isSignup ? 'Crée ton compte.' : 'Connecte-toi pour continuer.'}
           </p>
         </header>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="space-y-1.5">
-            <label htmlFor="email" className="block text-sm font-medium text-neutral-300">
+            <label htmlFor="email" className="block text-sm font-medium text-ink">
               Email
             </label>
             <input
@@ -83,13 +93,13 @@ export function LoginScreen() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 text-base text-neutral-100 placeholder:text-neutral-500 outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40"
+              className="w-full rounded-lg border border-line bg-surface px-4 py-3 text-base text-ink transition placeholder:text-ink-muted/70 focus:border-accent"
               placeholder="toi@exemple.com"
             />
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="password" className="block text-sm font-medium text-neutral-300">
+            <label htmlFor="password" className="block text-sm font-medium text-ink">
               Mot de passe
             </label>
             <input
@@ -97,34 +107,52 @@ export function LoginScreen() {
               type="password"
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               required
+              minLength={isSignup ? MIN_PASSWORD_LENGTH : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-4 py-3 text-base text-neutral-100 placeholder:text-neutral-500 outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/40"
+              className="w-full rounded-lg border border-line bg-surface px-4 py-3 text-base text-ink transition placeholder:text-ink-muted/70 focus:border-accent"
               placeholder="••••••••"
             />
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-red-400">
+            <p role="alert" className="flex items-start gap-2 text-sm text-warn">
+              {/* Glyphe d'alerte : double l'info couleur par une forme (DESIGN.md). */}
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="mt-0.5 shrink-0"
+              >
+                <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+              </svg>
               {error}
             </p>
           )}
-          {info && !error && <p className="text-sm text-violet-300">{info}</p>}
+          {info && !error && <p className="text-sm text-accent-ink">{info}</p>}
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-violet-600 px-4 py-3 text-base font-medium text-white transition hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-lg bg-accent-strong px-4 py-3 text-base font-medium text-on-accent transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting
-              ? 'Patiente…'
+              ? isSignup
+                ? 'Création du compte…'
+                : 'Connexion…'
               : isSignup
                 ? 'Créer mon compte'
                 : 'Se connecter'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-neutral-400">
+        <p className="mt-6 text-center text-sm text-ink-muted">
           {isSignup ? 'Déjà un compte ?' : 'Pas encore de compte ?'}{' '}
           <button
             type="button"
@@ -133,7 +161,7 @@ export function LoginScreen() {
               setError(null)
               setInfo(null)
             }}
-            className="font-medium text-violet-400 transition hover:text-violet-300"
+            className="rounded font-medium text-accent-ink transition hover:text-accent"
           >
             {isSignup ? 'Se connecter' : 'Créer un compte'}
           </button>
