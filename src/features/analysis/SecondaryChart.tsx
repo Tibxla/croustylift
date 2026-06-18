@@ -49,9 +49,18 @@ function SecondaryTooltip({ active, payload }: Partial<TooltipContentProps<numbe
   );
 }
 
+/** Résumé textuel de la courbe pour les lecteurs d'écran (le SVG est muet). */
+function describeCurve(curve: E1rmPoint[]): string {
+  if (curve.length === 0) return 'Tendance e1RM des séries 2+, aucune donnée.';
+  const values = curve.map((p) => p.e1rm);
+  const min = Math.round(Math.min(...values));
+  const max = Math.round(Math.max(...values));
+  return `Tendance e1RM moyen des séries 2+ sur ${curve.length} séances, de ${min} à ${max} kg.`;
+}
+
 export function SecondaryChart({ curve }: { curve: E1rmPoint[] }) {
   return (
-    <div className="h-24 w-full">
+    <div className="h-24 w-full" role="img" aria-label={describeCurve(curve)}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={curve} margin={{ top: 6, right: 20, bottom: 2, left: -8 }}>
           <XAxis
