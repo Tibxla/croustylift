@@ -13,7 +13,9 @@ import { supabase } from '../../lib/supabase';
 import { buildPrimaryCurve } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
-import type { ExerciseExecution, E1rmPoint } from '../../domain/types';
+import { detectBlocks } from '../../domain/block';
+import { buildConfigTimeline } from './config-timeline';
+import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
 
 /** Un exercice pour lequel l'user a au moins une série loggée. */
 export interface TrainedExercise {
@@ -149,4 +151,42 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
   );
 
   return analyses;
+}
+
+// --- Blocs (config de template inchangée, cf. ADR 0001) -----------------------
+
+/**
+ * Les blocs de l'user : périodes continues de configuration de template
+ * inchangée. On LIT le journal des changements de plan (activations de routine +
+ * versions de séances + le lien séance->routine), on construit la timeline de
+ * configs via le module pur `buildConfigTimeline`, puis on la passe à
+ * `detectBlocks`. Aucune lecture d'exécution ici : une déviation ne peut pas
+ * créer de bloc (cf. ADR 0001). Pas de logique de calcul dans cette couche.
+ */
+export async function loadBlocks(): Promise<Block[]> {
+  const [activationsRes, versionsRes, seancesRes] = await Promise.all([
+    supabase.from('routine_activations').select('activated_at, routine_id'),
+    supabase.from('seance_versions').select('created_at, seance_id'),
+    supabase.from('seances').select('id, routine_id'),
+  ]);
+  if (activationsRes.error) throw activationsRes.error;
+  if (versionsRes.error) throw versionsRes.error;
+  if (seancesRes.error) throw seancesRes.error;
+
+  const timeline = buildConfigTimeline({
+    activations: (activationsRes.data ?? []).map((r) => ({
+      activatedAt: r.activated_at,
+      routineId: r.routine_id,
+    })),
+    seanceVersions: (versionsRes.data ?? []).map((r) => ({
+      createdAt: r.created_at,
+      seanceId: r.seance_id,
+    })),
+    seances: (seancesRes.data ?? []).map((r) => ({
+      id: r.id,
+      routineId: r.routine_id,
+    })),
+  });
+
+  return detectBlocks(timeline);
 }
