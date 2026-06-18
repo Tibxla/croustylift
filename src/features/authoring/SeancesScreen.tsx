@@ -260,7 +260,7 @@ export function RoutinesView({
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
-      <h2 className="mb-1 text-lg font-semibold tracking-tight">Routines</h2>
+      <h2 className="mb-1 text-2xl font-bold tracking-tight">Routines</h2>
       <p className="mb-4 text-sm text-ink-muted">
         Tes programmes. Choisis ta routine courante, ouvre une routine pour gérer ses
         séances.
@@ -465,7 +465,7 @@ export function SeancesView({
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-3">
       <BackButton label="Retour aux routines" onClick={onBack} />
 
-      <h2 className="mt-1 text-lg font-semibold tracking-tight">{routineName}</h2>
+      <h2 className="mt-1 text-2xl font-bold tracking-tight">{routineName}</h2>
       <p className="mb-4 text-sm text-ink-muted">Séances de cette routine, dans l'ordre.</p>
 
       {seances.length === 0 && !creating ? (
@@ -665,7 +665,7 @@ function RowAction({
 
 function RowError({ message }: { message: string }) {
   return (
-    <p className="readout mt-2 break-words text-xs text-warn" role="alert">
+    <p className="mt-2 break-words text-xs text-warn" role="alert">
       {message}
     </p>
   );
@@ -838,8 +838,9 @@ function InlineNameForm({
         placeholder={placeholder}
         autoFocus
         enterKeyHint="done"
+        maxLength={80}
         onChange={(e) => setValue(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-accent focus:outline-none"
+        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
       />
       <div className="mt-2 flex items-center gap-2">
         <button
@@ -956,7 +957,7 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
     <button
       type="button"
       onClick={onClick}
-      className="-ml-1 inline-flex items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
+      className="-ml-1 inline-flex min-h-[44px] items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
     >
       <svg
         viewBox="0 0 24 24"
@@ -978,12 +979,25 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 function ScreenSpinner({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center">
-      <div
-        className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-        role="status"
-        aria-label={label}
-      />
+    <div
+      className="mx-auto w-full max-w-md px-4 pt-5"
+      role="status"
+      aria-label={label}
+    >
+      {/* Squelette : titre + 2-3 cartes simulant des lignes de liste. */}
+      <div className="mb-4 h-7 w-40 rounded-lg bg-surface-2 animate-pulse" />
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="mb-2.5 rounded-2xl border border-line bg-surface p-3.5">
+          <div className="flex items-center gap-2">
+            <div className="h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
+            <div className="h-4 flex-1 rounded bg-surface-2 animate-pulse" />
+          </div>
+          <div className="mt-3 flex gap-2">
+            <div className="h-8 w-24 rounded-lg bg-surface-2 animate-pulse" />
+            <div className="h-8 w-20 rounded-lg bg-surface-2 animate-pulse" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

@@ -442,7 +442,7 @@ function ExerciseRowCard({
             type="button"
             onClick={() => setExpanded(false)}
             aria-expanded
-            className="mt-3 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg text-sm font-medium text-ink-muted transition active:text-ink"
+            className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-lg text-sm font-medium text-ink-muted transition active:text-ink"
           >
             Replier
             <Caret dir="up" />
@@ -553,7 +553,7 @@ function SegButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`min-h-[36px] rounded-md px-3 text-xs font-semibold transition ${
+      className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
         active
           ? 'bg-accent-strong text-on-accent'
           : 'text-ink-muted active:text-ink'
@@ -624,8 +624,9 @@ function AddExerciseSheet({
         value={query}
         placeholder="Rechercher un exercice"
         enterKeyHint="search"
+        maxLength={80}
         onChange={(e) => setQuery(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-accent focus:outline-none"
+        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
       />
 
       {/* Filtre muscle : <select> natif (ce n'est pas un chiffre mesuré). */}
@@ -726,8 +727,9 @@ function CreatePersonalForm({
         placeholder="Nom de l'exercice"
         autoFocus
         enterKeyHint="done"
+        maxLength={80}
         onChange={(e) => setName(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-accent focus:outline-none"
+        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
       />
 
       <label className="mt-2.5 block text-xs font-medium text-ink-muted">
@@ -891,7 +893,7 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
     <button
       type="button"
       onClick={onClick}
-      className="-ml-1 inline-flex items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
+      className="-ml-1 inline-flex min-h-[44px] items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
     >
       <svg
         viewBox="0 0 24 24"
@@ -913,12 +915,25 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 function ScreenSpinner({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center">
-      <div
-        className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-        role="status"
-        aria-label={label}
-      />
+    <div
+      className="mx-auto w-full max-w-md px-4 pt-3"
+      role="status"
+      aria-label={label}
+    >
+      {/* Squelette : 3 cartes simulant des exercices prescrits. */}
+      <div className="mb-4 h-8 w-32 rounded-lg bg-surface-2 animate-pulse" />
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="mb-3 rounded-2xl border border-line bg-surface p-3.5">
+          <div className="flex items-start gap-2">
+            <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-3/5 rounded bg-surface-2 animate-pulse" />
+              <div className="h-3 w-2/5 rounded bg-surface-2 animate-pulse" />
+            </div>
+          </div>
+          <div className="mt-3 h-10 w-full rounded-xl bg-surface-2 animate-pulse" />
+        </div>
+      ))}
     </div>
   );
 }
