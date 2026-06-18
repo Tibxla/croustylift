@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
 import type { ExerciseExecution, PerformedSet } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
+import { personalRecord, type PersonalRecord } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { todayIso } from './state';
 import type { DatedNoteDraft } from './state';
@@ -18,7 +19,7 @@ import type { Session, SessionExercise } from './fixtures';
 
 export type { Session, SessionExercise } from './fixtures';
 
-type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
+export type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
 /** Une séance chargée pour la capture : la séance + l'id de sa version courante. */
 export interface LoadedSeance {
@@ -133,6 +134,56 @@ export async function listExercises(): Promise<ExerciseRow[]> {
   return data ?? [];
 }
 
+// --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------
+//
+// Un exo ajouté hors template n'a PAS de prescription versionnée (il n'est pas
+// au programme du jour). On lui donne une cible par défaut, sobre et atteignable :
+// `min: 1` série suffit à le passer « fait ». C'est un repère neutre, pas un plan.
+
+/** Cible par défaut d'un exo ajouté à la volée (pas de prescription versionnée). */
+export const DEFAULT_ADDED_PRESCRIPTION = {
+  sets: { min: 1, max: 3 },
+  reps: { min: 8, max: 12 },
+  rir: { min: 1, max: 2 },
+} as const;
+
+/**
+ * Mappe un exo du catalogue (`ExerciseRow`) vers la forme `SessionExercise`
+ * consommée par la Capture, avec la cible par défaut des ajouts. `reference` et
+ * `personalRecord` sont laissés à `null` ici : `loadCatalogExercise` les remplit
+ * depuis l'historique. Pur (testable sans Supabase).
+ */
+export function catalogExerciseToSession(row: Pick<ExerciseRow, 'id' | 'name'>): SessionExercise {
+  return {
+    exerciseId: row.id,
+    name: row.name,
+    prescription: {
+      sets: { ...DEFAULT_ADDED_PRESCRIPTION.sets },
+      reps: { ...DEFAULT_ADDED_PRESCRIPTION.reps },
+      rir: { ...DEFAULT_ADDED_PRESCRIPTION.rir },
+    },
+    reference: null,
+    personalRecord: null,
+    perExerciseNote: '',
+  };
+}
+
+/**
+ * Charge un exo du catalogue prêt à entrer dans la séance courante : sa forme
+ * `SessionExercise` (cible par défaut) enrichie de sa référence (dernière fois),
+ * de sa note d'instructions et de ses records, dérivés de l'historique.
+ */
+export async function loadCatalogExercise(
+  row: Pick<ExerciseRow, 'id' | 'name'>,
+): Promise<SessionExercise> {
+  const base = catalogExerciseToSession(row);
+  const [reference, personalRecord] = await Promise.all([
+    loadReference(row.id),
+    loadPersonalRecord(row.id),
+  ]);
+  return { ...base, reference, personalRecord };
+}
+
 // --- Chargement de la séance pour la capture ----------------------------------
 
 type PrescriptionWithExercise = {
@@ -183,15 +234,16 @@ export async function loadSeanceForCapture(
   return { id: seance.id, name: seance.name, exercises };
 }
 
-// --- Référence (dernière perf réelle) -----------------------------------------
+// --- Historique d'un exo (base des dérivées : référence ET records) -----------
 
 /**
- * Référence d'un exo : sa dernière performance réelle, dérivée de l'historique.
- * Lit les executions de l'user + leurs performed_sets pour cet exo, mappe vers
- * `ExerciseExecution[]` du domaine, puis applique `lastReference`.
- * User neuf (aucune perf) -> `null` (« première fois »).
+ * Historique réel d'un exo : ses exécutions (un jour = une `ExerciseExecution`),
+ * chacune avec ses séries. Lit les performed_sets de l'user (scopés RLS) + la
+ * date de leur exécution, regroupe par exécution. Base partagée des dérivées du
+ * domaine : `lastReference` (dernière perf) ET `personalRecord` (records). User
+ * neuf (aucune perf) -> liste vide.
  */
-export async function loadReference(exerciseId: string): Promise<PerformedSet[] | null> {
+async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
   const { data, error } = await supabase
     .from('performed_sets')
     .select('weight_kg, reps, rir, set_order, execution_id, executions ( performed_on )')
@@ -207,7 +259,6 @@ export async function loadReference(exerciseId: string): Promise<PerformedSet[] 
     executions: { performed_on: string } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
-  if (rows.length === 0) return null;
 
   // Regroupe les séries par exécution (une ExerciseExecution = un jour).
   const byExecution = new Map<string, ExerciseExecution>();
@@ -227,7 +278,30 @@ export async function loadReference(exerciseId: string): Promise<PerformedSet[] 
     });
   }
 
-  return lastReference([...byExecution.values()], exerciseId);
+  return [...byExecution.values()];
+}
+
+// --- Référence (dernière perf réelle) -----------------------------------------
+
+/**
+ * Référence d'un exo : sa dernière performance réelle, dérivée de l'historique.
+ * User neuf (aucune perf) -> `null` (« première fois »).
+ */
+export async function loadReference(exerciseId: string): Promise<PerformedSet[] | null> {
+  const executions = await loadExerciseExecutions(exerciseId);
+  return lastReference(executions, exerciseId);
+}
+
+// --- Records personnels (issue #34) -------------------------------------------
+
+/**
+ * Records personnels d'un exo (meilleur e1RM + meilleure charge poids×reps),
+ * dérivés de TOUT l'historique. Sert à signaler en Capture qu'une série bat un
+ * record. User neuf -> records nuls (bestE1rm/bestWeightReps à `null`).
+ */
+export async function loadPersonalRecord(exerciseId: string): Promise<PersonalRecord> {
+  const executions = await loadExerciseExecutions(exerciseId);
+  return personalRecord(executions, exerciseId);
 }
 
 // --- Exécution du jour --------------------------------------------------------

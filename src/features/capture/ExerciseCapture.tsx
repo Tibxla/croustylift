@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
 import { deriveDeviations } from '../../domain/deviation';
 import { isBlankNote } from '../../domain/notes';
+import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../domain/pr';
 import type { PerformedSet } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
@@ -57,6 +58,17 @@ export function ExerciseCapture({
 }: ExerciseCaptureProps) {
   const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
+
+  // Records personnels (issue #34), dérivés de l'historique. Une série loggée
+  // AUJOURD'HUI qui dépasse le record est marquée « Record ». On compare au
+  // record COURANT (historique + séries du jour déjà loggées avant elle) : ainsi
+  // une seule série du jour porte le marqueur par mesure, pas toutes celles qui
+  // battent l'ancien record. Récord absent (premier passage) = aucun marqueur,
+  // pour ne pas crier « record » sur la toute première série jamais faite.
+  const recordFlags = useMemo(
+    () => computeRecordFlags(progress.sets, exercise.personalRecord ?? null),
+    [progress.sets, exercise.personalRecord],
+  );
 
   // Brouillon de la série courante (steppers). Report de la dernière série loggée si elle existe.
   const seed = useMemo(() => {
@@ -189,7 +201,7 @@ export function ExerciseCapture({
       {/* Séries déjà loggées (mono, alignées) */}
       {loggedCount > 0 && (
         <ol className="mt-4 flex flex-col gap-1.5">
-          {progress.sets.map((s) => {
+          {progress.sets.map((s, i) => {
             const beats =
               refToBeatAt(reference, s.order) &&
               estimateE1rm(s.weightKg, s.reps, s.rir) >=
@@ -198,6 +210,7 @@ export function ExerciseCapture({
                   refToBeatAt(reference, s.order)!.reps,
                   refToBeatAt(reference, s.order)!.rir,
                 );
+            const record = recordFlags[i];
             return (
               <li
                 key={s.order}
@@ -209,27 +222,34 @@ export function ExerciseCapture({
                 <span className="readout flex-1 text-base text-ink tabular-nums">
                   {formatSet(s)}
                 </span>
-                {beats && (
-                  <span
-                    className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
-                    title="Référence battue"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="14"
-                      height="14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                      className="text-accent-ink"
+                {/* Record (issue #34) : prime sur « battu » (un record bat déjà
+                    la dernière fois). Accent violet — rare, mérité — + glyphe +
+                    label : l'info ne tient jamais à la couleur seule. */}
+                {record ? (
+                  <RecordBadge kind={record} />
+                ) : (
+                  beats && (
+                    <span
+                      className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
+                      title="Référence battue"
                     >
-                      <path d="M12 19V5M6 11l6-6 6 6" />
-                    </svg>
-                    battu
-                  </span>
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="14"
+                        height="14"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className="text-accent-ink"
+                      >
+                        <path d="M12 19V5M6 11l6-6 6 6" />
+                      </svg>
+                      battu
+                    </span>
+                  )
                 )}
               </li>
             );
@@ -435,4 +455,87 @@ function refToBeatAt(
   order: number,
 ): PerformedSet | null {
   return reference?.find((s) => s.order === order) ?? null;
+}
+
+/** Le type de record qu'une série bat : e1RM, charge, ou les deux. */
+export type RecordKind = 'e1rm' | 'weight-reps' | 'both';
+
+/**
+ * Pour chaque série loggée du jour, dit si (et comment) elle bat le record
+ * personnel — `null` sinon. Le record « avance » au fil des séries du jour : on
+ * part du record historique, et chaque série qui le dépasse le remplace. Ainsi
+ * une SEULE série par mesure porte le marqueur (la première à dépasser), pas
+ * toutes celles qui battent l'ancien record. Pur, testé séparément.
+ */
+export function computeRecordFlags(
+  sets: PerformedSet[],
+  historical: PersonalRecord | null,
+): (RecordKind | null)[] {
+  // Premier passage (aucun historique) : on ne crie pas « record » sur la toute
+  // première série jamais faite. Le record se construit, sans marqueur.
+  if (historical === null) {
+    let running: PersonalRecord = { bestE1rm: null, bestWeightReps: null };
+    return sets.map((s) => {
+      running = absorb(running, s);
+      return null;
+    });
+  }
+
+  let running = historical;
+  return sets.map((s) => {
+    const e1rm = isE1rmRecord(running, s);
+    const weightReps = isWeightRepsRecord(running, s);
+    running = absorb(running, s);
+    if (e1rm && weightReps) return 'both';
+    if (e1rm) return 'e1rm';
+    if (weightReps) return 'weight-reps';
+    return null;
+  });
+}
+
+/** Intègre une série dans un record courant (pour faire avancer la comparaison). */
+function absorb(record: PersonalRecord, s: PerformedSet): PersonalRecord {
+  const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir);
+  const bestE1rm =
+    record.bestE1rm === null || e1rm > record.bestE1rm ? e1rm : record.bestE1rm;
+  const bestWeightReps = isWeightRepsRecord(record, s)
+    ? { weightKg: s.weightKg, reps: s.reps }
+    : record.bestWeightReps;
+  return { bestE1rm, bestWeightReps };
+}
+
+const RECORD_LABEL: Record<RecordKind, string> = {
+  e1rm: 'Record e1RM',
+  'weight-reps': 'Record de charge',
+  both: 'Record',
+};
+
+/**
+ * Indicateur SOBRE de nouveau record (issue #34). Accent violet — rare, mérité,
+ * réservé à l'état marquant — + glyphe étoile + label : l'info ne tient jamais à
+ * la couleur seule (DESIGN.md). Pas de confettis, pas de ton coach : un constat.
+ */
+function RecordBadge({ kind }: { kind: RecordKind }) {
+  const label = RECORD_LABEL[kind];
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs font-semibold text-accent-ink"
+      title={label}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" />
+      </svg>
+      {label}
+    </span>
+  );
 }
