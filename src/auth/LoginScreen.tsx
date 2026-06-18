@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
+import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 
-type Mode = 'signin' | 'signup'
+type Mode = 'signin' | 'signup' | 'forgot'
 
 /** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
 const MIN_PASSWORD_LENGTH = 8
@@ -36,6 +37,11 @@ function frenchError(message: string): string {
 export function LoginScreen() {
   const { signIn, signUp } = useAuth()
   const [mode, setMode] = useState<Mode>('signin')
+
+  if (mode === 'forgot') {
+    return <ForgotPasswordScreen onBack={() => setMode('signin')} />
+  }
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -99,9 +105,20 @@ export function LoginScreen() {
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="password" className="block text-sm font-medium text-ink">
-              Mot de passe
-            </label>
+            <div className="flex items-baseline justify-between">
+              <label htmlFor="password" className="block text-sm font-medium text-ink">
+                Mot de passe
+              </label>
+              {!isSignup && (
+                <button
+                  type="button"
+                  onClick={() => setMode('forgot')}
+                  className="rounded text-xs text-ink-muted transition hover:text-accent-ink"
+                >
+                  Mot de passe oublie ?
+                </button>
+              )}
+            </div>
             <input
               id="password"
               type="password"
