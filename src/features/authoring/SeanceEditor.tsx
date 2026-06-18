@@ -331,6 +331,34 @@ export function SeanceEditorView({
 // Carte d'un exo prescrit
 // =====================================================================
 
+/** Résumé compact d'un champ : « 3 » (fixe) ou « 8-12 » (fourchette). */
+function fmtField(v: FieldValue): string {
+  return v.mode === 'fixe' ? String(v.min) : `${v.min}-${v.max}`;
+}
+
+/** Résumé d'une prescription, même format que la cible affichée en Capture. */
+function summarizeRow(row: EditorRow): string {
+  return `${fmtField(row.sets)} × ${fmtField(row.reps)} @ RIR ${fmtField(row.rir)}`;
+}
+
+function Caret({ dir }: { dir: 'up' | 'down' }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={dir === 'down' ? 'M6 9l6 6 6-6' : 'M18 15l-6-6-6 6'} />
+    </svg>
+  );
+}
+
 function ExerciseRowCard({
   row,
   position,
@@ -348,6 +376,8 @@ function ExerciseRowCard({
   onRemove: () => void;
   onField: (key: FieldKey, next: FieldValue) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <div className="rounded-2xl border border-line bg-surface p-3.5">
       <div className="flex items-start gap-2">
@@ -386,26 +416,52 @@ function ExerciseRowCard({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-3">
-        <RangeField
-          label="Séries"
-          floor={FIELD_FLOOR.sets}
-          value={row.sets}
-          onChange={(next) => onField('sets', next)}
-        />
-        <RangeField
-          label="Reps"
-          floor={FIELD_FLOOR.reps}
-          value={row.reps}
-          onChange={(next) => onField('reps', next)}
-        />
-        <RangeField
-          label="RIR"
-          floor={FIELD_FLOOR.rir}
-          value={row.rir}
-          onChange={(next) => onField('rir', next)}
-        />
-      </div>
+      {expanded ? (
+        <>
+          <div className="mt-3 flex flex-col gap-3">
+            <RangeField
+              label="Séries"
+              floor={FIELD_FLOOR.sets}
+              value={row.sets}
+              onChange={(next) => onField('sets', next)}
+            />
+            <RangeField
+              label="Reps"
+              floor={FIELD_FLOOR.reps}
+              value={row.reps}
+              onChange={(next) => onField('reps', next)}
+            />
+            <RangeField
+              label="RIR"
+              floor={FIELD_FLOOR.rir}
+              value={row.rir}
+              onChange={(next) => onField('rir', next)}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            aria-expanded
+            className="mt-3 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg text-sm font-medium text-ink-muted transition active:text-ink"
+          >
+            Replier
+            <Caret dir="up" />
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-expanded={false}
+          className="mt-2.5 flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl bg-surface-2/40 px-3 text-left transition active:bg-surface-2"
+        >
+          <span className="readout text-sm tabular-nums text-ink">{summarizeRow(row)}</span>
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted">
+            Modifier
+            <Caret dir="down" />
+          </span>
+        </button>
+      )}
     </div>
   );
 }
