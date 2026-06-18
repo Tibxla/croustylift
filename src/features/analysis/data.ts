@@ -222,18 +222,22 @@ export async function loadBlockComparisonData(
 // --- Log brut des lifts (cf. issue #27) ---------------------------------------
 
 /**
- * Le log brut de l'user : toutes ses séries loggées, regroupées par exécution
- * puis par exo (cf. `buildRawLog`). On lit `performed_sets` joint à la date de
- * l'exécution et au nom de l'exo (calque `loadExerciseExecutions`, sans filtre
- * d'exo : on veut TOUT l'historique). RLS scope déjà à l'user connecté. Le
- * regroupement/tri est fait par le module pur `buildRawLog` ; cette couche ne
- * fait que mapper les lignes et déléguer.
+ * Le log brut enrichi de l'user (cf. issue #32) : toutes ses séries loggées,
+ * regroupées par exécution puis par exo (cf. `buildRawLog`), chaque exécution
+ * portant ses métadonnées de séance (nom, BPM, durée) pour l'en-tête de récap.
+ * On lit `performed_sets` joint à la date + métriques de l'exécution, au nom de
+ * l'exo, et au nom de la séance via `executions → seance_versions → seances`
+ * (calque `loadExerciseExecutions`, sans filtre d'exo : on veut TOUT
+ * l'historique). RLS scope déjà à l'user connecté. Le BPM, la durée et le nom de
+ * séance sont OPTIONNELS (exécution hors-template, métriques facultatives) et
+ * restent `null` pour ne pas inventer de récap. Le regroupement/tri est fait par
+ * le module pur `buildRawLog` ; cette couche ne fait que mapper et déléguer.
  */
 export async function loadRawLog(): Promise<RawLogEntry[]> {
   const { data, error } = await supabase
     .from('performed_sets')
     .select(
-      'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on )',
+      'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
     );
   if (error) throw error;
 
@@ -245,20 +249,29 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     execution_id: string;
     exercise_id: string;
     exercises: { name: string } | null;
-    executions: { performed_on: string } | null;
+    executions: {
+      performed_on: string;
+      bpm_avg: number | null;
+      duration_min: number | null;
+      seance_versions: { seances: { name: string } | null } | null;
+    } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
 
   return buildRawLog(
     rows.flatMap((row) => {
-      const date = row.executions?.performed_on;
-      if (!date) return []; // garde-fou : série orpheline d'exécution.
+      const execution = row.executions;
+      if (!execution) return []; // garde-fou : série orpheline d'exécution.
       return [
         {
           executionId: row.execution_id,
-          date,
+          date: execution.performed_on,
           exerciseId: row.exercise_id,
           exerciseName: row.exercises?.name ?? '(exercice inconnu)',
+          sessionName: execution.seance_versions?.seances?.name ?? null,
+          bpmAvg: execution.bpm_avg === null ? null : Number(execution.bpm_avg),
+          durationMin:
+            execution.duration_min === null ? null : Number(execution.duration_min),
           set: {
             weightKg: Number(row.weight_kg),
             reps: row.reps,
