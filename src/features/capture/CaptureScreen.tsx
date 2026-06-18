@@ -45,7 +45,8 @@ import {
 import type { PerformedSet } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
-import { SessionEnd, type SessionEndValues, type SessionSummary } from './SessionEnd';
+import { SessionEnd, type SessionEndValues } from './SessionEnd';
+import { buildSummary, elapsedMinutesSince } from './summary';
 
 type LoadState =
   | { phase: 'loading' }
@@ -427,34 +428,6 @@ function CaptureBoard({
       )}
     </div>
   );
-}
-
-/**
- * Durée écoulée en minutes (arrondi) depuis le lancement de la séance, ou `null`
- * si `startedAt` est absent/invalide (cas dégénéré : on n'envoie ni n'affiche
- * de durée plutôt qu'une valeur trompeuse).
- */
-function elapsedMinutesSince(startedAt: number | undefined): number | null {
-  if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return null;
-  return Math.round((Date.now() - startedAt) / 60000);
-}
-
-/** Construit le récap sobre de l'exécution courante (exos faits / total, séries). */
-function buildSummary(session: Session, state: CaptureState): SessionSummary {
-  const exercisesDone = session.exercises.filter((ex) => {
-    const p = getProgress(state, ex.exerciseId);
-    return p.skipped || p.sets.length >= ex.prescription.sets.min;
-  }).length;
-  const totalSets = session.exercises.reduce(
-    (sum, ex) => sum + getProgress(state, ex.exerciseId).sets.length,
-    0,
-  );
-  return {
-    sessionName: session.name,
-    exercisesDone,
-    exercisesTotal: session.exercises.length,
-    totalSets,
-  };
 }
 
 /**
