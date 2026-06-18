@@ -3,8 +3,9 @@ import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
 import { AnalysisScreen } from './features/analysis/AnalysisScreen'
+import { SeancesScreen } from './features/authoring/SeancesScreen'
 
-type Surface = 'capture' | 'analysis'
+type Surface = 'capture' | 'analysis' | 'seances'
 
 // Hauteur de la barre d'onglets (+ safe-area iOS). Centralisée ici pour que :
 //   - chaque surface réserve l'espace en bas (padding) ;
@@ -65,7 +66,9 @@ function App() {
         className="app-surface"
         style={{ paddingBottom: NAV_OFFSET }}
       >
-        {surface === 'capture' ? <CaptureScreen /> : <AnalysisScreen />}
+        {surface === 'capture' && <CaptureScreen />}
+        {surface === 'analysis' && <AnalysisScreen />}
+        {surface === 'seances' && <SeancesScreen />}
       </div>
 
       <BottomNav surface={surface} onSelect={setSurface} />
@@ -87,7 +90,7 @@ function BottomNav({
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 backdrop-blur-sm"
       aria-label="Navigation principale"
     >
-      <div className="mx-auto grid w-full max-w-md grid-cols-2 pb-[env(safe-area-inset-bottom,0)]">
+      <div className="mx-auto grid w-full max-w-md grid-cols-3 pb-[env(safe-area-inset-bottom,0)]">
         <TabButton
           label="Capture"
           active={surface === 'capture'}
@@ -104,6 +107,17 @@ function BottomNav({
             <>
               <path d="M3 3v18h18" />
               <path d="M7 14l4-4 3 3 5-6" />
+            </>
+          }
+        />
+        <TabButton
+          label="Séances"
+          active={surface === 'seances'}
+          onClick={() => onSelect('seances')}
+          icon={
+            <>
+              <path d="M8 6h11M8 12h11M8 18h11" />
+              <path d="M3 6h.01M3 12h.01M3 18h.01" />
             </>
           }
         />
