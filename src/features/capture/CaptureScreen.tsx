@@ -222,9 +222,17 @@ function CaptureBoard({
   }, [session, date]);
 
   // --- Flux de fin de séance ------------------------------------------------
-  // Phase locale : capture (sélecteur + panneaux) -> fin (saisie BPM/durée).
+  // Phase locale : capture (sélecteur + panneaux) -> fin (clôture, BPM optionnel).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd.
   const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
+  // Durée CHRONOMÉTRÉE, figée à l'ouverture du flux de fin (lancement -> clôture).
+  // `null` = cas dégénéré (startedAt absent) : pas de durée envoyée ni affichée.
+  const [durationMin, setDurationMin] = useState<number | null>(null);
+
+  const openFinish = useCallback(() => {
+    setDurationMin(elapsedMinutesSince(state.startedAt));
+    setPhase('finishing');
+  }, [state.startedAt]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
   const loggedAny = session.exercises.some(
@@ -238,9 +246,13 @@ function CaptureBoard({
       // Garantit l'exécution même si une synchro de série a échoué plus tôt
       // (l'utilisateur a pu logger offline) : sans id, rien à clôturer.
       const executionId = await ensureExecution();
-      await finishExecution(executionId, values);
+      // La durée vient du chrono (lancement -> clôture), pas d'une saisie.
+      await finishExecution(executionId, {
+        bpmAvg: values.bpmAvg,
+        durationMin: durationMin ?? undefined,
+      });
     },
-    [ensureExecution],
+    [ensureExecution, durationMin],
   );
 
   if (phase === 'finishing') {
@@ -249,6 +261,7 @@ function CaptureBoard({
         {unsynced && <UnsyncedBanner />}
         <SessionEnd
           summary={summary}
+          durationMin={durationMin}
           onSave={handleFinish}
           onBack={() => setPhase('capture')}
         />
@@ -280,12 +293,22 @@ function CaptureBoard({
             state={state}
             canFinish={loggedAny}
             onReset={handleReset}
-            onFinish={() => setPhase('finishing')}
+            onFinish={openFinish}
           />
         </>
       )}
     </div>
   );
+}
+
+/**
+ * Durée écoulée en minutes (arrondi) depuis le lancement de la séance, ou `null`
+ * si `startedAt` est absent/invalide (cas dégénéré : on n'envoie ni n'affiche
+ * de durée plutôt qu'une valeur trompeuse).
+ */
+function elapsedMinutesSince(startedAt: number | undefined): number | null {
+  if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return null;
+  return Math.round((Date.now() - startedAt) / 60000);
 }
 
 /** Construit le récap sobre de l'exécution courante (exos faits / total, séries). */
@@ -306,7 +329,12 @@ function buildSummary(session: Session, state: CaptureState): SessionSummary {
   };
 }
 
-/** Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé. */
+/**
+ * Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé.
+ * `b` = état restauré du localStorage : son `startedAt` (le lancement réel,
+ * persisté) prime sur celui fraîchement re-créé par l'hydratation Supabase, pour
+ * que la durée chronométrée survive au passage en arrière-plan.
+ */
 function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   const ids = new Set([...Object.keys(a.progress), ...Object.keys(b.progress)]);
   const progress: CaptureState['progress'] = {};
@@ -317,7 +345,7 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     else if (!pb) progress[id] = pa;
     else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
   }
-  return { ...a, progress };
+  return { ...a, startedAt: b.startedAt, progress };
 }
 
 function UnsyncedBanner() {
@@ -328,7 +356,7 @@ function UnsyncedBanner() {
       aria-live="polite"
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
-      Non synchronisé — tes séries sont gardées sur l&apos;appareil.
+      Non synchronisé. Tes séries sont gardées sur l&apos;appareil.
     </div>
   );
 }

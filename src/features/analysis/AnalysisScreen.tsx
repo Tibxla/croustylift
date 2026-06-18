@@ -116,7 +116,7 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         <span className="text-xs text-ink-muted">e1RM · 1ʳᵉ série</span>
         {slopeUnavailable && (
           <span className="text-xs text-ink-muted">
-            Pente indispo — pas assez de séances.
+            Pas assez de séances pour la pente.
           </span>
         )}
       </div>
@@ -146,7 +146,7 @@ function EmptyState() {
         </svg>
       </div>
       <p className="text-sm text-ink-muted">
-        Pas encore de données — fais ta première séance pour voir ta progression.
+        Pas encore de données. Fais ta première séance pour voir ta progression.
       </p>
     </div>
   );

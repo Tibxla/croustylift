@@ -18,6 +18,14 @@ export interface CaptureState {
   sessionId: string;
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   date: string;
+  /**
+   * Horodatage du LANCEMENT de la session de capture (epoch ms, `Date.now()`).
+   * Sert à chronométrer la durée auto : `durationMin = round((Date.now() - startedAt) / 60000)`
+   * à la clôture (cf. SessionEnd). Posé une fois au démarrage, persisté en
+   * localStorage et CONSERVÉ tel quel à la restauration (la durée survit au
+   * passage en arrière-plan).
+   */
+  startedAt: number;
   /** Exo actuellement ouvert dans le panneau de capture, ou null = on est sur le sélecteur. */
   activeExerciseId: string | null;
   /** Réalisé par exerciseId. */
@@ -59,6 +67,7 @@ export function initialState(session: Session, date = todayIso()): CaptureState 
   return {
     sessionId: session.id,
     date,
+    startedAt: Date.now(),
     activeExerciseId: null,
     progress: {},
   };
@@ -80,6 +89,7 @@ export function hydratedState(
   return {
     sessionId: session.id,
     date,
+    startedAt: Date.now(),
     activeExerciseId: null,
     progress,
   };
@@ -147,7 +157,8 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
     }
 
     case 'reset':
-      return { ...state, activeExerciseId: null, progress: {} };
+      // Nouvelle séance = nouveau chrono : on ré-amorce startedAt.
+      return { ...state, startedAt: Date.now(), activeExerciseId: null, progress: {} };
 
     default:
       return state;
@@ -174,6 +185,12 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
     return {
       sessionId: session.id,
       date,
+      // CONSERVE le startedAt persisté (la durée survit au background). Si une
+      // session pré-startedAt traînait en cache, on retombe sur « maintenant ».
+      startedAt:
+        typeof parsed.startedAt === 'number' && Number.isFinite(parsed.startedAt)
+          ? parsed.startedAt
+          : Date.now(),
       activeExerciseId:
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: parsed.progress && typeof parsed.progress === 'object' ? parsed.progress : {},

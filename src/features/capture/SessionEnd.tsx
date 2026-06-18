@@ -1,20 +1,20 @@
-// Flux de fin de séance : saisie MANUELLE, niveau séance, de deux métriques
-// liées — BPM moyen + durée (min) — toutes deux OPTIONNELLES (cf. décisions
-// produit ; pas de chrono auto cette passe). Un récap sobre encadre la saisie,
-// puis un écran de confirmation clôt la séance.
+// Flux de fin de séance. La DURÉE est AUTO-CHRONOMÉTRÉE (lancement -> clôture,
+// cf. state.startedAt / CaptureScreen) : elle s'affiche en readout lecture seule,
+// jamais saisie. Le BPM moyen reste, lui, une saisie MANUELLE et OPTIONNELLE
+// (cf. décisions produit révisées). Un récap sobre encadre la saisie, puis un
+// écran de confirmation clôt la séance.
 //
-// L'« optionnel » est matérialisé par métrique : non saisie = ligne repliée
-// avec un bouton « + Ajouter… » ; on l'ouvre pour révéler un Stepper (DESIGN.md,
-// jamais d'<input> ni de clavier OS), on la retire pour revenir à « non saisie ».
-// Le bouton « Passer » clôt sans aucune valeur. Le primaire (accent violet, la
+// L'« optionnel » du BPM est matérialisé : non saisi = ligne repliée avec un
+// bouton « + Ajouter… » ; on l'ouvre pour révéler un Stepper (DESIGN.md, jamais
+// d'<input> ni de clavier OS), on le retire pour revenir à « non saisi ». Le
+// bouton « Clôturer sans noter » clôt sans BPM. Le primaire (accent violet, la
 // seule tache de couleur de l'écran) enregistre puis bascule en confirmation.
 import { useState } from 'react';
 import { Stepper } from './Stepper';
 
-/** Ce que la fin de séance remonte au parent pour persistance (champs omis = non saisis). */
+/** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
   bpmAvg?: number | null;
-  durationMin?: number | null;
 }
 
 /** Récap sobre de l'exécution close : exos faits / total + total des séries. */
@@ -27,6 +27,11 @@ export interface SessionSummary {
 
 interface SessionEndProps {
   summary: SessionSummary;
+  /**
+   * Durée chronométrée de la séance (min), calculée du lancement à la clôture.
+   * `null` = cas dégénéré (lancement non horodaté) : on n'affiche aucune durée.
+   */
+  durationMin: number | null;
   /** Enregistre les métriques (peut échouer côté réseau ; le parent gère le retry). */
   onSave: (values: SessionEndValues) => Promise<void> | void;
   /** Retour à la capture (la séance n'est pas close). */
@@ -36,20 +41,15 @@ interface SessionEndProps {
 const BPM_DEFAULT = 130;
 const BPM_STEP = 5;
 const BPM_FINE = 1;
-const DURATION_DEFAULT = 60;
-const DURATION_STEP = 5;
-const DURATION_FINE = 1;
 
 function intFormat(value: number): string {
   return String(Math.round(value));
 }
 
-export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
-  // Chaque métrique : activée (saisie) ? + sa valeur. Repliée par défaut = « non saisie ».
+export function SessionEnd({ summary, durationMin, onSave, onBack }: SessionEndProps) {
+  // BPM : activé (saisi) ? + sa valeur. Replié par défaut = « non saisi ».
   const [bpmOn, setBpmOn] = useState(false);
   const [bpm, setBpm] = useState(BPM_DEFAULT);
-  const [durationOn, setDurationOn] = useState(false);
-  const [duration, setDuration] = useState(DURATION_DEFAULT);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,16 +71,12 @@ export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
   }
 
   // Champ omis (undefined) = colonne inchangée côté DB ; on n'envoie que le saisi.
-  const handleSaveAndClose = () =>
-    void commit({
-      bpmAvg: bpmOn ? bpm : undefined,
-      durationMin: durationOn ? duration : undefined,
-    });
+  const handleSaveAndClose = () => void commit({ bpmAvg: bpmOn ? bpm : undefined });
 
   const handleSkip = () => void commit({});
 
   if (saved) {
-    return <SessionDone summary={summary} values={saved} />;
+    return <SessionDone summary={summary} durationMin={durationMin} values={saved} />;
   }
 
   return (
@@ -112,10 +108,10 @@ export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
       </h2>
       <p className="mt-1.5 text-sm text-ink-muted">{summary.sessionName}</p>
 
-      <SummaryCard summary={summary} />
+      <SummaryCard summary={summary} durationMin={durationMin} />
 
       <p className="mt-7 text-sm text-ink-muted">
-        Note ton effort si tu veux — les deux champs sont optionnels.
+        Note ton BPM moyen si tu veux, c&apos;est optionnel.
       </p>
 
       <div className="mt-3 flex flex-col gap-3">
@@ -137,27 +133,6 @@ export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
             max={240}
             format={intFormat}
             onChange={setBpm}
-          />
-        </MetricRow>
-
-        <MetricRow
-          title="Durée"
-          addLabel="Ajouter la durée"
-          hint="Durée totale de la séance, en minutes."
-          on={durationOn}
-          onAdd={() => setDurationOn(true)}
-          onRemove={() => setDurationOn(false)}
-        >
-          <Stepper
-            label="Durée"
-            unit="min"
-            value={duration}
-            step={DURATION_STEP}
-            fineStep={DURATION_FINE}
-            min={1}
-            max={360}
-            format={intFormat}
-            onChange={setDuration}
           />
         </MetricRow>
       </div>
@@ -185,7 +160,7 @@ export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
             onClick={handleSkip}
             className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
           >
-            Passer — clôturer sans noter
+            Clôturer sans noter
           </button>
         </div>
       </div>
@@ -193,8 +168,18 @@ export function SessionEnd({ summary, onSave, onBack }: SessionEndProps) {
   );
 }
 
-/** Carte de récap : exos faits / total + total de séries (chiffres en mono). */
-function SummaryCard({ summary }: { summary: SessionSummary }) {
+/**
+ * Carte de récap : exos faits / total + total de séries + durée auto (chiffres
+ * en mono). La durée est un readout lecture seule, jamais saisie ; absente si
+ * non chronométrée.
+ */
+function SummaryCard({
+  summary,
+  durationMin,
+}: {
+  summary: SessionSummary;
+  durationMin: number | null;
+}) {
   return (
     <div className="mt-4 grid grid-cols-2 gap-2.5">
       <div className="rounded-2xl bg-surface px-4 py-3.5">
@@ -210,6 +195,15 @@ function SummaryCard({ summary }: { summary: SessionSummary }) {
           {summary.totalSets}
         </p>
       </div>
+      {durationMin != null && (
+        <div className="rounded-2xl bg-surface px-4 py-3.5">
+          <p className="text-xs font-medium text-ink-muted">Durée</p>
+          <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
+            {durationMin}
+            <span className="text-base text-ink-muted"> min</span>
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -281,16 +275,17 @@ function MetricRow({
 
 // --- Confirmation -----------------------------------------------------------
 
-/** Écran de confirmation : séance close, récap + métriques saisies (si présentes). */
+/** Écran de confirmation : séance close, récap + durée auto + BPM saisi (si présent). */
 function SessionDone({
   summary,
+  durationMin,
   values,
 }: {
   summary: SessionSummary;
+  durationMin: number | null;
   values: SessionEndValues;
 }) {
   const hasBpm = typeof values.bpmAvg === 'number';
-  const hasDuration = typeof values.durationMin === 'number';
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-12 pt-10">
@@ -316,28 +311,17 @@ function SessionDone({
         <p className="mt-1.5 text-sm text-ink-muted">{summary.sessionName}</p>
       </div>
 
-      <SummaryCard summary={summary} />
+      <SummaryCard summary={summary} durationMin={durationMin} />
 
-      {(hasBpm || hasDuration) && (
-        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-          {hasBpm && (
-            <div className="rounded-2xl bg-surface px-4 py-3.5">
-              <p className="text-xs font-medium text-ink-muted">BPM moyen</p>
-              <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-                {values.bpmAvg}
-                <span className="text-base text-ink-muted"> bpm</span>
-              </p>
-            </div>
-          )}
-          {hasDuration && (
-            <div className="rounded-2xl bg-surface px-4 py-3.5">
-              <p className="text-xs font-medium text-ink-muted">Durée</p>
-              <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-                {values.durationMin}
-                <span className="text-base text-ink-muted"> min</span>
-              </p>
-            </div>
-          )}
+      {hasBpm && (
+        <div className="mt-2.5">
+          <div className="rounded-2xl bg-surface px-4 py-3.5">
+            <p className="text-xs font-medium text-ink-muted">BPM moyen</p>
+            <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
+              {values.bpmAvg}
+              <span className="text-base text-ink-muted"> bpm</span>
+            </p>
+          </div>
         </div>
       )}
 

@@ -142,11 +142,11 @@ export function ExerciseCapture({
         ) : reference ? (
           <p className="text-sm text-ink-muted">
             Dernière fois : <span className="readout">{reference.length}</span> séries
-            seulement — au-delà, surpasse-toi.
+            seulement. Au-delà, surpasse-toi.
           </p>
         ) : (
           <p className="text-sm text-ink-muted">
-            Premier passage sur cet exercice — aucune référence à battre.
+            Premier passage sur cet exercice. Aucune référence à battre.
           </p>
         )}
       </div>

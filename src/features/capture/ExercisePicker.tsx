@@ -52,7 +52,7 @@ export function ExercisePicker({ session, state, onPick }: ExercisePickerProps) 
           aria-live="polite"
         >
           <span className="font-medium">Séance terminée.</span> Tous les exercices sont
-          traités — tu peux ranger le téléphone.
+          traités. Tu peux ranger le téléphone.
         </div>
       )}
 
