@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { decideCaptureSource, type SeanceChoice } from './data';
+import {
+  decideCaptureSource,
+  resolveCaptureRoutineId,
+  type SeanceChoice,
+} from './data';
 
 // Logique PURE de sélection de la séance en Capture (issue #1).
 //
@@ -36,5 +40,24 @@ describe('decideCaptureSource', () => {
       kind: 'choose',
       seances,
     });
+  });
+});
+
+// Résolution de la routine sur laquelle ouvrir la Capture : routine courante si
+// définie, sinon repli sur la 1ʳᵉ routine existante (évite l'impasse « rien à
+// logger » quand une routine existe mais qu'aucune n'a été « définie courante »).
+describe('resolveCaptureRoutineId', () => {
+  it('routine courante définie -> on la prend (même avec d\'autres routines)', () => {
+    expect(resolveCaptureRoutineId('r-courante', ['r-1', 'r-courante', 'r-2'])).toBe(
+      'r-courante',
+    );
+  });
+
+  it('aucune routine courante mais des routines existent -> repli sur la 1ʳᵉ', () => {
+    expect(resolveCaptureRoutineId(null, ['r-1', 'r-2'])).toBe('r-1');
+  });
+
+  it('aucune routine courante et aucune routine -> null (vrai premier lancement)', () => {
+    expect(resolveCaptureRoutineId(null, [])).toBeNull();
   });
 });
