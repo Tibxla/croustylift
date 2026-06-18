@@ -11,7 +11,7 @@ import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
 import type { ExerciseExecution, PerformedSet } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
-import { getCurrentRoutineId, getCurrentVersionId, listSeances } from '../authoring/data';
+import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { todayIso } from './state';
 import type { Session, SessionExercise } from './fixtures';
 
@@ -29,11 +29,15 @@ export interface LoadedSeance {
 // --- Choix de la séance dans la routine courante (issue #1) -------------------
 //
 // En arrivant en Capture, l'user choisit QUELLE séance de sa routine courante il
-// attaque, au lieu de toujours charger la 1ʳᵉ séance de la 1ʳᵉ routine. Quand il
-// n'a rien d'exploitable (aucune routine courante, ou routine courante sans
-// séance), la Capture affiche un ÉTAT VIDE : depuis l'onboarding (issue #3) on ne
-// crée plus aucune séance en silence. Un user totalement neuf ne passe d'ailleurs
-// pas par ici, App l'envoie d'abord sur l'écran de premier lancement.
+// attaque, au lieu de toujours charger la 1ʳᵉ séance de la 1ʳᵉ routine. Si aucune
+// routine n'est explicitement courante, on REPLIE sur la 1ʳᵉ routine existante
+// (un user peut avoir créé une routine via l'onglet Séances sans cliquer
+// « Définir courante », ou avoir une routine pré-existante) : sans ce repli, la
+// Capture restait coincée sur « rien à logger » alors qu'une séance existe.
+// La Capture n'affiche un ÉTAT VIDE que si l'user n'a AUCUNE routine, ou si la
+// routine retenue n'a pas de séance : depuis l'onboarding (issue #3) on ne crée
+// plus rien en silence. Un user totalement neuf ne passe d'ailleurs pas par ici,
+// App l'envoie d'abord sur l'écran de premier lancement.
 
 /** Une séance proposée au choix en Capture : juste de quoi l'afficher et la résoudre. */
 export interface SeanceChoice {
@@ -69,12 +73,34 @@ export function decideCaptureSource(
 }
 
 /**
- * Lit la routine courante (getCurrentRoutineId) et ses séances, puis tranche la
- * source de la Capture via `decideCaptureSource`. C'est le point d'entrée de
- * l'écran : il dit s'il faut proposer un choix ou afficher l'état vide.
+ * Routine sur laquelle ouvrir la Capture : la routine courante si elle est
+ * définie, sinon (REPLI) la 1ʳᵉ routine existante. Le repli évite l'impasse
+ * « rien à logger » pour un user qui a une routine sans avoir cliqué « Définir
+ * courante ». `null` seulement si l'user n'a AUCUNE routine. Logique PURE, testée.
+ */
+export function resolveCaptureRoutineId(
+  currentRoutineId: string | null,
+  routineIds: string[],
+): string | null {
+  if (currentRoutineId !== null) return currentRoutineId;
+  return routineIds[0] ?? null;
+}
+
+/**
+ * Lit la routine courante (getCurrentRoutineId), avec repli sur la 1ʳᵉ routine
+ * (resolveCaptureRoutineId), puis ses séances, et tranche la source de la Capture
+ * via `decideCaptureSource`. Point d'entrée de l'écran : il dit s'il faut proposer
+ * un choix ou afficher l'état vide.
  */
 export async function loadCaptureSource(): Promise<CaptureSource> {
-  const routineId = await getCurrentRoutineId();
+  const [currentRoutineId, routines] = await Promise.all([
+    getCurrentRoutineId(),
+    listRoutines(),
+  ]);
+  const routineId = resolveCaptureRoutineId(
+    currentRoutineId,
+    routines.map((r) => r.id),
+  );
   if (routineId === null) return decideCaptureSource(null, []);
 
   const seances = await listSeances(routineId);
