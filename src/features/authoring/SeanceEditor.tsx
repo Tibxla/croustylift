@@ -24,6 +24,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Stepper } from '../capture/Stepper';
 import { listExercises } from '../capture/data';
+import { NoteField } from '../notes/NoteField';
+import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { isBlankNote } from '../../domain/notes';
 import type { Database } from '../../lib/database.types';
 import { loadSeanceEditor, saveSeanceVersion, createPersonalExercise } from './data';
 import {
@@ -68,7 +71,13 @@ const MUSCLE_GROUPS = [
 type Load =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; rows: EditorRow[]; catalogue: ExerciseRow[] };
+  | {
+      phase: 'ready';
+      rows: EditorRow[];
+      catalogue: ExerciseRow[];
+      /** Notes d'instructions par exerciseId (issue #26), '' si aucune. */
+      notes: Record<string, string>;
+    };
 
 export interface SeanceEditorProps {
   /** Id de la séance éditée (charge sa version courante, sauve une nouvelle version). */
@@ -111,7 +120,14 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
           reps: rangeToField(p.reps),
           rir: rangeToField(p.rir),
         }));
-        setLoad({ phase: 'ready', rows, catalogue });
+        // Note d'instructions (issue #26) par exo distinct présent dans la séance.
+        const exerciseIds = [...new Set(prescriptions.map((p) => p.exerciseId))];
+        const noteEntries = await Promise.all(
+          exerciseIds.map(async (id) => [id, await loadExerciseNote(id)] as const),
+        );
+        if (!active) return;
+        const notes = Object.fromEntries(noteEntries);
+        setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
         setLoad({ phase: 'error', message: errMessage(err) });
@@ -142,8 +158,10 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
       seanceName={seanceName}
       initialRows={load.rows}
       catalogue={load.catalogue}
+      initialNotes={load.notes}
       onBack={onBack}
       onSave={(rows) => saveSeanceVersion(seanceId, rowsToPrescriptionInputs(rows))}
+      onSaveExerciseNote={saveExerciseNote}
       onCreatePersonal={async (input) => {
         const created = await createPersonalExercise(input);
         return { id: created.id, name: created.name, muscleGroup: created.muscle_group };
@@ -169,9 +187,17 @@ export interface SeanceEditorViewProps {
   initialRows: EditorRow[];
   /** Catalogue complet (base + perso) pour le sélecteur d'ajout. */
   catalogue: ExerciseRow[];
+  /** Notes d'instructions par exerciseId (issue #26), '' si aucune. */
+  initialNotes: Record<string, string>;
   onBack: () => void;
   /** Crée une nouvelle version. Résolu = enregistré. */
   onSave: (rows: EditorRow[]) => Promise<string>;
+  /**
+   * Enregistre la note d'instructions d'un exo (issue #26). Indépendante du
+   * versionnage des prescriptions : sauvegardée à part, immédiatement. Corps
+   * vidé = note effacée.
+   */
+  onSaveExerciseNote: (exerciseId: string, body: string) => Promise<void>;
   /** Crée un exo perso et renvoie sa forme réduite (pour l'ajouter aussitôt). */
   onCreatePersonal: (input: { name: string; muscleGroup: string }) => Promise<CatalogueExercise>;
   /** Fabrique de rowId (injectée pour rester déterministe en test/harness). */
@@ -182,12 +208,18 @@ export function SeanceEditorView({
   seanceName,
   initialRows,
   catalogue,
+  initialNotes,
   onBack,
   onSave,
+  onSaveExerciseNote,
   onCreatePersonal,
   makeRowId,
 }: SeanceEditorViewProps) {
   const [rows, setRows] = useState<EditorRow[]>(initialRows);
+  // Notes d'instructions par exo (issue #26), éditées et sauvegardées à part du
+  // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même
+  // exo (exercise_notes est unique par exo).
+  const [notes, setNotes] = useState<Record<string, string>>(initialNotes);
   // Catalogue local : on y ajoute les exos perso créés à la volée, sans recharger.
   const [catalog, setCatalog] = useState<CatalogueExercise[]>(() =>
     catalogue.map((e) => ({ id: e.id, name: e.name, muscleGroup: e.muscle_group })),
@@ -203,6 +235,20 @@ export function SeanceEditorView({
     setRows((prev) =>
       prev.map((r) => (r.rowId === rowId ? { ...r, [key]: next } : r)),
     );
+  }
+
+  // Enregistre la note d'un exo : optimiste en local (toutes ses lignes la
+  // reflètent), puis persiste. En cas d'échec, on remet la valeur d'avant pour
+  // ne pas laisser croire à un enregistrement réussi.
+  async function saveNote(exerciseId: string, body: string): Promise<void> {
+    const before = notes[exerciseId] ?? '';
+    setNotes((prev) => ({ ...prev, [exerciseId]: body }));
+    try {
+      await onSaveExerciseNote(exerciseId, body);
+    } catch (err) {
+      setNotes((prev) => ({ ...prev, [exerciseId]: before }));
+      throw err;
+    }
   }
 
   function addExercise(exo: CatalogueExercise) {
@@ -271,9 +317,11 @@ export function SeanceEditorView({
                   position={index + 1}
                   isFirst={index === 0}
                   isLast={index === rows.length - 1}
+                  note={notes[row.exerciseId] ?? ''}
                   onMove={(direction) => setRows((prev) => moveRow(prev, index, direction))}
                   onRemove={() => setRows((prev) => prev.filter((r) => r.rowId !== row.rowId))}
                   onField={(key, next) => updateRow(row.rowId, key, next)}
+                  onSaveNote={(body) => saveNote(row.exerciseId, body)}
                 />
               </li>
             ))}
@@ -364,17 +412,23 @@ function ExerciseRowCard({
   position,
   isFirst,
   isLast,
+  note,
   onMove,
   onRemove,
   onField,
+  onSaveNote,
 }: {
   row: EditorRow;
   position: number;
   isFirst: boolean;
   isLast: boolean;
+  /** Note d'instructions de l'exo (issue #26), '' si aucune. */
+  note: string;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
   onField: (key: FieldKey, next: FieldValue) => void;
+  /** Enregistre la note d'instructions de l'exo (corps vidé = note effacée). */
+  onSaveNote: (body: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -437,6 +491,11 @@ function ExerciseRowCard({
               value={row.rir}
               onChange={(next) => onField('rir', next)}
             />
+            <ExerciseNoteEditor
+              exerciseName={row.exerciseName}
+              note={note}
+              onSave={onSaveNote}
+            />
           </div>
           <button
             type="button"
@@ -455,12 +514,110 @@ function ExerciseRowCard({
           aria-expanded={false}
           className="mt-2.5 flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl bg-surface-2/40 px-3 text-left transition active:bg-surface-2"
         >
-          <span className="readout text-sm tabular-nums text-ink">{summarizeRow(row)}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="readout text-sm tabular-nums text-ink">{summarizeRow(row)}</span>
+            {/* Indicateur « note présente » : mot + icône, jamais la couleur seule. */}
+            {!isBlankNote(note) && (
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 6h16M4 12h10M4 18h7" />
+                </svg>
+                Note
+              </span>
+            )}
+          </span>
           <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted">
             Modifier
             <Caret dir="down" />
           </span>
         </button>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// Note d'instructions de l'exo (issue #26)
+// =====================================================================
+
+/**
+ * Éditeur de la note d'instructions d'un exo, dans la carte dépliée. Persistée
+ * à part du versionnage des prescriptions (bouton dédié), car la note vaut pour
+ * l'exo lui-même, pas pour cette version de séance. Vider puis enregistrer
+ * efface la note. Texte libre : <textarea> légitime (le ban clavier OS ne vise
+ * que les chiffres mesurés).
+ */
+function ExerciseNoteEditor({
+  exerciseName,
+  note,
+  onSave,
+}: {
+  exerciseName: string;
+  note: string;
+  onSave: (body: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(note);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const dirty = draft !== note;
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(draft);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1600);
+    } catch (err) {
+      setError(errMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-surface-2/40 p-3">
+      <NoteField
+        id={`note-${exerciseName}`}
+        label="Note de l’exercice"
+        hint="Instructions persistantes, affichées en référence pendant la série."
+        value={draft}
+        placeholder="Prise serrée, coudes rentrés, descente contrôlée."
+        rows={3}
+        onChange={setDraft}
+      />
+      <div className="mt-2.5 flex items-center justify-end gap-2">
+        {saved && !dirty && (
+          <span className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-good">
+            <CheckIcon />
+            Note enregistrée.
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={!dirty || busy}
+          onClick={() => void submit()}
+          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+        >
+          {busy ? 'Enregistrement…' : isBlankNote(draft) ? 'Effacer la note' : 'Enregistrer la note'}
+        </button>
+      </div>
+      {error && (
+        <p className="readout mt-2 break-words text-xs text-warn" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

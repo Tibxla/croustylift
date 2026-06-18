@@ -19,6 +19,7 @@ import {
   loadChosenSeance,
   loadReference,
   loadSeanceForCapture,
+  loadTodayDatedNotes,
   loadTodayProgress,
   updateExecution,
   upsertExecution,
@@ -28,8 +29,15 @@ import {
   type Session,
 } from './data';
 import {
+  loadExerciseNote,
+  upsertDatedNote as upsertDatedNoteRow,
+  deleteDatedNoteById,
+  datedNoteOutboxOp,
+} from '../notes/data';
+import {
   captureReducer,
   clearPersisted,
+  getDatedNote,
   getProgress,
   hydratedState,
   loadPersisted,
@@ -37,6 +45,7 @@ import {
   persist,
   statusOf,
   todayIso,
+  type DatedNoteDraft,
 } from './state';
 import {
   enqueue,
@@ -63,6 +72,8 @@ export function CaptureScreen() {
   const [reloadKey, setReloadKey] = useState(0);
   // Le réalisé Supabase du jour, posé par l'effet de chargement, lu par CaptureBoard.
   const hydrationRef = useRef<Record<string, PerformedSet[]>>({});
+  // Les notes datées Supabase du jour (issue #26), posées au chargement, lues par CaptureBoard.
+  const datedNotesRef = useRef<Record<string, DatedNoteDraft>>({});
 
   // Charge une séance résolue (sa version courante) vers la phase « ready » :
   // template -> références par exo -> réhydratation du réalisé du jour. Le drapeau
@@ -73,21 +84,30 @@ export function CaptureScreen() {
     async ({ seance, seanceVersionId }: LoadedSeance, active: () => boolean) => {
       const base = await loadSeanceForCapture(seance, seanceVersionId);
 
-      const [withRefs, todayProgress] = await Promise.all([
+      // Par exo : référence (dernière fois) ET note d'instructions (issue #26),
+      // affichée comme référence en Capture. En parallèle : le réalisé du jour et
+      // les notes datées du jour (réhydratation au montage, Supabase fait foi).
+      const [withRefs, todayProgress, todayDatedNotes] = await Promise.all([
         Promise.all(
-          base.exercises.map(async (ex) => ({
-            ...ex,
-            reference: await loadReference(ex.exerciseId),
-          })),
+          base.exercises.map(async (ex) => {
+            const [reference, perExerciseNote] = await Promise.all([
+              loadReference(ex.exerciseId),
+              loadExerciseNote(ex.exerciseId),
+            ]);
+            return { ...ex, reference, perExerciseNote };
+          }),
         ),
         loadTodayProgress(seanceVersionId),
+        loadTodayDatedNotes(seanceVersionId),
       ]);
 
       if (!active()) return;
       const session: Session = { ...base, exercises: withRefs };
-      // On transporte le réalisé chargé vers le reducer via un ref, posé AVANT
-      // le passage en « ready » pour qu'il soit prêt au 1ᵉʳ render de CaptureBoard.
+      // On transporte le réalisé et les notes datées chargés vers le reducer via
+      // des refs, posés AVANT le passage en « ready » pour être prêts au 1ᵉʳ
+      // render de CaptureBoard.
       hydrationRef.current = todayProgress;
+      datedNotesRef.current = todayDatedNotes;
       setLoad({ phase: 'ready', session, seanceVersionId });
     },
     [],
@@ -209,6 +229,7 @@ export function CaptureScreen() {
       session={load.session}
       seanceVersionId={load.seanceVersionId}
       initialProgress={hydrationRef.current}
+      initialDatedNotes={datedNotesRef.current}
     />
   );
 }
@@ -298,6 +319,14 @@ const syncFns: SyncFns = {
   deleteSet: (op) => deleteSetById(op.id),
   updateExecution: (op) =>
     updateExecution({ id: op.id, bpmAvg: op.bpmAvg, durationMin: op.durationMin }),
+  upsertDatedNote: (op) =>
+    upsertDatedNoteRow({
+      id: op.id,
+      executionId: op.executionId,
+      exerciseId: op.exerciseId,
+      body: op.body,
+    }),
+  deleteDatedNote: (op) => deleteDatedNoteById(op.id),
 };
 
 // --- Indicateur de sync réactif --------------------------------------------
@@ -366,10 +395,12 @@ function CaptureBoard({
   session,
   seanceVersionId,
   initialProgress,
+  initialDatedNotes,
 }: {
   session: Session;
   seanceVersionId: string;
   initialProgress: Record<string, PerformedSet[]>;
+  initialDatedNotes: Record<string, DatedNoteDraft>;
 }) {
   const [date] = useState(todayIso);
 
@@ -377,7 +408,7 @@ function CaptureBoard({
   // (survie au background / écriture offline non encore synchronisée). Pour
   // chaque exo on garde la source ayant le plus de séries.
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const fromSupabase = hydratedState(session, initialProgress, date);
+    const fromSupabase = hydratedState(session, initialProgress, initialDatedNotes, date);
     const fromLocal = loadPersisted(session, date);
     if (!fromLocal) return fromSupabase;
     return mergeProgress(fromSupabase, fromLocal);
@@ -454,6 +485,24 @@ function CaptureBoard({
       }
     },
     [state],
+  );
+
+  // Enregistre la NOTE DATÉE d'un exo (issue #26). L'id de ligne est stable :
+  // réutilisé s'il existe déjà (édition en place), sinon généré une fois. On
+  // enfile l'exécution AVANT la note (dépendance FK note->exécution, garantie
+  // aussi par le FIFO) puis l'op note (upsert si corps réel, delete si vidé,
+  // tranché par datedNoteOutboxOp). UI immédiate via le reducer ; sync en fond.
+  const handleSaveDatedNote = useCallback(
+    (exerciseId: string, body: string) => {
+      const existing = getDatedNote(state, exerciseId);
+      const noteId = existing?.id ?? newId();
+      dispatch({ type: 'set-dated-note', exerciseId, noteId, body });
+      enqueueExecutionOnce();
+      enqueueAndFlush(
+        datedNoteOutboxOp({ id: noteId, executionId: state.executionId, exerciseId, body }),
+      );
+    },
+    [state, enqueueExecutionOnce],
   );
 
   const handleReset = useCallback(() => {
@@ -563,9 +612,11 @@ function CaptureBoard({
           key={activeExercise.exerciseId}
           exercise={activeExercise}
           progress={getProgress(state, activeExercise.exerciseId)}
+          datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           dispatch={dispatch}
           onLog={(set) => handleLog(activeExercise.exerciseId, set)}
           onUndo={() => handleUndo(activeExercise.exerciseId)}
+          onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
         />
       ) : (
         <>
@@ -605,6 +656,11 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     else if (!pb) progress[id] = pa;
     else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
   }
+  // Notes datées : le LOCAL (b) prime par exo (une saisie offline pas encore
+  // synchronisée ne doit pas être écrasée par la base), mais on garde la note de
+  // la base (a) pour un exo que le local ne porte pas. Les ids alignés sur
+  // b.executionId restent cohérents avec les ops déjà en outbox.
+  const datedNotes: CaptureState['datedNotes'] = { ...a.datedNotes, ...b.datedNotes };
   // `closedAt` vient du LOCAL (b) : la clôture est une notion locale, la base
   // n'en sait rien (a.closedAt est toujours null). Sinon une séance clôturée
   // puis quittée repasserait « en cours » au remontage.
@@ -613,6 +669,7 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     executionId: b.executionId,
     startedAt: b.startedAt,
     progress,
+    datedNotes,
     closedAt: b.closedAt,
   };
 }
@@ -668,15 +725,21 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 function CapturePanel({
   exercise,
   progress,
+  datedNote,
   dispatch,
   onLog,
   onUndo,
+  onSaveDatedNote,
 }: {
   exercise: SessionExercise;
   progress: ExerciseProgress;
+  /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
+  datedNote: string;
   dispatch: Dispatch<CaptureAction>;
   onLog: (set: { weightKg: number; reps: number; rir: number }) => void;
   onUndo: () => void;
+  /** Enregistre la note datée du jour (corps vidé = note effacée). */
+  onSaveDatedNote: (body: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre fixe puisse logger.
   const [draft, setDraft] = useState<{ weightKg: number; reps: number; rir: number } | null>(
@@ -704,6 +767,7 @@ function CapturePanel({
       <ExerciseCapture
         exercise={exercise}
         progress={progress}
+        datedNote={datedNote}
         onUndoLast={() => {
           onUndo();
           setAnnounce('Dernière série annulée.');
@@ -711,6 +775,7 @@ function CapturePanel({
         onSkip={() => dispatch({ type: 'skip-exercise', exerciseId: exercise.exerciseId })}
         onBack={() => dispatch({ type: 'back-to-picker' })}
         onDraftChange={setDraft}
+        onSaveDatedNote={onSaveDatedNote}
       />
 
       <p className="sr-only" role="status" aria-live="assertive">

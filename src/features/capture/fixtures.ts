@@ -18,6 +18,12 @@ export interface SessionExercise {
    * Dérivée de l'historique (jamais saisie). `null` = jamais fait → rien à battre.
    */
   reference: PerformedSet[] | null;
+  /**
+   * Note d'INSTRUCTIONS persistante de l'exo (issue #26), chargée depuis
+   * `exercise_notes`. Affichée en RÉFÉRENCE (lecture seule) pendant la série, pas
+   * éditée ici (l'édition vit dans l'authoring). Chaîne vide = aucune instruction.
+   */
+  perExerciseNote: string;
 }
 
 /** Une Séance : template = liste ordonnée d'exercices, chacun avec sa prescription. */
@@ -42,6 +48,7 @@ export const upperA: Session = {
         { weightKg: 82.5, reps: 7, rir: 1, order: 2 },
         { weightKg: 80, reps: 8, rir: 1, order: 3 },
       ],
+      perExerciseNote: 'Omoplates rétractées, pieds bien ancrés. Barre au sternum.',
     },
     {
       exerciseId: 'seated-row',
@@ -53,6 +60,7 @@ export const upperA: Session = {
         { weightKg: 67.5, reps: 11, rir: 1, order: 3 },
         { weightKg: 67.5, reps: 10, rir: 1, order: 4 },
       ],
+      perExerciseNote: '',
     },
     {
       exerciseId: 'overhead-press',
@@ -63,6 +71,7 @@ export const upperA: Session = {
         { weightKg: 47.5, reps: 6, rir: 1, order: 2 },
         { weightKg: 45, reps: 7, rir: 2, order: 3 },
       ],
+      perExerciseNote: '',
     },
     {
       // Premier passage sur cet exo : aucune référence à battre (un trou, pas un zéro).
@@ -70,6 +79,7 @@ export const upperA: Session = {
       name: 'Curl biceps haltères',
       prescription: { sets: r(3, 4), reps: r(10, 15), rir: r(0, 1) },
       reference: null,
+      perExerciseNote: '',
     },
   ],
 };

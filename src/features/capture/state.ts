@@ -6,6 +6,17 @@ import type { Session } from './fixtures';
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
 
+/**
+ * Brouillon d'une NOTE DATÉE (issue #26) : le contexte d'une perf le jour de la
+ * séance, par exo. `id` est l'UUID client de la ligne `dated_notes` (stable tant
+ * que la séance dure → l'écriture via outbox vise toujours la même ligne,
+ * idempotente). `body` est le texte tel que saisi (normalisé à l'écriture).
+ */
+export interface DatedNoteDraft {
+  id: string;
+  body: string;
+}
+
 /** Le réalisé d'un exercice : les séries loggées, dans l'ordre, + s'il a été passé. */
 export interface ExerciseProgress {
   /** Séries réellement loggées (ordre = index + 1). */
@@ -49,6 +60,12 @@ export interface CaptureState {
   /** Réalisé par exerciseId. */
   progress: Record<string, ExerciseProgress>;
   /**
+   * Notes datées par exerciseId (issue #26) : le contexte saisi pour cet exo le
+   * jour de la séance. Survit au background (persisté). Vidé au reset (la
+   * nouvelle exécution repart sans note).
+   */
+  datedNotes: Record<string, DatedNoteDraft>;
+  /**
    * Horodatage de CLÔTURE (epoch ms) si la séance a été clôturée, sinon `null`.
    * Persisté : au remontage (changement d'onglet, reload), une séance clôturée
    * réaffiche l'écran « Séance terminée » au lieu de repasser « en cours ».
@@ -63,6 +80,11 @@ export type CaptureAction =
   // pour que l'état local et l'op d'outbox partagent EXACTEMENT le même id.
   | { type: 'log-set'; exerciseId: string; setId: string; set: Omit<PerformedSet, 'order'> }
   | { type: 'undo-last-set'; exerciseId: string }
+  // Note datée d'un exo (issue #26). `noteId` = UUID client de la ligne
+  // `dated_notes`, fourni par le caller pour que l'état et l'op d'outbox visent
+  // la même ligne. Un `body` vide est conservé tel quel dans l'état ; c'est la
+  // couche data (datedNoteOutboxOp) qui traduit « vide » en suppression.
+  | { type: 'set-dated-note'; exerciseId: string; noteId: string; body: string }
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
@@ -92,6 +114,14 @@ export function getProgress(state: CaptureState, exerciseId: string): ExercisePr
   return state.progress[exerciseId] ?? emptyProgress();
 }
 
+/** Note datée de l'exo dans l'exécution courante, ou `null` si aucune saisie. */
+export function getDatedNote(
+  state: CaptureState,
+  exerciseId: string,
+): DatedNoteDraft | null {
+  return state.datedNotes[exerciseId] ?? null;
+}
+
 export function statusOf(progress: ExerciseProgress, prescribedMin: number): ExerciseStatus {
   if (progress.skipped) return 'skipped';
   if (progress.sets.length === 0) return 'todo';
@@ -114,17 +144,21 @@ export function initialState(session: Session, date = todayIso()): CaptureState 
     startedAt: Date.now(),
     activeExerciseId: null,
     progress: {},
+    datedNotes: {},
     closedAt: null,
   };
 }
 
 /**
  * État construit à partir du réalisé persisté en base (Supabase fait foi au
- * reload). `progressByExercise` = séries déjà loggées par exerciseId.
+ * reload). `progressByExercise` = séries déjà loggées par exerciseId ;
+ * `datedNotesByExercise` = notes datées déjà en base (issue #26), par exerciseId,
+ * avec leur id réel pour que l'édition vise la bonne ligne.
  */
 export function hydratedState(
   session: Session,
   progressByExercise: Record<string, PerformedSet[]>,
+  datedNotesByExercise: Record<string, DatedNoteDraft> = {},
   date = todayIso(),
   executionId = newId(),
 ): CaptureState {
@@ -143,6 +177,7 @@ export function hydratedState(
     startedAt: Date.now(),
     activeExerciseId: null,
     progress,
+    datedNotes: { ...datedNotesByExercise },
     // Le réalisé venu de la base ne porte pas la notion de clôture (locale).
     closedAt: null,
   };
@@ -171,6 +206,15 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         },
       };
     }
+
+    case 'set-dated-note':
+      return {
+        ...state,
+        datedNotes: {
+          ...state.datedNotes,
+          [action.exerciseId]: { id: action.noteId, body: action.body },
+        },
+      };
 
     case 'undo-last-set': {
       const prev = getProgress(state, action.exerciseId);
@@ -226,6 +270,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         startedAt: Date.now(),
         activeExerciseId: null,
         progress: {},
+        datedNotes: {},
         closedAt: null,
       };
 
@@ -265,6 +310,23 @@ function normalizeProgress(raw: unknown): Record<string, ExerciseProgress> {
   return out;
 }
 
+/**
+ * Normalise les notes datées lues du cache : ne garde que les entrées bien
+ * formées (id + body en chaîne). Un cache d'ancien format (sans datedNotes) ->
+ * objet vide.
+ */
+function normalizeDatedNotes(raw: unknown): Record<string, DatedNoteDraft> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, DatedNoteDraft> = {};
+  for (const [exerciseId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const n = value as Partial<DatedNoteDraft>;
+    if (typeof n?.id === 'string' && typeof n?.body === 'string') {
+      out[exerciseId] = { id: n.id, body: n.body };
+    }
+  }
+  return out;
+}
+
 /** Charge l'exécution persistée pour cette séance/jour, ou null si rien/invalide. */
 export function loadPersisted(session: Session, date: string): CaptureState | null {
   if (typeof localStorage === 'undefined') return null;
@@ -289,6 +351,7 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
       activeExerciseId:
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: normalizeProgress(parsed.progress),
+      datedNotes: normalizeDatedNotes(parsed.datedNotes),
       // CONSERVE la clôture : une séance clôturée puis quittée (changement
       // d'onglet) doit rester close au retour, pas repasser « en cours ».
       closedAt:

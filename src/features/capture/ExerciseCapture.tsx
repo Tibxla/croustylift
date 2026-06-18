@@ -3,21 +3,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
 import { deriveDeviations } from '../../domain/deviation';
+import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { Stepper } from './Stepper';
+import { NoteField } from '../notes/NoteField';
 import { DeviationBadge, deviationVisual } from './DeviationBadge';
 import { formatE1rm, formatPrescription, formatSet, formatRange, formatWeight } from './format';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
   progress: ExerciseProgress;
+  /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
+  datedNote: string;
   onUndoLast: () => void;
   onSkip: () => void;
   onBack: () => void;
   /** Remonte le brouillon de la série courante vers la barre d'action fixe (qui commit). */
   onDraftChange: (draft: { weightKg: number; reps: number; rir: number }) => void;
+  /** Enregistre la note datée du jour (corps vidé = note effacée). */
+  onSaveDatedNote: (body: string) => void;
 }
 
 const WEIGHT_STEP = 2.5;
@@ -42,12 +48,14 @@ function seedFor(
 export function ExerciseCapture({
   exercise,
   progress,
+  datedNote,
   onUndoLast,
   onSkip,
   onBack,
   onDraftChange,
+  onSaveDatedNote,
 }: ExerciseCaptureProps) {
-  const { prescription, reference } = exercise;
+  const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
 
   // Brouillon de la série courante (steppers). Report de la dernière série loggée si elle existe.
@@ -150,6 +158,33 @@ export function ExerciseCapture({
           </p>
         )}
       </div>
+
+      {/* Note d'INSTRUCTIONS de l'exo (issue #26) : référence persistante, lecture
+          seule pendant la série (l'édition vit dans l'authoring). Affichée seulement
+          si elle porte du contenu. Icône + libellé : l'info ne tient pas à la couleur. */}
+      {!isBlankNote(perExerciseNote) && (
+        <div className="mt-2.5 rounded-2xl border border-line bg-surface px-4 py-3">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-ink-muted">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6h16M4 12h10M4 18h7" />
+            </svg>
+            Note de l’exercice
+          </p>
+          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-ink">
+            {perExerciseNote}
+          </p>
+        </div>
+      )}
 
       {/* Séries déjà loggées (mono, alignées) */}
       {loggedCount > 0 && (
@@ -275,6 +310,120 @@ export function ExerciseCapture({
           className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
         >
           Passer l&apos;exercice
+        </button>
+      </div>
+
+      {/* Note DATÉE du jour (issue #26) : contexte de la perf d'aujourd'hui sur cet
+          exo. Saisissable et consultable ici. Repliée par défaut (zéro-friction),
+          on l'ouvre pour saisir. key=exerciseId : le brouillon se ré-amorce quand
+          on change d'exo. */}
+      <DatedNoteSection
+        key={exercise.exerciseId}
+        value={datedNote}
+        onSave={onSaveDatedNote}
+      />
+    </div>
+  );
+}
+
+/**
+ * Section de note datée du jour. Repliée tant qu'aucune note n'existe (bouton
+ * « Ajouter une note du jour ») ; ouverte, elle montre un textarea + un bouton
+ * d'enregistrement. Le brouillon est local ; on remonte au parent (outbox) à
+ * l'enregistrement explicite. Vider le texte puis enregistrer efface la note.
+ */
+function DatedNoteSection({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (body: string) => void;
+}) {
+  const hasNote = !isBlankNote(value);
+  // Ouverte si une note existe déjà (consultation/édition), sinon repliée.
+  const [open, setOpen] = useState(hasNote);
+  const [draft, setDraft] = useState(value);
+  const [saved, setSaved] = useState(false);
+
+  // Sauvegarde différée du résultat : on confirme brièvement puis on retombe.
+  const dirty = draft !== value;
+
+  const handleSave = () => {
+    onSave(draft);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-5 flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="shrink-0 text-ink-muted"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-semibold text-ink">
+            Ajouter une note du jour
+          </span>
+          <span className="mt-0.5 block text-xs text-ink-muted">
+            Le contexte de ta perf d&apos;aujourd&apos;hui sur cet exercice.
+          </span>
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-5">
+      <NoteField
+        id="dated-note"
+        label="Note du jour"
+        hint="Contexte de la perf d&apos;aujourd&apos;hui (sommeil, douleur, sensation)."
+        value={draft}
+        placeholder="Épaule un peu raide, échauffement plus long."
+        rows={3}
+        onChange={setDraft}
+      />
+      <div className="mt-2.5 flex items-center justify-end gap-2">
+        {saved && !dirty && (
+          <span className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-good">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            Note enregistrée.
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={!dirty}
+          onClick={handleSave}
+          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+        >
+          Enregistrer la note
         </button>
       </div>
     </div>

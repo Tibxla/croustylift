@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   captureReducer,
   getProgress,
+  getDatedNote,
   statusOf,
   initialState,
   clearCaptureState,
@@ -171,6 +172,62 @@ describe('captureReducer — log-set', () => {
   });
 });
 
+// --- captureReducer — set-dated-note -----------------------------------------
+
+describe('captureReducer — set-dated-note', () => {
+  it('pose la note datée d’un exo (id client + corps) et la relit via getDatedNote', () => {
+    const state = mkState();
+    expect(getDatedNote(state, 'bench-press')).toBeNull();
+
+    const next = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'note-1',
+      body: 'dos un peu raide',
+    });
+
+    expect(getDatedNote(next, 'bench-press')).toEqual({
+      id: 'note-1',
+      body: 'dos un peu raide',
+    });
+  });
+
+  it('réécrit la note du même exo en gardant le même id (édition en place)', () => {
+    let state = mkState();
+    state = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'note-1',
+      body: 'première version',
+    });
+    state = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'note-1',
+      body: 'corrigée',
+    });
+    expect(getDatedNote(state, 'bench-press')).toEqual({ id: 'note-1', body: 'corrigée' });
+  });
+
+  it('n’écrase pas la note d’un autre exo', () => {
+    let state = mkState();
+    state = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'note-1',
+      body: 'note couché',
+    });
+    state = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'seated-row',
+      noteId: 'note-2',
+      body: 'note tirage',
+    });
+    expect(getDatedNote(state, 'bench-press')).toEqual({ id: 'note-1', body: 'note couché' });
+    expect(getDatedNote(state, 'seated-row')).toEqual({ id: 'note-2', body: 'note tirage' });
+  });
+});
+
 // --- captureReducer — undo-last-set ------------------------------------------
 
 describe('captureReducer — undo-last-set', () => {
@@ -238,6 +295,18 @@ describe('captureReducer — reset', () => {
     const state = mkState();
     const after = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
     expect(after.sessionId).toBe(state.sessionId);
+  });
+
+  it('vide les notes datées (elles visaient l’exécution précédente, désormais close)', () => {
+    let state = mkState();
+    state = captureReducer(state, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'note-1',
+      body: 'note du jour',
+    });
+    const after = captureReducer(state, { type: 'reset', executionId: 'exec-new' });
+    expect(getDatedNote(after, 'bench-press')).toBeNull();
   });
 
   it('lève la clôture : une séance neuve repart en cours (closedAt null)', () => {

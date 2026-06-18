@@ -146,6 +146,7 @@ describe('buildSummary', () => {
       startedAt: 1_000_000,
       activeExerciseId: null,
       progress: {},
+      datedNotes: {},
       closedAt: null,
     };
     const s = buildSummary(emptySession, state);

@@ -64,11 +64,15 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const insertSet = vi.fn(async (op) => void order.push(op));
   const deleteSet = vi.fn(async (op) => void order.push(op));
   const updateExecution = vi.fn(async (op) => void order.push(op));
+  const upsertDatedNote = vi.fn(async (op) => void order.push(op));
+  const deleteDatedNote = vi.fn(async (op) => void order.push(op));
   return {
     upsertExecution,
     insertSet,
     deleteSet,
     updateExecution,
+    upsertDatedNote,
+    deleteDatedNote,
     calls: () => order,
   };
 }
@@ -113,6 +117,14 @@ describe('flush (succès)', () => {
     enqueue(setOp('s1', 1));
     enqueue({ type: 'deleteSet', id: 's1' });
     enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 130, durationMin: 52 });
+    enqueue({
+      type: 'upsertDatedNote',
+      id: 'note-1',
+      executionId: 'exec-1',
+      exerciseId: 'bench',
+      body: 'épaule un peu raide',
+    });
+    enqueue({ type: 'deleteDatedNote', id: 'note-1' });
     const fns = okFns();
 
     await flush(fns);
@@ -121,6 +133,24 @@ describe('flush (succès)', () => {
     expect(fns.insertSet).toHaveBeenCalledTimes(1);
     expect(fns.deleteSet).toHaveBeenCalledTimes(1);
     expect(fns.updateExecution).toHaveBeenCalledTimes(1);
+    expect(fns.upsertDatedNote).toHaveBeenCalledTimes(1);
+    expect(fns.deleteDatedNote).toHaveBeenCalledTimes(1);
+  });
+
+  it('une note datée part APRÈS l’exécution dont elle dépend (FK)', async () => {
+    enqueue(execOp());
+    enqueue({
+      type: 'upsertDatedNote',
+      id: 'note-1',
+      executionId: 'exec-1',
+      exerciseId: 'bench',
+      body: 'tempo lent',
+    });
+    const fns = okFns();
+
+    await flush(fns);
+
+    expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 'note-1']);
   });
 
   it('traite dans l’ORDRE : exécution AVANT ses séries (dépendance FK)', async () => {
