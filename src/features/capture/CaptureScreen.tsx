@@ -15,8 +15,11 @@ import {
 } from 'react';
 import {
   deleteSetById,
+  listExercises,
   loadCaptureSource,
+  loadCatalogExercise,
   loadChosenSeance,
+  loadPersonalRecord,
   loadReference,
   loadSeanceForCapture,
   loadTodayDatedNotes,
@@ -28,6 +31,11 @@ import {
   type SeanceChoice,
   type Session,
 } from './data';
+import {
+  addExercise,
+  swapExercise,
+  templateExerciseIds,
+} from './session-edit';
 import {
   loadExerciseNote,
   upsertDatedNote as upsertDatedNoteRow,
@@ -90,11 +98,14 @@ export function CaptureScreen() {
       const [withRefs, todayProgress, todayDatedNotes] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
-            const [reference, perExerciseNote] = await Promise.all([
+            // Référence (dernière fois), note d'instructions ET records (issue #34),
+            // tous dérivés de l'historique de l'exo, chargés en parallèle.
+            const [reference, perExerciseNote, personalRecord] = await Promise.all([
               loadReference(ex.exerciseId),
               loadExerciseNote(ex.exerciseId),
+              loadPersonalRecord(ex.exerciseId),
             ]);
-            return { ...ex, reference, perExerciseNote };
+            return { ...ex, reference, perExerciseNote, personalRecord };
           }),
         ),
         loadTodayProgress(seanceVersionId),
@@ -392,7 +403,7 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 // --- Le tableau de capture (séance chargée) ---------------------------------
 
 function CaptureBoard({
-  session,
+  session: initialSession,
   seanceVersionId,
   initialProgress,
   initialDatedNotes,
@@ -404,12 +415,18 @@ function CaptureBoard({
 }) {
   const [date] = useState(todayIso);
 
+  // La séance courante évolue à la volée : ajout / swap d'un exo hors template
+  // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
+  // diff de déviations — il n'est JAMAIS modifié (le versionné en base non plus).
+  const [session, setSession] = useState(initialSession);
+  const templateIdsRef = useRef(templateExerciseIds(initialSession));
+
   // Restauration au montage : Supabase fait foi, localStorage est un filet
   // (survie au background / écriture offline non encore synchronisée). Pour
   // chaque exo on garde la source ayant le plus de séries.
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const fromSupabase = hydratedState(session, initialProgress, initialDatedNotes, date);
-    const fromLocal = loadPersisted(session, date);
+    const fromSupabase = hydratedState(initialSession, initialProgress, initialDatedNotes, date);
+    const fromLocal = loadPersisted(initialSession, date);
     if (!fromLocal) return fromSupabase;
     return mergeProgress(fromSupabase, fromLocal);
   });
@@ -505,6 +522,23 @@ function CaptureBoard({
     [state, enqueueExecutionOnce],
   );
 
+  // --- Ajout / swap d'un exo à la volée (issue #36) -------------------------
+  // L'exo (catalogue base/perso) entre dans la SÉANCE COURANTE en mémoire ; le
+  // template versionné en base reste intact. Pas d'écriture dédiée : la déviation
+  // est dérivée par diff (ADR 0002). Le réalisé loggé dessus remontera comme
+  // n'importe quelle série (l'outbox upsert par exerciseId), donc l'exo ajouté
+  // apparaît dans le log brut et le récap.
+  const handleAddExercise = useCallback((exercise: SessionExercise) => {
+    setSession((s) => addExercise(s, exercise));
+  }, []);
+
+  const handleSwapExercise = useCallback(
+    (targetExerciseId: string, replacement: SessionExercise) => {
+      setSession((s) => swapExercise(s, targetExerciseId, replacement));
+    },
+    [],
+  );
+
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
     // Nouvelle exécution = id client neuf (la précédente reste en base). La file
@@ -512,9 +546,12 @@ function CaptureBoard({
     clearQueue();
     notifySync();
     executionEnqueuedRef.current = false;
+    // La séance repart du template d'origine : les ajouts/swaps de l'exécution
+    // close ne se reportent pas sur la suivante (un swap se redécide chaque jour).
+    setSession(initialSession);
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
-  }, [session, date]);
+  }, [session, date, initialSession]);
 
   // Après clôture : repartir sur une séance fraîche. On NE vide PAS la file —
   // les ops de la séance close doivent encore se synchroniser (contrairement à
@@ -522,9 +559,10 @@ function CaptureBoard({
   const handleNewSession = useCallback(() => {
     clearPersisted(session, date);
     executionEnqueuedRef.current = false;
+    setSession(initialSession);
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
-  }, [session, date]);
+  }, [session, date, initialSession]);
 
   // --- Flux de fin de séance ------------------------------------------------
   // Phase locale : capture (sélecteur + panneaux) -> fin (clôture, BPM optionnel).
@@ -622,8 +660,13 @@ function CaptureBoard({
         <>
           <ExercisePicker
             session={session}
+            templateExerciseIds={templateIdsRef.current}
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
+            loadCatalog={listExercises}
+            loadCatalogExercise={loadCatalogExercise}
+            onAddExercise={handleAddExercise}
+            onSwapExercise={handleSwapExercise}
           />
           <ResetBar
             session={session}
