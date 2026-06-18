@@ -93,6 +93,20 @@ function decideWinner(
 }
 
 /**
+ * Calcule la progression (courbe e1RM + pente %/semaine) de CHAQUE bloc d'une
+ * liste, dans l'ordre d'entrée. Sert à l'UI de sélection : lister les blocs
+ * d'un exo avec leur nombre de points, pour ne proposer à la comparaison que
+ * ceux qui ont de quoi tracer une pente (et étiqueter les trop maigres).
+ */
+export function summarizeBlocks(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+  blocks: Block[],
+): BlockProgression[] {
+  return blocks.map((block) => progressionOf(executions, exerciseId, block))
+}
+
+/**
  * Compare deux blocs d'un même exercice par vitesse de progression e1RM.
  * Découpe les exécutions par fenêtre de bloc, mesure la pente %/semaine de
  * chacun, puis désigne le plus rapide (ou `null` faute de données).
