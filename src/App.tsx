@@ -1,14 +1,15 @@
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
+import { CaptureScreen } from './features/capture/CaptureScreen'
 
 function App() {
   const { session, user, loading, signOut } = useAuth()
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
+      <main className="flex min-h-screen items-center justify-center bg-bg text-ink">
         <div
-          className="h-6 w-6 animate-spin rounded-full border-2 border-neutral-700 border-t-violet-500"
+          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
           role="status"
           aria-label="Chargement"
         />
@@ -21,28 +22,26 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-900 px-6 py-4">
-        <h1 className="text-lg font-semibold tracking-tight">Croustylift</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-neutral-400">{user?.email}</span>
+    <main className="min-h-screen bg-bg text-ink">
+      <header className="flex h-14 items-center justify-between border-b border-line px-4">
+        <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
+        <div className="flex items-center gap-3">
+          <span className="hidden max-w-[40vw] truncate text-sm text-ink-muted sm:inline">
+            {user?.email}
+          </span>
           <button
             type="button"
             onClick={() => {
               void signOut()
             }}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-sm font-medium text-neutral-200 transition hover:border-neutral-700 hover:text-white"
+            className="rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-muted transition active:text-ink"
           >
             Se déconnecter
           </button>
         </div>
       </header>
 
-      <section className="flex min-h-[60vh] items-center justify-center px-6 text-center">
-        <p className="text-sm text-neutral-500">
-          L’écran de capture arrive bientôt.
-        </p>
-      </section>
+      <CaptureScreen />
     </main>
   )
 }

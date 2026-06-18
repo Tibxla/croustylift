@@ -1,1 +1,74 @@
 @import "tailwindcss";
+
+/* Fonts self-hosted (cf. DESIGN.md — Readout Rule : mono tabulaire pour les chiffres mesurés). */
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
+/*
+  Design tokens — « L'instrument de nuit » (DESIGN.md).
+  Dark par nécessité : fond mat quasi-noir teinté vers l'accent, contraste élevé.
+  Toutes les valeurs en OKLCH. Contrastes vérifiés WCAG AA (script contrast.mjs) :
+    ink/surface 16.3:1 · inkMuted/surface 7.1:1 · white/accent-strong 5.3:1.
+*/
+@theme {
+  --color-bg: oklch(0.16 0.008 286);          /* fond quasi-noir teinté violet */
+  --color-surface: oklch(0.21 0.01 286);      /* panneaux, lignes de série (palier +1) */
+  --color-surface-2: oklch(0.26 0.012 286);   /* palier +2 (ligne sélectionnée, hover) */
+  --color-line: oklch(0.30 0.012 286);        /* séparateurs 1px discrets */
+
+  --color-ink: oklch(0.97 0.005 286);         /* texte principal, quasi-blanc (≥14:1) */
+  --color-ink-muted: oklch(0.72 0.02 286);    /* labels secondaires (≥6:1, jamais délavé) */
+
+  /* The One Voice Rule : violet sur ≤10 % de l'écran. */
+  --color-accent: oklch(0.62 0.22 286);       /* sélection, indicateur (bordure/forme) */
+  --color-accent-strong: oklch(0.55 0.20 286);/* fond d'action primaire (blanc lisible dessus) */
+  --color-accent-ink: oklch(0.70 0.20 286);   /* texte accent sur surface sombre (≥6:1) */
+  --color-on-accent: oklch(0.99 0.01 286);    /* texte sur fond accent */
+
+  /* Statut déviation — couleur + signe/forme, jamais couleur seule (No Fitness-Red Rule). */
+  --color-good: oklch(0.78 0.14 150);         /* cible atteinte / battue (vert froid) */
+  --color-warn: oklch(0.80 0.13 75);          /* sous-objectif / skippé (ambre, pas rouge) */
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: var(--color-bg);
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  /* Évite le surlignage bleu natif au tap sur mobile (feedback géré nous-mêmes). */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Readout Rule : chiffres mesurés en mono à chasse tabulaire, alignés en colonne. */
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Focus visible au clavier, jamais perdu (DoD). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Motion 150–250 ms ease-out ; instantané si l'utilisateur le demande. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

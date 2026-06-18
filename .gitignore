@@ -19,3 +19,6 @@ Thumbs.db
 
 # Claude local config
 .claude/settings.local.json
+
+# Screenshots de revue design (local, non versionnés)
+.screenshots/
