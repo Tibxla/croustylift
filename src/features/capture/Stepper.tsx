@@ -97,6 +97,7 @@ export function Stepper({
         <output
           className="readout flex flex-1 items-center justify-center rounded-xl bg-bg/40 text-2xl font-medium tabular-nums"
           aria-live="off"
+          aria-label={`${label} : ${format(value)}${unit ? ' ' + unit : ''}`}
         >
           <span className="flex items-baseline gap-1">
             <span>{format(value)}</span>
