@@ -10,7 +10,12 @@ import type { E1rmPoint } from '../../domain/types'
 
 /** Un point de courbe replacé sur un axe X = semaines depuis le début du bloc. */
 export interface WeeklyPoint {
-  /** Semaines écoulées depuis le premier point du bloc (le 1er point est à 0). */
+  /**
+   * Semaines ÉCOULÉES depuis le premier point du bloc (le 1er point est à 0) :
+   * c'est l'écart exact qui rend les pentes comparables. L'AFFICHAGE compte les
+   * semaines à partir de S1 (« S0 » n'existe pas en muscu) ; ce +1 ne vit que
+   * dans le tick du graphe (`ComparisonChart.formatWeekTick`), pas ici.
+   */
   week: number
   e1rm: number
 }

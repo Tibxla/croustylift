@@ -21,6 +21,7 @@ import { loadBlockComparisonData } from './data';
 import { blockLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
+import { TrendArrow, trendColor, trendOf } from './TrendArrow';
 
 /** Sous ce nombre de points, un bloc n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -190,7 +191,7 @@ function BlockSelect({
     <label className="flex flex-col gap-1">
       <span className="text-[11px] text-ink-muted">{label}</span>
       <select
-        className="h-10 rounded-lg border border-line bg-surface-2 px-2 text-sm text-ink"
+        className="h-11 rounded-lg border border-line bg-surface-2 px-2 text-sm text-ink"
         value={value ?? ''}
         onChange={(e) => onChange(Number(e.target.value))}
       >
@@ -236,6 +237,8 @@ function ComparisonResult({
         first={firstSeries}
         second={secondSeries}
         winner={result.winner}
+        firstLabel={blockLabel(first)}
+        secondLabel={blockLabel(second)}
       />
 
       <div className="grid grid-cols-2 gap-2">
@@ -264,15 +267,6 @@ function ComparisonResult({
   );
 }
 
-/** Sous ce seuil (en points de %/semaine), une pente est dite « plate ». */
-const FLAT_THRESHOLD = 0.5;
-
-function rateColor(rate: number): string {
-  // Progression franche en vert ; stagnation et régression en ambre atténué
-  // (No Fitness-Red Rule : une baisse n'est pas une urgence rouge).
-  return rate > FLAT_THRESHOLD ? 'text-good' : 'text-warn';
-}
-
 function BlockRateCard({
   label,
   rate,
@@ -284,6 +278,11 @@ function BlockRateCard({
   pointCount: number;
   isWinner: boolean;
 }) {
+  // Comme ProgressionBadge : flèche (forme) + couleur + signe, jamais la couleur
+  // seule (DESIGN.md ; +2,3 vs −3,0 et stagnation vs baisse sinon ambigus).
+  const trend = rate === null ? null : trendOf(rate);
+  const sign = rate !== null && rate > 0 ? '+' : ''; // le '−' vient du nombre négatif.
+
   return (
     <div
       className={`rounded-xl border bg-surface-2 px-3 py-2 ${
@@ -291,17 +290,20 @@ function BlockRateCard({
       }`}
     >
       <p className="readout text-[11px] text-ink-muted">{label}</p>
-      {rate === null ? (
+      {rate === null || trend === null ? (
         <p className="mt-1 text-xs text-ink-muted">
           {pointCount < MIN_POINTS
             ? `pas assez de points (${pointCount})`
             : 'pente indispo'}
         </p>
       ) : (
-        <p className={`readout mt-1 text-sm font-medium ${rateColor(rate)}`}>
-          {rate > 0 ? '+' : ''}
-          {rate.toFixed(1)}
-          <span className="ml-0.5 text-xs font-normal opacity-80"> %/sem</span>
+        <p className={`mt-1 flex items-center gap-1 ${trendColor(trend)}`}>
+          <TrendArrow trend={trend} />
+          <span className="readout text-sm font-medium">
+            {sign}
+            {rate.toFixed(1)}
+            <span className="ml-0.5 text-xs font-normal opacity-80"> %/sem</span>
+          </span>
         </p>
       )}
     </div>

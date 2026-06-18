@@ -53,9 +53,18 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
   );
 }
 
+/** Résumé textuel de la courbe pour les lecteurs d'écran (le SVG est muet). */
+function describeCurve(curve: E1rmPoint[]): string {
+  if (curve.length === 0) return 'Courbe e1RM de la 1ʳᵉ série, aucune donnée.';
+  const values = curve.map((p) => p.e1rm);
+  const min = Math.round(Math.min(...values));
+  const max = Math.round(Math.max(...values));
+  return `Courbe e1RM de la 1ʳᵉ série sur ${curve.length} séances, de ${min} à ${max} kg.`;
+}
+
 export function E1rmChart({ curve }: { curve: E1rmPoint[] }) {
   return (
-    <div className="h-40 w-full">
+    <div className="h-40 w-full" role="img" aria-label={describeCurve(curve)}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={curve}

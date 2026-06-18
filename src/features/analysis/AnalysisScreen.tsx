@@ -51,15 +51,7 @@ export function AnalysisScreen() {
   }, [reloadKey]);
 
   if (load.phase === 'loading') {
-    return (
-      <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center">
-        <div
-          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-          role="status"
-          aria-label="Chargement de l'analyse"
-        />
-      </div>
-    );
+    return <AnalysisSkeleton />;
   }
 
   if (load.phase === 'error') {
@@ -155,7 +147,7 @@ function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
+        className="flex min-h-[44px] w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
       >
         <span>Comparer deux blocs</span>
         <svg
@@ -183,11 +175,41 @@ function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
   );
 }
 
+// Squelette de chargement : on dessine la forme des cartes à venir (titre,
+// badge, zone de graphe) plutôt qu'un spinner nu, pour que l'écran ne « saute »
+// pas quand les données arrivent. Lignes en surface-2 qui pulsent.
+function AnalysisSkeleton() {
+  return (
+    <div
+      className="mx-auto w-full max-w-md px-4 pb-8 pt-5"
+      role="status"
+      aria-label="Chargement de l'analyse"
+    >
+      <div className="mb-4 h-6 w-32 animate-pulse rounded bg-surface-2" />
+      <ul className="flex flex-col gap-3">
+        {[0, 1, 2].map((i) => (
+          <li
+            key={i}
+            className="rounded-2xl border border-line bg-surface p-4"
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />
+              <div className="h-6 w-20 animate-pulse rounded-md bg-surface-2" />
+            </div>
+            <div className="h-40 w-full animate-pulse rounded-lg bg-surface-2" />
+            <div className="mt-2 h-3 w-24 animate-pulse rounded bg-surface-2" />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-3 px-8 text-center">
       <div
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface"
+        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2"
         aria-hidden="true"
       >
         <svg
