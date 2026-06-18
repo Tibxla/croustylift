@@ -1,9 +1,11 @@
 // La surface « Analyse au calme » : pour chaque exo entraîné, sa progression
-// %/semaine et la courbe e1RM de la 1ʳᵉ série. Distincte de la capture (salle).
+// %/semaine et la courbe e1RM de la 1ʳᵉ série, plus la tendance des séries 2+
+// en dessous (subordonnée). Distincte de la capture (salle).
 //
-// Périmètre v1 (DESIGN.md + brief) : SEULEMENT la courbe primaire + la pente.
-// Pas de graphes secondaires (séries 2+), pas de comparaison de blocs (features
-// « Should » qui demandent des mois de données).
+// Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
+// secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
+// Toujours hors périmètre : la comparaison de blocs (feature « Should » qui
+// demande des mois de données).
 //
 // L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `AnalysisList`
 // est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
@@ -11,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { loadAnalyses, type ExerciseAnalysis } from './data';
 import { E1rmChart } from './E1rmChart';
+import { SecondaryChart } from './SecondaryChart';
 import { ProgressionBadge } from './ProgressionBadge';
 
 type LoadState =
@@ -98,10 +101,12 @@ export function AnalysisList({ analyses }: { analyses: ExerciseAnalysis[] }) {
 }
 
 function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
-  const { name, curve, weeklyRate } = analysis;
+  const { name, curve, secondaryCurve, weeklyRate } = analysis;
   // Une pente nulle (`null`) malgré des points = pas assez de séances : la
   // courbe reste le héros, on explique juste l'absence de pente sous le graphe.
   const slopeUnavailable = weeklyRate === null && curve.length > 0;
+  // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []).
+  const hasSecondary = secondaryCurve.length > 0;
 
   return (
     <section className="rounded-2xl border border-line bg-surface p-4">
@@ -120,6 +125,16 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
           </span>
         )}
       </div>
+
+      {hasSecondary && (
+        // Subordonné à la primaire : séparé par un filet tonal, libellé discret,
+        // graphe plus petit et en ink-muted (jamais l'accent). Le héros reste
+        // au-dessus ; ceci n'est qu'un repère « résistance à la fatigue ».
+        <div className="mt-3 border-t border-line pt-3">
+          <span className="text-[11px] text-ink-muted">Séries 2+ · e1RM moyen</span>
+          <SecondaryChart curve={secondaryCurve} />
+        </div>
+      )}
     </section>
   );
 }

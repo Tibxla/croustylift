@@ -1,15 +1,17 @@
 // Couche d'accès Supabase de l'analyse (surface « au calme »).
 //
 // On RÉUTILISE la logique du domaine déjà testée — `buildPrimaryCurve` (courbe
-// e1RM de la 1ʳᵉ série) et `weeklyProgressionRate` (pente %/semaine). Cette
-// couche ne fait que LIRE Supabase, mapper vers `ExerciseExecution[]`, puis
-// appeler le domaine. Aucune logique de calcul ici (cf. data.ts de la capture).
+// e1RM de la 1ʳᵉ série), `buildSecondaryCurve` (tendance des séries 2+) et
+// `weeklyProgressionRate` (pente %/semaine). Cette couche ne fait que LIRE
+// Supabase, mapper vers `ExerciseExecution[]`, puis appeler le domaine. Aucune
+// logique de calcul ici (cf. data.ts de la capture).
 //
 // Conventions DB (cf. ADR 0003 + capture/data.ts) :
 //   - RLS scope déjà tout à l'utilisateur connecté ; pas de filtre owner_id.
 //   - Une `ExerciseExecution` du domaine = les séries d'un exo un jour donné.
 import { supabase } from '../../lib/supabase';
 import { buildPrimaryCurve } from '../../domain/primary-curve';
+import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
 import type { ExerciseExecution, E1rmPoint } from '../../domain/types';
 
@@ -20,12 +22,16 @@ export interface TrainedExercise {
 }
 
 /**
- * Analyse complète d'un exo : la courbe e1RM (1ʳᵉ série) + la pente %/semaine.
+ * Analyse complète d'un exo : la courbe e1RM (1ʳᵉ série) + la pente %/semaine,
+ * plus la courbe secondaire (tendance des séries 2+, subordonnée à la primaire).
  * `weeklyRate` vaut `null` quand il n'y a pas assez de séances pour ajuster une
  * droite (cf. `weeklyProgressionRate`) — l'UI montre alors la courbe sans pente.
+ * `secondaryCurve` est `[]` quand aucune exécution n'a de série 2+ : l'UI
+ * n'affiche alors aucun graphe secondaire.
  */
 export interface ExerciseAnalysis extends TrainedExercise {
   curve: E1rmPoint[];
+  secondaryCurve: E1rmPoint[];
   weeklyRate: number | null;
 }
 
@@ -110,8 +116,9 @@ export async function loadExerciseExecutions(
 // --- Composition domaine ------------------------------------------------------
 
 /**
- * Dérive l'analyse (courbe + pente) d'un exo à partir de ses exécutions, en
- * passant par les fonctions testées du domaine. Pure : pas d'accès réseau.
+ * Dérive l'analyse (courbe primaire + pente + courbe secondaire) d'un exo à
+ * partir de ses exécutions, en passant par les fonctions testées du domaine.
+ * Pure : pas d'accès réseau.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
@@ -121,6 +128,7 @@ export function analyzeExecutions(
   return {
     ...exercise,
     curve,
+    secondaryCurve: buildSecondaryCurve(executions, exercise.exerciseId),
     weeklyRate: weeklyProgressionRate(curve),
   };
 }
