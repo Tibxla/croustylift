@@ -16,6 +16,7 @@ import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } f
 import { todayIso } from './state';
 import type { DatedNoteDraft } from './state';
 import type { Session, SessionExercise } from './fixtures';
+import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 
 export type { Session, SessionExercise } from './fixtures';
 
@@ -392,6 +393,79 @@ export async function loadTodayDatedNotes(
     byExercise[row.exercise_id] = { id: row.id, body: row.body };
   }
   return byExercise;
+}
+
+// --- Édition d'une séance passée (issue #38) ----------------------------------
+//
+// Pour CORRIGER une exécution d'un jour antérieur depuis le journal, on charge
+// ses séries telles qu'en base — avec leur id RÉEL, contrairement à la capture
+// du jour qui n'a pas besoin de viser des lignes existantes (elle append). Cet
+// id réel est ce qui permet à l'édition (via l'outbox : upsert/delete par id) de
+// modifier/supprimer la BONNE ligne sans toucher les autres jours. On lit par
+// `execution_id` (pas par date) : une seule exécution est concernée.
+
+/** Une exécution passée prête à éditer : sa date + ses exos avec leurs séries. */
+export interface EditableExecution {
+  executionId: string;
+  /** Date ISO 'YYYY-MM-DD' de l'exécution (affichée, jamais modifiée). */
+  date: string;
+  exercises: EditableExercise[];
+}
+
+/**
+ * Charge une exécution passée pour l'édition (issue #38) : sa date + ses séries
+ * regroupées par exo (avec l'id réel de chaque série, pour cibler la bonne ligne
+ * au moment d'écrire). Lit `performed_sets` filtré par `execution_id` (joint au
+ * nom de l'exo) + la date de l'exécution. RLS scope déjà à l'user connecté : on
+ * ne peut charger qu'une exécution à soi. Le groupage/tri est fait par le module
+ * pur `groupSetsForEdit` ; cette couche ne fait que mapper et déléguer.
+ */
+export async function loadExecutionForEdit(
+  executionId: string,
+): Promise<EditableExecution> {
+  const { data: exec, error: execErr } = await supabase
+    .from('executions')
+    .select('id, performed_on')
+    .eq('id', executionId)
+    .maybeSingle();
+  if (execErr) throw execErr;
+  if (!exec) {
+    throw new Error(`Exécution ${executionId} introuvable (ou non accessible).`);
+  }
+
+  const { data, error } = await supabase
+    .from('performed_sets')
+    .select('id, exercise_id, set_order, weight_kg, reps, rir, exercises ( name )')
+    .eq('execution_id', executionId)
+    .order('set_order', { ascending: true });
+  if (error) throw error;
+
+  type SetRow = {
+    id: string;
+    exercise_id: string;
+    set_order: number;
+    weight_kg: number;
+    reps: number;
+    rir: number;
+    exercises: { name: string } | null;
+  };
+  const rows = (data ?? []) as unknown as SetRow[];
+
+  const editableRows: EditableSetRow[] = rows.map((row) => ({
+    id: row.id,
+    exerciseId: row.exercise_id,
+    exerciseName: row.exercises?.name ?? '(exercice inconnu)',
+    order: row.set_order,
+    weightKg: Number(row.weight_kg),
+    reps: row.reps,
+    rir: row.rir,
+  }));
+
+  return {
+    executionId,
+    date: exec.performed_on,
+    exercises: groupSetsForEdit(editableRows),
+  };
 }
 
 // --- Écriture idempotente (rejouable par l'outbox) ----------------------------

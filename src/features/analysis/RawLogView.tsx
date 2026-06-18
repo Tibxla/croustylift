@@ -39,7 +39,17 @@ function formatVolume(kg: number): string {
   return kg.toLocaleString('fr-FR');
 }
 
-export function RawLogView({ entries }: { entries: RawLogEntry[] }) {
+export function RawLogView({
+  entries,
+  onEdit,
+}: {
+  entries: RawLogEntry[];
+  /**
+   * Ouvre une séance passée en édition (issue #38), par id d'exécution. Optionnel :
+   * le harness de screenshot et la consultation pure montent la vue sans édition.
+   */
+  onEdit?: (executionId: string) => void;
+}) {
   if (entries.length === 0) {
     return <RawLogEmptyState />;
   }
@@ -50,7 +60,7 @@ export function RawLogView({ entries }: { entries: RawLogEntry[] }) {
         <li key={entry.executionId}>
           {/* La plus récente (en tête) est dépliée par défaut : on consulte
               d'abord ce qu'on vient de faire ; le reste reste replié. */}
-          <SessionEntry entry={entry} defaultOpen={index === 0} />
+          <SessionEntry entry={entry} defaultOpen={index === 0} onEdit={onEdit} />
         </li>
       ))}
     </ul>
@@ -60,9 +70,11 @@ export function RawLogView({ entries }: { entries: RawLogEntry[] }) {
 function SessionEntry({
   entry,
   defaultOpen,
+  onEdit,
 }: {
   entry: RawLogEntry;
   defaultOpen: boolean;
+  onEdit?: (executionId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const summary = summarizeSession(entry);
@@ -134,6 +146,33 @@ function SessionEntry({
               </ul>
             </div>
           ))}
+
+          {/* Corriger cette séance (issue #38) : ouvre l'éditeur des séries de ce
+              jour. Action discrète, sobre (pas l'accent : la correction n'est pas
+              un signal de progression). Affichée seulement si l'éditeur est câblé. */}
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(entry.executionId)}
+              className="mt-1 inline-flex min-h-[44px] items-center gap-2 self-start rounded-xl bg-surface-2 px-4 text-sm font-medium text-ink transition active:scale-[0.99] active:bg-surface"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+              </svg>
+              Corriger cette séance
+            </button>
+          )}
         </div>
       )}
     </section>

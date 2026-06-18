@@ -24,6 +24,7 @@ import { E1rmChart } from './E1rmChart';
 import { SecondaryChart } from './SecondaryChart';
 import { SessionMetricsChart } from './SessionMetricsChart';
 import { RawLogView } from './RawLogView';
+import { PastSessionEditor } from './PastSessionEditor';
 import { ProgressionBadge } from './ProgressionBadge';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
 
@@ -213,6 +214,9 @@ function JournalTab() {
     | { phase: 'ready'; entries: RawLogEntry[] }
   >({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
+  // Édition d'une séance passée (issue #38) : l'exécution ouverte, ou null en
+  // consultation. L'éditeur se monte par-dessus le journal (modal plein écran).
+  const [editingExecutionId, setEditingExecutionId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -257,7 +261,24 @@ function JournalTab() {
     );
   }
 
-  return <RawLogView entries={load.entries} />;
+  return (
+    <>
+      <RawLogView entries={load.entries} onEdit={setEditingExecutionId} />
+      {editingExecutionId && (
+        <PastSessionEditor
+          executionId={editingExecutionId}
+          onClose={() => setEditingExecutionId(null)}
+          onSaved={() => {
+            // Corrections synchronisées : on ferme et on recharge le journal
+            // pour refléter le réalisé corrigé (l'analyse e1RM se recalcule à sa
+            // prochaine ouverture, dérivée des mêmes séries).
+            setEditingExecutionId(null);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      )}
+    </>
+  );
 }
 
 function JournalSkeleton() {
