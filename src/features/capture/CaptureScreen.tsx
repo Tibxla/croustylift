@@ -12,6 +12,7 @@ import {
 } from 'react';
 import {
   ensureStarterSeance,
+  finishExecution,
   findOrCreateTodayExecution,
   loadReference,
   loadSeanceForCapture,
@@ -33,6 +34,7 @@ import {
 import type { PerformedSet } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import { SessionEnd, type SessionEndValues, type SessionSummary } from './SessionEnd';
 
 type LoadState =
   | { phase: 'loading' }
@@ -214,9 +216,45 @@ function CaptureBoard({
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
     dispatch({ type: 'reset' });
+    setPhase('capture');
     // On repart sur une exécution neuve au prochain log (la précédente reste en base).
     executionIdRef.current = null;
   }, [session, date]);
+
+  // --- Flux de fin de séance ------------------------------------------------
+  // Phase locale : capture (sélecteur + panneaux) -> fin (saisie BPM/durée).
+  // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd.
+  const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
+
+  // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
+  const loggedAny = session.exercises.some(
+    (ex) => getProgress(state, ex.exerciseId).sets.length > 0,
+  );
+
+  const summary = buildSummary(session, state);
+
+  const handleFinish = useCallback(
+    async (values: SessionEndValues) => {
+      // Garantit l'exécution même si une synchro de série a échoué plus tôt
+      // (l'utilisateur a pu logger offline) : sans id, rien à clôturer.
+      const executionId = await ensureExecution();
+      await finishExecution(executionId, values);
+    },
+    [ensureExecution],
+  );
+
+  if (phase === 'finishing') {
+    return (
+      <div className="min-h-[calc(100vh-3.5rem)]">
+        {unsynced && <UnsyncedBanner />}
+        <SessionEnd
+          summary={summary}
+          onSave={handleFinish}
+          onBack={() => setPhase('capture')}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
@@ -237,11 +275,35 @@ function CaptureBoard({
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
           />
-          <ResetBar session={session} state={state} onReset={handleReset} />
+          <ResetBar
+            session={session}
+            state={state}
+            canFinish={loggedAny}
+            onReset={handleReset}
+            onFinish={() => setPhase('finishing')}
+          />
         </>
       )}
     </div>
   );
+}
+
+/** Construit le récap sobre de l'exécution courante (exos faits / total, séries). */
+function buildSummary(session: Session, state: CaptureState): SessionSummary {
+  const exercisesDone = session.exercises.filter((ex) => {
+    const p = getProgress(state, ex.exerciseId);
+    return p.skipped || p.sets.length >= ex.prescription.sets.min;
+  }).length;
+  const totalSets = session.exercises.reduce(
+    (sum, ex) => sum + getProgress(state, ex.exerciseId).sets.length,
+    0,
+  );
+  return {
+    sessionName: session.name,
+    exercisesDone,
+    exercisesTotal: session.exercises.length,
+    totalSets,
+  };
 }
 
 /** Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé. */
@@ -361,11 +423,16 @@ function CapturePanel({
 function ResetBar({
   session,
   state,
+  canFinish,
   onReset,
+  onFinish,
 }: {
   session: Session;
   state: CaptureState;
+  /** « Au moins une série loggée » : le flux de fin de séance est disponible. */
+  canFinish: boolean;
   onReset: () => void;
+  onFinish: () => void;
 }) {
   const touched = session.exercises.some((ex) => {
     const p = getProgress(state, ex.exerciseId);
@@ -382,17 +449,30 @@ function ResetBar({
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
-      <div className="mx-auto flex w-full max-w-md items-center justify-between gap-3">
-        <span className="text-sm text-ink-muted">
-          {allDone ? 'Séance terminée.' : 'Exécution en cours, sauvegardée.'}
-        </span>
-        <button
-          type="button"
-          onClick={onReset}
-          className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
-        >
-          {allDone ? 'Nouvelle séance' : 'Réinitialiser'}
-        </button>
+      <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
+        {/* « Terminer la séance » dès qu'une série est loggée. Caché sinon
+            (un exo seulement passé n'ouvre pas le flux de fin). */}
+        {canFinish && (
+          <button
+            type="button"
+            onClick={onFinish}
+            className="flex h-12 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent"
+          >
+            Terminer la séance
+          </button>
+        )}
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm text-ink-muted">
+            {allDone ? 'Séance terminée.' : 'Exécution en cours, sauvegardée.'}
+          </span>
+          <button
+            type="button"
+            onClick={onReset}
+            className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+          >
+            {allDone ? 'Nouvelle séance' : 'Réinitialiser'}
+          </button>
+        </div>
       </div>
     </div>
   );

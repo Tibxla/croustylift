@@ -385,6 +385,28 @@ export async function persistSet(
 }
 
 /**
+ * Clôture l'exécution en y posant les métriques saisies en fin de séance :
+ * BPM moyen et durée (min). Toutes deux optionnelles (saisie manuelle, niveau
+ * séance, cf. décisions produit) — un champ omis ou `null` laisse la colonne
+ * inchangée plutôt que de l'effacer, pour qu'une seconde clôture partielle
+ * n'écrase pas une valeur déjà posée. `update` typé via `Database`.
+ */
+export async function finishExecution(
+  executionId: string,
+  fields: { bpmAvg?: number | null; durationMin?: number | null },
+): Promise<void> {
+  const patch: Database['public']['Tables']['executions']['Update'] = {};
+  if (fields.bpmAvg !== undefined) patch.bpm_avg = fields.bpmAvg;
+  if (fields.durationMin !== undefined) patch.duration_min = fields.durationMin;
+
+  // Rien à poser : on évite un update vide (no-op réseau).
+  if (Object.keys(patch).length === 0) return;
+
+  const { error } = await supabase.from('executions').update(patch).eq('id', executionId);
+  if (error) throw error;
+}
+
+/**
  * Supprime la dernière série loggée de cet exo dans l'exécution (« annuler »).
  * « Dernière » = set_order le plus élevé pour ce couple (exécution, exo).
  */
