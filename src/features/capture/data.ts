@@ -9,11 +9,7 @@
 //   - RLS scope déjà tout à l'utilisateur connecté ; pas de filtre owner_id côté client.
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
-import type {
-  ExerciseExecution,
-  PerformedSet,
-  Prescription,
-} from '../../domain/types';
+import type { ExerciseExecution, PerformedSet } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
 import { getCurrentRoutineId, getCurrentVersionId, listSeances } from '../authoring/data';
 import { todayIso } from './state';
@@ -33,9 +29,11 @@ export interface LoadedSeance {
 // --- Choix de la séance dans la routine courante (issue #1) -------------------
 //
 // En arrivant en Capture, l'user choisit QUELLE séance de sa routine courante il
-// attaque, au lieu de toujours charger la 1ʳᵉ séance de la 1ʳᵉ routine. La
-// fixture de démo (cf. fixtures.ts) ne sert plus que de FALLBACK quand l'user n'a
-// rien d'exploitable (aucune routine courante, ou routine courante sans séance).
+// attaque, au lieu de toujours charger la 1ʳᵉ séance de la 1ʳᵉ routine. Quand il
+// n'a rien d'exploitable (aucune routine courante, ou routine courante sans
+// séance), la Capture affiche un ÉTAT VIDE : depuis l'onboarding (issue #3) on ne
+// crée plus aucune séance en silence. Un user totalement neuf ne passe d'ailleurs
+// pas par ici, App l'envoie d'abord sur l'écran de premier lancement.
 
 /** Une séance proposée au choix en Capture : juste de quoi l'afficher et la résoudre. */
 export interface SeanceChoice {
@@ -45,7 +43,8 @@ export interface SeanceChoice {
 
 /**
  * Source de la Capture, dérivée de la routine courante :
- *   - `demo`   : aucune séance choisissable -> on charge la séance de démo (fallback) ;
+ *   - `demo`   : rien à capturer (aucune routine courante, ou routine courante
+ *                sans séance) -> la Capture affiche un état vide, sans rien créer ;
  *   - `choose` : la routine courante a des séances -> l'user en choisit une.
  */
 export type CaptureSource =
@@ -56,8 +55,8 @@ export type CaptureSource =
  * Tranche la source de la Capture (logique PURE, testée) à partir de l'id de
  * routine courante et des séances de cette routine, déjà lus côté Supabase.
  *
- * Fallback démo si : aucune routine courante (`null`) OU routine courante sans
- * séance (rien à choisir). Sinon : choix parmi les séances de la routine courante.
+ * `demo` (rien à capturer) si : aucune routine courante (`null`) OU routine
+ * courante sans séance. Sinon : choix parmi les séances de la routine courante.
  */
 export function decideCaptureSource(
   currentRoutineId: string | null,
@@ -72,7 +71,7 @@ export function decideCaptureSource(
 /**
  * Lit la routine courante (getCurrentRoutineId) et ses séances, puis tranche la
  * source de la Capture via `decideCaptureSource`. C'est le point d'entrée de
- * l'écran : il dit s'il faut proposer un choix ou retomber sur la démo.
+ * l'écran : il dit s'il faut proposer un choix ou afficher l'état vide.
  */
 export async function loadCaptureSource(): Promise<CaptureSource> {
   const routineId = await getCurrentRoutineId();
@@ -105,163 +104,6 @@ export async function listExercises(): Promise<ExerciseRow[]> {
   const { data, error } = await supabase.from('exercises').select('*');
   if (error) throw error;
   return data ?? [];
-}
-
-// --- Starter idempotent -------------------------------------------------------
-
-/** Les 4 exos de démo, par NOM (les UUID sont résolus à l'exécution, jamais hardcodés). */
-const STARTER_PRESCRIPTIONS: Array<{ name: string; prescription: Prescription }> = [
-  {
-    name: 'Développé couché',
-    prescription: { sets: { min: 3, max: 4 }, reps: { min: 8, max: 12 }, rir: { min: 1, max: 2 } },
-  },
-  {
-    name: 'Tirage horizontal',
-    prescription: { sets: { min: 3, max: 4 }, reps: { min: 10, max: 12 }, rir: { min: 1, max: 2 } },
-  },
-  {
-    name: 'Développé militaire',
-    prescription: { sets: { min: 3, max: 3 }, reps: { min: 6, max: 8 }, rir: { min: 2, max: 2 } },
-  },
-  {
-    name: 'Curl biceps haltères',
-    prescription: { sets: { min: 3, max: 4 }, reps: { min: 10, max: 15 }, rir: { min: 0, max: 1 } },
-  },
-];
-
-// L'idempotence repose sur un « check puis create » : deux appels CONCURRENTS
-// (double-montage React StrictMode, double-clic) verraient tous deux « aucune
-// routine » et créeraient le starter en double. On sérialise donc les appels en
-// vol via une promesse mémoïsée : tant qu'un ensureStarterSeance tourne, les
-// suivants réutilisent son résultat. La garde est relâchée une fois résolu.
-let inFlightStarter: Promise<LoadedSeance> | null = null;
-
-/**
- * Garantit une séance de démarrage pour un user neuf.
- *
- * Idempotent : si l'user a DÉJÀ au moins une routine, on ne crée rien et on
- * renvoie la première séance de sa première routine (avec sa version max). Si
- * l'user n'a AUCUNE routine, on crée « Ma routine » + séance « Upper A » (v1) +
- * les prescriptions des 4 exos de base.
- *
- * Renvoie la séance + l'id de sa version courante (= version max).
- */
-export function ensureStarterSeance(): Promise<LoadedSeance> {
-  if (inFlightStarter) return inFlightStarter;
-  inFlightStarter = runEnsureStarterSeance().finally(() => {
-    inFlightStarter = null;
-  });
-  return inFlightStarter;
-}
-
-async function runEnsureStarterSeance(): Promise<LoadedSeance> {
-  // 1. Une routine existe déjà ? -> on réutilise (idempotence).
-  const { data: routines, error: routinesError } = await supabase
-    .from('routines')
-    .select('id')
-    .order('created_at', { ascending: true })
-    .limit(1);
-  if (routinesError) throw routinesError;
-
-  if (routines && routines.length > 0) {
-    return loadFirstSeance(routines[0].id);
-  }
-
-  // 2. User neuf : on crée tout. owner_id se remplit via default auth.uid().
-  const { data: routine, error: routineErr } = await supabase
-    .from('routines')
-    .insert({ name: 'Ma routine' })
-    .select('id')
-    .single();
-  if (routineErr) throw routineErr;
-
-  const { data: seance, error: seanceErr } = await supabase
-    .from('seances')
-    .insert({ routine_id: routine.id, name: 'Upper A', position: 0 })
-    .select('id, name')
-    .single();
-  if (seanceErr) throw seanceErr;
-
-  const { data: version, error: versionErr } = await supabase
-    .from('seance_versions')
-    .insert({ seance_id: seance.id, version: 1 })
-    .select('id')
-    .single();
-  if (versionErr) throw versionErr;
-
-  // Résolution des ids d'exos de base par NOM (pas de hardcode d'UUID).
-  const wantedNames = STARTER_PRESCRIPTIONS.map((p) => p.name);
-  const { data: baseExercises, error: exErr } = await supabase
-    .from('exercises')
-    .select('id, name')
-    .in('name', wantedNames);
-  if (exErr) throw exErr;
-
-  const idByName = new Map((baseExercises ?? []).map((e) => [e.name, e.id]));
-
-  const prescriptionRows = STARTER_PRESCRIPTIONS.map((p, index) => {
-    const exerciseId = idByName.get(p.name);
-    if (!exerciseId) {
-      throw new Error(
-        `Exercice de base introuvable au seed du starter : « ${p.name} ». ` +
-          'Vérifie le catalogue de base (migration 0002).',
-      );
-    }
-    return {
-      seance_version_id: version.id,
-      exercise_id: exerciseId,
-      position: index,
-      sets_min: p.prescription.sets.min,
-      sets_max: p.prescription.sets.max,
-      reps_min: p.prescription.reps.min,
-      reps_max: p.prescription.reps.max,
-      rir_min: p.prescription.rir.min,
-      rir_max: p.prescription.rir.max,
-    };
-  });
-
-  const { error: prescErr } = await supabase.from('prescriptions').insert(prescriptionRows);
-  if (prescErr) throw prescErr;
-
-  return {
-    seance: { id: seance.id, name: seance.name },
-    seanceVersionId: version.id,
-  };
-}
-
-/** Première séance d'une routine + sa version max (cas user déjà initialisé). */
-async function loadFirstSeance(routineId: string): Promise<LoadedSeance> {
-  const { data: seance, error: seanceErr } = await supabase
-    .from('seances')
-    .select('id, name')
-    .eq('routine_id', routineId)
-    .order('position', { ascending: true })
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (seanceErr) throw seanceErr;
-  if (!seance) {
-    throw new Error('Routine sans séance : impossible de charger la capture.');
-  }
-
-  const versionId = await currentVersionId(seance.id);
-  return { seance: { id: seance.id, name: seance.name }, seanceVersionId: versionId };
-}
-
-/** Id de la version courante (version max) d'une séance. */
-async function currentVersionId(seanceId: string): Promise<string> {
-  const { data, error } = await supabase
-    .from('seance_versions')
-    .select('id, version')
-    .eq('seance_id', seanceId)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) {
-    throw new Error(`Séance ${seanceId} sans version : template incomplet.`);
-  }
-  return data.id;
 }
 
 // --- Chargement de la séance pour la capture ----------------------------------
