@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { AuthContext, type AuthContextValue } from './auth-context'
+import { clearQueue } from '../features/capture/outbox'
+import { clearCaptureState } from '../features/capture/state'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -46,6 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut: async () => {
         const { error } = await supabase.auth.signOut()
         if (error) throw error
+        // Purge les données locales en clair (réalisé de capture + outbox) : sur
+        // un appareil partagé, elles ne doivent pas survivre au départ de
+        // l'utilisateur. supabase.auth.signOut() ne nettoie que son propre token.
+        clearCaptureState()
+        clearQueue()
       },
     }),
     [session, loading],

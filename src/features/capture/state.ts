@@ -293,3 +293,25 @@ export function clearPersisted(session: Session, date: string): void {
     /* no-op */
   }
 }
+
+/**
+ * Purge TOUT l'état de capture persisté (toutes sessions/jours confondus) en
+ * supprimant chaque clé `croustylift:capture:*`. Sert à la déconnexion : sur un
+ * appareil partagé, le réalisé loggé ne doit pas rester lisible en clair après
+ * le départ de l'utilisateur. Ne touche QUE le préfixe capture (l'outbox et le
+ * reste du storage sont purgés ailleurs).
+ */
+export function clearCaptureState(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    // Collecte avant suppression : retirer en itérant décale les index.
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key !== null && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* no-op */
+  }
+}
