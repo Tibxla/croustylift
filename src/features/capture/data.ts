@@ -13,6 +13,7 @@ import type { ExerciseExecution, PerformedSet } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { todayIso } from './state';
+import type { DatedNoteDraft } from './state';
 import type { Session, SessionExercise } from './fixtures';
 
 export type { Session, SessionExercise } from './fixtures';
@@ -149,7 +150,8 @@ type PrescriptionWithExercise = {
 /**
  * Charge les prescriptions d'une version de séance, jointes au nom de l'exo,
  * triées par position, dans la forme `SessionExercise` attendue par l'UI.
- * La `reference` est laissée à `null` ici — `loadReference` la remplit par exo.
+ * La `reference` est laissée à `null` et `perExerciseNote` à '' ici : `loadReference`
+ * et `loadExerciseNote` les remplissent par exo (cf. loadSeance dans CaptureScreen).
  */
 export async function loadSeanceForCapture(
   seance: { id: string; name: string },
@@ -175,6 +177,7 @@ export async function loadSeanceForCapture(
       rir: { min: row.rir_min, max: row.rir_max },
     },
     reference: null,
+    perExerciseNote: '',
   }));
 
   return { id: seance.id, name: seance.name, exercises };
@@ -275,6 +278,44 @@ export async function loadTodayProgress(
   }
   for (const id of Object.keys(byExercise)) {
     byExercise[id].sort((a, b) => a.order - b.order);
+  }
+  return byExercise;
+}
+
+/**
+ * Charge les NOTES DATÉES déjà persistées de l'exécution du jour (issue #26),
+ * par exerciseId, avec leur id réel (pour que l'édition vise la bonne ligne).
+ * Même résolution de l'exécution du jour que `loadTodayProgress` (seance_version
+ * + performed_on). Sert à RÉHYDRATER la saisie en Capture après un reload :
+ * Supabase fait foi. Map vide si aucune exécution / aucune note aujourd'hui.
+ */
+export async function loadTodayDatedNotes(
+  seanceVersionId: string,
+): Promise<Record<string, DatedNoteDraft>> {
+  const today = todayIso();
+
+  const { data: exec, error: execErr } = await supabase
+    .from('executions')
+    .select('id')
+    .eq('seance_version_id', seanceVersionId)
+    .eq('performed_on', today)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (execErr) throw execErr;
+  if (!exec) return {};
+
+  const { data, error } = await supabase
+    .from('dated_notes')
+    .select('id, exercise_id, body, created_at')
+    .eq('execution_id', exec.id)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+
+  // Une note par exo : la dernière créée gagne (l'UI n'en crée qu'une, garde-fou).
+  const byExercise: Record<string, DatedNoteDraft> = {};
+  for (const row of data ?? []) {
+    byExercise[row.exercise_id] = { id: row.id, body: row.body };
   }
   return byExercise;
 }
