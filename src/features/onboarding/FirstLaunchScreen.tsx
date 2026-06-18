@@ -111,7 +111,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
         </fieldset>
 
         {error && (
-          <p className="readout mt-4 break-words text-xs text-warn" role="alert">
+          <p className="mt-4 break-words text-xs text-warn" role="alert">
             {error}
           </p>
         )}
@@ -120,7 +120,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
+            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
           >
             {busy ? 'Création…' : 'Commencer'}
           </button>
@@ -182,7 +182,7 @@ function Field({
         autoFocus={autoFocus}
         enterKeyHint="next"
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/70 focus:border-accent focus:outline-none"
+        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
       />
     </label>
   );

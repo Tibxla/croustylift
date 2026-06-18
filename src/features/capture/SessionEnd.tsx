@@ -147,7 +147,7 @@ export function SessionEnd({ summary, durationMin, onSave, onBack, onNewSession 
       </div>
 
       {error && (
-        <p className="readout mt-4 break-words text-xs text-warn" role="alert">
+        <p className="mt-4 break-words text-xs text-warn" role="alert">
           Échec de l&apos;enregistrement : {error}
         </p>
       )}
@@ -159,7 +159,7 @@ export function SessionEnd({ summary, durationMin, onSave, onBack, onNewSession 
             type="button"
             disabled={saving}
             onClick={handleSaveAndClose}
-            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
+            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
           >
             {saving ? 'Enregistrement…' : 'Enregistrer et clôturer'}
           </button>

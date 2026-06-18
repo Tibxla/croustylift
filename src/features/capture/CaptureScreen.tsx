@@ -191,7 +191,7 @@ export function CaptureScreen() {
         <p className="text-sm text-ink-muted">
           Impossible de charger ta séance.
         </p>
-        <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
+        <p className="max-w-full break-words text-xs text-warn">{load.message}</p>
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
@@ -689,7 +689,7 @@ function CapturePanel({
             type="button"
             disabled={!draft}
             onClick={() => draft && logSet(draft)}
-            className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
+            className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
           >
             <svg
               viewBox="0 0 24 24"
