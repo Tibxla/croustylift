@@ -510,6 +510,9 @@ function CaptureBoard({
         bpmAvg: values.bpmAvg,
         durationMin: durationMin ?? undefined,
       });
+      // Persiste la CLÔTURE : au remontage (changement d'onglet/reload), la séance
+      // réaffiche « Séance terminée » au lieu de repasser « en cours ».
+      dispatch({ type: 'close', closedAt: Date.now() });
     },
     [enqueueExecutionOnce, state.executionId, durationMin],
   );
@@ -524,6 +527,29 @@ function CaptureBoard({
           onSave={handleFinish}
           onBack={() => setPhase('capture')}
           onNewSession={handleNewSession}
+        />
+      </div>
+    );
+  }
+
+  // Séance restaurée CLÔTURÉE (revenue via changement d'onglet / reload) : on
+  // réaffiche la confirmation « Séance terminée » plutôt que de la repasser « en
+  // cours ». La durée vient de l'écart lancement -> clôture persisté.
+  if (state.closedAt !== null) {
+    const closedDurationMin =
+      state.closedAt > state.startedAt
+        ? Math.round((state.closedAt - state.startedAt) / 60000)
+        : null;
+    return (
+      <div className="min-h-[calc(100vh-3.5rem)]">
+        <SyncBanner status={status} pending={pending} />
+        <SessionEnd
+          summary={summary}
+          durationMin={closedDurationMin}
+          onSave={() => {}}
+          onBack={handleNewSession}
+          onNewSession={handleNewSession}
+          alreadyClosed
         />
       </div>
     );
@@ -579,7 +605,16 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     else if (!pb) progress[id] = pa;
     else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
   }
-  return { ...a, executionId: b.executionId, startedAt: b.startedAt, progress };
+  // `closedAt` vient du LOCAL (b) : la clôture est une notion locale, la base
+  // n'en sait rien (a.closedAt est toujours null). Sinon une séance clôturée
+  // puis quittée repasserait « en cours » au remontage.
+  return {
+    ...a,
+    executionId: b.executionId,
+    startedAt: b.startedAt,
+    progress,
+    closedAt: b.closedAt,
+  };
 }
 
 /**
