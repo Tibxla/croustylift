@@ -5,7 +5,7 @@
 // rapide. Un bloc est une période continue de configuration de template
 // inchangée (cf. ADR 0001 + `detectBlocks`).
 //
-// Fonction PURE : aucune lecture réseau. On RÉUTILISE le domaine déjà testé —
+// Fonction PURE : aucune lecture réseau. On RÉUTILISE le domaine déjà testé :
 // `buildPrimaryCurve` (courbe e1RM de la 1ʳᵉ série) et `weeklyProgressionRate`
 // (régression linéaire %/semaine). Le seul travail propre à ce module est de
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
