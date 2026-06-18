@@ -59,11 +59,34 @@ export interface UpdateExecutionOp {
   durationMin?: number | null;
 }
 
+/**
+ * Crée (ou ré-affirme) la NOTE DATÉE d'un exo pour l'exécution courante (issue
+ * #26). Idempotent via upsert par id (UUID client) : rejouer pose le même corps.
+ * Comme une série, elle dépend de l'exécution (FK) → enfilée APRÈS l'upsert
+ * d'exécution, ordre garanti par le FIFO.
+ */
+export interface UpsertDatedNoteOp {
+  type: 'upsertDatedNote';
+  id: string;
+  executionId: string;
+  exerciseId: string;
+  /** Corps normalisé (cf. domain/notes). Vide = la note est effacée via deleteDatedNote. */
+  body: string;
+}
+
+/** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
+export interface DeleteDatedNoteOp {
+  type: 'deleteDatedNote';
+  id: string;
+}
+
 export type OutboxOp =
   | UpsertExecutionOp
   | InsertSetOp
   | DeleteSetOp
-  | UpdateExecutionOp;
+  | UpdateExecutionOp
+  | UpsertDatedNoteOp
+  | DeleteDatedNoteOp;
 
 /**
  * Les fonctions de SYNC réelles, une par type d'op (injectées → testable sans
@@ -75,6 +98,8 @@ export interface SyncFns {
   insertSet: (op: InsertSetOp) => Promise<void>;
   deleteSet: (op: DeleteSetOp) => Promise<void>;
   updateExecution: (op: UpdateExecutionOp) => Promise<void>;
+  upsertDatedNote: (op: UpsertDatedNoteOp) => Promise<void>;
+  deleteDatedNote: (op: DeleteDatedNoteOp) => Promise<void>;
 }
 
 /** État renvoyé par `flush` : combien d'ops restent en file après la passe. */
@@ -155,6 +180,10 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.deleteSet(op);
     case 'updateExecution':
       return fns.updateExecution(op);
+    case 'upsertDatedNote':
+      return fns.upsertDatedNote(op);
+    case 'deleteDatedNote':
+      return fns.deleteDatedNote(op);
   }
 }
 
