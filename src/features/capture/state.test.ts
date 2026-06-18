@@ -1,12 +1,13 @@
 // Tests unitaires du reducer de capture et de ses helpers (getProgress, statusOf).
 //
 // Pas de localStorage, pas de React : logique pure uniquement.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   captureReducer,
   getProgress,
   statusOf,
   initialState,
+  clearCaptureState,
   type CaptureState,
   type ExerciseProgress,
 } from './state';
@@ -259,5 +260,72 @@ describe('progression globale via statusOf', () => {
 
     state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's3', set: set1 });
     expect(statusOf(getProgress(state, exId), min)).toBe('done');
+  });
+});
+
+// --- clearCaptureState (purge à la déconnexion) ------------------------------
+//
+// Env node : pas de localStorage natif → polyfill mémoire avant chaque test.
+// Ici on a besoin de `length` + `key(i)` (le helper balaye toutes les clés),
+// que le polyfill minimal de outbox.test.ts n'expose pas.
+
+class IndexableMemoryStorage {
+  private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(i: number): string | null {
+    return Array.from(this.store.keys())[i] ?? null;
+  }
+  getItem(k: string): string | null {
+    return this.store.has(k) ? (this.store.get(k) as string) : null;
+  }
+  setItem(k: string, v: string): void {
+    this.store.set(k, String(v));
+  }
+  removeItem(k: string): void {
+    this.store.delete(k);
+  }
+  clear(): void {
+    this.store.clear();
+  }
+}
+
+describe('clearCaptureState', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('supprime toutes les clés croustylift:capture:* (plusieurs sessions/jours)', () => {
+    localStorage.setItem('croustylift:capture:sess-1:2026-06-18', '{}');
+    localStorage.setItem('croustylift:capture:sess-1:2026-06-17', '{}');
+    localStorage.setItem('croustylift:capture:sess-2:2026-06-18', '{}');
+
+    clearCaptureState();
+
+    expect(localStorage.getItem('croustylift:capture:sess-1:2026-06-18')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:sess-1:2026-06-17')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:sess-2:2026-06-18')).toBeNull();
+  });
+
+  it('ne touche pas les autres clés (outbox, token Supabase, divers)', () => {
+    localStorage.setItem('croustylift:capture:sess-1:2026-06-18', '{}');
+    localStorage.setItem('croustylift:outbox', '[]');
+    localStorage.setItem('sb-xyz-auth-token', 'jwt');
+    localStorage.setItem('autre-cle', 'valeur');
+
+    clearCaptureState();
+
+    expect(localStorage.getItem('croustylift:capture:sess-1:2026-06-18')).toBeNull();
+    // Tout le reste survit : la purge est ciblée sur le préfixe capture.
+    expect(localStorage.getItem('croustylift:outbox')).toBe('[]');
+    expect(localStorage.getItem('sb-xyz-auth-token')).toBe('jwt');
+    expect(localStorage.getItem('autre-cle')).toBe('valeur');
+  });
+
+  it('est un no-op sans erreur quand rien n’est persisté', () => {
+    expect(() => clearCaptureState()).not.toThrow();
+    expect(localStorage.length).toBe(0);
   });
 });
