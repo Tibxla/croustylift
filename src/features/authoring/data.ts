@@ -28,6 +28,7 @@
 // le coût (version vide possible) est borné et sans danger pour l'historique.
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
+import { buildPersonalExerciseInsert } from './exercise-input';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
@@ -132,16 +133,21 @@ export function prescriptionInputToRow(
 
 /**
  * Crée un exercice perso. `owner_id` se remplit via default auth.uid().
- * `muscleGroup` est un texte libre côté DB ; on n'impose pas les 15 canoniques
- * en dur ici (validation laissée à l'UI / au domaine), cf. CONTEXT.md.
+ *
+ * Modèle étendu (issue #33) : on écrit `unilateral` + la LISTE `primary_muscles`
+ * (>= 1, vocabulaire canonique) ET, pour la compat legacy, `muscle_group` = le
+ * premier muscle principal. La row est construite et validée par le helper pur
+ * buildPersonalExerciseInsert (cf. exercise-input.ts) ; il jette si la saisie est
+ * invalide (nom vide ou aucun muscle canonique).
  */
 export async function createPersonalExercise(input: {
   name: string;
-  muscleGroup: string;
+  primaryMuscles: string[];
+  unilateral?: boolean;
 }): Promise<ExerciseRow> {
   const { data, error } = await supabase
     .from('exercises')
-    .insert({ name: input.name, muscle_group: input.muscleGroup })
+    .insert(buildPersonalExerciseInsert(input))
     .select('*')
     .single();
   if (error) throw error;
