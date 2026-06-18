@@ -15,7 +15,6 @@ import {
 } from 'react';
 import {
   deleteSetById,
-  ensureStarterSeance,
   loadCaptureSource,
   loadChosenSeance,
   loadReference,
@@ -56,6 +55,7 @@ type LoadState =
   | { phase: 'loading' }
   | { phase: 'choosing'; seances: SeanceChoice[] }
   | { phase: 'error'; message: string }
+  | { phase: 'empty' }
   | { phase: 'ready'; session: Session; seanceVersionId: string };
 
 export function CaptureScreen() {
@@ -67,8 +67,8 @@ export function CaptureScreen() {
   // Charge une séance résolue (sa version courante) vers la phase « ready » :
   // template -> références par exo -> réhydratation du réalisé du jour. Le drapeau
   // `active` évite de poser l'état si le composant s'est démonté entre-temps
-  // (changement d'onglet pendant le chargement). Partagé entre le fallback démo
-  // et la séance choisie dans la routine courante.
+  // (changement d'onglet pendant le chargement). Partagé entre la séance unique
+  // chargée direct et la séance choisie dans la routine courante.
   const loadSeance = useCallback(
     async ({ seance, seanceVersionId }: LoadedSeance, active: () => boolean) => {
       const base = await loadSeanceForCapture(seance, seanceVersionId);
@@ -94,8 +94,11 @@ export function CaptureScreen() {
   );
 
   // Au montage (et à chaque retour sur l'onglet Capture, qui REMONTE l'écran),
-  // on lit la routine courante : si elle a des séances, on en propose le choix ;
-  // sinon on retombe sur la séance de démo (ensureStarterSeance, idempotent).
+  // on lit la routine courante : si elle a des séances, on en propose le choix.
+  // Sinon (aucune routine courante, ou routine courante sans séance), on ne crée
+  // PLUS rien en silence (l'ancien fallback ensureStarterSeance est supprimé) :
+  // on affiche un état vide. Un user totalement neuf ne passe pas par ici, App
+  // l'envoie d'abord sur l'écran de premier lancement (issue #3).
   useEffect(() => {
     let alive = true;
     const active = () => alive;
@@ -117,9 +120,8 @@ export function CaptureScreen() {
           return;
         }
 
-        // Fallback démo : garantit la séance de démarrage (idempotent) et la charge.
-        const fallback = await ensureStarterSeance();
-        await loadSeance(fallback, active);
+        // Rien d'exploitable dans la routine courante : état vide, sans création.
+        setLoad({ phase: 'empty' });
       } catch (err) {
         if (!alive) return;
         setLoad({
@@ -172,6 +174,17 @@ export function CaptureScreen() {
     );
   }
 
+  if (load.phase === 'empty') {
+    return (
+      <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-sm text-ink-muted">
+          Rien à logger pour l'instant. Va dans l'onglet Séances pour choisir ta
+          routine courante et lui ajouter une séance.
+        </p>
+      </div>
+    );
+  }
+
   if (load.phase === 'error') {
     return (
       <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
@@ -205,7 +218,7 @@ export function CaptureScreen() {
 /**
  * Sélecteur de séance à l'arrivée en Capture : « quelle séance de ta routine
  * courante tu attaques ? ». N'apparaît que si la routine courante a au moins
- * deux séances (une seule est chargée direct ; aucune retombe sur la démo).
+ * deux séances (une seule est chargée direct ; aucune affiche l'état vide).
  * Calqué sur ExercisePicker pour l'unité visuelle (même conteneur, surfaces,
  * chevron). Pas d'accent décoratif : le violet reste pour l'action et l'état.
  */
