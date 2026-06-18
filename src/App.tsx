@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
 import { AnalysisScreen } from './features/analysis/AnalysisScreen'
 import { SeancesScreen } from './features/authoring/SeancesScreen'
+import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
+import { listRoutines } from './features/authoring/data'
+import { isFirstLaunch } from './features/onboarding/template'
 
 type Surface = 'capture' | 'analysis' | 'seances'
 
@@ -15,22 +18,99 @@ type Surface = 'capture' | 'analysis' | 'seances'
 
 function App() {
   const { session, user, loading, signOut } = useAuth()
-  const [surface, setSurface] = useState<Surface>('capture')
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-bg text-ink">
-        <div
-          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-          role="status"
-          aria-label="Chargement"
-        />
-      </main>
-    )
+    return <FullScreenSpinner label="Chargement" />
   }
 
   if (!session) {
     return <LoginScreen />
+  }
+
+  return <AuthenticatedApp email={user?.email} onSignOut={signOut} />
+}
+
+// --- App authentifiée : aiguillage premier lancement <-> surfaces ------------
+
+/**
+ * Après l'auth, on regarde si l'utilisateur a au moins une routine. Aucune ->
+ * écran de PREMIER LANCEMENT (il nomme sa 1ʳᵉ routine + séance), pas de routine
+ * auto-créée. Sinon -> les surfaces habituelles. Après création, on recharge et
+ * on bascule sur la capture.
+ */
+function AuthenticatedApp({
+  email,
+  onSignOut,
+}: {
+  email: string | undefined
+  onSignOut: () => Promise<void>
+}) {
+  type RoutineCheck =
+    | { phase: 'checking' }
+    | { phase: 'error'; message: string }
+    | { phase: 'first-launch' }
+    | { phase: 'ready' }
+
+  const [check, setCheck] = useState<RoutineCheck>({ phase: 'checking' })
+  const [reloadKey, setReloadKey] = useState(0)
+  const [surface, setSurface] = useState<Surface>('capture')
+
+  useEffect(() => {
+    let active = true
+    setCheck({ phase: 'checking' })
+
+    void (async () => {
+      try {
+        const routines = await listRoutines()
+        if (!active) return
+        setCheck({ phase: isFirstLaunch(routines.length) ? 'first-launch' : 'ready' })
+      } catch (err) {
+        if (!active) return
+        setCheck({
+          phase: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+  }, [reloadKey])
+
+  if (check.phase === 'checking') {
+    return <FullScreenSpinner label="Chargement" />
+  }
+
+  if (check.phase === 'error') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center text-ink">
+        <p className="text-sm text-ink-muted">Impossible de charger ton compte.</p>
+        <p className="readout max-w-full break-words text-xs text-warn">{check.message}</p>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        >
+          Réessayer
+        </button>
+      </main>
+    )
+  }
+
+  if (check.phase === 'first-launch') {
+    return (
+      <main className="min-h-screen bg-bg text-ink">
+        <FirstLaunchScreen
+          onCreated={() => {
+            // La routine existe désormais : on recharge l'aiguillage et on ouvre
+            // la capture sur la séance fraîchement créée.
+            setSurface('capture')
+            setReloadKey((k) => k + 1)
+          }}
+        />
+      </main>
+    )
   }
 
   return (
@@ -39,12 +119,12 @@ function App() {
         <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
         <div className="flex items-center gap-3">
           <span className="hidden max-w-[40vw] truncate text-sm text-ink-muted sm:inline">
-            {user?.email}
+            {email}
           </span>
           <button
             type="button"
             onClick={() => {
-              void signOut()
+              void onSignOut()
             }}
             className="rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-muted transition active:text-ink"
           >
@@ -60,6 +140,18 @@ function App() {
       </div>
 
       <BottomNav surface={surface} onSelect={setSurface} />
+    </main>
+  )
+}
+
+function FullScreenSpinner({ label }: { label: string }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-bg text-ink">
+      <div
+        className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
+        role="status"
+        aria-label={label}
+      />
     </main>
   )
 }
