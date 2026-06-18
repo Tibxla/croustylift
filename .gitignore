@@ -22,3 +22,6 @@ Thumbs.db
 
 # Screenshots de revue design (local, non versionnés)
 .screenshots/
+
+# Artefacts Playwright CLI (vérif e2e locale)
+.playwright-cli/

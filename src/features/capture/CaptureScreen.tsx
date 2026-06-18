@@ -1,54 +1,234 @@
-// Orchestrateur picker ↔ panneau. État via useReducer, persisté en localStorage
-// (« survit au background » : on peut fermer/rouvrir, l'état revient).
-import { useCallback, useEffect, useReducer, useState } from 'react';
-import { upperA } from './fixtures';
+// Orchestrateur picker ↔ panneau. La séance vient de Supabase (vraies données,
+// scopées à l'user par RLS). L'UI reste pilotée par un reducer local ; Supabase
+// est persisté EN PARALLÈLE de chaque log/annulation. localStorage survit au
+// background. Écriture qui échoue -> on garde l'état local + badge « non synchronisé ».
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type Dispatch,
+} from 'react';
+import {
+  ensureStarterSeance,
+  findOrCreateTodayExecution,
+  loadReference,
+  loadSeanceForCapture,
+  loadTodayProgress,
+  persistSet,
+  removeLastSet,
+  type Session,
+} from './data';
 import {
   captureReducer,
   clearPersisted,
   getProgress,
-  initialState,
+  hydratedState,
   loadPersisted,
   persist,
   statusOf,
   todayIso,
 } from './state';
+import type { PerformedSet } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 
-const session = upperA;
+type LoadState =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; session: Session; seanceVersionId: string };
 
 export function CaptureScreen() {
+  const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
+  const [reloadKey, setReloadKey] = useState(0);
+  // Le réalisé Supabase du jour, posé par l'effet de chargement, lu par CaptureBoard.
+  const hydrationRef = useRef<Record<string, PerformedSet[]>>({});
+
+  useEffect(() => {
+    let active = true;
+    setLoad({ phase: 'loading' });
+
+    void (async () => {
+      try {
+        // 1. Garantit une séance de démarrage (idempotent), 2. charge son template,
+        // 3. enrichit chaque exo de sa référence, 4. réhydrate le réalisé du jour.
+        const { seance, seanceVersionId } = await ensureStarterSeance();
+        const base = await loadSeanceForCapture(seance, seanceVersionId);
+
+        const [withRefs, todayProgress] = await Promise.all([
+          Promise.all(
+            base.exercises.map(async (ex) => ({
+              ...ex,
+              reference: await loadReference(ex.exerciseId),
+            })),
+          ),
+          loadTodayProgress(seanceVersionId),
+        ]);
+
+        if (!active) return;
+        const session: Session = { ...base, exercises: withRefs };
+        // On transporte le réalisé chargé vers le reducer via un ref, posé AVANT
+        // le passage en « ready » pour qu'il soit prêt au 1ᵉʳ render de CaptureBoard.
+        hydrationRef.current = todayProgress;
+        setLoad({ phase: 'ready', session, seanceVersionId });
+      } catch (err) {
+        if (!active) return;
+        setLoad({
+          phase: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  if (load.phase === 'loading') {
+    return (
+      <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center">
+        <div
+          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
+          role="status"
+          aria-label="Chargement de la séance"
+        />
+      </div>
+    );
+  }
+
+  if (load.phase === 'error') {
+    return (
+      <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="text-sm text-ink-muted">
+          Impossible de charger ta séance.
+        </p>
+        <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <CaptureBoard
+      key={load.session.id}
+      session={load.session}
+      seanceVersionId={load.seanceVersionId}
+      initialProgress={hydrationRef.current}
+    />
+  );
+}
+
+// --- Le tableau de capture (séance chargée) ---------------------------------
+
+function CaptureBoard({
+  session,
+  seanceVersionId,
+  initialProgress,
+}: {
+  session: Session;
+  seanceVersionId: string;
+  initialProgress: Record<string, PerformedSet[]>;
+}) {
   const [date] = useState(todayIso);
 
-  // Restauration au montage : l'exécution persistée reprend là où on l'avait laissée.
-  const [state, dispatch] = useReducer(
-    captureReducer,
-    null,
-    () => loadPersisted(session, date) ?? initialState(session, date),
-  );
+  // Restauration au montage : Supabase fait foi, localStorage est un filet
+  // (survie au background / écriture offline non encore synchronisée). Pour
+  // chaque exo on garde la source ayant le plus de séries.
+  const [state, dispatch] = useReducer(captureReducer, null, () => {
+    const fromSupabase = hydratedState(session, initialProgress, date);
+    const fromLocal = loadPersisted(session, date);
+    if (!fromLocal) return fromSupabase;
+    return mergeProgress(fromSupabase, fromLocal);
+  });
 
-  // Persiste à chaque changement d'état.
+  // Persiste à chaque changement d'état (localStorage).
   useEffect(() => {
     persist(state);
   }, [state]);
+
+  // --- Synchro Supabase en parallèle ----------------------------------------
+  const [unsynced, setUnsynced] = useState(false);
+  // Id de l'exécution du jour, créé paresseusement au 1ᵉʳ log.
+  const executionIdRef = useRef<string | null>(null);
+
+  const ensureExecution = useCallback(async (): Promise<string> => {
+    if (executionIdRef.current) return executionIdRef.current;
+    const id = await findOrCreateTodayExecution(seanceVersionId);
+    executionIdRef.current = id;
+    return id;
+  }, [seanceVersionId]);
+
+  const syncLog = useCallback(
+    async (exerciseId: string, set: PerformedSet) => {
+      try {
+        const executionId = await ensureExecution();
+        await persistSet(executionId, exerciseId, set, set.order);
+      } catch {
+        setUnsynced(true);
+      }
+    },
+    [ensureExecution],
+  );
+
+  const syncUndo = useCallback(
+    async (exerciseId: string) => {
+      try {
+        const executionId = await ensureExecution();
+        await removeLastSet(executionId, exerciseId);
+      } catch {
+        setUnsynced(true);
+      }
+    },
+    [ensureExecution],
+  );
 
   const activeExercise = state.activeExerciseId
     ? session.exercises.find((e) => e.exerciseId === state.activeExerciseId) ?? null
     : null;
 
+  const handleLog = useCallback(
+    (exerciseId: string, set: { weightKg: number; reps: number; rir: number }) => {
+      const order = getProgress(state, exerciseId).sets.length + 1;
+      dispatch({ type: 'log-set', exerciseId, set });
+      void syncLog(exerciseId, { ...set, order });
+    },
+    [state, syncLog],
+  );
+
+  const handleUndo = useCallback(
+    (exerciseId: string) => {
+      dispatch({ type: 'undo-last-set', exerciseId });
+      void syncUndo(exerciseId);
+    },
+    [syncUndo],
+  );
+
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
     dispatch({ type: 'reset' });
-  }, [date]);
+    // On repart sur une exécution neuve au prochain log (la précédente reste en base).
+    executionIdRef.current = null;
+  }, [session, date]);
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
+      {unsynced && <UnsyncedBanner />}
       {activeExercise ? (
         <CapturePanel
           key={activeExercise.exerciseId}
           exercise={activeExercise}
           progress={getProgress(state, activeExercise.exerciseId)}
           dispatch={dispatch}
+          onLog={(set) => handleLog(activeExercise.exerciseId, set)}
+          onUndo={() => handleUndo(activeExercise.exerciseId)}
         />
       ) : (
         <>
@@ -57,27 +237,57 @@ export function CaptureScreen() {
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
           />
-          <ResetBar state={state} onReset={handleReset} />
+          <ResetBar session={session} state={state} onReset={handleReset} />
         </>
       )}
     </div>
   );
 }
 
+/** Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé. */
+function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
+  const ids = new Set([...Object.keys(a.progress), ...Object.keys(b.progress)]);
+  const progress: CaptureState['progress'] = {};
+  for (const id of ids) {
+    const pa = a.progress[id];
+    const pb = b.progress[id];
+    if (!pa) progress[id] = pb;
+    else if (!pb) progress[id] = pa;
+    else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
+  }
+  return { ...a, progress };
+}
+
+function UnsyncedBanner() {
+  return (
+    <div
+      className="mx-auto flex w-full max-w-md items-center gap-2 px-4 pt-3 text-xs text-warn"
+      role="status"
+      aria-live="polite"
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
+      Non synchronisé — tes séries sont gardées sur l&apos;appareil.
+    </div>
+  );
+}
+
 // --- Panneau + barre d'action fixe (zone basse du pouce) --------------------
 
-import type { Dispatch } from 'react';
-import type { SessionExercise } from './fixtures';
-import type { CaptureAction, ExerciseProgress } from './state';
+import type { SessionExercise } from './data';
+import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 
 function CapturePanel({
   exercise,
   progress,
   dispatch,
+  onLog,
+  onUndo,
 }: {
   exercise: SessionExercise;
   progress: ExerciseProgress;
   dispatch: Dispatch<CaptureAction>;
+  onLog: (set: { weightKg: number; reps: number; rir: number }) => void;
+  onUndo: () => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre fixe puisse logger.
   const [draft, setDraft] = useState<{ weightKg: number; reps: number; rir: number } | null>(
@@ -92,12 +302,12 @@ function CapturePanel({
 
   const logSet = useCallback(
     (set: { weightKg: number; reps: number; rir: number }) => {
-      dispatch({ type: 'log-set', exerciseId: exercise.exerciseId, set });
+      onLog(set);
       setAnnounce(
         `Série ${loggedCount + 1} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [dispatch, exercise.exerciseId, loggedCount],
+    [onLog, loggedCount],
   );
 
   return (
@@ -106,7 +316,7 @@ function CapturePanel({
         exercise={exercise}
         progress={progress}
         onUndoLast={() => {
-          dispatch({ type: 'undo-last-set', exerciseId: exercise.exerciseId });
+          onUndo();
           setAnnounce('Dernière série annulée.');
         }}
         onSkip={() => dispatch({ type: 'skip-exercise', exerciseId: exercise.exerciseId })}
@@ -149,10 +359,12 @@ function CapturePanel({
 }
 
 function ResetBar({
+  session,
   state,
   onReset,
 }: {
-  state: ReturnType<typeof initialState>;
+  session: Session;
+  state: CaptureState;
   onReset: () => void;
 }) {
   const touched = session.exercises.some((ex) => {

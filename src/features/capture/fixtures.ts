@@ -1,5 +1,10 @@
-// Données MOCKÉES de la séance « Upper A » (pas de Supabase cette passe).
-// Tout est typé avec les types du domaine — la couche réseau les remplacera plus tard.
+// Données MOCKÉES de la séance « Upper A ».
+//
+// N'EST PLUS sur le chemin réel de l'app : la capture charge sa séance depuis
+// Supabase (cf. data.ts + CaptureScreen.tsx). Conservé comme fixture pour les
+// tests et les screenshots de revue design, et comme contrat de FORME : `Session`
+// / `SessionExercise` ci-dessous définissent ce que l'UI consomme, que la source
+// soit la fixture ou Supabase.
 import type { Prescription, PerformedSet } from '../../domain/types';
 
 /** Un exercice de la séance courante, avec son plan cible et sa référence (dernière fois). */

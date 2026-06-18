@@ -64,6 +64,27 @@ export function initialState(session: Session, date = todayIso()): CaptureState 
   };
 }
 
+/**
+ * État construit à partir du réalisé persisté en base (Supabase fait foi au
+ * reload). `progressByExercise` = séries déjà loggées par exerciseId.
+ */
+export function hydratedState(
+  session: Session,
+  progressByExercise: Record<string, PerformedSet[]>,
+  date = todayIso(),
+): CaptureState {
+  const progress: Record<string, ExerciseProgress> = {};
+  for (const [exerciseId, sets] of Object.entries(progressByExercise)) {
+    if (sets.length > 0) progress[exerciseId] = { sets, skipped: false };
+  }
+  return {
+    sessionId: session.id,
+    date,
+    activeExerciseId: null,
+    progress,
+  };
+}
+
 export function captureReducer(state: CaptureState, action: CaptureAction): CaptureState {
   switch (action.type) {
     case 'open-exercise':
