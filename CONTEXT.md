@@ -23,7 +23,7 @@ Consigne personnelle et persistante qu'un utilisateur attache à un exercice (de
 _Avoid_: Description, commentaire
 
 **Groupe musculaire principal**:
-L'unique muscle qu'un exercice cible en priorité. Sert à regrouper et filtrer les exercices dans l'analyse (jamais à calculer un volume).
+L'unique muscle qu'un exercice cible en priorité. Sert à regrouper et filtrer les exercices dans l'analyse (jamais à calculer un volume). Vocabulaire canonique (15) : pectoraux · avant épaule · milieu épaule · arrière épaule · trapèzes · dorsaux · biceps · triceps · brachioradial · abdominaux · quadriceps · ischio-jambiers · adducteurs · fessiers · mollets.
 _Avoid_: Volume musculaire, muscle secondaire
 
 ### Séances & routines
