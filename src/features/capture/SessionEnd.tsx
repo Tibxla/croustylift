@@ -36,6 +36,8 @@ interface SessionEndProps {
   onSave: (values: SessionEndValues) => Promise<void> | void;
   /** Retour à la capture (la séance n'est pas close). */
   onBack: () => void;
+  /** Repart sur une séance fraîche, depuis l'écran de confirmation de clôture. */
+  onNewSession: () => void;
 }
 
 const BPM_DEFAULT = 130;
@@ -46,7 +48,7 @@ function intFormat(value: number): string {
   return String(Math.round(value));
 }
 
-export function SessionEnd({ summary, durationMin, onSave, onBack }: SessionEndProps) {
+export function SessionEnd({ summary, durationMin, onSave, onBack, onNewSession }: SessionEndProps) {
   // BPM : activé (saisi) ? + sa valeur. Replié par défaut = « non saisi ».
   const [bpmOn, setBpmOn] = useState(false);
   const [bpm, setBpm] = useState(BPM_DEFAULT);
@@ -76,7 +78,14 @@ export function SessionEnd({ summary, durationMin, onSave, onBack }: SessionEndP
   const handleSkip = () => void commit({});
 
   if (saved) {
-    return <SessionDone summary={summary} durationMin={durationMin} values={saved} />;
+    return (
+      <SessionDone
+        summary={summary}
+        durationMin={durationMin}
+        values={saved}
+        onNewSession={onNewSession}
+      />
+    );
   }
 
   return (
@@ -280,10 +289,12 @@ function SessionDone({
   summary,
   durationMin,
   values,
+  onNewSession,
 }: {
   summary: SessionSummary;
   durationMin: number | null;
   values: SessionEndValues;
+  onNewSession: () => void;
 }) {
   const hasBpm = typeof values.bpmAvg === 'number';
 
@@ -328,6 +339,14 @@ function SessionDone({
       <p className="mt-6 text-center text-sm text-ink-muted">
         C&apos;est noté. Tu peux ranger le téléphone.
       </p>
+
+      <button
+        type="button"
+        onClick={onNewSession}
+        className="mt-8 flex h-12 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+      >
+        Nouvelle séance
+      </button>
     </div>
   );
 }

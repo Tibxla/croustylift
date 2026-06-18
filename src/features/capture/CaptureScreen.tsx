@@ -335,6 +335,16 @@ function CaptureBoard({
     setPhase('capture');
   }, [session, date]);
 
+  // Après clôture : repartir sur une séance fraîche. On NE vide PAS la file —
+  // les ops de la séance close doivent encore se synchroniser (contrairement à
+  // « Réinitialiser » qui abandonne). Nouvelle exécution, progrès + chrono à zéro.
+  const handleNewSession = useCallback(() => {
+    clearPersisted(session, date);
+    executionEnqueuedRef.current = false;
+    dispatch({ type: 'reset', executionId: newId() });
+    setPhase('capture');
+  }, [session, date]);
+
   // --- Flux de fin de séance ------------------------------------------------
   // Phase locale : capture (sélecteur + panneaux) -> fin (clôture, BPM optionnel).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd.
@@ -381,6 +391,7 @@ function CaptureBoard({
           durationMin={durationMin}
           onSave={handleFinish}
           onBack={() => setPhase('capture')}
+          onNewSession={handleNewSession}
         />
       </div>
     );
