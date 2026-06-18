@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Croustylift</title>
+
+    <!-- PWA : meta iOS (Safari ne lit pas le manifest W3C pour l'installation) -->
+    <!-- apple-mobile-web-app-capable active le mode "standalone" sur iOS :
+         l'app s'ouvre sans la barre Safari une fois ajoutee a l'ecran d'accueil. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Croustylift" />
+    <!-- Icone pour l'ecran d'accueil iOS (180x180 recommande pour iPhone retina) -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Couleur de theme : violet electrique coherent avec DESIGN.md -->
+    <meta name="theme-color" content="#7c3aed" />
   </head>
   <body>
     <div id="root"></div>

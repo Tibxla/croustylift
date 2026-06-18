@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Fond quasi-noir teinté violet (Noir d'instrument, DESIGN.md) -->
+  <rect width="512" height="512" rx="80" fill="#0d0d12"/>
+  <!-- Lettre C en violet electrique (accent unique, the One Voice Rule) -->
+  <text
+    x="256"
+    y="360"
+    font-family="system-ui, -apple-system, 'Helvetica Neue', sans-serif"
+    font-size="300"
+    font-weight="700"
+    text-anchor="middle"
+    fill="#7c3aed"
+  >C</text>
+</svg>
