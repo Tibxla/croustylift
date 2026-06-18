@@ -31,6 +31,7 @@ import {
   reorderSeances,
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
+import { ExportButton } from '../export/ExportButton';
 
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
 type SeanceRow = Database['public']['Tables']['seances']['Row'];
@@ -305,7 +306,27 @@ export function RoutinesView({
           </div>
         </>
       )}
+
+      <DataSection />
     </div>
+  );
+}
+
+/**
+ * Section « Données » : backup JSON de tout le compte (issue #8). Discrète, en
+ * bas de l'écran d'accueil des routines : c'est l'endroit « au calme » naturel
+ * pour exporter, sans alourdir la capture en salle.
+ */
+function DataSection() {
+  return (
+    <section className="mt-8 border-t border-line pt-5">
+      <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">Données</h3>
+      <p className="mb-3 text-sm text-ink-muted">
+        Télécharge une sauvegarde JSON de tes exos perso, routines, séances et historique.
+        Garde-la en cas de perte du stockage local.
+      </p>
+      <ExportButton />
+    </section>
   );
 }
 
