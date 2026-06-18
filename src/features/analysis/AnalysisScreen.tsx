@@ -12,20 +12,33 @@
 // est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
 // dans le harness de screenshot, sans réseau ni user de test.
 import { useEffect, useState } from 'react';
-import { loadAnalyses, type ExerciseAnalysis } from './data';
+import {
+  loadAnalyses,
+  loadRawLog,
+  loadSessionMetrics,
+  type ExerciseAnalysis,
+} from './data';
+import type { SessionMetricPoint } from './session-metrics';
+import type { RawLogEntry } from './raw-log';
 import { E1rmChart } from './E1rmChart';
 import { SecondaryChart } from './SecondaryChart';
+import { SessionMetricsChart } from './SessionMetricsChart';
+import { RawLogView } from './RawLogView';
 import { ProgressionBadge } from './ProgressionBadge';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
+
+/** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
+type AnalysisTab = 'curves' | 'journal';
 
 type LoadState =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; analyses: ExerciseAnalysis[] };
+  | { phase: 'ready'; analyses: ExerciseAnalysis[]; metrics: SessionMetricPoint[] };
 
 export function AnalysisScreen() {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
+  const [tab, setTab] = useState<AnalysisTab>('curves');
 
   useEffect(() => {
     let active = true;
@@ -33,9 +46,15 @@ export function AnalysisScreen() {
 
     void (async () => {
       try {
-        const analyses = await loadAnalyses();
+        // Les courbes (e1RM par exo) et les métriques de séance (BPM/durée) sont
+        // toutes deux des vues globales de l'onglet « Courbes » : on les charge
+        // ensemble, en parallèle.
+        const [analyses, metrics] = await Promise.all([
+          loadAnalyses(),
+          loadSessionMetrics(),
+        ]);
         if (!active) return;
-        setLoad({ phase: 'ready', analyses });
+        setLoad({ phase: 'ready', analyses, metrics });
       } catch (err) {
         if (!active) return;
         setLoad({
@@ -70,27 +89,189 @@ export function AnalysisScreen() {
     );
   }
 
-  return <AnalysisList analyses={load.analyses} />;
+  return (
+    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
+      <AnalysisTabs active={tab} onChange={setTab} />
+      {tab === 'curves' ? (
+        <CurvesTab analyses={load.analyses} metrics={load.metrics} />
+      ) : (
+        <JournalTab />
+      )}
+    </div>
+  );
 }
 
-// --- Présentation (pure, montable sans réseau) ------------------------------
+// Onglets « Courbes » / « Journal » : un segmenté discret qui REMPLACE l'unique
+// titre « Progression » sans ajouter d'entrée de nav (cf. périmètre des issues).
+// L'onglet actif porte le seul accent (One Voice Rule : la sélection courante).
+function AnalysisTabs({
+  active,
+  onChange,
+}: {
+  active: AnalysisTab;
+  onChange: (tab: AnalysisTab) => void;
+}) {
+  const tabs: { id: AnalysisTab; label: string }[] = [
+    { id: 'curves', label: 'Courbes' },
+    { id: 'journal', label: 'Journal' },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Vue de l'analyse"
+      className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1"
+    >
+      {tabs.map(({ id, label }) => {
+        const selected = id === active;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(id)}
+            className={`h-9 rounded-lg text-sm font-medium transition active:scale-[0.98] ${
+              selected
+                ? 'bg-accent-strong text-on-accent'
+                : 'text-ink-muted'
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-export function AnalysisList({ analyses }: { analyses: ExerciseAnalysis[] }) {
-  if (analyses.length === 0) {
+// --- Onglet « Courbes » (pur, montable sans réseau) -------------------------
+
+/**
+ * L'onglet courbes : la liste des exos (e1RM par exo) plus, en tête quand il y a
+ * de quoi, le graphe BPM moyen + durée de séance (cf. issue #28). Pur : il prend
+ * des `ExerciseAnalysis[]` et des `SessionMetricPoint[]`, donc montable tel quel
+ * dans le harness de screenshot, sans réseau ni user de test.
+ */
+export function CurvesTab({
+  analyses,
+  metrics,
+}: {
+  analyses: ExerciseAnalysis[];
+  metrics: SessionMetricPoint[];
+}) {
+  if (analyses.length === 0 && metrics.length === 0) {
     return <EmptyState />;
   }
 
   return (
-    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
-      <h2 className="mb-4 text-lg font-semibold tracking-tight">Progression</h2>
-      <ul className="flex flex-col gap-3">
-        {analyses.map((analysis) => (
-          <li key={analysis.exerciseId}>
-            <ExerciseAnalysisCard analysis={analysis} />
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {metrics.length > 0 && (
+        <section className="mb-3 rounded-2xl border border-line bg-surface p-4">
+          <h3 className="mb-3 text-base font-medium leading-tight">Cardio · séance</h3>
+          <SessionMetricsChart points={metrics} />
+          <div className="mt-2 flex items-center gap-4 text-xs text-ink-muted">
+            <span className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-2 rounded-full bg-accent"
+                aria-hidden="true"
+              />
+              BPM moyen
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-2 w-2 rounded-full bg-ink-muted"
+                aria-hidden="true"
+              />
+              Durée (min)
+            </span>
+          </div>
+        </section>
+      )}
+
+      {analyses.length > 0 && (
+        <ul className="flex flex-col gap-3">
+          {analyses.map((analysis) => (
+            <li key={analysis.exerciseId}>
+              <ExerciseAnalysisCard analysis={analysis} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+// --- Onglet « Journal » : log brut des lifts (cf. issue #27) -----------------
+
+// Le log brut peut être lourd (tout l'historique de séries) ; on ne le charge
+// qu'à l'ouverture de l'onglet, pas avec le reste de l'écran. Composant à part
+// pour porter son propre cycle de chargement, le rendu restant pur (RawLogView).
+function JournalTab() {
+  const [load, setLoad] = useState<
+    | { phase: 'loading' }
+    | { phase: 'error'; message: string }
+    | { phase: 'ready'; entries: RawLogEntry[] }
+  >({ phase: 'loading' });
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoad({ phase: 'loading' });
+
+    void (async () => {
+      try {
+        const entries = await loadRawLog();
+        if (!active) return;
+        setLoad({ phase: 'ready', entries });
+      } catch (err) {
+        if (!active) return;
+        setLoad({
+          phase: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  if (load.phase === 'loading') {
+    return <JournalSkeleton />;
+  }
+
+  if (load.phase === 'error') {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="text-sm text-ink-muted">Impossible de charger ton journal.</p>
+        <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        >
+          Réessayer
+        </button>
+      </div>
+    );
+  }
+
+  return <RawLogView entries={load.entries} />;
+}
+
+function JournalSkeleton() {
+  return (
+    <ul className="flex flex-col gap-3" role="status" aria-label="Chargement du journal">
+      {[0, 1, 2].map((i) => (
+        <li key={i} className="rounded-2xl border border-line bg-surface p-4">
+          <div className="mb-3 h-4 w-40 animate-pulse rounded bg-surface-2" />
+          <div className="h-3 w-28 animate-pulse rounded bg-surface-2" />
+          <div className="mt-2 h-3 w-48 animate-pulse rounded bg-surface-2" />
+          <div className="mt-1.5 h-3 w-44 animate-pulse rounded bg-surface-2" />
+        </li>
+      ))}
+    </ul>
   );
 }
 

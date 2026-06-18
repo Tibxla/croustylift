@@ -15,6 +15,8 @@ import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
 import { detectBlocks } from '../../domain/block';
 import { buildConfigTimeline } from './config-timeline';
+import { buildRawLog, type RawLogEntry } from './raw-log';
+import { buildSessionMetrics, type SessionMetricPoint } from './session-metrics';
 import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
 
 /** Un exercice pour lequel l'user a au moins une série loggée. */
@@ -215,4 +217,87 @@ export async function loadBlockComparisonData(
     loadBlocks(),
   ]);
   return { executions, blocks };
+}
+
+// --- Log brut des lifts (cf. issue #27) ---------------------------------------
+
+/**
+ * Le log brut de l'user : toutes ses séries loggées, regroupées par exécution
+ * puis par exo (cf. `buildRawLog`). On lit `performed_sets` joint à la date de
+ * l'exécution et au nom de l'exo (calque `loadExerciseExecutions`, sans filtre
+ * d'exo : on veut TOUT l'historique). RLS scope déjà à l'user connecté. Le
+ * regroupement/tri est fait par le module pur `buildRawLog` ; cette couche ne
+ * fait que mapper les lignes et déléguer.
+ */
+export async function loadRawLog(): Promise<RawLogEntry[]> {
+  const { data, error } = await supabase
+    .from('performed_sets')
+    .select(
+      'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on )',
+    );
+  if (error) throw error;
+
+  type Row = {
+    weight_kg: number;
+    reps: number;
+    rir: number;
+    set_order: number;
+    execution_id: string;
+    exercise_id: string;
+    exercises: { name: string } | null;
+    executions: { performed_on: string } | null;
+  };
+  const rows = (data ?? []) as unknown as Row[];
+
+  return buildRawLog(
+    rows.flatMap((row) => {
+      const date = row.executions?.performed_on;
+      if (!date) return []; // garde-fou : série orpheline d'exécution.
+      return [
+        {
+          executionId: row.execution_id,
+          date,
+          exerciseId: row.exercise_id,
+          exerciseName: row.exercises?.name ?? '(exercice inconnu)',
+          set: {
+            weightKg: Number(row.weight_kg),
+            reps: row.reps,
+            rir: row.rir,
+            order: row.set_order,
+          },
+        },
+      ];
+    }),
+  );
+}
+
+// --- BPM moyen + durée de séance (cf. issue #28) ------------------------------
+
+/**
+ * Les points BPM/durée de l'user dans le temps (cf. `buildSessionMetrics`). On
+ * lit directement `executions` (date + les deux métriques de séance), scopé RLS.
+ * Le filtrage (au moins une métrique) et le tri sont faits par le module pur ;
+ * cette couche ne fait que mapper et déléguer. Renvoie [] si aucune métrique :
+ * l'UI n'affiche alors pas de graphe.
+ */
+export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
+  const { data, error } = await supabase
+    .from('executions')
+    .select('performed_on, bpm_avg, duration_min');
+  if (error) throw error;
+
+  type Row = {
+    performed_on: string;
+    bpm_avg: number | null;
+    duration_min: number | null;
+  };
+  const rows = (data ?? []) as unknown as Row[];
+
+  return buildSessionMetrics(
+    rows.map((row) => ({
+      date: row.performed_on,
+      bpmAvg: row.bpm_avg === null ? null : Number(row.bpm_avg),
+      durationMin: row.duration_min === null ? null : Number(row.duration_min),
+    })),
+  );
 }
