@@ -35,6 +35,18 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
 }
 
+/*
+  Layout partagé — hauteur de la barre d'onglets persistante (BottomNav, App.tsx).
+  Centralisée ici (et non dans @theme, ce n'est pas un token de design Tailwind)
+  pour que la nav, les barres d'action fixes de la capture et le padding-bas des
+  surfaces s'alignent sur UNE seule source. `--nav-offset` ajoute la safe-area iOS
+  pour positionner les barres `fixed` juste au-dessus de la nav.
+*/
+:root {
+  --nav-height: 3.5rem; /* = h-14, hauteur d'un onglet */
+  --nav-offset: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+}
+
 html,
 body,
 #root {

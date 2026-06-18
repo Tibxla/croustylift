@@ -144,7 +144,7 @@ export function SessionEnd({ summary, durationMin, onSave, onBack }: SessionEndP
       )}
 
       {/* Actions fixes en bas (zone du pouce). Primaire = accent violet. */}
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
           <button
             type="button"

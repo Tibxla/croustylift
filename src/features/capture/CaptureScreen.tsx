@@ -419,7 +419,7 @@ function CapturePanel({
       </p>
 
       {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. */}
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-md">
           <button
             type="button"
@@ -476,7 +476,7 @@ function ResetBar({
   if (!touched) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
       <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
         {/* « Terminer la séance » dès qu'une série est loggée. Caché sinon
             (un exo seulement passé n'ouvre pas le flux de fin). */}

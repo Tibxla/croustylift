@@ -25,3 +25,4 @@ Thumbs.db
 
 # Artefacts Playwright CLI (vérif e2e locale)
 .playwright-cli/
+.vercel

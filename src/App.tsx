@@ -7,11 +7,11 @@ import { SeancesScreen } from './features/authoring/SeancesScreen'
 
 type Surface = 'capture' | 'analysis' | 'seances'
 
-// Hauteur de la barre d'onglets (+ safe-area iOS). Centralisée ici pour que :
-//   - chaque surface réserve l'espace en bas (padding) ;
-//   - les barres d'action fixes de la capture (`fixed bottom-0`, qu'on ne
-//     modifie pas) soient repoussées AU-DESSUS de la nav (cf. <style> plus bas).
-const NAV_OFFSET = 'calc(3.5rem + env(safe-area-inset-bottom, 0px))'
+// La hauteur de la tab bar vit dans une variable CSS partagée `--nav-height`
+// (`--nav-offset` = + safe-area iOS), définie une seule fois sur `:root`
+// (index.css). La surface réserve l'espace en bas via `var(--nav-offset)` et les
+// barres d'action fixes de la capture s'y alignent (`bottom-[var(--nav-offset)]`),
+// sans <style> injecté ni couplage cross-feature.
 
 function App() {
   const { session, user, loading, signOut } = useAuth()
@@ -35,15 +35,6 @@ function App() {
 
   return (
     <main className="min-h-screen bg-bg text-ink">
-      {/* Les barres d'action fixes de la capture (`fixed bottom-0`) sont
-          repoussées au-dessus de la tab bar persistante, sans toucher leur code.
-          La tab bar (z-30) reste au-dessus de tout le reste. */}
-      <style>{`
-        .app-surface > div .fixed.inset-x-0.bottom-0 {
-          bottom: ${NAV_OFFSET};
-        }
-      `}</style>
-
       <header className="flex h-14 items-center justify-between border-b border-line px-4">
         <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
         <div className="flex items-center gap-3">
@@ -62,10 +53,7 @@ function App() {
         </div>
       </header>
 
-      <div
-        className="app-surface"
-        style={{ paddingBottom: NAV_OFFSET }}
-      >
+      <div style={{ paddingBottom: 'var(--nav-offset)' }}>
         {surface === 'capture' && <CaptureScreen />}
         {surface === 'analysis' && <AnalysisScreen />}
         {surface === 'seances' && <SeancesScreen />}
