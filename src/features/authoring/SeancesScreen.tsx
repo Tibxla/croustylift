@@ -32,6 +32,7 @@ import {
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
 import { ExportButton } from '../export/ExportButton';
+import { ImportButton } from '../export/ImportButton';
 
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
 type SeanceRow = Database['public']['Tables']['seances']['Row'];
@@ -323,9 +324,13 @@ function DataSection() {
       <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">Données</h3>
       <p className="mb-3 text-sm text-ink-muted">
         Télécharge une sauvegarde JSON de tes exos perso, routines, séances et historique.
-        Garde-la en cas de perte du stockage local.
+        Garde-la en cas de perte du stockage local. Pour restaurer, importe le fichier
+        de sauvegarde.
       </p>
-      <ExportButton />
+      <div className="flex flex-col gap-2.5">
+        <ExportButton />
+        <ImportButton />
+      </div>
     </section>
   );
 }
