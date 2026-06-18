@@ -61,6 +61,7 @@ export function SeancesScreen() {
   if (view.kind === 'editor') {
     return (
       <SeanceEditor
+        seanceId={view.seance.id}
         seanceName={view.seance.name}
         onBack={() => setView({ kind: 'seances', routine: view.routine })}
       />
