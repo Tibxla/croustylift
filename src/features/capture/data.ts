@@ -15,6 +15,7 @@ import type {
   Prescription,
 } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
+import { getCurrentRoutineId, getCurrentVersionId, listSeances } from '../authoring/data';
 import { todayIso } from './state';
 import type { Session, SessionExercise } from './fixtures';
 
@@ -27,6 +28,74 @@ export interface LoadedSeance {
   seance: { id: string; name: string };
   /** Version courante (= version max) de la séance. */
   seanceVersionId: string;
+}
+
+// --- Choix de la séance dans la routine courante (issue #1) -------------------
+//
+// En arrivant en Capture, l'user choisit QUELLE séance de sa routine courante il
+// attaque, au lieu de toujours charger la 1ʳᵉ séance de la 1ʳᵉ routine. La
+// fixture de démo (cf. fixtures.ts) ne sert plus que de FALLBACK quand l'user n'a
+// rien d'exploitable (aucune routine courante, ou routine courante sans séance).
+
+/** Une séance proposée au choix en Capture : juste de quoi l'afficher et la résoudre. */
+export interface SeanceChoice {
+  id: string;
+  name: string;
+}
+
+/**
+ * Source de la Capture, dérivée de la routine courante :
+ *   - `demo`   : aucune séance choisissable -> on charge la séance de démo (fallback) ;
+ *   - `choose` : la routine courante a des séances -> l'user en choisit une.
+ */
+export type CaptureSource =
+  | { kind: 'demo' }
+  | { kind: 'choose'; seances: SeanceChoice[] };
+
+/**
+ * Tranche la source de la Capture (logique PURE, testée) à partir de l'id de
+ * routine courante et des séances de cette routine, déjà lus côté Supabase.
+ *
+ * Fallback démo si : aucune routine courante (`null`) OU routine courante sans
+ * séance (rien à choisir). Sinon : choix parmi les séances de la routine courante.
+ */
+export function decideCaptureSource(
+  currentRoutineId: string | null,
+  seances: SeanceChoice[],
+): CaptureSource {
+  if (currentRoutineId === null || seances.length === 0) {
+    return { kind: 'demo' };
+  }
+  return { kind: 'choose', seances };
+}
+
+/**
+ * Lit la routine courante (getCurrentRoutineId) et ses séances, puis tranche la
+ * source de la Capture via `decideCaptureSource`. C'est le point d'entrée de
+ * l'écran : il dit s'il faut proposer un choix ou retomber sur la démo.
+ */
+export async function loadCaptureSource(): Promise<CaptureSource> {
+  const routineId = await getCurrentRoutineId();
+  if (routineId === null) return decideCaptureSource(null, []);
+
+  const seances = await listSeances(routineId);
+  const choices: SeanceChoice[] = seances.map((s) => ({ id: s.id, name: s.name }));
+  return decideCaptureSource(routineId, choices);
+}
+
+/**
+ * Résout une séance choisie vers sa version courante (= version max), prête à
+ * être chargée par `loadSeanceForCapture`. Réutilise `getCurrentVersionId` de
+ * l'authoring (pas de duplication de la résolution « version courante »).
+ * Lève si la séance n'a aucune version (template incomplet, ne devrait pas
+ * arriver : createSeance crée toujours une v1).
+ */
+export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSeance> {
+  const versionId = await getCurrentVersionId(seance.id);
+  if (!versionId) {
+    throw new Error(`Séance ${seance.id} sans version : template incomplet.`);
+  }
+  return { seance: { id: seance.id, name: seance.name }, seanceVersionId: versionId };
 }
 
 // --- Lecture du catalogue -----------------------------------------------------

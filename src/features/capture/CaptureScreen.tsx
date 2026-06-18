@@ -16,12 +16,16 @@ import {
 import {
   deleteSetById,
   ensureStarterSeance,
+  loadCaptureSource,
+  loadChosenSeance,
   loadReference,
   loadSeanceForCapture,
   loadTodayProgress,
   updateExecution,
   upsertExecution,
   upsertSet,
+  type LoadedSeance,
+  type SeanceChoice,
   type Session,
 } from './data';
 import {
@@ -49,6 +53,7 @@ import { SessionEnd, type SessionEndValues, type SessionSummary } from './Sessio
 
 type LoadState =
   | { phase: 'loading' }
+  | { phase: 'choosing'; seances: SeanceChoice[] }
   | { phase: 'error'; message: string }
   | { phase: 'ready'; session: Session; seanceVersionId: string };
 
@@ -58,35 +63,64 @@ export function CaptureScreen() {
   // Le réalisé Supabase du jour, posé par l'effet de chargement, lu par CaptureBoard.
   const hydrationRef = useRef<Record<string, PerformedSet[]>>({});
 
+  // Charge une séance résolue (sa version courante) vers la phase « ready » :
+  // template -> références par exo -> réhydratation du réalisé du jour. Le drapeau
+  // `active` évite de poser l'état si le composant s'est démonté entre-temps
+  // (changement d'onglet pendant le chargement). Partagé entre le fallback démo
+  // et la séance choisie dans la routine courante.
+  const loadSeance = useCallback(
+    async ({ seance, seanceVersionId }: LoadedSeance, active: () => boolean) => {
+      const base = await loadSeanceForCapture(seance, seanceVersionId);
+
+      const [withRefs, todayProgress] = await Promise.all([
+        Promise.all(
+          base.exercises.map(async (ex) => ({
+            ...ex,
+            reference: await loadReference(ex.exerciseId),
+          })),
+        ),
+        loadTodayProgress(seanceVersionId),
+      ]);
+
+      if (!active()) return;
+      const session: Session = { ...base, exercises: withRefs };
+      // On transporte le réalisé chargé vers le reducer via un ref, posé AVANT
+      // le passage en « ready » pour qu'il soit prêt au 1ᵉʳ render de CaptureBoard.
+      hydrationRef.current = todayProgress;
+      setLoad({ phase: 'ready', session, seanceVersionId });
+    },
+    [],
+  );
+
+  // Au montage (et à chaque retour sur l'onglet Capture, qui REMONTE l'écran),
+  // on lit la routine courante : si elle a des séances, on en propose le choix ;
+  // sinon on retombe sur la séance de démo (ensureStarterSeance, idempotent).
   useEffect(() => {
-    let active = true;
+    let alive = true;
+    const active = () => alive;
     setLoad({ phase: 'loading' });
 
     void (async () => {
       try {
-        // 1. Garantit une séance de démarrage (idempotent), 2. charge son template,
-        // 3. enrichit chaque exo de sa référence, 4. réhydrate le réalisé du jour.
-        const { seance, seanceVersionId } = await ensureStarterSeance();
-        const base = await loadSeanceForCapture(seance, seanceVersionId);
+        const source = await loadCaptureSource();
+        if (!alive) return;
 
-        const [withRefs, todayProgress] = await Promise.all([
-          Promise.all(
-            base.exercises.map(async (ex) => ({
-              ...ex,
-              reference: await loadReference(ex.exerciseId),
-            })),
-          ),
-          loadTodayProgress(seanceVersionId),
-        ]);
+        if (source.kind === 'choose') {
+          // Choix d'une seule séance : inutile de demander, on la charge direct.
+          if (source.seances.length === 1) {
+            const chosen = await loadChosenSeance(source.seances[0]);
+            await loadSeance(chosen, active);
+            return;
+          }
+          setLoad({ phase: 'choosing', seances: source.seances });
+          return;
+        }
 
-        if (!active) return;
-        const session: Session = { ...base, exercises: withRefs };
-        // On transporte le réalisé chargé vers le reducer via un ref, posé AVANT
-        // le passage en « ready » pour qu'il soit prêt au 1ᵉʳ render de CaptureBoard.
-        hydrationRef.current = todayProgress;
-        setLoad({ phase: 'ready', session, seanceVersionId });
+        // Fallback démo : garantit la séance de démarrage (idempotent) et la charge.
+        const fallback = await ensureStarterSeance();
+        await loadSeance(fallback, active);
       } catch (err) {
-        if (!active) return;
+        if (!alive) return;
         setLoad({
           phase: 'error',
           message: err instanceof Error ? err.message : String(err),
@@ -95,9 +129,35 @@ export function CaptureScreen() {
     })();
 
     return () => {
-      active = false;
+      alive = false;
     };
-  }, [reloadKey]);
+  }, [reloadKey, loadSeance]);
+
+  // Clic sur une séance proposée : on la résout (version courante) et on charge.
+  const chooseSeance = useCallback(
+    (seance: SeanceChoice) => {
+      let alive = true;
+      const active = () => alive;
+      setLoad({ phase: 'loading' });
+      void (async () => {
+        try {
+          const chosen = await loadChosenSeance(seance);
+          await loadSeance(chosen, active);
+        } catch (err) {
+          if (!alive) return;
+          setLoad({
+            phase: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })();
+    },
+    [loadSeance],
+  );
+
+  if (load.phase === 'choosing') {
+    return <SeancePicker seances={load.seances} onPick={chooseSeance} />;
+  }
 
   if (load.phase === 'loading') {
     return (
@@ -136,6 +196,64 @@ export function CaptureScreen() {
       seanceVersionId={load.seanceVersionId}
       initialProgress={hydrationRef.current}
     />
+  );
+}
+
+// --- Choix de la séance (routine courante) ----------------------------------
+
+/**
+ * Sélecteur de séance à l'arrivée en Capture : « quelle séance de ta routine
+ * courante tu attaques ? ». N'apparaît que si la routine courante a au moins
+ * deux séances (une seule est chargée direct ; aucune retombe sur la démo).
+ * Calqué sur ExercisePicker pour l'unité visuelle (même conteneur, surfaces,
+ * chevron). Pas d'accent décoratif : le violet reste pour l'action et l'état.
+ */
+function SeancePicker({
+  seances,
+  onPick,
+}: {
+  seances: SeanceChoice[];
+  onPick: (seance: SeanceChoice) => void;
+}) {
+  return (
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-5">
+      <header className="mb-5">
+        <h2 className="text-2xl font-semibold tracking-tight text-ink">Ta séance</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          Quelle séance tu attaques aujourd&apos;hui ?
+        </p>
+      </header>
+
+      <ul className="flex flex-col gap-2.5">
+        {seances.map((seance) => (
+          <li key={seance.id}>
+            <button
+              type="button"
+              onClick={() => onPick(seance)}
+              className="group flex w-full items-center gap-3 rounded-2xl bg-surface px-4 py-4 text-left transition active:scale-[0.99] active:bg-surface-2"
+            >
+              <span className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+                {seance.name}
+              </span>
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="shrink-0 text-ink-muted"
+                aria-hidden="true"
+              >
+                <path d="M9 6l6 6-6 6" />
+              </svg>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
