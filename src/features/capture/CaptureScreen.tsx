@@ -1,24 +1,27 @@
 // Orchestrateur picker ↔ panneau. La séance vient de Supabase (vraies données,
-// scopées à l'user par RLS). L'UI reste pilotée par un reducer local ; Supabase
-// est persisté EN PARALLÈLE de chaque log/annulation. localStorage survit au
-// background. Écriture qui échoue -> on garde l'état local + badge « non synchronisé ».
+// scopées à l'user par RLS). L'UI reste pilotée par un reducer local ; la
+// DURABILITÉ passe par l'OUTBOX : chaque mutation écrit l'état local (UI
+// immédiate) ET enfile une op (outbox.ts), synchronisée en fond. Une écriture
+// qui échoue (wifi de salle coupé) reste en file et remonte SEULE au retour du
+// réseau. localStorage survit au background ; l'outbox survit au reload.
 import {
   useCallback,
   useEffect,
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type Dispatch,
 } from 'react';
 import {
+  deleteSetById,
   ensureStarterSeance,
-  finishExecution,
-  findOrCreateTodayExecution,
   loadReference,
   loadSeanceForCapture,
   loadTodayProgress,
-  persistSet,
-  removeLastSet,
+  updateExecution,
+  upsertExecution,
+  upsertSet,
   type Session,
 } from './data';
 import {
@@ -27,10 +30,18 @@ import {
   getProgress,
   hydratedState,
   loadPersisted,
+  newId,
   persist,
   statusOf,
   todayIso,
 } from './state';
+import {
+  enqueue,
+  flush,
+  pendingCount,
+  clearQueue,
+  type SyncFns,
+} from './outbox';
 import type { PerformedSet } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
@@ -128,6 +139,95 @@ export function CaptureScreen() {
   );
 }
 
+// --- Couche de synchronisation (outbox) -------------------------------------
+
+/**
+ * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
+ * toutes idempotentes par id (cf. data.ts). C'est le seul point de couplage
+ * entre l'outbox (logique pure) et Supabase.
+ */
+const syncFns: SyncFns = {
+  upsertExecution: (op) =>
+    upsertExecution({
+      id: op.id,
+      seanceVersionId: op.seanceVersionId,
+      performedOn: op.performedOn,
+    }),
+  insertSet: (op) =>
+    upsertSet({
+      id: op.id,
+      executionId: op.executionId,
+      exerciseId: op.exerciseId,
+      setOrder: op.setOrder,
+      weightKg: op.weightKg,
+      reps: op.reps,
+      rir: op.rir,
+    }),
+  deleteSet: (op) => deleteSetById(op.id),
+  updateExecution: (op) =>
+    updateExecution({ id: op.id, bpmAvg: op.bpmAvg, durationMin: op.durationMin }),
+};
+
+// --- Indicateur de sync réactif --------------------------------------------
+// La bannière est pilotée par la LONGUEUR de l'outbox + l'état réseau. On
+// expose la longueur via un petit store maison rafraîchi à chaque mutation /
+// flush / changement de connectivité, lu par useSyncExternalStore.
+
+const syncListeners = new Set<() => void>();
+
+/** À appeler après tout changement de file (enqueue / flush) pour rafraîchir l'UI. */
+function notifySync() {
+  for (const l of syncListeners) l();
+}
+
+function subscribeSync(cb: () => void): () => void {
+  syncListeners.add(cb);
+  const onOnlineOffline = () => cb();
+  window.addEventListener('online', onOnlineOffline);
+  window.addEventListener('offline', onOnlineOffline);
+  return () => {
+    syncListeners.delete(cb);
+    window.removeEventListener('online', onOnlineOffline);
+    window.removeEventListener('offline', onOnlineOffline);
+  };
+}
+
+/** Tente un flush puis notifie l'UI (longueur de file potentiellement changée). */
+async function attemptFlush(): Promise<void> {
+  try {
+    await flush(syncFns);
+  } finally {
+    notifySync();
+  }
+}
+
+/** Enfile une op, notifie l'UI, et tente un flush immédiat (sync en fond). */
+function enqueueAndFlush(...ops: Parameters<typeof enqueue>): void {
+  for (const op of ops) enqueue(op);
+  notifySync();
+  void attemptFlush();
+}
+
+export type SyncStatus = 'synced' | 'pending' | 'offline';
+
+/** Statut de synchro dérivé : file vide = synchronisé ; sinon hors-ligne / en attente. */
+function useSyncStatus(): { status: SyncStatus; pending: number } {
+  const pending = useSyncExternalStore(
+    subscribeSync,
+    () => pendingCount(),
+    () => 0,
+  );
+  const online =
+    useSyncExternalStore(
+      subscribeSync,
+      () => (typeof navigator === 'undefined' ? true : navigator.onLine),
+      () => true,
+    ) ?? true;
+
+  if (pending === 0) return { status: 'synced', pending };
+  return { status: online ? 'pending' : 'offline', pending };
+}
+
 // --- Le tableau de capture (séance chargée) ---------------------------------
 
 function CaptureBoard({
@@ -156,41 +256,32 @@ function CaptureBoard({
     persist(state);
   }, [state]);
 
-  // --- Synchro Supabase en parallèle ----------------------------------------
-  const [unsynced, setUnsynced] = useState(false);
-  // Id de l'exécution du jour, créé paresseusement au 1ᵉʳ log.
-  const executionIdRef = useRef<string | null>(null);
+  // --- Synchro via outbox ---------------------------------------------------
+  const { status, pending } = useSyncStatus();
 
-  const ensureExecution = useCallback(async (): Promise<string> => {
-    if (executionIdRef.current) return executionIdRef.current;
-    const id = await findOrCreateTodayExecution(seanceVersionId);
-    executionIdRef.current = id;
-    return id;
-  }, [seanceVersionId]);
+  // L'exécution est enfilée UNE fois par session, AVANT son premier set (la FK
+  // séries→exécution impose l'ordre, garanti aussi par le FIFO de l'outbox).
+  const executionEnqueuedRef = useRef(false);
+  const enqueueExecutionOnce = useCallback(() => {
+    if (executionEnqueuedRef.current) return;
+    executionEnqueuedRef.current = true;
+    enqueueAndFlush({
+      type: 'upsertExecution',
+      id: state.executionId,
+      seanceVersionId,
+      performedOn: date,
+    });
+  }, [state.executionId, seanceVersionId, date]);
 
-  const syncLog = useCallback(
-    async (exerciseId: string, set: PerformedSet) => {
-      try {
-        const executionId = await ensureExecution();
-        await persistSet(executionId, exerciseId, set, set.order);
-      } catch {
-        setUnsynced(true);
-      }
-    },
-    [ensureExecution],
-  );
-
-  const syncUndo = useCallback(
-    async (exerciseId: string) => {
-      try {
-        const executionId = await ensureExecution();
-        await removeLastSet(executionId, exerciseId);
-      } catch {
-        setUnsynced(true);
-      }
-    },
-    [ensureExecution],
-  );
+  // Déclencheurs de flush : au MONTAGE (reprise après reload offline) et à
+  // l'événement réseau 'online' (le wifi de salle revient). Le 3ᵉ déclencheur
+  // — après chaque enqueue — est porté par enqueueAndFlush.
+  useEffect(() => {
+    void attemptFlush();
+    const onOnline = () => void attemptFlush();
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
 
   const activeExercise = state.activeExerciseId
     ? session.exercises.find((e) => e.exerciseId === state.activeExerciseId) ?? null
@@ -199,26 +290,49 @@ function CaptureBoard({
   const handleLog = useCallback(
     (exerciseId: string, set: { weightKg: number; reps: number; rir: number }) => {
       const order = getProgress(state, exerciseId).sets.length + 1;
-      dispatch({ type: 'log-set', exerciseId, set });
-      void syncLog(exerciseId, { ...set, order });
+      const setId = newId();
+      // 1. UI immédiate. 2. Durabilité : exécution (1×) puis la série, dans l'ordre.
+      dispatch({ type: 'log-set', exerciseId, setId, set });
+      enqueueExecutionOnce();
+      enqueueAndFlush({
+        type: 'insertSet',
+        id: setId,
+        executionId: state.executionId,
+        exerciseId,
+        setOrder: order,
+        weightKg: set.weightKg,
+        reps: set.reps,
+        rir: set.rir,
+      });
     },
-    [state, syncLog],
+    [state, enqueueExecutionOnce],
   );
 
   const handleUndo = useCallback(
     (exerciseId: string) => {
+      // Id de la dernière série encore loggée localement : c'est elle qu'on annule.
+      const prev = getProgress(state, exerciseId);
+      const lastId = prev.setIds[prev.setIds.length - 1] ?? null;
       dispatch({ type: 'undo-last-set', exerciseId });
-      void syncUndo(exerciseId);
+      // `null` = série réhydratée de la base (pas d'id client connu) : rien à
+      // enfiler (le delete par id ne saurait pas quoi viser). Cas marginal :
+      // on annule en local sans op ; la base garde la ligne (rare, assumé).
+      if (lastId) {
+        enqueueAndFlush({ type: 'deleteSet', id: lastId });
+      }
     },
-    [syncUndo],
+    [state],
   );
 
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
-    dispatch({ type: 'reset' });
+    // Nouvelle exécution = id client neuf (la précédente reste en base). La file
+    // est vidée : ses ops visaient l'ancienne exécution, déjà close.
+    clearQueue();
+    notifySync();
+    executionEnqueuedRef.current = false;
+    dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
-    // On repart sur une exécution neuve au prochain log (la précédente reste en base).
-    executionIdRef.current = null;
   }, [session, date]);
 
   // --- Flux de fin de séance ------------------------------------------------
@@ -243,22 +357,25 @@ function CaptureBoard({
 
   const handleFinish = useCallback(
     async (values: SessionEndValues) => {
-      // Garantit l'exécution même si une synchro de série a échoué plus tôt
-      // (l'utilisateur a pu logger offline) : sans id, rien à clôturer.
-      const executionId = await ensureExecution();
-      // La durée vient du chrono (lancement -> clôture), pas d'une saisie.
-      await finishExecution(executionId, {
+      // Clôture via l'outbox : on enfile l'exécution (au cas où aucune série
+      // n'aurait encore créé l'op, p. ex. clôture juste après un log offline)
+      // PUIS la pose des métriques. La durée vient du chrono (lancement →
+      // clôture), pas d'une saisie. Tout remonte seul au retour du réseau.
+      enqueueExecutionOnce();
+      enqueueAndFlush({
+        type: 'updateExecution',
+        id: state.executionId,
         bpmAvg: values.bpmAvg,
         durationMin: durationMin ?? undefined,
       });
     },
-    [ensureExecution, durationMin],
+    [enqueueExecutionOnce, state.executionId, durationMin],
   );
 
   if (phase === 'finishing') {
     return (
       <div className="min-h-[calc(100vh-3.5rem)]">
-        {unsynced && <UnsyncedBanner />}
+        <SyncBanner status={status} pending={pending} />
         <SessionEnd
           summary={summary}
           durationMin={durationMin}
@@ -271,7 +388,7 @@ function CaptureBoard({
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
-      {unsynced && <UnsyncedBanner />}
+      <SyncBanner status={status} pending={pending} />
       {activeExercise ? (
         <CapturePanel
           key={activeExercise.exerciseId}
@@ -333,7 +450,9 @@ function buildSummary(session: Session, state: CaptureState): SessionSummary {
  * Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé.
  * `b` = état restauré du localStorage : son `startedAt` (le lancement réel,
  * persisté) prime sur celui fraîchement re-créé par l'hydratation Supabase, pour
- * que la durée chronométrée survive au passage en arrière-plan.
+ * que la durée chronométrée survive au passage en arrière-plan. Son `executionId`
+ * prime aussi : c'est l'exécution EN COURS, celle que visent les ops déjà en
+ * outbox (sinon le rejeu créerait une exécution orpheline).
  */
 function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   const ids = new Set([...Object.keys(a.progress), ...Object.keys(b.progress)]);
@@ -345,18 +464,48 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     else if (!pb) progress[id] = pa;
     else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
   }
-  return { ...a, startedAt: b.startedAt, progress };
+  return { ...a, executionId: b.executionId, startedAt: b.startedAt, progress };
 }
 
-function UnsyncedBanner() {
+/**
+ * Indicateur de synchronisation, piloté par la LONGUEUR de l'outbox :
+ *   - vide      → « Synchronisé » (vert, discret) ;
+ *   - en ligne  → « N en attente » (info, sync en cours) ;
+ *   - hors ligne→ « Hors ligne » (warn).
+ * Couleur ET texte portent toujours l'info (jamais la couleur seule). « Synchronisé »
+ * reste rendu pour stabiliser la mise en page et confirmer la reprise après coup.
+ */
+export function SyncBanner({ status, pending }: { status: SyncStatus; pending: number }) {
+  const variants: Record<
+    SyncStatus,
+    { dot: string; text: string; label: string }
+  > = {
+    synced: {
+      dot: 'bg-good',
+      text: 'text-ink-muted',
+      label: 'Synchronisé. Tout est en base.',
+    },
+    pending: {
+      dot: 'bg-accent',
+      text: 'text-ink-muted',
+      label: `Synchronisation… ${pending} en attente.`,
+    },
+    offline: {
+      dot: 'bg-warn',
+      text: 'text-warn',
+      label: `Hors ligne. ${pending} en attente, gardé sur l’appareil.`,
+    },
+  };
+  const v = variants[status];
+
   return (
     <div
-      className="mx-auto flex w-full max-w-md items-center gap-2 px-4 pt-3 text-xs text-warn"
+      className={`mx-auto flex w-full max-w-md items-center gap-2 px-4 pt-3 text-xs ${v.text}`}
       role="status"
       aria-live="polite"
     >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden="true" />
-      Non synchronisé. Tes séries sont gardées sur l&apos;appareil.
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${v.dot}`} aria-hidden="true" />
+      {v.label}
     </div>
   );
 }

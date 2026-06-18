@@ -10,12 +10,30 @@ export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
 export interface ExerciseProgress {
   /** Séries réellement loggées (ordre = index + 1). */
   sets: PerformedSet[];
+  /**
+   * Id CLIENT de chaque série (UUID, cf. ADR 0003), aligné par index avec `sets`.
+   * Généré au log, persisté avec l'état : c'est lui qui rend l'écriture Supabase
+   * idempotente (upsert/delete par id) et permet à l'outbox de viser exactement
+   * la bonne ligne au rejeu. Tableau parallèle car `PerformedSet` (domaine) ne
+   * porte pas d'id. Une série réhydratée depuis la base n'a pas d'id client :
+   * son entrée vaut `null` (pas de mutation outbox dessus, déjà en base).
+   */
+  setIds: (string | null)[];
   /** Exo explicitement passé par l'utilisateur (un trou assumé, pas un oubli). */
   skipped: boolean;
 }
 
 export interface CaptureState {
   sessionId: string;
+  /**
+   * Id de l'EXÉCUTION du jour, généré CÔTÉ CLIENT (`crypto.randomUUID()`) au
+   * démarrage de la session, AVANT toute écriture (cf. ADR 0003 : UUID client →
+   * les lignes créées offline remontent sans collision). Réutilisé tant que la
+   * session dure, persisté avec l'état pour survivre au background : un log
+   * offline et son upsert d'exécution partagent toujours le même id, donc le
+   * rejeu de l'outbox reste idempotent et la FK séries→exécution tient.
+   */
+  executionId: string;
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   date: string;
   /**
@@ -35,14 +53,30 @@ export interface CaptureState {
 export type CaptureAction =
   | { type: 'open-exercise'; exerciseId: string }
   | { type: 'back-to-picker' }
-  | { type: 'log-set'; exerciseId: string; set: Omit<PerformedSet, 'order'> }
+  // `setId` est l'UUID client de la série (cf. ADR 0003) : fourni par le caller
+  // pour que l'état local et l'op d'outbox partagent EXACTEMENT le même id.
+  | { type: 'log-set'; exerciseId: string; setId: string; set: Omit<PerformedSet, 'order'> }
   | { type: 'undo-last-set'; exerciseId: string }
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
-  | { type: 'reset' };
+  // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
+  | { type: 'reset'; executionId: string };
 
 function emptyProgress(): ExerciseProgress {
-  return { sets: [], skipped: false };
+  return { sets: [], setIds: [], skipped: false };
+}
+
+/**
+ * UUID généré côté client (cf. ADR 0003). Centralisé ici pour une éventuelle
+ * substitution en test, et pour tolérer un environnement sans `crypto.randomUUID`
+ * (fallback non-cryptographique mais suffisant pour distinguer des lignes locales).
+ */
+export function newId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback rarissime (très vieux runtime) : pas cryptographique, juste unique.
+  return `loc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function getProgress(state: CaptureState, exerciseId: string): ExerciseProgress {
@@ -66,6 +100,7 @@ export function todayIso(): string {
 export function initialState(session: Session, date = todayIso()): CaptureState {
   return {
     sessionId: session.id,
+    executionId: newId(),
     date,
     startedAt: Date.now(),
     activeExerciseId: null,
@@ -81,13 +116,19 @@ export function hydratedState(
   session: Session,
   progressByExercise: Record<string, PerformedSet[]>,
   date = todayIso(),
+  executionId = newId(),
 ): CaptureState {
   const progress: Record<string, ExerciseProgress> = {};
   for (const [exerciseId, sets] of Object.entries(progressByExercise)) {
-    if (sets.length > 0) progress[exerciseId] = { sets, skipped: false };
+    // Séries venues de la base : déjà persistées, pas d'id client (null) → elles
+    // ne génèrent aucune op d'outbox. L'outbox ne porte que le réalisé LOCAL.
+    if (sets.length > 0) {
+      progress[exerciseId] = { sets, setIds: sets.map(() => null), skipped: false };
+    }
   }
   return {
     sessionId: session.id,
+    executionId,
     date,
     startedAt: Date.now(),
     activeExerciseId: null,
@@ -112,6 +153,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
           ...state.progress,
           [action.exerciseId]: {
             sets: [...prev.sets, nextSet],
+            setIds: [...prev.setIds, action.setId],
             skipped: false,
           },
         },
@@ -128,6 +170,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
           [action.exerciseId]: {
             ...prev,
             sets: prev.sets.slice(0, -1),
+            setIds: prev.setIds.slice(0, -1),
           },
         },
       };
@@ -157,8 +200,15 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
     }
 
     case 'reset':
-      // Nouvelle séance = nouveau chrono : on ré-amorce startedAt.
-      return { ...state, startedAt: Date.now(), activeExerciseId: null, progress: {} };
+      // Nouvelle séance = nouveau chrono ET nouvelle exécution (id client neuf,
+      // fourni par le caller). L'exécution précédente reste en base.
+      return {
+        ...state,
+        executionId: action.executionId,
+        startedAt: Date.now(),
+        activeExerciseId: null,
+        progress: {},
+      };
 
     default:
       return state;
@@ -174,6 +224,28 @@ function storageKey(sessionId: string, date: string): string {
   return `${STORAGE_PREFIX}${sessionId}:${date}`;
 }
 
+/**
+ * Normalise le `progress` lu du cache : garantit un `setIds` aligné avec `sets`
+ * (un cache d'ancien format n'en avait pas → on remplit de `null`, ces séries
+ * passent pour « déjà connues localement », pas de mutation outbox dessus).
+ */
+function normalizeProgress(raw: unknown): Record<string, ExerciseProgress> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, ExerciseProgress> = {};
+  for (const [exerciseId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const p = value as Partial<ExerciseProgress>;
+    const sets = Array.isArray(p?.sets) ? p.sets : [];
+    const ids = Array.isArray(p?.setIds) ? p.setIds : [];
+    out[exerciseId] = {
+      sets,
+      // Aligne la longueur : complète les ids manquants par `null`.
+      setIds: sets.map((_, i) => (typeof ids[i] === 'string' ? (ids[i] as string) : null)),
+      skipped: Boolean(p?.skipped),
+    };
+  }
+  return out;
+}
+
 /** Charge l'exécution persistée pour cette séance/jour, ou null si rien/invalide. */
 export function loadPersisted(session: Session, date: string): CaptureState | null {
   if (typeof localStorage === 'undefined') return null;
@@ -184,6 +256,10 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
     if (parsed.sessionId !== session.id || parsed.date !== date) return null;
     return {
       sessionId: session.id,
+      // CONSERVE l'executionId persisté : un log offline et son upsert d'exécution
+      // doivent garder le même id à la restauration. Cache pré-executionId (ancien
+      // format) : on en forge un neuf pour ne pas casser la session restaurée.
+      executionId: typeof parsed.executionId === 'string' ? parsed.executionId : newId(),
       date,
       // CONSERVE le startedAt persisté (la durée survit au background). Si une
       // session pré-startedAt traînait en cache, on retombe sur « maintenant ».
@@ -193,7 +269,7 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
           : Date.now(),
       activeExerciseId:
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
-      progress: parsed.progress && typeof parsed.progress === 'object' ? parsed.progress : {},
+      progress: normalizeProgress(parsed.progress),
     };
   } catch {
     return null;

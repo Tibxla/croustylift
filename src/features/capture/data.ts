@@ -291,33 +291,11 @@ export async function loadReference(exerciseId: string): Promise<PerformedSet[] 
 }
 
 // --- Exécution du jour --------------------------------------------------------
-
-/**
- * Trouve l'exécution du jour (performed_on = aujourd'hui) pour cette version de
- * séance, sinon la crée. Idempotent à l'échelle du jour. Renvoie son id.
- */
-export async function findOrCreateTodayExecution(seanceVersionId: string): Promise<string> {
-  const today = todayIso();
-
-  const { data: existing, error: findErr } = await supabase
-    .from('executions')
-    .select('id')
-    .eq('seance_version_id', seanceVersionId)
-    .eq('performed_on', today)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (findErr) throw findErr;
-  if (existing) return existing.id;
-
-  const { data: created, error: createErr } = await supabase
-    .from('executions')
-    .insert({ seance_version_id: seanceVersionId, performed_on: today })
-    .select('id')
-    .single();
-  if (createErr) throw createErr;
-  return created.id;
-}
+//
+// NOTE : l'id d'exécution n'est plus résolu côté serveur via un « find or
+// create » du jour. Depuis l'ajout de l'outbox (ADR 0003), il est GÉNÉRÉ CÔTÉ
+// CLIENT au démarrage de la session (state.executionId) et posé via
+// `upsertExecution`, pour qu'une séance loggée offline remonte sans collision.
 
 /**
  * Charge le réalisé déjà persisté de l'exécution du jour, par exerciseId, dans
@@ -364,64 +342,89 @@ export async function loadTodayProgress(
   return byExercise;
 }
 
-// --- Écriture / annulation des séries -----------------------------------------
+// --- Écriture idempotente (rejouable par l'outbox) ----------------------------
+//
+// Toutes ces fonctions sont IDEMPOTENTES par `id` (UUID client, cf. ADR 0003) :
+// l'outbox peut les rejouer sans crainte de doublon ni d'effet de bord. Elles
+// sont les `SyncFns` consommées par `flush()` ; le mapping op→fonction se fait
+// dans CaptureScreen.
 
-/** Insère une série loggée pour un exo dans une exécution. */
-export async function persistSet(
-  executionId: string,
-  exerciseId: string,
-  set: PerformedSet,
-  setOrder: number,
-): Promise<void> {
-  const { error } = await supabase.from('performed_sets').insert({
-    execution_id: executionId,
-    exercise_id: exerciseId,
-    set_order: setOrder,
-    weight_kg: set.weightKg,
-    reps: set.reps,
-    rir: set.rir,
-  });
+/**
+ * Crée (ou ré-affirme) l'exécution du jour, par son id client. `upsert` avec
+ * `onConflict: 'id'` : rejouer la même op est sans effet (la ligne existe déjà,
+ * ses colonnes identiques). owner_id se remplit via default auth.uid().
+ */
+export async function upsertExecution(params: {
+  id: string;
+  seanceVersionId: string;
+  performedOn: string;
+}): Promise<void> {
+  const { error } = await supabase.from('executions').upsert(
+    {
+      id: params.id,
+      seance_version_id: params.seanceVersionId,
+      performed_on: params.performedOn,
+    },
+    { onConflict: 'id' },
+  );
   if (error) throw error;
 }
 
 /**
- * Clôture l'exécution en y posant les métriques saisies en fin de séance :
- * BPM moyen et durée (min). Toutes deux optionnelles (saisie manuelle, niveau
- * séance, cf. décisions produit) — un champ omis ou `null` laisse la colonne
- * inchangée plutôt que de l'effacer, pour qu'une seconde clôture partielle
- * n'écrase pas une valeur déjà posée. `update` typé via `Database`.
+ * Insère une série loggée, par son id client. `upsert` avec `onConflict: 'id'` :
+ * rejouer l'op (retry après coupure) ne crée pas de doublon, elle ré-affirme la
+ * même ligne. owner_id via default auth.uid().
  */
-export async function finishExecution(
-  executionId: string,
-  fields: { bpmAvg?: number | null; durationMin?: number | null },
-): Promise<void> {
+export async function upsertSet(params: {
+  id: string;
+  executionId: string;
+  exerciseId: string;
+  setOrder: number;
+  weightKg: number;
+  reps: number;
+  rir: number;
+}): Promise<void> {
+  const { error } = await supabase.from('performed_sets').upsert(
+    {
+      id: params.id,
+      execution_id: params.executionId,
+      exercise_id: params.exerciseId,
+      set_order: params.setOrder,
+      weight_kg: params.weightKg,
+      reps: params.reps,
+      rir: params.rir,
+    },
+    { onConflict: 'id' },
+  );
+  if (error) throw error;
+}
+
+/**
+ * Supprime une série par son id (« annuler »). Idempotent : supprimer une ligne
+ * déjà absente ne fait rien et ne lève pas (delete par id ciblé).
+ */
+export async function deleteSetById(id: string): Promise<void> {
+  const { error } = await supabase.from('performed_sets').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Pose les métriques de fin (BPM moyen, durée) sur l'exécution, par id. Update
+ * idempotent : rejouer pose les mêmes valeurs. Un champ omis (`undefined`)
+ * laisse la colonne inchangée plutôt que de l'effacer.
+ */
+export async function updateExecution(params: {
+  id: string;
+  bpmAvg?: number | null;
+  durationMin?: number | null;
+}): Promise<void> {
   const patch: Database['public']['Tables']['executions']['Update'] = {};
-  if (fields.bpmAvg !== undefined) patch.bpm_avg = fields.bpmAvg;
-  if (fields.durationMin !== undefined) patch.duration_min = fields.durationMin;
+  if (params.bpmAvg !== undefined) patch.bpm_avg = params.bpmAvg;
+  if (params.durationMin !== undefined) patch.duration_min = params.durationMin;
 
   // Rien à poser : on évite un update vide (no-op réseau).
   if (Object.keys(patch).length === 0) return;
 
-  const { error } = await supabase.from('executions').update(patch).eq('id', executionId);
+  const { error } = await supabase.from('executions').update(patch).eq('id', params.id);
   if (error) throw error;
-}
-
-/**
- * Supprime la dernière série loggée de cet exo dans l'exécution (« annuler »).
- * « Dernière » = set_order le plus élevé pour ce couple (exécution, exo).
- */
-export async function removeLastSet(executionId: string, exerciseId: string): Promise<void> {
-  const { data: last, error: findErr } = await supabase
-    .from('performed_sets')
-    .select('id')
-    .eq('execution_id', executionId)
-    .eq('exercise_id', exerciseId)
-    .order('set_order', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (findErr) throw findErr;
-  if (!last) return; // rien à annuler.
-
-  const { error: delErr } = await supabase.from('performed_sets').delete().eq('id', last.id);
-  if (delErr) throw delErr;
 }
