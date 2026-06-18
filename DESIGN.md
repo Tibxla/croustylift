@@ -94,5 +94,6 @@ Primitives signature à venir (issues de la session, pour mémoire) :
 - **Don't** faire surgir le **clavier OS** : steppers et pavé custom au pouce, point.
 - **Don't** utiliser le **rouge/orange « énergie » fitness** comme accent.
 - **Don't** de **décoration gratuite**, ni ton « coach motivant », ni emojis/confettis.
-- **Don't** de **gris clair « élégant »** sur le fond sombre — c'est la première cause d'illisibilité.
+- **Don't** de **gris clair « élégant »** sur le fond sombre : c'est la première cause d'illisibilité.
+- **Don't** de **tiret long (—)** dans le texte affiché : un point ou une virgule à la place. (Préférence produit ferme.)
 - **Don't** (bans absolus) : bordure-latérale colorée > 1px, texte en dégradé (`background-clip: text`), glassmorphism décoratif, template hero-metric, eyebrow majuscule traquée au-dessus de chaque section.

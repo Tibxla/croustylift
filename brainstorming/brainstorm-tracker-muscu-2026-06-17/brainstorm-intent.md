@@ -116,6 +116,6 @@ Décidé en prolongement de la session.
 ## 6. Questions ouvertes / à trancher
 
 - **Stratégie de sync** : last-write-wins ou journal append-only ? (conflits rares car un user = un appareil actif à la fois ; le modèle « déviation = événement » pousse vers l'append-only).
-- **Durée de séance** : saisie manuelle en v1 ; **à reconsidérer en auto-chrono** plus tard (quasi gratuit, plus fiable que la mémoire post-séance).
+- **Durée de séance** : tranché → **auto-chronométrée** (du lancement de la séance à la clôture), aucune saisie manuelle. Le BPM moyen reste manuel et optionnel.
 - Seuil « minimum de points par bloc » pour valider une comparaison de pentes à définir.
 - Contenu initial du **catalogue d'exos de base** (quels exos pré-remplis) à lister.
