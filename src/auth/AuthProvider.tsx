@@ -8,6 +8,9 @@ import { clearCaptureState } from '../features/capture/state'
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  // Positionné à true dès que Supabase émet PASSWORD_RECOVERY — l'app aiguille
+  // alors vers ResetPasswordScreen, prioritaire sur tout autre écran.
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -21,7 +24,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return
+      if (event === 'PASSWORD_RECOVERY') {
+        // On a une session temporaire recovery : on la garde pour pouvoir appeler
+        // updateUser(), mais on signale à l'app qu'il faut afficher le reset.
+        setSession(nextSession)
+        setIsPasswordRecovery(true)
+        setLoading(false)
+        return
+      }
       setSession(nextSession)
       setLoading(false)
     })
@@ -37,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       user: session?.user ?? null,
       loading,
+      isPasswordRecovery,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
@@ -54,8 +67,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearCaptureState()
         clearQueue()
       },
+      requestPasswordReset: async (email) => {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        })
+        if (error) throw error
+      },
+      updatePassword: async (password) => {
+        const { error } = await supabase.auth.updateUser({ password })
+        if (error) throw error
+      },
+      clearPasswordRecovery: () => {
+        setIsPasswordRecovery(false)
+      },
     }),
-    [session, loading],
+    [session, loading, isPasswordRecovery],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

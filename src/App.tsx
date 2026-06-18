@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
+import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
 import { AnalysisScreen } from './features/analysis/AnalysisScreen'
 import { SeancesScreen } from './features/authoring/SeancesScreen'
@@ -17,10 +18,17 @@ type Surface = 'capture' | 'analysis' | 'seances'
 // sans <style> injecté ni couplage cross-feature.
 
 function App() {
-  const { session, user, loading, signOut } = useAuth()
+  const { session, user, loading, signOut, isPasswordRecovery } = useAuth()
 
   if (loading) {
     return <FullScreenSpinner label="Chargement" />
+  }
+
+  // Le flux recovery est prioritaire sur tout : l'utilisateur arrive via le lien
+  // email, une session temporaire est ouverte, on lui demande son nouveau mot de
+  // passe avant de le laisser accéder à l'app.
+  if (isPasswordRecovery) {
+    return <ResetPasswordScreen />
   }
 
   if (!session) {
