@@ -95,11 +95,13 @@ export function Stepper({
         </button>
 
         <output
-          className="readout flex flex-1 items-baseline justify-center gap-1 rounded-xl bg-bg/40 text-2xl font-medium tabular-nums"
+          className="readout flex flex-1 items-center justify-center rounded-xl bg-bg/40 text-2xl font-medium tabular-nums"
           aria-live="off"
         >
-          <span>{format(value)}</span>
-          {unit && <span className="text-sm text-ink-muted">{unit}</span>}
+          <span className="flex items-baseline gap-1">
+            <span>{format(value)}</span>
+            {unit && <span className="text-sm text-ink-muted">{unit}</span>}
+          </span>
         </output>
 
         <button
