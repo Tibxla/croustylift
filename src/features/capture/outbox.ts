@@ -87,13 +87,26 @@ export interface DeleteDatedNoteOp {
   id: string;
 }
 
+/**
+ * Supprime une EXÉCUTION entière par son id (issue #44, ADR 0008) : un jour de
+ * séance avec ses séries et ses notes datées. Un unique delete par id ; la
+ * CASCADE DB (`performed_sets`/`dated_notes` en on delete cascade, cf. migration
+ * 0001) efface les lignes filles. Idempotent : supprimer une exécution déjà
+ * absente est sans effet (delete par id ciblé).
+ */
+export interface DeleteExecutionOp {
+  type: 'deleteExecution';
+  id: string;
+}
+
 export type OutboxOp =
   | UpsertExecutionOp
   | InsertSetOp
   | DeleteSetOp
   | UpdateExecutionOp
   | UpsertDatedNoteOp
-  | DeleteDatedNoteOp;
+  | DeleteDatedNoteOp
+  | DeleteExecutionOp;
 
 /**
  * Les fonctions de SYNC réelles, une par type d'op (injectées → testable sans
@@ -107,6 +120,7 @@ export interface SyncFns {
   updateExecution: (op: UpdateExecutionOp) => Promise<void>;
   upsertDatedNote: (op: UpsertDatedNoteOp) => Promise<void>;
   deleteDatedNote: (op: DeleteDatedNoteOp) => Promise<void>;
+  deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
 }
 
 /** État renvoyé par `flush` : combien d'ops restent en file après la passe. */
@@ -191,6 +205,8 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.upsertDatedNote(op);
     case 'deleteDatedNote':
       return fns.deleteDatedNote(op);
+    case 'deleteExecution':
+      return fns.deleteExecution(op);
   }
 }
 

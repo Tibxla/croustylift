@@ -66,6 +66,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const updateExecution = vi.fn(async (op) => void order.push(op));
   const upsertDatedNote = vi.fn(async (op) => void order.push(op));
   const deleteDatedNote = vi.fn(async (op) => void order.push(op));
+  const deleteExecution = vi.fn(async (op) => void order.push(op));
   return {
     upsertExecution,
     insertSet,
@@ -73,6 +74,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
     updateExecution,
     upsertDatedNote,
     deleteDatedNote,
+    deleteExecution,
     calls: () => order,
   };
 }
@@ -125,6 +127,7 @@ describe('flush (succès)', () => {
       body: 'épaule un peu raide',
     });
     enqueue({ type: 'deleteDatedNote', id: 'note-1' });
+    enqueue({ type: 'deleteExecution', id: 'exec-1' });
     const fns = okFns();
 
     await flush(fns);
@@ -135,6 +138,29 @@ describe('flush (succès)', () => {
     expect(fns.updateExecution).toHaveBeenCalledTimes(1);
     expect(fns.upsertDatedNote).toHaveBeenCalledTimes(1);
     expect(fns.deleteDatedNote).toHaveBeenCalledTimes(1);
+    expect(fns.deleteExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it('deleteExecution : routée vers la bonne SyncFn (id), puis RETIRÉE de la file', async () => {
+    // Suppression d'une exécution entière (issue #44, ADR 0008) : un hard delete
+    // par id, la cascade DB efface séries + notes côté Supabase. Ici on vérifie
+    // juste le routage outbox -> deleteExecution et le retrait au flush réussi.
+    enqueue({ type: 'deleteExecution', id: 'exec-42' });
+    const fns = okFns();
+
+    const res = await flush(fns);
+
+    expect(fns.deleteExecution).toHaveBeenCalledTimes(1);
+    expect((fns.deleteExecution as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      type: 'deleteExecution',
+      id: 'exec-42',
+    });
+    // Aucune autre SyncFn n'est touchée par cette op.
+    expect(fns.deleteSet).not.toHaveBeenCalled();
+    // Flush réussi : l'op est retirée, la file est vide.
+    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(pendingCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
   });
 
   it('une note datée part APRÈS l’exécution dont elle dépend (FK)', async () => {

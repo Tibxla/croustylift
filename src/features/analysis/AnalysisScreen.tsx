@@ -275,6 +275,14 @@ function JournalTab() {
             setEditingExecutionId(null);
             setReloadKey((k) => k + 1);
           }}
+          onDeleted={() => {
+            // Exécution supprimée (ADR 0008) : MÊME voie que `onSaved`. On ferme
+            // et on recharge le journal pour que la séance disparaisse ; la
+            // référence et les courbes se recalculent à la lecture (rien à
+            // invalider, aucun dérivé matérialisé).
+            setEditingExecutionId(null);
+            setReloadKey((k) => k + 1);
+          }}
         />
       )}
     </>
