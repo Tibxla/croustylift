@@ -182,26 +182,27 @@ export function ExerciseCapture({
         {formatPrescription(prescription.sets, prescription.reps, prescription.rir)}
       </p>
 
-      {/* Co-roi : « dernière fois » à battre */}
-      <div className="mt-3 rounded-2xl bg-surface px-4 py-3">
-        {refToBeat ? (
-          <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-sm text-ink-muted">À battre · dernière fois</span>
-            <span className="readout text-base font-medium text-ink">
-              {formatSet(refToBeat)}
-            </span>
-          </p>
-        ) : reference ? (
-          <p className="text-sm text-ink-muted">
-            Dernière fois : <span className="readout">{reference.length}</span> séries
-            seulement. Au-delà, surpasse-toi.
-          </p>
-        ) : (
-          <p className="text-sm text-ink-muted">
-            Premier passage sur cet exercice. Aucune référence à battre.
-          </p>
-        )}
-      </div>
+      {/* Co-roi : « dernière fois » à battre. Deux cas seulement portent un
+          contenu : une série de réf à battre à la position courante, ou le tout
+          premier passage (aucune réf). Quand on DÉPASSE le nombre de séries de la
+          dernière fois (réf existe mais aucune à cette position), on ne rend rien :
+          pas de carte orpheline ni de message « N séries seulement ». */}
+      {(refToBeat || !reference) && (
+        <div className="mt-3 rounded-2xl bg-surface px-4 py-3">
+          {refToBeat ? (
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-sm text-ink-muted">À battre · dernière fois</span>
+              <span className="readout text-base font-medium text-ink">
+                {formatSet(refToBeat)}
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              Premier passage sur cet exercice. Aucune référence à battre.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Note d'INSTRUCTIONS de l'exo (issue #52, ex-#26) : référence persistante,
           désormais repliable ET éditable sur place. key=exerciseId pour ré-amorcer
