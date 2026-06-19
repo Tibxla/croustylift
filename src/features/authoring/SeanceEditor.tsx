@@ -27,6 +27,7 @@ import { listExercises } from '../capture/data';
 import { NoteField } from '../notes/NoteField';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
 import { isBlankNote } from '../../domain/notes';
+import { foldAccents } from '../../domain/text';
 import type { Database } from '../../lib/database.types';
 import { loadSeanceEditor, saveSeanceVersion, createPersonalExercise } from './data';
 import { ExerciseForm } from '../exercises/ExerciseForm';
@@ -251,6 +252,16 @@ export function SeanceEditorView({
     done: false,
   });
 
+  // Scroll vers le bas après un ajout (issue #57) : enchaîner les ajouts sans
+  // scroller à la main. On compte les ajouts (et non rows.length, qui bouge aussi
+  // au réordonnancement / à la suppression) pour ne déclencher QUE sur ajout.
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [addCount, setAddCount] = useState(0);
+  useEffect(() => {
+    if (addCount === 0) return; // pas au montage initial.
+    bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [addCount]);
+
   function updateRow(rowId: string, key: FieldKey, next: FieldValue) {
     setRows((prev) =>
       prev.map((r) => (r.rowId === rowId ? { ...r, [key]: next } : r)),
@@ -285,6 +296,8 @@ export function SeanceEditorView({
       },
     ]);
     setAdding(false);
+    // Signale l'effet de scroll : on revient en bas, sur le nouvel exo (#57).
+    setAddCount((n) => n + 1);
   }
 
   async function handleSave() {
@@ -360,6 +373,8 @@ export function SeanceEditorView({
             <PlusIcon />
             Ajouter un exercice
           </button>
+          {/* Sentinel de scroll : on revient ici après un ajout (#57). */}
+          <div ref={bottomRef} aria-hidden="true" />
         </>
       )}
 
@@ -822,11 +837,17 @@ function AddExerciseSheet({
   const [muscle, setMuscle] = useState<string>('');
   const [creating, setCreating] = useState(false);
 
+  // Ouverture du choix d'exo (issue #57) : on remonte en haut de la zone de choix
+  // pour partir de la recherche, pas du scroll hérité de la séance.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, []);
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = foldAccents(query.trim());
     return catalogue
       .filter((e) => (muscle ? e.muscleGroup === muscle : true))
-      .filter((e) => (q ? e.name.toLowerCase().includes(q) : true))
+      .filter((e) => (q ? foldAccents(e.name).includes(q) : true))
       .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   }, [catalogue, query, muscle]);
 
@@ -909,11 +930,14 @@ function AddExerciseSheet({
                   <span className="block truncate text-base font-medium text-ink">
                     {exo.name}
                   </span>
-                  {exo.muscleGroup && (
-                    <span className="mt-0.5 block truncate text-xs text-ink-muted">
-                      {exo.muscleGroup}
-                    </span>
-                  )}
+                  <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                    {exo.muscleGroup && (
+                      <span className="truncate text-xs text-ink-muted">
+                        {exo.muscleGroup}
+                      </span>
+                    )}
+                    {exo.unilateral && <UnilateralBadge />}
+                  </span>
                 </span>
                 <PlusIcon className="shrink-0 text-ink-muted" />
               </button>
@@ -922,6 +946,20 @@ function AddExerciseSheet({
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * Marqueur « Unilatéral » pour un exo (issue #57). Mot EXPLICITE + pastille de
+ * surface tonale : l'info n'est jamais portée par la seule couleur (DESIGN.md).
+ * Sobre (surface-2 / ink-muted), pas d'accent violet : la One Voice Rule réserve
+ * le violet à l'action primaire et à la sélection.
+ */
+function UnilateralBadge() {
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-[0.6875rem] font-medium leading-none text-ink-muted">
+      Unilatéral
+    </span>
   );
 }
 
