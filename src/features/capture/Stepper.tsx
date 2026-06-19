@@ -2,7 +2,7 @@
 // un palier fin optionnel pour le réglage précis.
 // Taper sur la valeur ouvre le pavé numérique de l'OS (inputmode="decimal" ou
 // "numeric") — jamais le clavier texte alpha.
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { parseAndClamp } from './stepper-utils';
 
@@ -62,9 +62,12 @@ export function Stepper({
   format = defaultFormat,
   onChange,
 }: StepperProps) {
-  // draft : valeur brute en cours de saisie (null = mode affichage)
+  // draft : valeur brute en cours de saisie (null = mode affichage).
+  // L'<input> est TOUJOURS monté (cf. plus bas) : le passage en saisie se fait au
+  // focus de l'input réel, donc dans le geste de tap de l'utilisateur — c'est ce
+  // qui ouvre le pavé numérique au 1ᵉʳ tap (issue #58). Un focus programmatique
+  // sur un input fraîchement inséré ne lèverait pas le clavier sur mobile.
   const [draft, setDraft] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const clamp = useCallback(
     (n: number) => Math.min(max, Math.max(min, Math.round(n * 1000) / 1000)),
@@ -79,11 +82,15 @@ export function Stepper({
   // Décimales permises si step < 1 (ex. 0.5 kg) ou si step a une partie décimale
   const allowsDecimal = step % 1 !== 0 || (fineStep != null && fineStep % 1 !== 0);
 
-  function handleReadoutClick() {
-    // Affiche la valeur avec point décimal (l'utilisateur peut taper directement)
-    setDraft(format(value).replace(',', '.'));
-    // Focus déclenché après le prochain rendu
-    requestAnimationFrame(() => inputRef.current?.select());
+  // Au focus (= tap direct sur l'input réel) : on entre en saisie en amorçant le
+  // draft avec la valeur courante (point décimal). Le clavier numérique est déjà
+  // levé par le focus lui-même (geste de confiance), d'où l'ouverture au 1ᵉʳ tap.
+  // On SÉLECTIONNE tout APRÈS le re-render (rAF) pour que la sélection porte sur
+  // la valeur du draft, pas sur l'ancien affichage : le 1ᵉʳ chiffre tapé remplace.
+  function handleFocus(e: React.FocusEvent<HTMLInputElement>) {
+    if (draft === null) setDraft(format(value).replace(',', '.'));
+    const el = e.currentTarget;
+    requestAnimationFrame(() => el.select());
   }
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -107,6 +114,7 @@ export function Stepper({
       e.currentTarget.blur();
     } else if (e.key === 'Escape') {
       setDraft(null);
+      e.currentTarget.blur();
     }
   }
 
@@ -141,34 +149,22 @@ export function Stepper({
           <Icon path={MINUS} title="Moins" />
         </button>
 
-        {draft !== null ? (
-          // Mode saisie : input pavé numérique, même apparence que l'output
-          <input
-            ref={inputRef}
-            type="text"
-            inputMode={allowsDecimal ? 'decimal' : 'numeric'}
-            value={draft}
-            onChange={handleInputChange}
-            onBlur={handleBlur}
-            onKeyDown={handleKeyDown}
-            // autoFocus géré via requestAnimationFrame (plus fiable sur iOS)
-            className={`${readoutBase} h-14 w-full min-w-0 cursor-text text-center`}
-            aria-label={`${label} : saisie directe`}
-          />
-        ) : (
-          // Mode affichage : tap → bascule en mode saisie
-          <button
-            type="button"
-            className={`${readoutBase} h-14 cursor-pointer`}
-            onClick={handleReadoutClick}
-            aria-label={`${label} : ${format(value)}${unit ? ' ' + unit : ''}. Appuyer pour saisir`}
-          >
-            <span className="flex items-baseline gap-1">
-              <span>{format(value)}</span>
-              {unit && <span className="text-sm text-ink-muted">{unit}</span>}
-            </span>
-          </button>
-        )}
+        {/* L'<input> est TOUJOURS monté : le tap dessus est un geste de confiance
+            qui ouvre le pavé numérique au 1ᵉʳ tap (issue #58). Au repos, il
+            affiche la valeur formatée (virgule FR) ; au focus, on bascule en
+            saisie (draft brut, point décimal) et on sélectionne tout. L'unité
+            reste portée par le label du haut, jamais par la couleur seule. */}
+        <input
+          type="text"
+          inputMode={allowsDecimal ? 'decimal' : 'numeric'}
+          value={draft ?? format(value)}
+          onFocus={handleFocus}
+          onChange={handleInputChange}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          className={`${readoutBase} h-14 w-full min-w-0 cursor-text text-center`}
+          aria-label={`${label}${unit ? ` en ${unit}` : ''} : ${format(value)}. Appuyer pour saisir`}
+        />
 
         <button
           type="button"
