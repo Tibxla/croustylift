@@ -23,6 +23,7 @@
 // --- Types d'opérations -------------------------------------------------------
 // Chaque op est un FAIT à rejouer, portant l'`id` de la ligne concernée (UUID
 // client) pour rester idempotente. Discriminées par `type`.
+import type { Side } from '../../domain/types';
 
 /** Crée (ou ré-affirme) l'exécution du jour. Idempotent via upsert par id. */
 export interface UpsertExecutionOp {
@@ -43,6 +44,12 @@ export interface InsertSetOp {
   weightKg: number;
   reps: number;
   rir: number;
+  /**
+   * Côté pour un exo UNILATÉRAL (issue #46) : 'left'/'right'. Deux ops d'une même
+   * série unilatérale partagent le même `setOrder` et diffèrent par `side`.
+   * Absent (`undefined`) pour un exo bilatéral -> écrit `side` null en base.
+   */
+  side?: Side;
 }
 
 /** Supprime une série par son id (« annuler »). Idempotent (delete par id). */

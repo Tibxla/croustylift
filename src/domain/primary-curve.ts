@@ -1,4 +1,4 @@
-import { estimateE1rm } from './e1rm'
+import { weakSideE1rm } from './unilateral'
 import type { ExerciseExecution, E1rmPoint } from './types'
 
 export function buildPrimaryCurve(
@@ -9,15 +9,12 @@ export function buildPrimaryCurve(
     if (execution.exerciseId !== exerciseId || execution.sets.length === 0) {
       return []
     }
-    const firstSet = execution.sets.reduce((earliest, set) =>
-      set.order < earliest.order ? set : earliest,
-    )
-    return [
-      {
-        date: execution.date,
-        e1rm: estimateE1rm(firstSet.weightKg, firstSet.reps, firstSet.rir),
-      },
-    ]
+    // Point de l'exécution : l'e1RM de la 1ʳᵉ série. Pour un exo unilatéral, c'est
+    // le CÔTÉ FAIBLE de cette 1ʳᵉ série (e1RM min des deux côtés appariés par
+    // order) ; pour un bilatéral, l'e1RM simple de la 1ʳᵉ série (cf. unilateral.ts).
+    const e1rm = weakSideE1rm(execution.sets)
+    if (e1rm === null) return []
+    return [{ date: execution.date, e1rm }]
   })
 
   // Dates ISO 'YYYY-MM-DD' : l'ordre lexicographique est l'ordre chronologique.

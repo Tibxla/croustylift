@@ -9,6 +9,8 @@ import {
   statusOf,
   initialState,
   clearCaptureState,
+  nextSetOrder,
+  pendingSide,
   type CaptureState,
   type ExerciseProgress,
 } from './state';
@@ -169,6 +171,125 @@ describe('captureReducer — log-set', () => {
     expect(getProgress(state, 'bench-press').skipped).toBe(true);
     state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId: 's1', set: set1 });
     expect(getProgress(state, 'bench-press').skipped).toBe(false);
+  });
+});
+
+// --- captureReducer — log-set UNILATÉRAL (issue #46) -------------------------
+
+describe('captureReducer — log-set unilatéral', () => {
+  // Un exo unilatéral : une SÉRIE = côté gauche PUIS droite, valeurs distinctes,
+  // les deux partagent le MÊME order.
+  const left1 = { weightKg: 28, reps: 10, rir: 2, side: 'left' as const };
+  const right1 = { weightKg: 32, reps: 10, rir: 2, side: 'right' as const };
+  const left2 = { weightKg: 27, reps: 9, rir: 1, side: 'left' as const };
+  const right2 = { weightKg: 31, reps: 9, rir: 1, side: 'right' as const };
+
+  it('gauche puis droite d’une 1ʳᵉ série partagent order=1, side conservé', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l1', set: left1 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right1 });
+
+    const p = getProgress(state, 'curl');
+    expect(p.sets).toHaveLength(2);
+    expect(p.sets[0]).toEqual({ ...left1, order: 1 });
+    expect(p.sets[1]).toEqual({ ...right1, order: 1 });
+    expect(p.setIds).toEqual(['l1', 'r1']);
+  });
+
+  it('2ᵉ série unilatérale : gauche puis droite partagent order=2', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l1', set: left1 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right1 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l2', set: left2 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r2', set: right2 });
+
+    const p = getProgress(state, 'curl');
+    expect(p.sets.map((s) => s.order)).toEqual([1, 1, 2, 2]);
+    expect(p.sets.map((s) => s.side)).toEqual(['left', 'right', 'left', 'right']);
+  });
+
+  it('garde des valeurs distinctes entre gauche et droite d’une même série', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l1', set: left1 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right1 });
+
+    const p = getProgress(state, 'curl');
+    expect(p.sets[0].weightKg).toBe(28);
+    expect(p.sets[1].weightKg).toBe(32);
+  });
+});
+
+// --- nextSetOrder (pur) ------------------------------------------------------
+
+describe('nextSetOrder', () => {
+  const empty: ExerciseProgress = { sets: [], setIds: [], skipped: false };
+
+  it('bilatéral : incrémente simplement (sets.length + 1)', () => {
+    expect(nextSetOrder(empty, undefined)).toBe(1);
+    const p: ExerciseProgress = {
+      sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
+      setIds: ['s1'],
+      skipped: false,
+    };
+    expect(nextSetOrder(p, undefined)).toBe(2);
+  });
+
+  it('unilatéral, côté gauche : ouvre une nouvelle série (max order + 1)', () => {
+    expect(nextSetOrder(empty, 'left')).toBe(1);
+    const p: ExerciseProgress = {
+      sets: [
+        { weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' },
+        { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      ],
+      setIds: ['l1', 'r1'],
+      skipped: false,
+    };
+    // série 1 complète -> gauche ouvre la série 2
+    expect(nextSetOrder(p, 'left')).toBe(2);
+  });
+
+  it('unilatéral, côté droit : complète la série gauche en attente (même order)', () => {
+    const p: ExerciseProgress = {
+      sets: [{ weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' }],
+      setIds: ['l1'],
+      skipped: false,
+    };
+    // un gauche attend son droit -> droite réutilise order=1
+    expect(nextSetOrder(p, 'right')).toBe(1);
+  });
+
+  it('unilatéral, droite sans gauche en attente (dégénéré) : nouvelle série', () => {
+    expect(nextSetOrder(empty, 'right')).toBe(1);
+  });
+});
+
+// --- pendingSide -------------------------------------------------------------
+
+describe('pendingSide', () => {
+  it('null quand aucune série n’est entamée', () => {
+    expect(pendingSide({ sets: [], setIds: [], skipped: false })).toBeNull();
+  });
+
+  it('"left" quand la prochaine saisie est un nouveau côté gauche', () => {
+    const p: ExerciseProgress = {
+      sets: [
+        { weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' },
+        { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      ],
+      setIds: ['l1', 'r1'],
+      skipped: false,
+    };
+    // série 1 complète -> on attend le gauche de la série 2
+    expect(pendingSide(p)).toBe('left');
+  });
+
+  it('"right" quand un côté gauche attend son droit', () => {
+    const p: ExerciseProgress = {
+      sets: [{ weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' }],
+      setIds: ['l1'],
+      skipped: false,
+    };
+    expect(pendingSide(p)).toBe('right');
   });
 });
 

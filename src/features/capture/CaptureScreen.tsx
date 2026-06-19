@@ -50,6 +50,8 @@ import {
   hydratedState,
   loadPersisted,
   newId,
+  nextSetOrder,
+  pendingSide,
   persist,
   statusOf,
   todayIso,
@@ -62,7 +64,7 @@ import {
   clearQueue,
   type SyncFns,
 } from './outbox';
-import type { PerformedSet } from '../../domain/types';
+import type { PerformedSet, Side } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
@@ -326,6 +328,7 @@ const syncFns: SyncFns = {
       weightKg: op.weightKg,
       reps: op.reps,
       rir: op.rir,
+      side: op.side,
     }),
   deleteSet: (op) => deleteSetById(op.id),
   updateExecution: (op) =>
@@ -468,11 +471,25 @@ function CaptureBoard({
     : null;
 
   const handleLog = useCallback(
-    (exerciseId: string, set: { weightKg: number; reps: number; rir: number }) => {
-      const order = getProgress(state, exerciseId).sets.length + 1;
+    (
+      exerciseId: string,
+      set: { weightKg: number; reps: number; rir: number },
+      unilateral: boolean,
+    ) => {
+      const progress = getProgress(state, exerciseId);
+      // Côté de cette saisie (issue #46) : pour un exo unilatéral, la prochaine
+      // série attend gauche (rien en attente) ou droite (un gauche entamé) ; pour
+      // un bilatéral, pas de côté. Source unique : l'état d'appariement courant.
+      const side: Side | undefined = unilateral
+        ? pendingSide(progress) ?? 'left'
+        : undefined;
+      // Order DÉRIVÉ comme dans le reducer (même fonction pure) : G/D d'une série
+      // unilatérale partagent un order ; simple incrément pour le bilatéral.
+      const order = nextSetOrder(progress, side);
       const setId = newId();
+      const loggedSet = { ...set, side };
       // 1. UI immédiate. 2. Durabilité : exécution (1×) puis la série, dans l'ordre.
-      dispatch({ type: 'log-set', exerciseId, setId, set });
+      dispatch({ type: 'log-set', exerciseId, setId, set: loggedSet });
       enqueueExecutionOnce();
       enqueueAndFlush({
         type: 'insertSet',
@@ -483,6 +500,7 @@ function CaptureBoard({
         weightKg: set.weightKg,
         reps: set.reps,
         rir: set.rir,
+        side,
       });
     },
     [state, enqueueExecutionOnce],
@@ -652,7 +670,9 @@ function CaptureBoard({
           progress={getProgress(state, activeExercise.exerciseId)}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           dispatch={dispatch}
-          onLog={(set) => handleLog(activeExercise.exerciseId, set)}
+          onLog={(set) =>
+            handleLog(activeExercise.exerciseId, set, activeExercise.unilateral ?? false)
+          }
           onUndo={() => handleUndo(activeExercise.exerciseId)}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
         />
@@ -765,6 +785,17 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
 import type { SessionExercise } from './data';
 import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 
+/**
+ * Libellé du bouton de log (issue #46) : explicite le côté pour un exo
+ * unilatéral (« Logger le côté gauche/droite »), reste « Logger la série » pour
+ * un bilatéral. L'info tient au TEXTE, jamais à la couleur seule (DESIGN.md).
+ */
+function logButtonLabel(side: Side | null, reachedMax: boolean): string {
+  if (side === 'left') return 'Logger le côté gauche';
+  if (side === 'right') return 'Logger le côté droit';
+  return reachedMax ? 'Logger une série de plus' : 'Logger la série';
+}
+
 function CapturePanel({
   exercise,
   progress,
@@ -789,20 +820,31 @@ function CapturePanel({
     null,
   );
 
-  const loggedCount = progress.sets.length;
-  const reachedMax = loggedCount >= exercise.prescription.sets.max;
+  const unilateral = exercise.unilateral ?? false;
+  // Côté de la PROCHAINE saisie pour un exo unilatéral (issue #46) : gauche si
+  // aucune série entamée, droite si un gauche attend son côté. Null = bilatéral.
+  const currentSide: Side | null = unilateral ? pendingSide(progress) ?? 'left' : null;
+  // Nombre de SÉRIES complètes : pour l'unilatéral, une série = gauche + droite,
+  // donc on compte les saisies droites déjà loggées. Bilatéral = une saisie/série.
+  const completedSets = unilateral
+    ? progress.sets.filter((s) => s.side === 'right').length
+    : progress.sets.length;
+  const reachedMax = completedSets >= exercise.prescription.sets.max;
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
 
+  const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
+
   const logSet = useCallback(
     (set: { weightKg: number; reps: number; rir: number }) => {
       onLog(set);
+      const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
-        `Série ${loggedCount + 1} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
+        `Série ${completedSets + 1}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, loggedCount],
+    [onLog, completedSets, currentSide],
   );
 
   return (
@@ -847,7 +889,7 @@ function CapturePanel({
             >
               <path d="M12 5v14M5 12h14" />
             </svg>
-            {reachedMax ? 'Logger une série de plus' : 'Logger la série'}
+            {logButtonLabel(currentSide, reachedMax)}
           </button>
         </div>
       </div>

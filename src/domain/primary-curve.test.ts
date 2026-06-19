@@ -107,4 +107,30 @@ describe('buildPrimaryCurve', () => {
   it('renvoie [] pour une entrée vide', () => {
     expect(buildPrimaryCurve([], 'bench')).toEqual([])
   })
+
+  it('unilatéral : le point suit le CÔTÉ FAIBLE de la 1ʳᵉ série (e1RM min des 2 côtés)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-01',
+        exerciseId: 'curl',
+        sets: [
+          // 1ʳᵉ série : DROITE saisie d'abord et plus FORTE, GAUCHE après et plus
+          // faible -> c'est le côté faible (gauche) qui doit compter, peu importe
+          // l'ordre d'apparition dans le tableau.
+          { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+          { weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' },
+          // 2ᵉ série : ne doit pas influencer le point (on prend la 1ʳᵉ)
+          { weightKg: 26, reps: 9, rir: 1, order: 2, side: 'left' },
+          { weightKg: 30, reps: 9, rir: 1, order: 2, side: 'right' },
+        ],
+      },
+    ]
+
+    const curve = buildPrimaryCurve(executions, 'curl')
+
+    expect(curve).toHaveLength(1)
+    // côté faible = gauche (e1RM le plus bas), pas droite ni une moyenne
+    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
+    expect(curve[0].e1rm).toBeLessThan(estimateE1rm(32, 10, 2))
+  })
 })

@@ -22,6 +22,13 @@ export type ExerciseOrigin = 'template' | 'added' | 'swapped';
 export interface SessionExercise {
   exerciseId: string;
   name: string;
+  /**
+   * Exo UNILATÉRAL (issue #33/#46) : mouvement exécuté un côté à la fois. En
+   * Capture, une série se logge côté gauche PUIS droite (valeurs distinctes
+   * possibles). Absent/`false` = bilatéral (une saisie par série). Défaut sûr
+   * `false` pour la rétrocompat des fixtures et d'un chargement partiel.
+   */
+  unilateral?: boolean;
   /** Le plan cible : séries / reps / RIR. */
   prescription: Prescription;
   /**

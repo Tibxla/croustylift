@@ -179,6 +179,7 @@ export type Database = {
           reps: number
           rir: number
           set_order: number
+          side: string | null
           updated_at: string
           weight_kg: number
         }
@@ -192,6 +193,7 @@ export type Database = {
           reps: number
           rir: number
           set_order: number
+          side?: string | null
           updated_at?: string
           weight_kg: number
         }
@@ -205,6 +207,7 @@ export type Database = {
           reps?: number
           rir?: number
           set_order?: number
+          side?: string | null
           updated_at?: string
           weight_kg?: number
         }

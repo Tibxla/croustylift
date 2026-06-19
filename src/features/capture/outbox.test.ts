@@ -163,6 +163,24 @@ describe('flush (succès)', () => {
 
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 's1', 's2']);
   });
+
+  it('série unilatérale : le `side` survit au round-trip et est passé intact', async () => {
+    // Une série unilatérale = 2 ops, même setOrder, side distinct (issue #46).
+    const left: InsertSetOp = { ...setOp('l1', 1), side: 'left' };
+    const right: InsertSetOp = { ...setOp('r1', 1), side: 'right' };
+    enqueue(left);
+    enqueue(right);
+
+    // Persistées telles quelles (le `side` n'est pas perdu au passage localStorage).
+    expect(readQueue()).toEqual([left, right]);
+
+    const fns = okFns();
+    await flush(fns);
+
+    const inserts = fns.calls().filter((o): o is InsertSetOp => o.type === 'insertSet');
+    expect(inserts.map((o) => o.side)).toEqual(['left', 'right']);
+    expect(inserts.map((o) => o.setOrder)).toEqual([1, 1]);
+  });
 });
 
 // --- flush qui échoue (offline) ---------------------------------------------
