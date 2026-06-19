@@ -41,7 +41,12 @@ describe('rowToEditablePrescription', () => {
       reps_max: 12,
       rir_min: 1,
       rir_max: 2,
-      exercises: { name: 'Développé couché', muscle_group: 'pectoraux' },
+      exercises: {
+        name: 'Développé couché',
+        muscle_group: 'pectoraux',
+        primary_muscles: ['pectoraux', 'triceps'],
+        unilateral: false,
+      },
     };
     expect(rowToEditablePrescription(row)).toEqual({
       exerciseId: 'ex-1',
@@ -51,6 +56,8 @@ describe('rowToEditablePrescription', () => {
       rir: { min: 1, max: 2 },
       exerciseName: 'Développé couché',
       muscleGroup: 'pectoraux',
+      primaryMuscles: ['pectoraux', 'triceps'],
+      unilateral: false,
     });
   });
 
@@ -69,6 +76,9 @@ describe('rowToEditablePrescription', () => {
     const out = rowToEditablePrescription(row);
     expect(out.exerciseName).toBe('(exercice inconnu)');
     expect(out.muscleGroup).toBe('');
+    // Replis sûrs pour le décompte PRÉVU : aucun muscle, bilatéral par défaut.
+    expect(out.primaryMuscles).toEqual([]);
+    expect(out.unilateral).toBe(false);
   });
 });
 

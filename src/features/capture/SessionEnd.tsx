@@ -11,18 +11,30 @@
 // seule tache de couleur de l'écran) enregistre puis bascule en confirmation.
 import { useState } from 'react';
 import { Stepper } from './Stepper';
+import { orderMusclesCanonical } from '../authoring/exercise-input';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
   bpmAvg?: number | null;
 }
 
-/** Récap sobre de l'exécution close : exos faits / total + total des séries. */
+/** Récap sobre de l'exécution close : exos faits / total + décompte des séries. */
 export interface SessionSummary {
   sessionName: string;
   exercisesDone: number;
   exercisesTotal: number;
+  /**
+   * Total des séries selon la règle de décompte (issue #37) : une série
+   * unilatérale (gauche + droite) compte 2, une bilatérale 1. Pas un simple
+   * comptage de lignes loggées.
+   */
   totalSets: number;
+  /**
+   * Décompte RÉEL des séries par muscle principal (issue #37), dérivé des séries
+   * loggées : +1 par série logique pour chaque muscle principal de l'exo. Vide si
+   * aucune série loggée (ou aucun muscle renseigné sur les exos faits).
+   */
+  setsByMuscle: Record<string, number>;
 }
 
 interface SessionEndProps {
@@ -132,6 +144,7 @@ export function SessionEnd({
       <p className="mt-1.5 text-sm text-ink-muted">{summary.sessionName}</p>
 
       <SummaryCard summary={summary} durationMin={durationMin} />
+      <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
 
       <p className="mt-7 text-sm text-ink-muted">
         Note ton BPM moyen si tu veux, c&apos;est optionnel.
@@ -228,6 +241,39 @@ function SummaryCard({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Décompte RÉEL des séries par muscle principal (issue #37), affiché en fin de
+ * séance sous le récap. Dérivé des séries loggées (cf. buildSummary). On ne parle
+ * PAS de « volume » (terme proscrit, CONTEXT.md) : « séries par muscle ».
+ *
+ * DESIGN.md : chiffres en mono tabulaire (.readout) alignés en colonne, un muscle
+ * par ligne, ordre canonique stable. Rendu seulement s'il y a au moins un muscle
+ * (sinon le récap suffit).
+ */
+function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number> }) {
+  const muscles = orderMusclesCanonical(Object.keys(setsByMuscle));
+  if (muscles.length === 0) return null;
+
+  return (
+    <section
+      className="mt-2.5 rounded-2xl bg-surface px-4 py-3.5"
+      aria-label="Séries par muscle"
+    >
+      <p className="text-xs font-medium text-ink-muted">Séries par muscle</p>
+      <ul className="mt-2.5 flex flex-col gap-1.5">
+        {muscles.map((muscle) => (
+          <li key={muscle} className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
+            <span className="readout shrink-0 text-sm tabular-nums text-ink">
+              {setsByMuscle[muscle]}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -337,6 +383,7 @@ function SessionDone({
       </div>
 
       <SummaryCard summary={summary} durationMin={durationMin} />
+      <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
 
       {hasBpm && (
         <div className="mt-2.5">

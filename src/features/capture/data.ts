@@ -170,12 +170,16 @@ export const DEFAULT_ADDED_PRESCRIPTION = {
  * depuis l'historique. Pur (testable sans Supabase).
  */
 export function catalogExerciseToSession(
-  row: Pick<ExerciseRow, 'id' | 'name'> & { unilateral?: boolean },
+  row: Pick<ExerciseRow, 'id' | 'name'> & {
+    unilateral?: boolean;
+    primary_muscles?: string[];
+  },
 ): SessionExercise {
   return {
     exerciseId: row.id,
     name: row.name,
     unilateral: row.unilateral ?? false,
+    primaryMuscles: row.primary_muscles ?? [],
     prescription: {
       sets: { ...DEFAULT_ADDED_PRESCRIPTION.sets },
       reps: { ...DEFAULT_ADDED_PRESCRIPTION.reps },
@@ -193,7 +197,10 @@ export function catalogExerciseToSession(
  * de sa note d'instructions et de ses records, dérivés de l'historique.
  */
 export async function loadCatalogExercise(
-  row: Pick<ExerciseRow, 'id' | 'name'> & { unilateral?: boolean },
+  row: Pick<ExerciseRow, 'id' | 'name'> & {
+    unilateral?: boolean;
+    primary_muscles?: string[];
+  },
 ): Promise<SessionExercise> {
   const base = catalogExerciseToSession(row);
   const [reference, personalRecord] = await Promise.all([
@@ -214,7 +221,7 @@ type PrescriptionWithExercise = {
   reps_max: number;
   rir_min: number;
   rir_max: number;
-  exercises: { name: string; unilateral: boolean } | null;
+  exercises: { name: string; unilateral: boolean; primary_muscles: string[] } | null;
 };
 
 /**
@@ -230,7 +237,7 @@ export async function loadSeanceForCapture(
   const { data, error } = await supabase
     .from('prescriptions')
     .select(
-      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral )',
+      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral, primary_muscles )',
     )
     .eq('seance_version_id', seanceVersionId)
     .order('position', { ascending: true });
@@ -242,6 +249,7 @@ export async function loadSeanceForCapture(
     exerciseId: row.exercise_id,
     name: row.exercises?.name ?? '(exercice inconnu)',
     unilateral: row.exercises?.unilateral ?? false,
+    primaryMuscles: row.exercises?.primary_muscles ?? [],
     prescription: {
       sets: { min: row.sets_min, max: row.sets_max },
       reps: { min: row.reps_min, max: row.reps_max },

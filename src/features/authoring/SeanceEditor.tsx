@@ -33,6 +33,7 @@ import {
   MUSCLE_GROUPS,
   toggleMuscle,
   validatePersonalExercise,
+  orderMusclesCanonical,
 } from './exercise-input';
 import {
   type EditorRow,
@@ -45,8 +46,10 @@ import {
   setMax,
   toggleMode,
   rowsToPrescriptionInputs,
+  rowsToPlannedExercises,
   moveRow,
 } from './prescription-edit';
+import { countPlannedSets, type CountRange } from '../../domain/set-count';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
@@ -102,6 +105,8 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
           exerciseId: p.exerciseId,
           exerciseName: p.exerciseName,
           muscleGroup: p.muscleGroup,
+          primaryMuscles: p.primaryMuscles,
+          unilateral: p.unilateral,
           sets: rangeToField(p.sets),
           reps: rangeToField(p.reps),
           rir: rangeToField(p.rir),
@@ -150,7 +155,13 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
       onSaveExerciseNote={saveExerciseNote}
       onCreatePersonal={async (input) => {
         const created = await createPersonalExercise(input);
-        return { id: created.id, name: created.name, muscleGroup: created.muscle_group };
+        return {
+          id: created.id,
+          name: created.name,
+          muscleGroup: created.muscle_group,
+          primaryMuscles: created.primary_muscles ?? [],
+          unilateral: created.unilateral ?? false,
+        };
       }}
       makeRowId={freshRowId}
     />
@@ -166,6 +177,10 @@ export interface CatalogueExercise {
   id: string;
   name: string;
   muscleGroup: string;
+  /** Muscles principaux (#33) : alimente le décompte PRÉVU quand l'exo est ajouté. */
+  primaryMuscles: string[];
+  /** Mouvement unilatéral (#33) : pèse double au décompte total (#37). */
+  unilateral: boolean;
 }
 
 /**
@@ -219,7 +234,13 @@ export function SeanceEditorView({
   const [notes, setNotes] = useState<Record<string, string>>(initialNotes);
   // Catalogue local : on y ajoute les exos perso créés à la volée, sans recharger.
   const [catalog, setCatalog] = useState<CatalogueExercise[]>(() =>
-    catalogue.map((e) => ({ id: e.id, name: e.name, muscleGroup: e.muscle_group })),
+    catalogue.map((e) => ({
+      id: e.id,
+      name: e.name,
+      muscleGroup: e.muscle_group,
+      primaryMuscles: e.primary_muscles ?? [],
+      unilateral: e.unilateral ?? false,
+    })),
   );
   const [adding, setAdding] = useState(false);
   const [save, setSave] = useState<{ busy: boolean; error: string | null; done: boolean }>({
@@ -256,6 +277,8 @@ export function SeanceEditorView({
         exerciseId: exo.id,
         exerciseName: exo.name,
         muscleGroup: exo.muscleGroup,
+        primaryMuscles: exo.primaryMuscles,
+        unilateral: exo.unilateral,
         ...defaultFields(),
       },
     ]);
@@ -306,6 +329,9 @@ export function SeanceEditorView({
         <EmptyState onAdd={() => setAdding(true)} />
       ) : (
         <>
+          {/* Décompte PRÉVU des séries (issue #37) : en direct, au-dessus de la liste. */}
+          <PlannedSetCountCard rows={rows} />
+
           <ul className="flex flex-col gap-3">
             {rows.map((row, index) => (
               <li key={row.rowId}>
@@ -381,9 +407,66 @@ function fmtField(v: FieldValue): string {
   return v.mode === 'fixe' ? String(v.min) : `${v.min}-${v.max}`;
 }
 
+/**
+ * Format d'un compte en fourchette (issue #37) : « 12 » si min === max (valeur
+ * fixe), sinon « 9-12 » (trait d'union court, jamais de tiret long, cf. DESIGN.md).
+ */
+function fmtCountRange(range: CountRange): string {
+  return range.min === range.max ? String(range.min) : `${range.min}-${range.max}`;
+}
+
 /** Résumé d'une prescription, même format que la cible affichée en Capture. */
 function summarizeRow(row: EditorRow): string {
   return `${fmtField(row.sets)} × ${fmtField(row.reps)} @ RIR ${fmtField(row.rir)}`;
+}
+
+/**
+ * Décompte PRÉVU des séries de la séance (issue #37) : total + par muscle
+ * principal, dérivé EN DIRECT des prescriptions courantes (recalculé à chaque
+ * édition via useMemo). Comme une prescription peut être une fourchette de
+ * séries, le décompte l'est aussi (« 9-12 ») ; fixe = valeur unique.
+ *
+ * DESIGN.md : chiffres mesurés en mono tabulaire (.readout), un seul muscle par
+ * ligne pour que les comptes s'alignent en colonne « cadran d'instrument », et
+ * AUCUN tiret long (la fourchette s'écrit avec un trait d'union court). On NE
+ * parle PAS de « volume » (terme proscrit, cf. CONTEXT.md) : « séries par muscle ».
+ */
+function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
+  const count = useMemo(() => countPlannedSets(rowsToPlannedExercises(rows)), [rows]);
+  // Muscles présents, dans l'ordre canonique de CONTEXT.md (colonne stable).
+  const muscles = orderMusclesCanonical(Object.keys(count.byMuscle));
+
+  return (
+    <section
+      className="mb-4 rounded-2xl border border-line bg-surface p-3.5"
+      aria-label="Décompte des séries prévues"
+    >
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-ink">Séries prévues</h3>
+        <span className="readout text-lg font-medium tabular-nums text-ink">
+          {fmtCountRange(count.total)}
+          <span className="ml-1 text-xs font-normal text-ink-muted">au total</span>
+        </span>
+      </div>
+
+      {muscles.length === 0 ? (
+        <p className="mt-2 text-xs text-ink-muted">
+          Aucun muscle principal renseigné sur ces exercices.
+        </p>
+      ) : (
+        <ul className="mt-3 flex flex-col gap-1.5">
+          {muscles.map((muscle) => (
+            <li key={muscle} className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-sm text-ink-muted">{muscle}</span>
+              <span className="readout shrink-0 text-sm tabular-nums text-ink">
+                {fmtCountRange(count.byMuscle[muscle])}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function Caret({ dir }: { dir: 'up' | 'down' }) {

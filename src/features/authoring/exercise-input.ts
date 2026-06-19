@@ -55,6 +55,21 @@ function sortCanonical(muscles: string[]): string[] {
 }
 
 /**
+ * Trie une liste de muscles selon l'ordre canonique de CONTEXT.md, sans muter
+ * l'entrée. Robuste aux termes hors vocabulaire (rang -1) : on les renvoie en
+ * FIN de liste (et non en tête comme un tri naïf sur l'indexOf), pour que
+ * l'affichage des décomptes (issue #37) garde toujours les 15 muscles connus
+ * dans leur ordre attendu. Source d'ordre unique, partagée par les deux UI.
+ */
+export function orderMusclesCanonical(muscles: string[]): string[] {
+  const rank = (m: string) => {
+    const r = canonicalRank(m);
+    return r === -1 ? Number.POSITIVE_INFINITY : r;
+  };
+  return [...muscles].sort((a, b) => rank(a) - rank(b));
+}
+
+/**
  * Ajoute / retire `muscle` d'une sélection, en gardant la liste DÉDOUBLONNÉE et
  * triée par l'ordre canonique. Un terme hors vocabulaire est ignoré (la sélection
  * est seulement re-triée). Ne mute jamais `selection`.

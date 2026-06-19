@@ -29,6 +29,13 @@ export interface SessionExercise {
    * `false` pour la rétrocompat des fixtures et d'un chargement partiel.
    */
   unilateral?: boolean;
+  /**
+   * Muscles principaux de l'exo (LISTE, issue #33), vocabulaire canonique.
+   * Alimente le décompte RÉEL des séries par muscle en fin de séance (issue #37).
+   * Absent/vide = exo legacy sans `primary_muscles` : il compte au total mais pour
+   * aucun muscle. Défaut sûr pour la rétrocompat des fixtures et d'un chargement partiel.
+   */
+  primaryMuscles?: string[];
   /** Le plan cible : séries / reps / RIR. */
   prescription: Prescription;
   /**

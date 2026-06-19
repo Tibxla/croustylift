@@ -10,6 +10,7 @@
 //   - Planchers métier : séries min ≥ 1, reps min ≥ 1, RIR min ≥ 0.
 //   - Défaut d'un exo ajouté : séries fixe 3, reps fourchette 8 à 12, RIR fixe 2.
 import type { PrescriptionInput, RangeInput } from './data';
+import type { PlannedExercise } from '../../domain/set-count';
 
 /** Les trois grandeurs prescrites. Sert de clé pour les planchers métier. */
 export type FieldKey = 'sets' | 'reps' | 'rir';
@@ -35,6 +36,14 @@ export interface EditorRow {
   exerciseId: string;
   exerciseName: string;
   muscleGroup: string;
+  /**
+   * Muscles principaux de l'exo (LISTE, issue #33), vocabulaire canonique. Sert
+   * au décompte PRÉVU des séries par muscle (issue #37). Vide si l'exo legacy
+   * n'a pas (encore) de `primary_muscles` rempli.
+   */
+  primaryMuscles: string[];
+  /** Mouvement unilatéral (issue #33) : pèse double au décompte total (issue #37). */
+  unilateral: boolean;
   sets: FieldValue;
   reps: FieldValue;
   rir: FieldValue;
@@ -108,6 +117,21 @@ export function rowsToPrescriptionInputs(rows: EditorRow[]): PrescriptionInput[]
     sets: fieldToRange(row.sets),
     reps: fieldToRange(row.reps),
     rir: fieldToRange(row.rir),
+  }));
+}
+
+/**
+ * Mappe l'état éditable vers les `PlannedExercise` du décompte PRÉVU (issue #37) :
+ * pour chaque ligne, son drapeau unilatéral, ses muscles principaux et sa
+ * fourchette de séries prescrites (fixe = min === max, via `fieldToRange`). Pur,
+ * réutilise la même aplatissement de champ que la sauvegarde — pas de divergence
+ * entre ce qui est compté et ce qui est sauvé.
+ */
+export function rowsToPlannedExercises(rows: EditorRow[]): PlannedExercise[] {
+  return rows.map((row) => ({
+    unilateral: row.unilateral,
+    primaryMuscles: row.primaryMuscles,
+    sets: fieldToRange(row.sets),
   }));
 }
 
