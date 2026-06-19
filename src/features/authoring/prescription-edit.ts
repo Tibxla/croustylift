@@ -121,10 +121,11 @@ export function rowsToPrescriptionInputs(rows: EditorRow[]): PrescriptionInput[]
 }
 
 /**
- * Mappe l'état éditable vers les `PlannedExercise` du décompte PRÉVU (issue #37) :
- * pour chaque ligne, son drapeau unilatéral, ses muscles principaux et sa
- * fourchette de séries prescrites (fixe = min === max, via `fieldToRange`). Pur,
- * réutilise la même aplatissement de champ que la sauvegarde — pas de divergence
+ * Mappe l'état éditable vers les `PlannedExercise` du décompte PRÉVU (issues #37
+ * et #60) : pour chaque ligne, son drapeau unilatéral, ses muscles principaux,
+ * sa fourchette de séries et sa fourchette de reps prescrites (fixe = min === max,
+ * via `fieldToRange`). Le décompte pondère par `reps.min` (cf. set-count.ts). Pur,
+ * réutilise le même aplatissement de champ que la sauvegarde — pas de divergence
  * entre ce qui est compté et ce qui est sauvé.
  */
 export function rowsToPlannedExercises(rows: EditorRow[]): PlannedExercise[] {
@@ -132,6 +133,7 @@ export function rowsToPlannedExercises(rows: EditorRow[]): PlannedExercise[] {
     unilateral: row.unilateral,
     primaryMuscles: row.primaryMuscles,
     sets: fieldToRange(row.sets),
+    reps: fieldToRange(row.reps),
   }));
 }
 

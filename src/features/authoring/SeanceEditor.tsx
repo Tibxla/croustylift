@@ -425,11 +425,19 @@ function fmtField(v: FieldValue): string {
 }
 
 /**
- * Format d'un compte en fourchette (issue #37) : « 12 » si min === max (valeur
- * fixe), sinon « 9-12 » (trait d'union court, jamais de tiret long, cf. DESIGN.md).
+ * Format d'un compte FRACTIONNAIRE (issue #60, pondération par reps) : une
+ * décimale, virgule décimale FR (jamais de point). « 1,8 » si min === max (valeur
+ * fixe), sinon « 1,8-2,4 » (trait d'union court, jamais de tiret long, cf.
+ * DESIGN.md). Les bornes égales après arrondi s'affichent en valeur unique.
  */
+function fmtCount(value: number): string {
+  return value.toFixed(1).replace('.', ',');
+}
+
 function fmtCountRange(range: CountRange): string {
-  return range.min === range.max ? String(range.min) : `${range.min}-${range.max}`;
+  const min = fmtCount(range.min);
+  const max = fmtCount(range.max);
+  return min === max ? min : `${min}-${max}`;
 }
 
 /** Résumé d'une prescription, même format que la cible affichée en Capture. */
@@ -438,15 +446,18 @@ function summarizeRow(row: EditorRow): string {
 }
 
 /**
- * Décompte PRÉVU des séries de la séance (issue #37) : total + par muscle
- * principal, dérivé EN DIRECT des prescriptions courantes (recalculé à chaque
- * édition via useMemo). Comme une prescription peut être une fourchette de
- * séries, le décompte l'est aussi (« 9-12 ») ; fixe = valeur unique.
+ * Décompte PRÉVU des séries de la séance (issue #60, affine #37) : total + par
+ * muscle principal, dérivé EN DIRECT des prescriptions courantes (recalculé à
+ * chaque édition via useMemo) et PONDÉRÉ par reps (chaque série vaut
+ * `min(reps_min,5)/5`). La prescription de reps est figée à sa borne basse ; seul
+ * le NOMBRE de séries fait varier la fourchette du décompte (« 1,8-2,4 ») ;
+ * séries fixes = valeur unique.
  *
- * DESIGN.md : chiffres mesurés en mono tabulaire (.readout), un seul muscle par
- * ligne pour que les comptes s'alignent en colonne « cadran d'instrument », et
- * AUCUN tiret long (la fourchette s'écrit avec un trait d'union court). On NE
- * parle PAS de « volume » (terme proscrit, cf. CONTEXT.md) : « séries par muscle ».
+ * DESIGN.md : chiffres mesurés en mono tabulaire (.readout) à une décimale
+ * (virgule FR), un seul muscle par ligne pour que les comptes s'alignent en
+ * colonne « cadran d'instrument », et AUCUN tiret long (la fourchette s'écrit
+ * avec un trait d'union court). On NE parle PAS de « volume » (terme proscrit,
+ * cf. CONTEXT.md) : « séries par muscle ».
  */
 function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
   const count = useMemo(() => countPlannedSets(rowsToPlannedExercises(rows)), [rows]);

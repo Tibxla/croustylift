@@ -244,25 +244,37 @@ describe('rowsToPrescriptionInputs — mapping vers PrescriptionInput[]', () => 
   });
 });
 
-describe('rowsToPlannedExercises — mapping vers le décompte PRÉVU (issue #37)', () => {
-  it('porte unilateral + muscles principaux et aplatit les séries en fourchette', () => {
+describe('rowsToPlannedExercises — mapping vers le décompte PRÉVU (issues #37, #60)', () => {
+  it('porte unilateral + muscles, et aplatit séries ET reps en fourchette (reps pour la pondération #60)', () => {
     const rows: EditorRow[] = [
       row({
         exerciseId: 'ex-a',
         primaryMuscles: ['pectoraux', 'triceps'],
         unilateral: false,
         sets: { mode: 'fourchette', min: 3, max: 4 },
+        reps: { mode: 'fourchette', min: 8, max: 12 },
       }),
       row({
         exerciseId: 'ex-b',
         primaryMuscles: ['quadriceps'],
         unilateral: true,
         sets: { mode: 'fixe', min: 3, max: 3 },
+        reps: { mode: 'fixe', min: 6, max: 6 },
       }),
     ];
     expect(rowsToPlannedExercises(rows)).toEqual([
-      { unilateral: false, primaryMuscles: ['pectoraux', 'triceps'], sets: { min: 3, max: 4 } },
-      { unilateral: true, primaryMuscles: ['quadriceps'], sets: { min: 3, max: 3 } },
+      {
+        unilateral: false,
+        primaryMuscles: ['pectoraux', 'triceps'],
+        sets: { min: 3, max: 4 },
+        reps: { min: 8, max: 12 },
+      },
+      {
+        unilateral: true,
+        primaryMuscles: ['quadriceps'],
+        sets: { min: 3, max: 3 },
+        reps: { min: 6, max: 6 },
+      },
     ]);
   });
 
