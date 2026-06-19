@@ -14,6 +14,8 @@ import {
   clearPersisted,
   nextSetOrder,
   pendingSide,
+  previousDayIso,
+  resolveCaptureDate,
   resolveExerciseNoteSave,
   type CaptureState,
   type ExerciseProgress,
@@ -658,5 +660,100 @@ describe('resolveExerciseNoteSave', () => {
     const r = resolveExerciseNoteSave('', '   ');
     expect(r.changed).toBe(false);
     expect(r.nextBody).toBe('');
+  });
+});
+
+// --- previousDayIso (pur) ----------------------------------------------------
+// La veille d'une date ISO, dérivée de l'argument (pas de Date.now()) → testable.
+
+describe('previousDayIso', () => {
+  it('recule d’un jour dans le même mois', () => {
+    expect(previousDayIso('2026-06-19')).toBe('2026-06-18');
+  });
+
+  it('passe la frontière de mois (1er du mois -> dernier du mois précédent)', () => {
+    expect(previousDayIso('2026-07-01')).toBe('2026-06-30');
+  });
+
+  it('passe la frontière d’année (1er janvier -> 31 décembre)', () => {
+    expect(previousDayIso('2026-01-01')).toBe('2025-12-31');
+  });
+
+  it('gère le 29 février d’une année bissextile', () => {
+    expect(previousDayIso('2024-03-01')).toBe('2024-02-29');
+  });
+});
+
+// --- resolveCaptureDate (frontière minuit, bug F10) --------------------------
+//
+// Une séance entamée la veille et NON clôturée doit pouvoir être reprise après
+// minuit : si rien n'est persisté pour `today`, on retombe sur le cache de la
+// veille (s'il existe et n'est pas clôturé), en conservant SA date. Une veille
+// clôturée a vu son cache nettoyé → rien à reprendre, capture vierge du jour.
+// Même polyfill localStorage indexable que plus haut.
+
+describe('resolveCaptureDate', () => {
+  const TODAY = '2026-06-19';
+  const YESTERDAY = '2026-06-18';
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('cas NOMINAL : cache d’aujourd’hui présent → on adopte today (veille ignorée)', () => {
+    // Une séance en cours du jour, ET un cache de la veille : today doit primer.
+    persist(mkState({ date: TODAY }));
+    persist(mkState({ date: YESTERDAY }));
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).not.toBeNull();
+    expect((restored as CaptureState).date).toBe(TODAY);
+  });
+
+  it('frontière minuit : rien pour today + veille NON clôturée → on reprend la veille (date = veille)', () => {
+    // Logge une série hier, persiste sous la date d'hier, rien aujourd'hui.
+    let yesterdayState = mkState({ date: YESTERDAY });
+    yesterdayState = captureReducer(yesterdayState, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(yesterdayState);
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(YESTERDAY);
+    expect(restored).not.toBeNull();
+    // La date adoptée est celle de la veille : les ops continueront de viser la
+    // bonne `performed_on`, et la série loggée hier est bien restaurée.
+    expect((restored as CaptureState).date).toBe(YESTERDAY);
+    expect(getProgress(restored as CaptureState, 'bench-press').sets).toHaveLength(1);
+  });
+
+  it('veille CLÔTURÉE → pas de restauration (capture vierge du jour)', () => {
+    // Geste de clôture câblé (ADR 0009) : on persiste l'état d'hier puis le cache
+    // est NETTOYÉ (clearPersisted). Le lendemain, plus rien à reprendre pour la
+    // veille → on repart vierge sous today, jamais sur la séance close d'hier.
+    let yesterdayState = mkState({ date: YESTERDAY });
+    yesterdayState = captureReducer(yesterdayState, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(yesterdayState);
+    clearPersisted(upperA, YESTERDAY);
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
+  });
+
+  it('rien nulle part → capture vierge sous today (premier montage)', () => {
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
   });
 });

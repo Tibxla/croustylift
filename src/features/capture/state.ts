@@ -196,6 +196,56 @@ export function todayIso(): string {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
 }
 
+/**
+ * La VEILLE d'une date ISO 'YYYY-MM-DD', en ISO. Pur (dérivé de l'argument, pas de
+ * `Date.now()`) → testable et déterministe. Le `Date(y, m-1, d)` local gère les
+ * débordements de mois/année et le DST (on ne manipule que la partie calendaire).
+ */
+export function previousDayIso(dateIso: string): string {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  const prev = new Date(y, m - 1, d - 1);
+  const z = (n: number) => String(n).padStart(2, '0');
+  return `${prev.getFullYear()}-${z(prev.getMonth() + 1)}-${z(prev.getDate())}`;
+}
+
+/**
+ * Résout la séance de capture à reprendre au montage, gérant la FRONTIÈRE MINUIT
+ * (bug F10) : une séance ENTAMÉE la veille et NON CLÔTURÉE doit pouvoir être
+ * reprise après minuit, sinon elle « disparaît » de l'écran (la clé de cache
+ * `sessionId:date` basculait sur `today` au remontage et ne retrouvait plus le
+ * cache d'hier).
+ *
+ * Stratégie, dans l'ordre :
+ *   1. cache de `today` présent → on l'adopte tel quel (cas NOMINAL, strictement
+ *      inchangé : le repli ci-dessous n'intervient JAMAIS si `today` existe) ;
+ *   2. sinon, cache de la VEILLE présent ET non clôturé (`closedAt === null`,
+ *      garanti par `loadPersisted`, qui ne restaure jamais une clôture) → on le
+ *      reprend en CONSERVANT SA date (la veille), pour que la persistance et les
+ *      ops (`performed_on`) continuent de viser la bonne journée ;
+ *   3. sinon → capture vierge pour `today` (rien à reprendre, ou veille clôturée
+ *      donc rangée — cohérent ADR 0009 : une clôture ne se restaure jamais).
+ *
+ * `date` est la date ADOPTÉE (today ou la veille) : le composant DOIT l'utiliser
+ * partout (clé de persistance, `performedOn`) pour rester cohérent avec `restored`.
+ */
+export function resolveCaptureDate(
+  session: Session,
+  today = todayIso(),
+): { date: string; restored: CaptureState | null } {
+  const fromToday = loadPersisted(session, today);
+  if (fromToday) return { date: today, restored: fromToday };
+
+  // Rien aujourd'hui : une séance d'hier non clôturée se reprend telle quelle.
+  // `loadPersisted` a déjà écarté toute clôture (closedAt forcé à null) ET ne
+  // renvoie un état que pour un cache d'une séance EN COURS — une veille clôturée
+  // a vu son cache nettoyé à la clôture, donc `fromYesterday` y vaut null.
+  const yesterday = previousDayIso(today);
+  const fromYesterday = loadPersisted(session, yesterday);
+  if (fromYesterday) return { date: yesterday, restored: fromYesterday };
+
+  return { date: today, restored: null };
+}
+
 export function initialState(session: Session, date = todayIso()): CaptureState {
   return {
     sessionId: session.id,

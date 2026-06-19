@@ -43,11 +43,11 @@ import {
   getDatedNote,
   getProgress,
   hydratedState,
-  loadPersisted,
   newId,
   nextSetOrder,
   pendingSide,
   persist,
+  resolveCaptureDate,
   statusOf,
   todayIso,
   type DatedNoteDraft,
@@ -376,7 +376,17 @@ function CaptureBoard({
   initialProgress: Record<string, PerformedSet[]>;
   initialDatedNotes: Record<string, DatedNoteDraft>;
 }) {
-  const [date] = useState(todayIso);
+  // Date de la séance ADOPTÉE au montage : aujourd'hui en temps normal, MAIS la
+  // veille si une séance entamée hier n'a pas été clôturée (frontière minuit,
+  // bug F10 — sinon le réalisé en cours « disparaît » après minuit). Résolue UNE
+  // fois (initialiseur du reducer ci-dessous) ; `date` en dérive et reste figé
+  // tant que la séance reprise dure — un reset / une nouvelle séance le repassent
+  // à `todayIso()` (la séance neuve démarre aujourd'hui, jamais sous la veille).
+  const initialCapture = useRef<{ date: string; restored: CaptureState | null } | undefined>(
+    undefined,
+  );
+  if (!initialCapture.current) initialCapture.current = resolveCaptureDate(initialSession);
+  const [date, setDate] = useState(initialCapture.current.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
   // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
@@ -386,12 +396,19 @@ function CaptureBoard({
 
   // Restauration au montage : Supabase fait foi, localStorage est un filet
   // (survie au background / écriture offline non encore synchronisée). Pour
-  // chaque exo on garde la source ayant le plus de séries.
+  // chaque exo on garde la source ayant le plus de séries. `restored` (cache local
+  // d'aujourd'hui ou de la veille, déjà résolu) est hydraté sous la date ADOPTÉE,
+  // alignée avec celle de l'exécution Supabase.
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const fromSupabase = hydratedState(initialSession, initialProgress, initialDatedNotes, date);
-    const fromLocal = loadPersisted(initialSession, date);
-    if (!fromLocal) return fromSupabase;
-    return mergeProgress(fromSupabase, fromLocal);
+    const { date: adoptedDate, restored } = initialCapture.current!;
+    const fromSupabase = hydratedState(
+      initialSession,
+      initialProgress,
+      initialDatedNotes,
+      adoptedDate,
+    );
+    if (!restored) return fromSupabase;
+    return mergeProgress(fromSupabase, restored);
   });
 
   // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
@@ -556,6 +573,10 @@ function CaptureBoard({
     // La séance repart du template d'origine : les ajouts/swaps de l'exécution
     // close ne se reportent pas sur la suivante (un swap se redécide chaque jour).
     setSession(initialSession);
+    // Une séance neuve démarre AUJOURD'HUI, même si on venait de reprendre une
+    // séance entamée la veille (frontière minuit) : la nouvelle exécution doit
+    // viser `today` (`performed_on` + clé de persistance), pas la veille.
+    setDate(todayIso());
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
   }, [session, date, initialSession, state.executionId]);
@@ -567,6 +588,8 @@ function CaptureBoard({
     clearPersisted(session, date);
     executionEnqueuedRef.current = false;
     setSession(initialSession);
+    // Comme le reset : une séance neuve repart sous AUJOURD'HUI (cf. handleReset).
+    setDate(todayIso());
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
   }, [session, date, initialSession]);
