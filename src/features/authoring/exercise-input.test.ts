@@ -5,6 +5,7 @@ import {
   toggleMuscle,
   validatePersonalExercise,
   buildPersonalExerciseInsert,
+  buildPersonalExerciseUpdate,
 } from './exercise-input';
 
 describe('MUSCLE_GROUPS', () => {
@@ -124,6 +125,47 @@ describe('buildPersonalExerciseInsert', () => {
   it('jette si le nom est vide', () => {
     expect(() =>
       buildPersonalExerciseInsert({ name: '  ', primaryMuscles: ['biceps'] }),
+    ).toThrow();
+  });
+});
+
+describe('buildPersonalExerciseUpdate', () => {
+  it('produit la row d update : name, muscle_group, primary_muscles, unilateral', () => {
+    // Ordre canonique : trapèzes (index 4) précède dorsaux (index 5).
+    expect(
+      buildPersonalExerciseUpdate({
+        name: '  Rowing  ',
+        primaryMuscles: ['dorsaux', 'trapèzes'],
+        unilateral: true,
+      }),
+    ).toEqual({
+      name: 'Rowing',
+      muscle_group: 'trapèzes',
+      primary_muscles: ['trapèzes', 'dorsaux'],
+      unilateral: true,
+    });
+  });
+
+  it('n écrit jamais owner_id (RLS : posé par default, jamais réécrit)', () => {
+    const row = buildPersonalExerciseUpdate({ name: 'X', primaryMuscles: ['biceps'] });
+    expect('owner_id' in row).toBe(false);
+  });
+
+  it('défaut unilateral = false et dédoublonne les muscles', () => {
+    const row = buildPersonalExerciseUpdate({
+      name: 'Squat',
+      primaryMuscles: ['quadriceps', 'quadriceps', 'fessiers'],
+    });
+    expect(row.unilateral).toBe(false);
+    expect(row.primary_muscles).toEqual(['quadriceps', 'fessiers']);
+  });
+
+  it('jette si la saisie est invalide (même garde que l insert)', () => {
+    expect(() =>
+      buildPersonalExerciseUpdate({ name: '  ', primaryMuscles: ['biceps'] }),
+    ).toThrow();
+    expect(() =>
+      buildPersonalExerciseUpdate({ name: 'X', primaryMuscles: [] }),
     ).toThrow();
   });
 });

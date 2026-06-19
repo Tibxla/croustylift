@@ -28,7 +28,14 @@
 // le coût (version vide possible) est borné et sans danger pour l'historique.
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
-import { buildPersonalExerciseInsert } from './exercise-input';
+import {
+  buildPersonalExerciseInsert,
+  buildPersonalExerciseUpdate,
+} from './exercise-input';
+import {
+  describeReferenceBlock,
+  type ExerciseReferenceCounts,
+} from '../exercises/deletion-guard';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
@@ -166,6 +173,94 @@ export async function createPersonalExercise(input: {
     .single();
   if (error) throw error;
   return data;
+}
+
+/**
+ * Édite un exo perso (renommer et/ou changer muscles + unilatéral, issue #49).
+ * La row d'update est construite et validée par buildPersonalExerciseUpdate
+ * (jette si nom vide ou aucun muscle canonique) ; `owner_id` n'est JAMAIS dans
+ * l'update (RLS, jamais réécrit). La RLS `exercises_update` borne déjà l'écriture
+ * au propriétaire : un exo de base (owner_id null) ou d'autrui ne sera pas modifié
+ * (0 ligne touchée), d'où le `.single()` qui remonte une erreur si rien ne matche.
+ */
+export async function updatePersonalExercise(
+  id: string,
+  input: { name: string; primaryMuscles: string[]; unilateral?: boolean },
+): Promise<ExerciseRow> {
+  const { data, error } = await supabase
+    .from('exercises')
+    .update(buildPersonalExerciseUpdate(input))
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Compte les références BLOQUANTES d'un exo : prescriptions (template) et
+ * performed_sets (historique réel). Sert à la garde de suppression (issue #49) :
+ * ces FK n'ont pas de ON DELETE CASCADE, supprimer un exo référencé est rejeté
+ * par la base. On lit juste les comptes (head + count: 'exact'), sans tirer les
+ * lignes. La RLS scope chaque table au user, on n'ajoute donc aucun filtre owner.
+ */
+export async function countExerciseReferences(
+  exerciseId: string,
+): Promise<ExerciseReferenceCounts> {
+  const [presc, sets] = await Promise.all([
+    supabase
+      .from('prescriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('exercise_id', exerciseId),
+    supabase
+      .from('performed_sets')
+      .select('id', { count: 'exact', head: true })
+      .eq('exercise_id', exerciseId),
+  ]);
+  if (presc.error) throw presc.error;
+  if (sets.error) throw sets.error;
+  return {
+    prescriptions: presc.count ?? 0,
+    performedSets: sets.count ?? 0,
+  };
+}
+
+/**
+ * Supprime un exo perso, de façon SÛRE (issue #49). On compte d'abord les
+ * références bloquantes : si l'exo est encore prescrit ou a un historique de
+ * séries, on REFUSE avec un message clair (describeReferenceBlock) au lieu de
+ * laisser la base lever une violation de FK opaque. L'historique n'est jamais
+ * perdu : on demande à l'utilisateur de détacher l'exo d'abord.
+ *
+ * Filet de sécurité : même après le compte (course possible avec une autre
+ * session ou une note datée non comptée), si la base rejette la suppression pour
+ * violation de FK (code Postgres 23503), on retraduit en message lisible plutôt
+ * que de remonter l'erreur SQL brute.
+ */
+export async function deletePersonalExercise(id: string): Promise<void> {
+  const counts = await countExerciseReferences(id);
+  const block = describeReferenceBlock(counts);
+  if (block) throw new Error(block);
+
+  const { error } = await supabase.from('exercises').delete().eq('id', id);
+  if (error) {
+    if (isForeignKeyViolation(error)) {
+      throw new Error(
+        'Impossible de supprimer cet exercice : il est encore utilisé ailleurs. Retire-le de tes séances avant de réessayer ; ton historique reste intact.',
+      );
+    }
+    throw error;
+  }
+}
+
+/** Vrai si l'erreur Supabase est une violation de clé étrangère (Postgres 23503). */
+function isForeignKeyViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === '23503'
+  );
 }
 
 // =====================================================================

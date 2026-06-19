@@ -29,12 +29,8 @@ import { loadExerciseNote, saveExerciseNote } from '../notes/data';
 import { isBlankNote } from '../../domain/notes';
 import type { Database } from '../../lib/database.types';
 import { loadSeanceEditor, saveSeanceVersion, createPersonalExercise } from './data';
-import {
-  MUSCLE_GROUPS,
-  toggleMuscle,
-  validatePersonalExercise,
-  orderMusclesCanonical,
-} from './exercise-input';
+import { ExerciseForm } from '../exercises/ExerciseForm';
+import { MUSCLE_GROUPS, orderMusclesCanonical } from './exercise-input';
 import {
   type EditorRow,
   type FieldKey,
@@ -840,10 +836,14 @@ function AddExerciseSheet({
       </p>
 
       {creating ? (
-        <CreatePersonalForm
-          onCancel={() => setCreating(false)}
-          onSubmit={onCreatePersonal}
-        />
+        <div className="mb-4">
+          <ExerciseForm
+            submitLabel="Créer et ajouter"
+            submitBusyLabel="Création…"
+            onCancel={() => setCreating(false)}
+            onSubmit={onCreatePersonal}
+          />
+        </div>
       ) : (
         <button
           type="button"
@@ -916,138 +916,6 @@ function AddExerciseSheet({
         </ul>
       )}
     </div>
-  );
-}
-
-/**
- * Création d'un exo perso (issue #33) : nom (texte) + LISTE de muscles principaux
- * (>= 1, chips cochables) + drapeau unilatéral (segment).
- *
- * DESIGN.md : l'info n'est jamais portée par la couleur seule. Un muscle
- * sélectionné porte une coche « ✓ » EN PLUS de l'accent ; le segment unilatéral a
- * un libellé texte explicite ("Bilatéral" / "Unilatéral") et aria-pressed. La
- * validation (>= 1 muscle, nom non vide) est mutualisée avec la couche data via
- * validatePersonalExercise (exercise-input.ts) : un seul message de vérité.
- */
-function CreatePersonalForm({
-  onCancel,
-  onSubmit,
-}: {
-  onCancel: () => void;
-  onSubmit: (input: PersonalExerciseFormInput) => Promise<void>;
-}) {
-  const [name, setName] = useState('');
-  const [muscles, setMuscles] = useState<string[]>([]);
-  const [unilateral, setUnilateral] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const trimmed = name.trim();
-  // validatePersonalExercise renvoie null quand la saisie est valide.
-  const canSubmit =
-    !busy &&
-    validatePersonalExercise({ name: trimmed, primaryMuscles: muscles }) === null;
-
-  async function submit() {
-    if (!canSubmit) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onSubmit({ name: trimmed, primaryMuscles: muscles, unilateral });
-      // En cas de succès, le parent quitte la sheet : pas de reset nécessaire.
-    } catch (err) {
-      setError(errMessage(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form
-      className="mb-4 rounded-2xl border border-line bg-surface p-3.5"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
-      }}
-    >
-      <p className="mb-2.5 text-sm font-semibold text-ink">Nouvel exercice perso</p>
-
-      <input
-        type="text"
-        value={name}
-        placeholder="Nom de l'exercice"
-        autoFocus
-        enterKeyHint="done"
-        maxLength={80}
-        onChange={(e) => setName(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
-      />
-
-      <p className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">Type de mouvement</p>
-      <div
-        className="inline-flex rounded-lg bg-bg/60 p-0.5"
-        role="group"
-        aria-label="Type de mouvement"
-      >
-        <SegButton
-          label="Bilatéral"
-          active={!unilateral}
-          onClick={unilateral ? () => setUnilateral(false) : undefined}
-        />
-        <SegButton
-          label="Unilatéral"
-          active={unilateral}
-          onClick={unilateral ? undefined : () => setUnilateral(true)}
-        />
-      </div>
-
-      <p id="muscles-label" className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">
-        Muscles principaux{' '}
-        <span className="readout tabular-nums">({muscles.length})</span>
-      </p>
-      <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby="muscles-label">
-        {MUSCLE_GROUPS.map((m) => {
-          const active = muscles.includes(m);
-          return (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
-              className={`min-h-[36px] rounded-lg px-2.5 text-xs font-medium transition active:scale-[0.97] ${
-                active
-                  ? 'bg-accent-strong text-on-accent'
-                  : 'bg-bg text-ink-muted active:text-ink'
-              }`}
-            >
-              {active ? `✓ ${m}` : m}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
-        >
-          {busy ? 'Création…' : 'Créer et ajouter'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && (
-        <p className="readout mt-2 break-words text-xs text-warn" role="alert">
-          {error}
-        </p>
-      )}
-    </form>
   );
 }
 
