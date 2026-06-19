@@ -9,6 +9,9 @@ import {
   statusOf,
   initialState,
   clearCaptureState,
+  loadPersisted,
+  persist,
+  clearPersisted,
   nextSetOrder,
   pendingSide,
   resolveExerciseNoteSave,
@@ -441,7 +444,7 @@ describe('captureReducer — reset', () => {
 // --- captureReducer — close --------------------------------------------------
 
 describe('captureReducer — close', () => {
-  it('fige closedAt (la clôture survit ainsi au remontage via la persistance)', () => {
+  it('fige closedAt EN MÉMOIRE (récap immédiat ; pas restauré — ADR 0009)', () => {
     const state = mkState();
     expect(state.closedAt).toBeNull();
     const after = captureReducer(state, { type: 'close', closedAt: 1_700_500 });
@@ -543,6 +546,76 @@ describe('clearCaptureState', () => {
   it('est un no-op sans erreur quand rien n’est persisté', () => {
     expect(() => clearCaptureState()).not.toThrow();
     expect(localStorage.length).toBe(0);
+  });
+});
+
+// --- persist / loadPersisted (survie au background + clôture transitoire) -----
+//
+// ADR 0009 : une séance EN COURS se restaure (offline : on ne perd pas les séries
+// loggées sur un reload). Une séance CLÔTURÉE ne se restaure JAMAIS : son cache est
+// nettoyé à la clôture (câblage CaptureScreen) et `loadPersisted` force `closedAt`
+// à null, de sorte qu'un vieux cache porteur d'un closedAt ne ressuscite pas
+// l'écran « Séance terminée ». Même polyfill localStorage indexable que ci-dessus.
+
+describe('persist / loadPersisted', () => {
+  const DATE = '2026-06-18';
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('restaure une séance EN COURS : les séries loggées sont préservées', () => {
+    let state = mkState();
+    state = captureReducer(state, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(state);
+
+    const restored = loadPersisted(upperA, DATE);
+    expect(restored).not.toBeNull();
+    const p = getProgress(restored as CaptureState, 'bench-press');
+    expect(p.sets).toHaveLength(1);
+    expect(p.sets[0]).toMatchObject({ ...set1, order: 1 });
+    expect(p.setIds).toEqual(['s1']);
+    // L'exécution en cours garde son id (les ops d'outbox visent cette exécution).
+    expect((restored as CaptureState).executionId).toBe(state.executionId);
+    expect((restored as CaptureState).closedAt).toBeNull();
+  });
+
+  it('ne restaure PAS la clôture : un cache porteur d’un closedAt revient « en cours »', () => {
+    // Cache d'un état close (pré-ADR, ou écrit avant le nettoyage) : le load doit
+    // l'ignorer et forcer closedAt à null (capture vierge, pas « Séance terminée »).
+    const closed = captureReducer(mkState(), { type: 'close', closedAt: 1_700_500 });
+    persist(closed);
+
+    const restored = loadPersisted(upperA, DATE);
+    expect(restored).not.toBeNull();
+    expect((restored as CaptureState).closedAt).toBeNull();
+  });
+
+  it('clearPersisted purge le cache : le remontage repart vierge (loadPersisted null)', () => {
+    // Geste de clôture câblé : le state est posé close, puis le cache nettoyé.
+    let state = mkState();
+    state = captureReducer(state, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(state);
+    expect(loadPersisted(upperA, DATE)).not.toBeNull();
+
+    // Clôture transitoire : on nettoie plutôt que de persister l'état close.
+    clearPersisted(upperA, DATE);
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+  });
+
+  it('rien de persisté → null (capture vierge au premier montage)', () => {
+    expect(loadPersisted(upperA, DATE)).toBeNull();
   });
 });
 

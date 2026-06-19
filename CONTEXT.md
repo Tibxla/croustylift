@@ -70,6 +70,10 @@ _Avoid_: Modification, correction, erreur
 Le déroulé réel d'une séance un jour donné : les séries réellement faites, rattachées à la version de séance active ce jour-là. Le diff entre les deux donne les déviations.
 _Avoid_: Session, séance réalisée (« séance » désigne le template)
 
+**Clôture**:
+Le geste par lequel l'utilisateur déclare sa séance finie en salle : il fige les métriques de fin (durée chronométrée, BPM moyen optionnel), voit son récap, puis l'écran de Capture redevient disponible. Un moment, pas un statut : une fois rangée, la séance vit dans le journal comme n'importe quelle Exécution.
+_Avoid_: Statut « terminée » persistant, fin de séance comme verrou
+
 **Série**:
 Une série de travail réellement effectuée dans une exécution : poids, reps, RIR et son rang d'ordre. Aucun échauffement n'est loggé. Sur un exercice unilatéral, une série tient sur deux lignes au même rang (un côté gauche, un côté droite, valeurs par côté) ; son e1RM est celui du côté faible.
 _Avoid_: Set ; ne pas confondre avec « rep » (les répétitions à l'intérieur d'une série)

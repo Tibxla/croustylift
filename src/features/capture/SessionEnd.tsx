@@ -51,13 +51,6 @@ interface SessionEndProps {
   onBack: () => void;
   /** Repart sur une séance fraîche, depuis l'écran de confirmation de clôture. */
   onNewSession: () => void;
-  /**
-   * `true` : la séance est DÉJÀ clôturée (restaurée close au remontage) → on
-   * affiche directement la confirmation « Séance terminée », sans repasser par
-   * le formulaire de fin. Les métriques saisies à la clôture initiale ne sont
-   * pas redemandées.
-   */
-  alreadyClosed?: boolean;
 }
 
 const BPM_DEFAULT = 130;
@@ -83,7 +76,6 @@ export function SessionEnd({
   onSave,
   onBack,
   onNewSession,
-  alreadyClosed = false,
 }: SessionEndProps) {
   // BPM : activé (saisi) ? + sa valeur. Replié par défaut = « non saisi ».
   const [bpmOn, setBpmOn] = useState(false);
@@ -113,12 +105,15 @@ export function SessionEnd({
 
   const handleSkip = () => void commit({});
 
-  if (saved || alreadyClosed) {
+  // Une fois enregistré : confirmation « Séance terminée » dans la foulée (récap
+  // immédiat, état local — la clôture est transitoire, ADR 0009, elle ne survit
+  // pas à un remontage).
+  if (saved) {
     return (
       <SessionDone
         summary={summary}
         durationMin={durationMin}
-        values={saved ?? {}}
+        values={saved}
         onNewSession={onNewSession}
       />
     );
