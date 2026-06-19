@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Variante MASKABLE : fond PLEIN BORD (pas de coins arrondis — c'est l'OS qui
+       applique SA forme de masque, cercle/squircle). Le « C » est réduit (260 vs
+       300) pour tenir dans la zone de sécurité centrale (~80 %) et ne pas être
+       rogné par le masque. L'icône normale (icon.svg / PNG) garde ses coins. -->
+  <rect width="512" height="512" fill="#0d0d12"/>
+  <text
+    x="256"
+    y="350"
+    font-family="system-ui, -apple-system, 'Helvetica Neue', sans-serif"
+    font-size="260"
+    font-weight="700"
+    text-anchor="middle"
+    fill="#7c3aed"
+  >C</text>
+</svg>

@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -61,12 +61,13 @@ export default defineConfig({
             type: 'image/png',
           },
           {
-            // Icone maskable : iOS/Android peuvent l'afficher dans un masque
-            // circulaire ou "squircle". Le fond plein #0d0d12 remplit la zone
-            // de securite sans espace blanc visible.
-            src: '/icon-maskable-512.png',
-            sizes: '512x512',
-            type: 'image/png',
+            // Icone maskable : l'OS l'affiche dans un masque (cercle/squircle).
+            // SVG plein-bord avec le logo dans la zone de securite centrale (~80%),
+            // pour ne pas etre rogne. Remplace l'ancien PNG qui DUPLIQUAIT l'icone
+            // normale (coins arrondis -> logo rogne par le masque).
+            src: '/icon-maskable.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
             purpose: 'maskable',
           },
         ],
@@ -76,5 +77,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // Les worktrees résiduels (.claude/worktrees) contiennent des copies du repo :
+    // sans cette exclusion, vitest globbe leurs *.test.ts et teste du code périmé /
+    // double-compte. On garde les exclusions par défaut + .claude.
+    exclude: [...configDefaults.exclude, '**/.claude/**'],
   },
 })
