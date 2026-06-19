@@ -11,9 +11,18 @@
 // sont exactement les `InsertSetOp` / `DeleteSetOp` de l'outbox de la capture.
 //
 // L'`order` n'est PAS porté par l'`EditableSet` pendant l'édition : il est
-// RECOMPACTÉ (1..N) à partir de la position dans la liste au moment d'écrire.
-// Ainsi supprimer la série du milieu ne laisse jamais de trou dans les rangs.
+// RECOMPACTÉ à partir de la position dans la liste au moment d'écrire. Ainsi
+// supprimer la série du milieu ne laisse jamais de trou dans les rangs.
+//
+// UNILATÉRAL (issue #38, ADR 0005) : une série d'un exo unilatéral tient sur
+// DEUX lignes (un côté gauche, un côté droite) au MÊME `order`. Chaque ligne est
+// un `EditableSet` portant son `side` ; les deux côtés d'une même série restent
+// CONTIGUS dans la liste (le chargement les trie ainsi). Le recompactage groupe
+// donc par SÉRIE LOGIQUE, pas par ligne : la paire G/D garde un `order` commun,
+// le rang n'avance qu'au passage à la série logique suivante. Sans ce groupage,
+// recompacter en 1..N par ligne dé-apparierait G/D et corromprait le côté faible.
 import type { InsertSetOp, DeleteSetOp, OutboxOp } from './outbox';
+import type { Side } from '../../domain/types';
 
 /** Une série en cours d'édition : son id (réel si en base, client si neuve) + ses valeurs. */
 export interface EditableSet {
@@ -27,6 +36,13 @@ export interface EditableSet {
   weightKg: number;
   reps: number;
   rir: number;
+  /**
+   * Côté pour un exo UNILATÉRAL (ADR 0005) : 'left'/'right'. Deux lignes d'une
+   * même série partagent le même `order` recompacté et diffèrent par `side`.
+   * Absent (`undefined`) pour un exo bilatéral (une série = une ligne). Porté de
+   * bout en bout (chargement → diff → outbox) pour ne jamais dé-apparier G/D.
+   */
+  side?: Side;
 }
 
 /** Une série recompactée, avec son rang d'ordre (1..N) figé pour l'écriture. */
@@ -62,13 +78,20 @@ export interface EditableExercise {
   sets: EditableSet[];
 }
 
+/** Rang de tri d'un côté : gauche (0) avant droite (1) à `order` égal. */
+function sideRank(side: Side | undefined): number {
+  return side === 'right' ? 1 : 0;
+}
+
 /**
  * Regroupe des lignes plates `(série, exo)` d'une exécution passée en exos
- * éditables : un exo par exerciseId, ses séries triées par order croissant
- * (l'order n'est plus porté ensuite — il est recompacté à l'écriture), exos
- * triés par nom (locale fr) comme dans le journal. Pure (pas de réseau) : la
- * couche data ne fait que l'alimenter. Garde l'id RÉEL de chaque série pour que
- * l'édition vise la bonne ligne.
+ * éditables : un exo par exerciseId, ses séries triées par order croissant puis
+ * par côté (gauche avant droite, ADR 0005) pour que les deux lignes d'une série
+ * unilatérale restent CONTIGUËS — le recompactage en dépend. L'order n'est plus
+ * porté ensuite (il est recompacté à l'écriture), mais le `side` l'est, de bout
+ * en bout. Exos triés par nom (locale fr) comme dans le journal. Pure (pas de
+ * réseau) : la couche data ne fait que l'alimenter. Garde l'id RÉEL de chaque
+ * série pour que l'édition vise la bonne ligne.
  */
 export function groupSetsForEdit(rows: EditableSetRow[]): EditableExercise[] {
   const byExercise = new Map<string, { name: string; rows: EditableSetRow[] }>();
@@ -85,8 +108,8 @@ export function groupSetsForEdit(rows: EditableSetRow[]): EditableExercise[] {
   for (const [exerciseId, group] of byExercise) {
     const sets = group.rows
       .slice()
-      .sort((a, b) => a.order - b.order)
-      .map((r) => ({ id: r.id, weightKg: r.weightKg, reps: r.reps, rir: r.rir }));
+      .sort((a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side))
+      .map((r) => ({ id: r.id, weightKg: r.weightKg, reps: r.reps, rir: r.rir, side: r.side }));
     exercises.push({ exerciseId, name: group.name, sets });
   }
 
@@ -121,12 +144,76 @@ export function removeSet(sets: EditableSet[], id: string): EditableSet[] {
 }
 
 /**
- * Fige les rangs d'ordre à partir de la position (1..N). À appeler juste avant
- * de comparer / d'écrire : c'est ce qui garantit des rangs contigus après une
- * suppression au milieu. Immutable.
+ * Fige les rangs d'ordre par SÉRIE LOGIQUE (pas par ligne). À appeler juste
+ * avant de comparer / d'écrire : c'est ce qui garantit des rangs contigus après
+ * une suppression au milieu, SANS dé-apparier les côtés d'une série unilatérale.
+ *
+ *   - BILATÉRAL (ligne sans `side`) : une ligne = une série, le rang avance à
+ *     chaque ligne — comportement strictement inchangé (1, 2, 3…).
+ *   - UNILATÉRAL : les deux côtés (G/D) d'une même série sont CONTIGUS (le
+ *     chargement les trie ainsi) et GARDENT un `order` commun. Le rang n'avance
+ *     qu'au passage à la série logique SUIVANTE, détectée quand on rencontre un
+ *     côté DÉJÀ vu dans la série courante (ou une ligne bilatérale).
+ *
+ * Le regroupement s'appuie sur la contiguïté G/D et sur `side` (le seul indice
+ * porté ici), pas sur l'order d'origine : c'est l'invariant que `groupSetsForEdit`
+ * et l'UI d'édition maintiennent (toujours une PAIRE complète, jamais réordonnée
+ * côté par côté). Immutable.
  */
 export function reorderSets(sets: EditableSet[]): OrderedEditableSet[] {
-  return sets.map((s, i) => ({ ...s, order: i + 1 }));
+  const ordered: OrderedEditableSet[] = [];
+  let order = 0;
+  let sidesInCurrent: Side[] = [];
+
+  for (const s of sets) {
+    // Nouvelle série logique si : ligne bilatérale, première ligne, ou côté déjà
+    // présent dans la série courante (les deux côtés d'une paire sont distincts).
+    const startsNewSet =
+      s.side === undefined || order === 0 || sidesInCurrent.includes(s.side);
+    if (startsNewSet) {
+      order += 1;
+      sidesInCurrent = [];
+    }
+    if (s.side !== undefined) sidesInCurrent.push(s.side);
+    ordered.push({ ...s, order });
+  }
+
+  return ordered;
+}
+
+/** Une série LOGIQUE : son rang + ses lignes (1 si bilatéral, 2 côtés si unilatéral). */
+export interface LogicalSet {
+  /** Rang d'ordre (1..N) de la série, partagé par ses deux côtés en unilatéral. */
+  order: number;
+  /** Le côté gauche (unilatéral), ou `null` s'il manque / si bilatéral. */
+  left: EditableSet | null;
+  /** Le côté droite (unilatéral), ou `null` s'il manque / si bilatéral. */
+  right: EditableSet | null;
+  /** La ligne unique d'une série BILATÉRALE, ou `null` si unilatérale. */
+  both: EditableSet | null;
+}
+
+/**
+ * Regroupe des lignes éditables en SÉRIES LOGIQUES pour l'affichage et le
+ * décompte : une série bilatérale tient sur `both`, une série unilatérale sur
+ * `left`/`right` (mêmes paires que `reorderSets`, même rang). Garde l'ordre des
+ * séries. Pur — sert l'UI d'édition (un bloc par série) et le chiffrage de la
+ * suppression (compter les séries, pas les lignes). N'invente jamais un côté
+ * manquant : une paire incomplète reste affichée telle quelle (côté à `null`).
+ */
+export function groupIntoLogicalSets(sets: EditableSet[]): LogicalSet[] {
+  const byOrder = new Map<number, LogicalSet>();
+  for (const s of reorderSets(sets)) {
+    let group = byOrder.get(s.order);
+    if (!group) {
+      group = { order: s.order, left: null, right: null, both: null };
+      byOrder.set(s.order, group);
+    }
+    if (s.side === 'left') group.left = s;
+    else if (s.side === 'right') group.right = s;
+    else group.both = s;
+  }
+  return [...byOrder.values()].sort((a, b) => a.order - b.order);
 }
 
 /**
@@ -153,7 +240,11 @@ export function diffSetsToOps(
   ctx: EditContext,
 ): OutboxOp[] {
   const orderedEdited = reorderSets(edited);
-  const originalById = new Map(original.map((s) => [s.id, s]));
+  // `original` est recompacté de la MÊME façon (par série logique) pour comparer
+  // des orders comparables : sinon, sur un exo unilatéral, l'order par série de
+  // l'édité ne collerait jamais à un order par ligne de l'origine et chaque côté
+  // droit serait à tort ré-affirmé.
+  const originalById = new Map(reorderSets(original).map((s) => [s.id, s]));
   const editedIds = new Set(edited.map((s) => s.id));
 
   const deletes: DeleteSetOp[] = [];
@@ -167,7 +258,7 @@ export function diffSetsToOps(
   }
 
   // Insertions / mises à jour : série neuve, ou série existante qui a changé
-  // (une valeur ou son rang). On rejoue par upsert (idempotent par id).
+  // (une valeur, son côté, ou son rang). On rejoue par upsert (idempotent par id).
   for (const s of orderedEdited) {
     const before = originalById.get(s.id);
     const unchanged =
@@ -175,9 +266,8 @@ export function diffSetsToOps(
       before.weightKg === s.weightKg &&
       before.reps === s.reps &&
       before.rir === s.rir &&
-      // `before` n'a pas d'order explicite : on le compare au rang qu'il avait
-      // dans `original` (sa position d'origine), recompacté de la même façon.
-      originalOrderOf(original, s.id) === s.order;
+      before.side === s.side &&
+      before.order === s.order;
     if (unchanged) continue;
     inserts.push({
       type: 'insertSet',
@@ -188,15 +278,12 @@ export function diffSetsToOps(
       weightKg: s.weightKg,
       reps: s.reps,
       rir: s.rir,
+      // `side` porté de bout en bout (ADR 0005) : `undefined` pour le bilatéral
+      // (l'outbox/`upsertSet` l'écrit `null`), 'left'/'right' pour l'unilatéral.
+      side: s.side,
     });
   }
 
   // Deletes d'abord (libère les rangs), puis inserts (occupe les rangs).
   return [...deletes, ...inserts];
-}
-
-/** Rang (1..N) qu'avait la série `id` dans la liste d'origine, ou -1 si absente. */
-function originalOrderOf(original: EditableSet[], id: string): number {
-  const idx = original.findIndex((s) => s.id === id);
-  return idx === -1 ? -1 : idx + 1;
 }

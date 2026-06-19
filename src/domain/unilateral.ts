@@ -10,13 +10,12 @@
 // unilatérale est donc l'e1RM le PLUS BAS des deux côtés sur la 1ʳᵉ série. Logique
 // pure (aucun Supabase), réutilisée par buildPrimaryCurve.
 //
-// LIMITES CONNUES (hors périmètre issue #46, à traiter dans des issues dédiées) :
-//   - Édition d'une séance passée (issue #38) : `reorderSets` recompacte les
-//     orders en 1..N et l'EditableSet ne porte pas `side` -> éditer une exécution
-//     unilatérale dé-apparierait G/D. À ne pas faire tant que l'édition n'a pas
-//     été rendue consciente du côté.
+// LIMITE CONNUE :
 //   - Log brut (issue #27/#32) : les séries unilatérales s'y affichent en deux
 //     lignes au même order, sans libellé de côté (RawLogSet n'a pas `side`).
+// L'édition d'une séance passée (issue #38) gère DÉSORMAIS le côté : `side` est
+// porté de bout en bout (chargement -> diff -> outbox -> DB) et `reorderSets`
+// recompacte par SÉRIE LOGIQUE pour garder G/D appariés (cf. past-session-edit).
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet, Side } from './types'
 

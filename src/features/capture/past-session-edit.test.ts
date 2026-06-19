@@ -14,10 +14,12 @@ import {
   reorderSets,
   diffSetsToOps,
   groupSetsForEdit,
+  groupIntoLogicalSets,
   type EditableSet,
   type EditableSetRow,
 } from './past-session-edit';
 import type { InsertSetOp, DeleteSetOp } from './outbox';
+import type { Side } from '../../domain/types';
 
 // --- Fabriques ---------------------------------------------------------------
 
@@ -27,6 +29,15 @@ const mkSet = (id: string, weightKg: number, reps: number, rir: number): Editabl
   reps,
   rir,
 });
+
+/** Une ligne unilatérale : comme `mkSet` mais avec son côté (G ou D). */
+const mkSide = (
+  id: string,
+  side: Side,
+  weightKg: number,
+  reps: number,
+  rir: number,
+): EditableSet => ({ id, weightKg, reps, rir, side });
 
 // Trois séries « en base » d'un exo (ids réels, comme renvoyés par le chargement).
 const original = (): EditableSet[] => [
@@ -108,6 +119,54 @@ describe('reorderSets', () => {
     const ordered = reorderSets(edited);
     expect(ordered.map((s) => s.order)).toEqual([1, 2]);
     expect(ordered.map((s) => s.id)).toEqual(['s1', 's3']);
+  });
+
+  // --- Unilatéral : la paire G/D garde un order COMMUN (ADR 0005) ------------
+
+  it('unilatéral : les deux côtés d’une série partagent le même order', () => {
+    // 2 séries unilatérales = 4 lignes, G/D contigus par série.
+    const ordered = reorderSets([
+      mkSide('l1', 'left', 30, 10, 2),
+      mkSide('r1', 'right', 28, 10, 2),
+      mkSide('l2', 'left', 30, 9, 1),
+      mkSide('r2', 'right', 28, 9, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1, 2, 2]);
+    expect(ordered.map((s) => s.side)).toEqual(['left', 'right', 'left', 'right']);
+  });
+
+  it('unilatéral : commencer par la droite ne casse pas l’appariement', () => {
+    const ordered = reorderSets([
+      mkSide('r1', 'right', 28, 10, 2),
+      mkSide('l1', 'left', 30, 10, 2),
+      mkSide('r2', 'right', 28, 9, 1),
+      mkSide('l2', 'left', 30, 9, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1, 2, 2]);
+  });
+
+  it('unilatéral : supprimer une paire ne laisse pas de trou dans les order', () => {
+    let edited: EditableSet[] = [
+      mkSide('l1', 'left', 30, 10, 2),
+      mkSide('r1', 'right', 28, 10, 2),
+      mkSide('l2', 'left', 30, 9, 1),
+      mkSide('r2', 'right', 28, 9, 1),
+    ];
+    // L'UI supprime la série 1 en entier (les deux côtés).
+    edited = removeSet(removeSet(edited, 'l1'), 'r1');
+    const ordered = reorderSets(edited);
+    expect(ordered.map((s) => s.id)).toEqual(['l2', 'r2']);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1]);
+  });
+
+  it('unilatéral : une série entamée d’un seul côté reste sa propre série', () => {
+    // Série 1 complète (G+D), série 2 incomplète (G seul) : 2 rangs distincts.
+    const ordered = reorderSets([
+      mkSide('l1', 'left', 30, 10, 2),
+      mkSide('r1', 'right', 28, 10, 2),
+      mkSide('l2', 'left', 30, 9, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1, 2]);
   });
 });
 
@@ -272,5 +331,132 @@ describe('groupSetsForEdit', () => {
 
   it('liste vide -> aucun exo', () => {
     expect(groupSetsForEdit([])).toEqual([]);
+  });
+
+  it('unilatéral : porte `side` et garde les côtés contigus (gauche avant droite)', () => {
+    const exercises = groupSetsForEdit([
+      { id: 'r1', exerciseId: 'db', exerciseName: 'Curl haltère', order: 1, weightKg: 14, reps: 10, rir: 2, side: 'right' },
+      { id: 'l1', exerciseId: 'db', exerciseName: 'Curl haltère', order: 1, weightKg: 16, reps: 10, rir: 2, side: 'left' },
+    ]);
+    const db = exercises.find((e) => e.exerciseId === 'db')!;
+    expect(db.sets.map((s) => s.side)).toEqual(['left', 'right']);
+    expect(db.sets.map((s) => s.id)).toEqual(['l1', 'r1']);
+  });
+});
+
+// --- Unilatéral : `side` porté de bout en bout (ADR 0005) -------------------
+//
+// Le bug corrigé : éditer une séance passée d'un exo unilatéral écrasait `side`
+// à null et dé-appariait G/D (côté faible faux, décompte cassé). Ces cas
+// vérifient que le diff PRÉSERVE le côté et que la paire garde un order commun.
+
+describe('diffSetsToOps (unilatéral)', () => {
+  const ctx = { executionId: 'exec-1', exerciseId: 'db-curl' };
+
+  // Une série unilatérale en base = deux lignes au même order, G puis D.
+  const uni = (): EditableSet[] => [
+    mkSide('l1', 'left', 16, 10, 2),
+    mkSide('r1', 'right', 14, 10, 2),
+    mkSide('l2', 'left', 16, 9, 1),
+    mkSide('r2', 'right', 14, 9, 1),
+  ];
+
+  it('aucune édition -> aucune op (le `side` intact ne déclenche rien)', () => {
+    expect(diffSetsToOps(uni(), uni(), ctx)).toEqual([]);
+  });
+
+  it('modifier un côté -> un insertSet portant son `side` et le bon order', () => {
+    const edited = updateSet(uni(), 'l1', { weightKg: 18, reps: 10, rir: 2 });
+    const ops = diffSetsToOps(uni(), edited, ctx);
+    expect(ops).toEqual<InsertSetOp[]>([
+      {
+        type: 'insertSet',
+        id: 'l1',
+        executionId: 'exec-1',
+        exerciseId: 'db-curl',
+        setOrder: 1,
+        weightKg: 18,
+        reps: 10,
+        rir: 2,
+        side: 'left',
+      },
+    ]);
+    // L'autre côté de la même série n'a pas bougé -> pas d'op (pas de ré-affirmation).
+    expect(ops.some((op) => op.type === 'insertSet' && op.id === 'r1')).toBe(false);
+  });
+
+  it('supprimer une série entière (les deux côtés) -> deux deleteSet, paire suivante recompactée à order 1', () => {
+    // L'UI supprime la série 1 G+D : restent l2/r2 qui passent de l'order 2 à 1.
+    const edited = removeSet(removeSet(uni(), 'l1'), 'r1');
+    const ops = diffSetsToOps(uni(), edited, ctx);
+    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 'l1' });
+    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 'r1' });
+    // l2/r2 ré-affirmés au nouvel order 1, chacun avec SON côté préservé.
+    expect(ops).toContainEqual<InsertSetOp>({
+      type: 'insertSet',
+      id: 'l2',
+      executionId: 'exec-1',
+      exerciseId: 'db-curl',
+      setOrder: 1,
+      weightKg: 16,
+      reps: 9,
+      rir: 1,
+      side: 'left',
+    });
+    expect(ops).toContainEqual<InsertSetOp>({
+      type: 'insertSet',
+      id: 'r2',
+      executionId: 'exec-1',
+      exerciseId: 'db-curl',
+      setOrder: 1,
+      weightKg: 14,
+      reps: 9,
+      rir: 1,
+      side: 'right',
+    });
+  });
+
+  it('ajouter une paire en fin -> deux insertSet au même nouvel order, un par côté', () => {
+    let edited = addSet(uni(), mkSide('l3', 'left', 16, 8, 1));
+    edited = addSet(edited, mkSide('r3', 'right', 14, 8, 1));
+    const ops = diffSetsToOps(uni(), edited, ctx);
+    const l3 = ops.find((op) => op.type === 'insertSet' && op.id === 'l3') as InsertSetOp;
+    const r3 = ops.find((op) => op.type === 'insertSet' && op.id === 'r3') as InsertSetOp;
+    expect(l3.setOrder).toBe(3);
+    expect(r3.setOrder).toBe(3);
+    expect(l3.side).toBe('left');
+    expect(r3.side).toBe('right');
+  });
+});
+
+describe('groupIntoLogicalSets', () => {
+  it('bilatéral : une ligne = une série logique sur `both`', () => {
+    const groups = groupIntoLogicalSets([mkSet('s1', 80, 8, 2), mkSet('s2', 80, 7, 1)]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].both?.id).toBe('s1');
+    expect(groups[0].left).toBeNull();
+    expect(groups[0].right).toBeNull();
+  });
+
+  it('unilatéral : la paire G/D forme UNE série logique (left + right)', () => {
+    const groups = groupIntoLogicalSets([
+      mkSide('l1', 'left', 16, 10, 2),
+      mkSide('r1', 'right', 14, 10, 2),
+      mkSide('l2', 'left', 16, 9, 1),
+      mkSide('r2', 'right', 14, 9, 1),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].left?.id).toBe('l1');
+    expect(groups[0].right?.id).toBe('r1');
+    expect(groups[0].both).toBeNull();
+    expect(groups[1].left?.id).toBe('l2');
+    expect(groups[1].right?.id).toBe('r2');
+  });
+
+  it('unilatéral incomplet : un seul côté loggé reste une série (l’autre côté null)', () => {
+    const groups = groupIntoLogicalSets([mkSide('l1', 'left', 16, 10, 2)]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].left?.id).toBe('l1');
+    expect(groups[0].right).toBeNull();
   });
 });

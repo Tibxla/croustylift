@@ -14,8 +14,6 @@ import {
   type Dispatch,
 } from 'react';
 import {
-  deleteExecutionById,
-  deleteSetById,
   listExercises,
   loadCaptureSource,
   loadCatalogExercise,
@@ -25,9 +23,6 @@ import {
   loadSeanceForCapture,
   loadTodayDatedNotes,
   loadTodayProgress,
-  updateExecution,
-  upsertExecution,
-  upsertSet,
   type LoadedSeance,
   type SeanceChoice,
   type Session,
@@ -40,8 +35,6 @@ import {
 import {
   loadExerciseNote,
   saveExerciseNote,
-  upsertDatedNote as upsertDatedNoteRow,
-  deleteDatedNoteById,
   datedNoteOutboxOp,
 } from '../notes/data';
 import {
@@ -64,8 +57,11 @@ import {
   flush,
   pendingCount,
   clearQueue,
-  type SyncFns,
 } from './outbox';
+// Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
+// (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
+// `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces.
+import { syncFns } from './sync';
 import type { PerformedSet, Side } from '../../domain/types';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
@@ -306,48 +302,6 @@ function SeancePicker({
     </div>
   );
 }
-
-// --- Couche de synchronisation (outbox) -------------------------------------
-
-/**
- * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
- * toutes idempotentes par id (cf. data.ts). C'est le seul point de couplage
- * entre l'outbox (logique pure) et Supabase.
- */
-const syncFns: SyncFns = {
-  upsertExecution: (op) =>
-    upsertExecution({
-      id: op.id,
-      seanceVersionId: op.seanceVersionId,
-      performedOn: op.performedOn,
-    }),
-  insertSet: (op) =>
-    upsertSet({
-      id: op.id,
-      executionId: op.executionId,
-      exerciseId: op.exerciseId,
-      setOrder: op.setOrder,
-      weightKg: op.weightKg,
-      reps: op.reps,
-      rir: op.rir,
-      side: op.side,
-    }),
-  deleteSet: (op) => deleteSetById(op.id),
-  updateExecution: (op) =>
-    updateExecution({ id: op.id, bpmAvg: op.bpmAvg, durationMin: op.durationMin }),
-  upsertDatedNote: (op) =>
-    upsertDatedNoteRow({
-      id: op.id,
-      executionId: op.executionId,
-      exerciseId: op.exerciseId,
-      body: op.body,
-    }),
-  deleteDatedNote: (op) => deleteDatedNoteById(op.id),
-  // La capture du jour n'enfile jamais cette op (la suppression d'exécution vient
-  // du journal, cf. ADR 0008), mais l'objet doit satisfaire `SyncFns` ; on câble
-  // le même chemin idempotent par id.
-  deleteExecution: (op) => deleteExecutionById(op.id),
-};
 
 // --- Indicateur de sync réactif --------------------------------------------
 // La bannière est pilotée par la LONGUEUR de l'outbox + l'état réseau. On

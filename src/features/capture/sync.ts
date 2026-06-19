@@ -41,6 +41,9 @@ export const syncFns: SyncFns = {
       weightKg: op.weightKg,
       reps: op.reps,
       rir: op.rir,
+      // Côté unilatéral (ADR 0005) : porté jusqu'à la base pour ne pas écraser
+      // `side` à null et dé-apparier G/D quand on édite une exécution passée.
+      side: op.side,
     }),
   deleteSet: (op) => deleteSetById(op.id),
   updateExecution: (op) =>

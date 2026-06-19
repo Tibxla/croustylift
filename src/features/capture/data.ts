@@ -511,7 +511,7 @@ export async function loadExecutionForEdit(
 
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('id, exercise_id, set_order, weight_kg, reps, rir, exercises ( name )')
+    .select('id, exercise_id, set_order, weight_kg, reps, rir, side, exercises ( name )')
     .eq('execution_id', executionId)
     .order('set_order', { ascending: true });
   if (error) throw error;
@@ -523,10 +523,14 @@ export async function loadExecutionForEdit(
     weight_kg: number;
     reps: number;
     rir: number;
+    side: string | null;
     exercises: { name: string } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
 
+  // `side` porté de bout en bout (ADR 0005) : sur un exo unilatéral, une série =
+  // deux lignes au même set_order distinguées par leur côté. Sans lui, l'édition
+  // recompacterait/réécrirait `side` à null et dé-apparierait G/D (côté faible faux).
   const editableRows: EditableSetRow[] = rows.map((row) => ({
     id: row.id,
     exerciseId: row.exercise_id,
@@ -535,6 +539,7 @@ export async function loadExecutionForEdit(
     weightKg: Number(row.weight_kg),
     reps: row.reps,
     rir: row.rir,
+    side: toSide(row.side),
   }));
 
   return {
