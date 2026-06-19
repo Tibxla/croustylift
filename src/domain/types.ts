@@ -14,6 +14,14 @@ export interface Prescription {
   rir: Range;
 }
 
+/**
+ * Le côté d'une série pour un exo UNILATÉRAL (mouvement exécuté un côté à la
+ * fois, cf. issue #33). Une série unilatérale se complète en saisissant le côté
+ * gauche PUIS le droit, chacun avec ses propres poids/reps/RIR. Pour un exo
+ * BILATÉRAL, le côté est absent (`undefined`) : la série couvre les deux côtés.
+ */
+export type Side = 'left' | 'right';
+
 /** Une Série de travail réellement effectuée. Aucun échauffement n'est loggé. */
 export interface PerformedSet {
   weightKg: number;
@@ -21,6 +29,11 @@ export interface PerformedSet {
   rir: number;
   /** Rang d'ordre de la série dans l'exécution de l'exo, à partir de 1. */
   order: number;
+  /**
+   * Côté pour un exo UNILATÉRAL : deux séries (gauche + droite) partagent le même
+   * `order`. Absent (`undefined`) pour un exo bilatéral (une série = les deux côtés).
+   */
+  side?: Side;
 }
 
 /** Les séries d'un exercice un jour donné. `sets` vide = exo skippé ce jour (un trou, pas un zéro). */
