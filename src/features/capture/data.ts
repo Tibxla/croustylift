@@ -9,7 +9,7 @@
 //   - RLS scope déjà tout à l'utilisateur connecté ; pas de filtre owner_id côté client.
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
-import type { ExerciseExecution, PerformedSet } from '../../domain/types';
+import type { ExerciseExecution, PerformedSet, Side } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
 import { personalRecord, type PersonalRecord } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
@@ -21,6 +21,21 @@ import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './
 export type { Session, SessionExercise } from './fixtures';
 
 export type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
+
+/**
+ * Mappe la colonne `side` (DB : `string | null`) vers le type domaine
+ * (`Side | undefined`) : null = bilatéral, traduit en `undefined` pour que le
+ * domaine (PerformedSet.side, weakSideE1rm) ne voie jamais qu'un côté valide.
+ * Toute autre valeur (jamais émise, le check DB la refuse) tombe sur `undefined`.
+ */
+function toSide(raw: string | null | undefined): Side | undefined {
+  return raw === 'left' || raw === 'right' ? raw : undefined;
+}
+
+/** Rang de tri d'un côté : gauche (0) avant droite (1) à `order` égal. */
+function sideRank(side: Side | undefined): number {
+  return side === 'right' ? 1 : 0;
+}
 
 /** Une séance chargée pour la capture : la séance + l'id de sa version courante. */
 export interface LoadedSeance {
@@ -154,10 +169,13 @@ export const DEFAULT_ADDED_PRESCRIPTION = {
  * `personalRecord` sont laissés à `null` ici : `loadCatalogExercise` les remplit
  * depuis l'historique. Pur (testable sans Supabase).
  */
-export function catalogExerciseToSession(row: Pick<ExerciseRow, 'id' | 'name'>): SessionExercise {
+export function catalogExerciseToSession(
+  row: Pick<ExerciseRow, 'id' | 'name'> & { unilateral?: boolean },
+): SessionExercise {
   return {
     exerciseId: row.id,
     name: row.name,
+    unilateral: row.unilateral ?? false,
     prescription: {
       sets: { ...DEFAULT_ADDED_PRESCRIPTION.sets },
       reps: { ...DEFAULT_ADDED_PRESCRIPTION.reps },
@@ -175,7 +193,7 @@ export function catalogExerciseToSession(row: Pick<ExerciseRow, 'id' | 'name'>):
  * de sa note d'instructions et de ses records, dérivés de l'historique.
  */
 export async function loadCatalogExercise(
-  row: Pick<ExerciseRow, 'id' | 'name'>,
+  row: Pick<ExerciseRow, 'id' | 'name'> & { unilateral?: boolean },
 ): Promise<SessionExercise> {
   const base = catalogExerciseToSession(row);
   const [reference, personalRecord] = await Promise.all([
@@ -196,7 +214,7 @@ type PrescriptionWithExercise = {
   reps_max: number;
   rir_min: number;
   rir_max: number;
-  exercises: { name: string } | null;
+  exercises: { name: string; unilateral: boolean } | null;
 };
 
 /**
@@ -212,7 +230,7 @@ export async function loadSeanceForCapture(
   const { data, error } = await supabase
     .from('prescriptions')
     .select(
-      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name )',
+      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral )',
     )
     .eq('seance_version_id', seanceVersionId)
     .order('position', { ascending: true });
@@ -223,6 +241,7 @@ export async function loadSeanceForCapture(
   const exercises: SessionExercise[] = rows.map((row) => ({
     exerciseId: row.exercise_id,
     name: row.exercises?.name ?? '(exercice inconnu)',
+    unilateral: row.exercises?.unilateral ?? false,
     prescription: {
       sets: { min: row.sets_min, max: row.sets_max },
       reps: { min: row.reps_min, max: row.reps_max },
@@ -247,7 +266,7 @@ export async function loadSeanceForCapture(
 async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, execution_id, executions ( performed_on )')
+    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on )')
     .eq('exercise_id', exerciseId);
   if (error) throw error;
 
@@ -256,12 +275,15 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
     reps: number;
     rir: number;
     set_order: number;
+    side: string | null;
     execution_id: string;
     executions: { performed_on: string } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
 
-  // Regroupe les séries par exécution (une ExerciseExecution = un jour).
+  // Regroupe les séries par exécution (une ExerciseExecution = un jour). Le `side`
+  // est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
+  // côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés.
   const byExecution = new Map<string, ExerciseExecution>();
   for (const row of rows) {
     const date = row.executions?.performed_on;
@@ -276,6 +298,7 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
       reps: row.reps,
       rir: row.rir,
       order: row.set_order,
+      side: toSide(row.side),
     });
   }
 
@@ -336,7 +359,7 @@ export async function loadTodayProgress(
 
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('exercise_id, weight_kg, reps, rir, set_order')
+    .select('exercise_id, weight_kg, reps, rir, set_order, side')
     .eq('execution_id', exec.id)
     .order('set_order', { ascending: true });
   if (error) throw error;
@@ -349,10 +372,14 @@ export async function loadTodayProgress(
       reps: row.reps,
       rir: row.rir,
       order: row.set_order,
+      side: toSide(row.side),
     });
   }
+  // Tri par order, puis gauche AVANT droite à order égal (série unilatérale,
+  // issue #46) : l'état réhydraté garde G/D dans l'ordre de saisie, donc
+  // `pendingSide`/`nextSetOrder` repartent juste après une série complète.
   for (const id of Object.keys(byExercise)) {
-    byExercise[id].sort((a, b) => a.order - b.order);
+    byExercise[id].sort((a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side));
   }
   return byExercise;
 }
@@ -509,6 +536,8 @@ export async function upsertSet(params: {
   weightKg: number;
   reps: number;
   rir: number;
+  /** Côté pour un exo unilatéral (issue #46) ; `null`/absent = bilatéral. */
+  side?: Side | null;
 }): Promise<void> {
   const { error } = await supabase.from('performed_sets').upsert(
     {
@@ -519,6 +548,8 @@ export async function upsertSet(params: {
       weight_kg: params.weightKg,
       reps: params.reps,
       rir: params.rir,
+      // `null` explicite pour le bilatéral : l'upsert ré-affirme bien « pas de côté ».
+      side: params.side ?? null,
     },
     { onConflict: 'id' },
   );

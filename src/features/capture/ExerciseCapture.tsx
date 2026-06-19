@@ -2,12 +2,14 @@
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
 import { useEffect, useMemo, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
+import { weakSideE1rm } from '../../domain/unilateral';
 import { deriveDeviations } from '../../domain/deviation';
 import { isBlankNote } from '../../domain/notes';
 import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../domain/pr';
-import type { PerformedSet } from '../../domain/types';
+import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
+import { pendingSide } from './state';
 import { Stepper } from './Stepper';
 import { NoteField } from '../notes/NoteField';
 import { DeviationBadge, deviationVisual } from './DeviationBadge';
@@ -59,6 +61,17 @@ export function ExerciseCapture({
   const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
 
+  // Logging unilatéral (issue #46) : une série = côté gauche PUIS droite. Le côté
+  // de la PROCHAINE saisie (gauche par défaut, droite si un gauche attend), et le
+  // nombre de SÉRIES complètes (= saisies droites loggées) pour le compteur, la
+  // cible « à battre » et le statut de fin. Bilatéral : currentSide null, une
+  // saisie = une série.
+  const unilateral = exercise.unilateral ?? false;
+  const currentSide: Side | null = unilateral ? pendingSide(progress) ?? 'left' : null;
+  const completedSets = unilateral
+    ? progress.sets.filter((s) => s.side === 'right').length
+    : loggedCount;
+
   // Records personnels (issue #34), dérivés de l'historique. Une série loggée
   // AUJOURD'HUI qui dépasse le record est marquée « Record ». On compare au
   // record COURANT (historique + séries du jour déjà loggées avant elle) : ainsi
@@ -100,20 +113,23 @@ export function ExerciseCapture({
     onDraftChange?.({ weightKg, reps, rir });
   }, [weightKg, reps, rir, onDraftChange]);
 
-  // La série « à battre » à la position courante (co-roi).
-  const refToBeat = reference?.find((s) => s.order === loggedCount + 1) ?? null;
+  // La série « à battre » à la position courante (co-roi). Masquée pour un exo
+  // unilatéral (issue #46) : la comparaison par côté (G vs D) sort du périmètre
+  // de la cible « dernière fois » par position.
+  const refToBeat =
+    unilateral ? null : reference?.find((s) => s.order === loggedCount + 1) ?? null;
 
-  // Statut de fin (si au moins le minimum prescrit est atteint).
-  const reachedMin = loggedCount >= prescription.sets.min;
+  // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
+  // complètes (une série unilatérale = gauche + droite). Le badge de déviation
+  // reste cantonné au bilatéral (le diff prescription/réel par côté est hors #46).
+  const reachedMin = completedSets >= prescription.sets.min;
   const deviations = deriveDeviations(prescription, progress.sets);
-  const finishVisual = deviationVisual(deviations, prescription.sets, loggedCount);
+  const finishVisual = deviationVisual(deviations, prescription.sets, completedSets);
 
-  // e1RM de la 1ʳᵉ série loggée (touche domaine, readout discret).
-  const firstSet = progress.sets[0];
-  const firstE1rm =
-    firstSet && firstSet.reps >= 1
-      ? estimateE1rm(firstSet.weightKg, firstSet.reps, firstSet.rir)
-      : null;
+  // e1RM de la 1ʳᵉ série loggée (touche domaine, readout discret). Pour un exo
+  // unilatéral, c'est le CÔTÉ FAIBLE de la 1ʳᵉ série (issue #46), aligné avec le
+  // point de la courbe primaire (cf. weakSideE1rm). Bilatéral : e1RM simple.
+  const firstE1rm = weakSideE1rm(progress.sets);
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
@@ -202,7 +218,11 @@ export function ExerciseCapture({
       {loggedCount > 0 && (
         <ol className="mt-4 flex flex-col gap-1.5">
           {progress.sets.map((s, i) => {
+            // Badges « battu »/record désactivés en unilatéral (issue #46) : la
+            // comparaison par côté (et le record historique mêlant les côtés)
+            // sort du périmètre. Le côté est porté par un libellé texte explicite.
             const beats =
+              !unilateral &&
               refToBeatAt(reference, s.order) &&
               estimateE1rm(s.weightKg, s.reps, s.rir) >=
                 estimateE1rm(
@@ -210,15 +230,21 @@ export function ExerciseCapture({
                   refToBeatAt(reference, s.order)!.reps,
                   refToBeatAt(reference, s.order)!.rir,
                 );
-            const record = recordFlags[i];
+            const record = unilateral ? null : recordFlags[i];
             return (
               <li
-                key={s.order}
+                key={`${s.order}-${s.side ?? 'bi'}`}
                 className="flex items-center gap-3 rounded-xl bg-surface px-4 py-2.5"
               >
                 <span className="readout w-6 shrink-0 text-sm text-ink-muted tabular-nums">
                   {s.order}
                 </span>
+                {/* Côté (issue #46) : libellé texte, jamais la couleur seule. */}
+                {s.side && (
+                  <span className="w-6 shrink-0 text-xs font-semibold uppercase text-ink-muted">
+                    {s.side === 'left' ? 'G' : 'D'}
+                  </span>
+                )}
                 <span className="readout flex-1 text-base text-ink tabular-nums">
                   {formatSet(s)}
                 </span>
@@ -257,27 +283,40 @@ export function ExerciseCapture({
         </ol>
       )}
 
-      {/* e1RM de la 1ʳᵉ série + badge de fin */}
-      {(firstE1rm != null || reachedMin) && (
+      {/* e1RM de la 1ʳᵉ série + badge de fin. Le badge de déviation est cantonné
+          au BILATÉRAL (issue #46) : en unilatéral, `progress.sets` porte 2 lignes
+          par série (G+D), donc le diff prescription/réel par côté sort du périmètre
+          (et un compte brut doublé fausserait le badge). On garde l'e1RM côté faible. */}
+      {(firstE1rm != null || (reachedMin && !unilateral)) && (
         <div className="mt-3 flex items-center justify-between gap-3">
           {firstE1rm != null ? (
             <span className="text-sm text-ink-muted">
-              e1RM{' '}
+              {unilateral ? 'e1RM côté faible' : 'e1RM'}{' '}
               <span className="readout font-medium text-ink">{formatE1rm(firstE1rm)} kg</span>
             </span>
           ) : (
             <span />
           )}
-          {reachedMin && <DeviationBadge visual={finishVisual} />}
+          {reachedMin && !unilateral && <DeviationBadge visual={finishVisual} />}
         </div>
       )}
 
-      {/* Compteur de série courante */}
+      {/* Compteur de série courante. En unilatéral, le numéro de série en cours
+          est completedSets + 1 (une série = G + D) et on annonce le côté à saisir
+          par un libellé texte (issue #46) ; la couleur ne porte jamais l'info. */}
       <p className="mt-6 mb-3" aria-live="polite">
         <span className="text-sm font-medium text-ink-muted">
           Série{' '}
-          <span className="readout text-ink">{loggedCount + 1}</span> /{' '}
+          <span className="readout text-ink">{completedSets + 1}</span> /{' '}
           <span className="readout text-ink">{formatRange(prescription.sets)}</span>
+          {currentSide && (
+            <>
+              {' · '}
+              <span className="font-semibold text-ink">
+                Côté {currentSide === 'left' ? 'gauche' : 'droite'}
+              </span>
+            </>
+          )}
         </span>
       </p>
 

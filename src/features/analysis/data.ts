@@ -83,7 +83,7 @@ export async function loadExerciseExecutions(
 ): Promise<ExerciseExecution[]> {
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, execution_id, executions ( performed_on )')
+    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on )')
     .eq('exercise_id', exerciseId);
   if (error) throw error;
 
@@ -92,6 +92,7 @@ export async function loadExerciseExecutions(
     reps: number;
     rir: number;
     set_order: number;
+    side: string | null;
     execution_id: string;
     executions: { performed_on: string } | null;
   };
@@ -111,6 +112,9 @@ export async function loadExerciseExecutions(
       reps: row.reps,
       rir: row.rir,
       order: row.set_order,
+      // Côté unilatéral (issue #46) : la courbe primaire suit le côté faible
+      // (weakSideE1rm) -> le domaine a besoin des deux côtés. null = bilatéral.
+      side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
     });
   }
 
