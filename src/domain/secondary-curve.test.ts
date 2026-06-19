@@ -162,4 +162,77 @@ describe('buildSecondaryCurve', () => {
   it('renvoie [] pour une entrée vide', () => {
     expect(buildSecondaryCurve([], 'bench')).toEqual([])
   })
+
+  // --- Unilatéral : la moyenne porte sur le CÔTÉ FAIBLE des séries 2+ (ADR 0005),
+  // pas sur l'e1RM moyen des deux côtés (qui noierait le déséquilibre).
+  it('unilatéral : moyenne le CÔTÉ FAIBLE des séries 2+ (pas les e1RM des deux côtés)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-01',
+        exerciseId: 'curl',
+        sets: [
+          // 1ʳᵉ série (order 1) : exclue de la secondaire.
+          { weightKg: 110, reps: 5, rir: 1, order: 1, side: 'left' },
+          { weightKg: 100, reps: 5, rir: 1, order: 1, side: 'right' },
+          // Série 2 : faible = D (85), fort = G (95).
+          { weightKg: 95, reps: 5, rir: 1, order: 2, side: 'left' },
+          { weightKg: 85, reps: 5, rir: 1, order: 2, side: 'right' },
+          // Série 3 : faible = D (80), fort = G (90).
+          { weightKg: 90, reps: 5, rir: 0, order: 3, side: 'left' },
+          { weightKg: 80, reps: 5, rir: 0, order: 3, side: 'right' },
+        ],
+      },
+    ]
+
+    const curve = buildSecondaryCurve(executions, 'curl')
+
+    // Moyenne des côtés faibles : (85x5@1 puis 80x5@0).
+    const expected = (estimateE1rm(85, 5, 1) + estimateE1rm(80, 5, 0)) / 2
+    expect(curve).toHaveLength(1)
+    expect(curve[0].date).toBe('2026-01-01')
+    expect(curve[0].e1rm).toBeCloseTo(expected)
+  })
+
+  it('unilatéral : côté faible apparié par order, insensible à l’ordre de saisie', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-01',
+        exerciseId: 'curl',
+        // Entrée volontairement désordonnée et côtés faibles saisis en 1er.
+        sets: [
+          { weightKg: 80, reps: 5, rir: 0, order: 3, side: 'right' },
+          { weightKg: 100, reps: 5, rir: 1, order: 1, side: 'right' },
+          { weightKg: 85, reps: 5, rir: 1, order: 2, side: 'right' },
+          { weightKg: 90, reps: 5, rir: 0, order: 3, side: 'left' },
+          { weightKg: 110, reps: 5, rir: 1, order: 1, side: 'left' },
+          { weightKg: 95, reps: 5, rir: 1, order: 2, side: 'left' },
+        ],
+      },
+    ]
+
+    const curve = buildSecondaryCurve(executions, 'curl')
+
+    const expected = (estimateE1rm(85, 5, 1) + estimateE1rm(80, 5, 0)) / 2
+    expect(curve[0].e1rm).toBeCloseTo(expected)
+  })
+
+  it('unilatéral : un côté manquant sur une série 2+ retombe sur le côté présent', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-01',
+        exerciseId: 'curl',
+        sets: [
+          { weightKg: 110, reps: 5, rir: 1, order: 1, side: 'left' },
+          { weightKg: 100, reps: 5, rir: 1, order: 1, side: 'right' },
+          // Série 2 incomplète : seul le côté gauche est loggé.
+          { weightKg: 95, reps: 5, rir: 1, order: 2, side: 'left' },
+        ],
+      },
+    ]
+
+    const curve = buildSecondaryCurve(executions, 'curl')
+
+    expect(curve).toHaveLength(1)
+    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
+  })
 })
