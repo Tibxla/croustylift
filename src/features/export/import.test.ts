@@ -150,6 +150,8 @@ describe('importUserData', () => {
       data: {
         ...emptyCollected(),
         exercises: [{ id: 'perso-1', name: 'Mon exo', owner_id: 'me' }],
+        // exercise_overrides référence exercises : doit venir après dans EXPORT_TABLES
+        exercise_overrides: [{ id: 'ov1', user_id: 'me', exercise_id: 'perso-1' }],
         routines: [{ id: 'r1', name: 'Ma routine' }],
         performed_sets: [{ id: 'ps1', weight_kg: 80 }],
       },
@@ -158,7 +160,37 @@ describe('importUserData', () => {
     await importUserData(client, parsed);
 
     // Les tables renseignées sont upsertées dans l'ordre EXPORT_TABLES.
-    expect(upsertedTables).toEqual(['exercises', 'routines', 'performed_sets']);
+    expect(upsertedTables).toEqual(['exercises', 'exercise_overrides', 'routines', 'performed_sets']);
+  });
+
+  it('exercise_overrides : réimport idempotent sur onConflict: id', async () => {
+    const upsertArgs: { table: string; rows: Row[]; onConflict: string }[] = [];
+    const client: ImportClient = {
+      from(table: string) {
+        return {
+          upsert(rows: Row[], options) {
+            upsertArgs.push({ table, rows, onConflict: options.onConflict });
+            return Promise.resolve({ data: null, error: null });
+          },
+        };
+      },
+    };
+
+    const override = { id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' };
+    const parsed: ParsedImport = {
+      version: 1,
+      exportedAt: '2026-06-18T10:00:00.000Z',
+      data: { ...emptyCollected(), exercise_overrides: [override] },
+    };
+
+    await importUserData(client, parsed);
+    await importUserData(client, parsed); // 2e import : idempotent
+
+    const calls = upsertArgs.filter((a) => a.table === 'exercise_overrides');
+    expect(calls).toHaveLength(2);
+    expect(calls[0].rows).toEqual([override]);
+    expect(calls[0].onConflict).toBe('id');
+    expect(calls[1].onConflict).toBe('id');
   });
 
   it('saute les tables vides (pas d appel upsert)', async () => {

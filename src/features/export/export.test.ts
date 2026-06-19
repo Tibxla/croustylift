@@ -45,6 +45,7 @@ describe('EXPORT_TABLES', () => {
     expect(EXPORT_TABLES).toEqual([
       'exercises',
       'exercise_notes',
+      'exercise_overrides',
       'routines',
       'routine_activations',
       'seances',
@@ -54,6 +55,11 @@ describe('EXPORT_TABLES', () => {
       'performed_sets',
       'dated_notes',
     ]);
+  });
+
+  it('exercise_overrides vient après exercises (dépendance FK)', () => {
+    const idx = (t: string) => EXPORT_TABLES.indexOf(t as typeof EXPORT_TABLES[number]);
+    expect(idx('exercise_overrides')).toBeGreaterThan(idx('exercises'));
   });
 });
 
@@ -96,6 +102,22 @@ describe('collectUserData', () => {
     expect(collected.exercises).toEqual([{ id: 'perso-1', name: 'Mon exo', owner_id: 'me' }]);
   });
 
+  it('exercise_overrides est inclus tel quel (user_id, pas owner_id : pas filtré)', async () => {
+    const client = fakeClient({
+      exercise_overrides: {
+        data: [
+          { id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' },
+        ],
+      },
+    });
+
+    const collected = await collectUserData(client);
+
+    expect(collected.exercise_overrides).toEqual([
+      { id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' },
+    ]);
+  });
+
   it('remonte l erreur Supabase d une table', async () => {
     const client = fakeClient({
       executions: { error: { message: 'boom' } },
@@ -117,6 +139,7 @@ describe('buildExport', () => {
   const collected: CollectedData = {
     exercises: [{ id: 'perso-1', name: 'Mon exo', owner_id: 'me' }],
     exercise_notes: [],
+    exercise_overrides: [{ id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' }],
     routines: [{ id: 'r1', name: 'Ma routine' }],
     routine_activations: [],
     seances: [{ id: 's1', name: 'Upper A' }],
