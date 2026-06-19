@@ -65,6 +65,73 @@ describe('seedDraft — poids prérempli (point 1 #58)', () => {
   });
 });
 
+describe('seedDraft — unilatéral (côté visé, issue #46/#63)', () => {
+  // Référence G/D : chaque rang porte DEUX lignes (un côté chacune). G plus léger
+  // que D pour qu'un mauvais côté pioché soit détectable par la valeur.
+  const refUni: PerformedSet[] = [
+    { weightKg: 30, reps: 8, rir: 2, order: 1, side: 'left' },
+    { weightKg: 34, reps: 8, rir: 1, order: 1, side: 'right' },
+    { weightKg: 30, reps: 8, rir: 1, order: 2, side: 'left' },
+    { weightKg: 34, reps: 7, rir: 0, order: 2, side: 'right' },
+  ];
+
+  it('1re série, côté gauche : pioche la ligne de réf order=1 side=left', () => {
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets: [], side: 'left' });
+    expect(seed.weightKg).toBe(30); // pas 34 (le droit)
+    expect(seed.rir).toBe(2); // rir du gauche order=1
+  });
+
+  it('1re série, côté droite : pioche la ligne de réf order=1 side=right', () => {
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets: [], side: 'right' });
+    expect(seed.weightKg).toBe(34); // pas 30 (le gauche)
+    expect(seed.rir).toBe(1); // rir du droit order=1
+  });
+
+  it('2e série, côté gauche : vise order=2 side=left (pas la dérive length+1 → order 3)', () => {
+    // Série 1 complète (G+D) déjà loggée : 2 lignes. Sans le fix, length+1 = 3
+    // viserait un order inexistant et le report tomberait sur la dernière ligne (D).
+    const loggedSets: PerformedSet[] = [
+      { weightKg: 30, reps: 8, rir: 2, order: 1, side: 'left' },
+      { weightKg: 34, reps: 8, rir: 1, order: 1, side: 'right' },
+    ];
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets, side: 'left' });
+    // 2e série côté gauche : report de la dernière loggée du MÊME côté (le G de la
+    // série 1, à 30), pas de la dernière ligne tous côtés confondus (le D à 34).
+    expect(seed.weightKg).toBe(30);
+  });
+
+  it('2e série, côté droite : report de la dernière loggée du côté droit', () => {
+    const loggedSets: PerformedSet[] = [
+      { weightKg: 30, reps: 8, rir: 2, order: 1, side: 'left' },
+      { weightKg: 36, reps: 8, rir: 1, order: 1, side: 'right' }, // D loggé à 36
+    ];
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets, side: 'right' });
+    expect(seed.weightKg).toBe(36); // dernière loggée du droit, pas le gauche (30)
+  });
+
+  it('2e côté de la 1re série (G fait, on saisit D) : report de la réf order=1 side=right, pas du G saisi', () => {
+    // Série 1 entamée côté gauche seulement (1 ligne). On vise maintenant le droit
+    // de la MÊME série (order 1) : aucune saisie droite encore → on retombe sur la
+    // référence du côté droit à order 1 (34), pas sur le poids du gauche saisi (30).
+    const loggedSets: PerformedSet[] = [
+      { weightKg: 30, reps: 9, rir: 1, order: 1, side: 'left' },
+    ];
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets, side: 'right' });
+    expect(seed.weightKg).toBe(34); // réf droit order=1, pas le 30 du gauche
+  });
+
+  it('côté sans référence ni saisie : point de départ neutre', () => {
+    const seed = seedDraft({ prescription, reference: null, loggedSets: [], side: 'left' });
+    expect(seed.weightKg).toBe(20);
+    expect(seed.rir).toBe(1);
+  });
+
+  it('reps reste la borne basse prescrite, indépendamment du côté', () => {
+    const seed = seedDraft({ prescription, reference: refUni, loggedSets: [], side: 'right' });
+    expect(seed.reps).toBe(8); // reps.min de [8, 12]
+  });
+});
+
 describe('seedDraft — rir prérempli (comportement préservé)', () => {
   it('1re série : prend le rir de la référence à la position courante', () => {
     const seed = seedDraft({ prescription, reference, loggedSets: [] });
