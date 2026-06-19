@@ -1,10 +1,11 @@
 // Panneau de capture d'un exo. Nom = roi ; « dernière fois » = co-roi à battre ;
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
 import {
   currentSetOrder,
   defaultSide,
+  loggedSetEquivalents,
   pairSidesByOrder,
   sidesDoneAt,
   weakSideE1rm,
@@ -20,7 +21,14 @@ import { Stepper } from './Stepper';
 import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
 import { DeviationBadge, deviationVisual } from './DeviationBadge';
-import { formatE1rm, formatPrescription, formatSet, formatRange, formatWeight } from './format';
+import {
+  formatE1rm,
+  formatPrescription,
+  formatSet,
+  formatRange,
+  formatSetCount,
+  formatWeight,
+} from './format';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
@@ -313,13 +321,18 @@ export function ExerciseCapture({
         </div>
       )}
 
-      {/* Compteur de série courante. En unilatéral, le numéro de série en cours
-          est completedSets + 1 (une série = G + D) ; le côté à saisir est porté
-          par le sélecteur ci-dessous, pas répété ici. */}
+      {/* Compteur de progression « faites / prévu ». Le numérateur est le décompte
+          en ÉQUIVALENT-SÉRIE (loggedSetEquivalents) : une série bilatérale = 1, une
+          série unilatérale COMPLÈTE (G + D) = 1, un seul côté loggé = 0,5. D'où
+          « 1 / 1 » quand les deux côtés sont faits (et non « 2 / 1 ») et « 0,5 / 1 »
+          pour un seul côté. Le côté à saisir est porté par le sélecteur ci-dessous. */}
       <p className="mt-6 mb-3" aria-live="polite">
         <span className="text-sm font-medium text-ink-muted">
           Série{' '}
-          <span className="readout text-ink">{completedSets + 1}</span> /{' '}
+          <span className="readout text-ink">
+            {formatSetCount(loggedSetEquivalents(progress.sets))}
+          </span>{' '}
+          /{' '}
           <span className="readout text-ink">{formatRange(prescription.sets)}</span>
         </span>
       </p>
@@ -537,6 +550,16 @@ function ExerciseNoteSection({
   const [draft, setDraft] = useState(value);
   const [saved, setSaved] = useState(false);
 
+  // Le toast « enregistré » retombe après 1,6 s. Id gardé en ref + clear au
+  // démontage : changer d'exo dans l'intervalle ne déclenche pas le timer sur
+  // une instance démontée (même garde-fou que ExportButton).
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
   const startEditing = () => {
     setDraft(value);
     setEditing(true);
@@ -553,7 +576,8 @@ function ExerciseNoteSection({
     // Une note vidée se replie sur l'affordance « Ajouter » ; sinon on reste ouvert.
     setOpen(!isBlankNote(nextBody));
     setSaved(true);
-    window.setTimeout(() => setSaved(false), 1600);
+    if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
   };
 
   const handleCancel = () => {
@@ -749,10 +773,20 @@ function DatedNoteSection({
   // Sauvegarde différée du résultat : on confirme brièvement puis on retombe.
   const dirty = draft !== value;
 
+  // Toast « enregistré » (1,6 s) : id en ref + clear au démontage pour ne pas
+  // tirer setSaved sur une instance démontée si on change d'exo entre-temps.
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
   const handleSave = () => {
     onSave(draft);
     setSaved(true);
-    window.setTimeout(() => setSaved(false), 1600);
+    if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
   };
 
   if (!open) {

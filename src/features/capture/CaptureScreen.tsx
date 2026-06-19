@@ -205,7 +205,7 @@ export function CaptureScreen() {
   // Clic sur une séance proposée : on la résout (version courante) et on charge.
   const chooseSeance = useCallback(
     (seance: SeanceChoice) => {
-      let alive = true;
+      const alive = true;
       const active = () => alive;
       setLoad({ phase: 'loading' });
       void (async () => {
@@ -627,7 +627,14 @@ function CaptureBoard({
     // deleteSet/deleteDatedNote éventuels restent (idempotents par id, sans effet
     // si la ligne, dont l'insert vient d'être retiré, n'a jamais existé en base).
     purgeByExecution(state.executionId);
-    notifySync();
+    // L'exécution abandonnée a pu être PARTIELLEMENT synchronisée (upsertExecution
+    // + séries déjà flushés en base avant le reset). purgeByExecution ne retire que
+    // les ops ENCORE en file ; elle ne défait rien côté base. Sans compensation,
+    // l'exécution survit en base (closed_at NULL, sans durée), et loadTodayExecution
+    // la RÉHYDRATE au prochain reload : la séance « réinitialisée » réapparaît avec
+    // son réalisé. On enfile donc un deleteExecution (idempotent par id, cascade DB :
+    // sans effet si rien n'a été synchronisé, supprime l'orpheline sinon).
+    enqueueAndFlush({ type: 'deleteExecution', id: state.executionId });
     executionEnqueuedRef.current = false;
     // La séance repart du template d'origine : les ajouts/swaps de l'exécution
     // close ne se reportent pas sur la suivante (un swap se redécide chaque jour).

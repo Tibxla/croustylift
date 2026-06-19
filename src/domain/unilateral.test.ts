@@ -10,9 +10,53 @@ import {
   currentSetOrder,
   defaultSide,
   nextOrderForSide,
+  loggedSetEquivalents,
 } from './unilateral'
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet } from './types'
+
+describe('loggedSetEquivalents', () => {
+  it('bilatéral : une ligne = une série (pas de côté)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 80, reps: 8, rir: 2, order: 1 },
+      { weightKg: 80, reps: 7, rir: 1, order: 2 },
+      { weightKg: 80, reps: 6, rir: 0, order: 3 },
+    ]
+
+    expect(loggedSetEquivalents(sets)).toBe(3)
+  })
+
+  it('unilatéral complet (G + D au même order) = 1 série (bug « 2/1 »)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+
+    expect(loggedSetEquivalents(sets)).toBe(1)
+  })
+
+  it('unilatéral un seul côté = 0,5 série (bug « 1/1 » attendu « 0,5/1 »)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+
+    expect(loggedSetEquivalents(sets)).toBe(0.5)
+  })
+
+  it('unilatéral : 1 série complète + 1 côté entamé = 1,5', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 30, reps: 9, rir: 1, order: 2, side: 'left' },
+    ]
+
+    expect(loggedSetEquivalents(sets)).toBe(1.5)
+  })
+
+  it('aucune série loggée = 0', () => {
+    expect(loggedSetEquivalents([])).toBe(0)
+  })
+})
 
 describe('pairSidesByOrder', () => {
   it('apparie gauche et droite d’un même order en une paire', () => {

@@ -43,8 +43,11 @@ vi.mock('../notes/data', () => ({
   deleteExerciseNoteByExercise: vi.fn(),
 }));
 
-import { flushOps } from './sync';
+import { flushOps, syncFns } from './sync';
 import { readQueue } from './outbox';
+// `./data` est mocké plus haut : cet import récupère la vi.fn() pour asserter
+// l'argument reçu par data.updateExecution (chaîne closed_at).
+import { updateExecution } from './data';
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -139,6 +142,29 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     // remaining PROPRE = nos 2 ids (e1, s1), pas les 3 de la file globale.
     expect(res.remaining).toBe(2);
     expect(readQueue().map((o) => o.id)).toEqual(['autre', 'e1', 's1']);
+  });
+
+  it('chaîne closed_at : syncFns.updateExecution transmet closedAt à data (séance « rangée », jamais ressuscitée)', async () => {
+    // Régression du bug « la séance clôturée réapparaît après refresh » : si une
+    // couche (op -> syncFns -> data) LAISSE TOMBER closedAt, la clôture ne pose pas
+    // `closed_at` en base et loadTodayExecution réhydrate la séance finie. Ce test
+    // verrouille la traversée complète de closedAt (bpmAvg/durationMin inclus).
+    (updateExecution as Mock).mockClear();
+
+    await syncFns.updateExecution({
+      type: 'updateExecution',
+      id: 'exec-1',
+      bpmAvg: 120,
+      durationMin: 45,
+      closedAt: '2026-06-19T18:00:00.000Z',
+    });
+
+    expect(updateExecution).toHaveBeenCalledWith({
+      id: 'exec-1',
+      bpmAvg: 120,
+      durationMin: 45,
+      closedAt: '2026-06-19T18:00:00.000Z',
+    });
   });
 
   it('remaining propre = 0 quand le flush A bien drainé NOS ops (succès réel)', async () => {

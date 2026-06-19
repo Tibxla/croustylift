@@ -490,6 +490,56 @@ describe('flush (ré-armement, issue F12)', () => {
   });
 });
 
+// --- flush : concurrence réelle (sérialisation `inFlight`) -------------------
+//
+// Les tests ci-dessus sont séquentiels (un seul flush awaité à la fois) : ils
+// n'exercent PAS le garde-fou `if (inFlight) return inFlight`. Ici on lance DEUX
+// flush qui se CHEVAUCHENT vraiment — la 1ʳᵉ passe est figée sur une SyncFn qui
+// bloque sur une promesse qu'on résout à la main, le 2ᵉ flush part avant que la
+// 1ʳᵉ ait fini. On vérifie qu'ils partagent la même promesse (pas de 2ᵉ passe)
+// et qu'aucune op n'est rejouée (chaque SyncFn appelée une seule fois).
+
+describe('flush (concurrence réelle, sérialisation inFlight)', () => {
+  it('deux flush concurrents partagent la promesse et ne rejouent aucune op', async () => {
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+
+    const fns = okFns();
+    // La 1ʳᵉ passe se fige sur la 1ʳᵉ op : on contrôle sa résolution à la main,
+    // garantissant que le 2ᵉ flush part PENDANT que la 1ʳᵉ passe est en vol.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realUpsert = fns.upsertExecution;
+    let blocked = false;
+    fns.upsertExecution = vi.fn(async (op) => {
+      if (!blocked) {
+        blocked = true;
+        await gate; // fige la passe jusqu'au release manuel
+      }
+      return realUpsert(op);
+    });
+
+    // Deux flush SANS await entre les deux : le 2ᵉ doit retomber sur `inFlight`.
+    const p1 = flush(fns);
+    const p2 = flush(fns);
+    expect(p1).toBe(p2); // même promesse mémoïsée, aucune 2ᵉ passe lancée
+
+    release(); // débloque la 1ʳᵉ (et seule) passe
+    const [res1, res2] = await Promise.all([p1, p2]);
+
+    // Une seule passe a réellement tourné : chaque op n'a été jouée qu'UNE fois.
+    expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 's1']);
+    // Résultat partagé, file vidée.
+    expect(res1).toBe(res2);
+    expect(res1).toEqual({ remaining: 0, flushed: 2 });
+    expect(pendingCount()).toBe(0);
+  });
+});
+
 // --- flush : shift conditionnel (file mutée pendant l'await) — BUG M3 --------
 //
 // runFlushOnce traitait l'op en tête puis faisait un `shift()` AVEUGLE après

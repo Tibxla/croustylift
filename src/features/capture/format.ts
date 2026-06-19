@@ -22,6 +22,12 @@ export function formatSet(set: PerformedSet): string {
   return `${formatWeight(set.weightKg)} × ${set.reps} @ RIR ${set.rir}`;
 }
 
+/** Un décompte de séries en équivalent-série (demi-série possible) : "1", "0,5", "1,5". */
+export function formatSetCount(n: number): string {
+  const rounded = Math.round(n * 100) / 100;
+  return rounded.toString().replace('.', ',');
+}
+
 /** e1RM arrondi à 0,5 kg, format FR : "94,4". */
 export function formatE1rm(value: number): string {
   const half = Math.round(value * 2) / 2;
