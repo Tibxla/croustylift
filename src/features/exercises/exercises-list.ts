@@ -8,6 +8,7 @@
 // perso a owner_id = auth.uid(). On ne FILTRE jamais sur owner_id côté client (la
 // RLS scope déjà tout au user) ; owner_id ne sert ici qu'à classer base/perso.
 import type { Database } from '../../lib/database.types';
+import { foldAccents } from '../../domain/text';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
@@ -49,16 +50,17 @@ function byNameFr(a: ListExercise, b: ListExercise): number {
 
 /**
  * Sépare le catalogue en deux groupes (base / perso) après application de la
- * recherche par nom (trim + insensible à la casse). Chaque groupe est trié par
- * nom (ordre français). Une requête vide ne filtre rien.
+ * recherche par nom (trim + insensible à la casse ET aux accents, via
+ * foldAccents). Chaque groupe est trié par nom (ordre français). Une requête
+ * vide ne filtre rien.
  */
 export function filterExercises(
   catalogue: ListExercise[],
   query: string,
 ): { base: ListExercise[]; personal: ListExercise[] } {
-  const q = query.trim().toLowerCase();
+  const q = foldAccents(query.trim());
   const matched = q
-    ? catalogue.filter((e) => e.name.toLowerCase().includes(q))
+    ? catalogue.filter((e) => foldAccents(e.name).includes(q))
     : catalogue;
 
   const base = matched.filter((e) => !isPersonalExercise(e.ownerId)).sort(byNameFr);

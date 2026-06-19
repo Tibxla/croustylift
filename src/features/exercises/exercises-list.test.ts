@@ -105,6 +105,12 @@ describe('filterExercises', () => {
     expect(personal.map((e) => e.id)).toEqual(['p2']);
   });
 
+  it('recherche insensible aux accents : « developpe » retrouve « Développé »', () => {
+    const { base, personal } = filterExercises(catalogue, 'developpe');
+    expect(base.map((e) => e.id)).toEqual(['b1']);
+    expect(personal.map((e) => e.id)).toEqual(['p2']);
+  });
+
   it('recherche sans correspondance -> groupes vides', () => {
     const { base, personal } = filterExercises(catalogue, 'tractions');
     expect(base).toEqual([]);

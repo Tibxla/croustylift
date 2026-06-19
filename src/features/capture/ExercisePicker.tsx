@@ -9,6 +9,7 @@ import type { CaptureState } from './state';
 import { getProgress, statusOf } from './state';
 import { deriveExerciseDeviations } from './session-edit';
 import { formatPrescription, formatRange } from './format';
+import { foldAccents } from '../../domain/text';
 
 interface ExercisePickerProps {
   session: Session;
@@ -283,10 +284,10 @@ function CatalogSheet({
 
   const filtered = useMemo(() => {
     if (!rows) return [];
-    const q = query.trim().toLowerCase();
+    const q = foldAccents(query.trim());
     return rows
       .filter((r) => !excluded.has(r.id))
-      .filter((r) => (q === '' ? true : r.name.toLowerCase().includes(q)))
+      .filter((r) => (q === '' ? true : foldAccents(r.name).includes(q)))
       .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   }, [rows, excluded, query]);
 
@@ -355,8 +356,11 @@ function CatalogSheet({
                     onClick={() => void handlePick(row)}
                     className="flex min-h-[3rem] w-full items-center gap-3 rounded-xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2 disabled:opacity-60"
                   >
-                    <span className="min-w-0 flex-1 truncate text-base font-medium text-ink">
-                      {row.name}
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="truncate text-base font-medium text-ink">
+                        {row.name}
+                      </span>
+                      {row.unilateral && <UnilateralBadge />}
                     </span>
                     {picking === row.id && (
                       <span
@@ -373,5 +377,18 @@ function CatalogSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Marqueur « Unilatéral » pour un exo du catalogue (issue #57). Mot EXPLICITE +
+ * pastille de surface tonale : l'info n'est jamais portée par la seule couleur
+ * (DESIGN.md). Sobre (surface-2 / ink-muted), sans accent violet (One Voice Rule).
+ */
+function UnilateralBadge() {
+  return (
+    <span className="inline-flex shrink-0 items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-[0.6875rem] font-medium leading-none text-ink-muted">
+      Unilatéral
+    </span>
   );
 }
