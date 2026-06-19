@@ -1,29 +1,28 @@
-// Fonctions pures de parse/clamp pour la saisie au pavé numérique du Stepper.
-// Séparées du composant pour rester testables sans DOM.
+// Fonction pure de parse/clamp de la SAISIE TAPÉE au pavé numérique du Stepper.
+// Séparée du composant pour rester testable sans DOM.
 
 /**
- * Arrondit `value` au multiple de `step` le plus proche.
- * Utilise `toFixed` sur le nombre de décimales de `step` pour éviter
- * les erreurs de virgule flottante JS (ex. 0.1 + 0.2 = 0.300...4).
+ * Parse une valeur TAPÉE au pavé numérique et la borne à [min, max].
+ *
+ * Contrairement au pas des boutons +/− (incrément/décrément fixe, ex. 2,5 kg),
+ * la valeur tapée PRÉSERVE sa précision décimale : taper « 13,25 » donne 13,25,
+ * on ne la « snappe » JAMAIS au pas d'incrément (issue #58). Le pas ne concerne
+ * que les boutons +/−, jamais la saisie directe.
+ *
+ *   - normalise la virgule décimale FR en point (« 13,25 » comme « 13.25 ») ;
+ *   - `allowDecimals=false` (reps, RIR) : arrondit à l'entier le plus proche
+ *     (pas de demi-répétition) ; `true` (poids) : précision libre, juste
+ *     dégrossie à 3 décimales pour ne pas traîner d'artefact de virgule
+ *     flottante (couvre .25 / .5 / .125 sans déformer) ;
+ *   - borne le résultat à [min, max] ;
+ *   - retourne `fallback` (la valeur courante) si la saisie est vide ou invalide.
  */
-export function roundToStep(value: number, step: number): number {
-  // Nombre de décimales de step (ex. step=0.5 → 1, step=2.5 → 1, step=1.25 → 2)
-  const decimals = (step.toString().split('.')[1] ?? '').length;
-  // Diviser par step, arrondir, remultiplier — sans approximation 1/step
-  return parseFloat((Math.round(value / step) * step).toFixed(decimals));
-}
-
-/**
- * Parse une chaîne saisie par l'utilisateur (virgule ou point décimal),
- * arrondit au `step` et clamp dans [min, max].
- * Retourne `fallback` si la saisie est invalide ou NaN.
- */
-export function parseAndClamp(
+export function parseTypedValue(
   raw: string,
-  step: number,
   min: number,
   max: number,
   fallback: number,
+  allowDecimals: boolean,
 ): number {
   const normalized = raw.trim().replace(',', '.');
   if (normalized === '') return fallback;
@@ -31,6 +30,8 @@ export function parseAndClamp(
   const parsed = parseFloat(normalized);
   if (!isFinite(parsed)) return fallback;
 
-  const rounded = roundToStep(parsed, step);
-  return Math.min(max, Math.max(min, rounded));
+  // Reps/RIR : entiers. Poids : précision libre, nettoyée du bruit flottant.
+  const precise = allowDecimals ? Math.round(parsed * 1000) / 1000 : Math.round(parsed);
+
+  return Math.min(max, Math.max(min, precise));
 }

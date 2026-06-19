@@ -4,7 +4,7 @@
 // "numeric") — jamais le clavier texte alpha.
 import { useCallback, useState } from 'react';
 
-import { parseAndClamp } from './stepper-utils';
+import { parseTypedValue } from './stepper-utils';
 
 interface StepperProps {
   /** Libellé du champ (ex. « Poids »), aussi utilisé pour l'aria-label des boutons. */
@@ -98,7 +98,10 @@ export function Stepper({
   }
 
   function commitDraft(raw: string) {
-    const next = parseAndClamp(raw, step, min, max, value);
+    // Saisie TAPÉE : précision préservée, jamais snappée au pas du +/− (issue
+    // #58). `allowsDecimal` distingue le poids (décimales libres) des reps/RIR
+    // (entiers). Seul le clamp [min, max] s'applique.
+    const next = parseTypedValue(raw, min, max, value, allowsDecimal);
     onChange(next);
     setDraft(null);
   }
