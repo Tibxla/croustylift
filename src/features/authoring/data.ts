@@ -36,6 +36,11 @@ import {
   describeReferenceBlock,
   type ExerciseReferenceCounts,
 } from '../exercises/deletion-guard';
+import { loadExerciseOverrides } from '../exercises/overrides';
+import {
+  mergeExerciseOverride,
+  type ExerciseOverrideValues,
+} from '../../domain/exercise-override';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
@@ -461,17 +466,47 @@ export async function loadSeanceEditor(seanceId: string): Promise<EditablePrescr
   const versionId = await getCurrentVersionId(seanceId);
   if (!versionId) return [];
 
-  const { data, error } = await supabase
-    .from('prescriptions')
-    .select(
-      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, muscle_group, primary_muscles, unilateral )',
-    )
-    .eq('seance_version_id', versionId)
-    .order('position', { ascending: true });
+  const [{ data, error }, overrides] = await Promise.all([
+    supabase
+      .from('prescriptions')
+      .select(
+        'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, muscle_group, primary_muscles, unilateral )',
+      )
+      .eq('seance_version_id', versionId)
+      .order('position', { ascending: true }),
+    // Fusion override per-user (issue #50) : le décompte PRÉVU des séries (#37)
+    // doit refléter les muscles / l'unilatéral personnalisés, comme la Capture.
+    loadExerciseOverrides(),
+  ]);
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as PrescriptionRowWithExercise[];
-  return rows.map(rowToEditablePrescription);
+  return rows.map((row) => applyOverrideToEditable(rowToEditablePrescription(row), overrides));
+}
+
+/**
+ * Surcharge les champs partagés (nom, muscles, unilatéral) d'une prescription
+ * éditable avec l'override per-user de son exo, via la règle PURE de fusion. La
+ * fourchette de séries/reps/RIR (propre à la prescription) n'est pas concernée.
+ */
+function applyOverrideToEditable(
+  presc: EditablePrescription,
+  overrides: Map<string, ExerciseOverrideValues>,
+): EditablePrescription {
+  const merged = mergeExerciseOverride(
+    {
+      name: presc.exerciseName,
+      unilateral: presc.unilateral,
+      primaryMuscles: presc.primaryMuscles,
+    },
+    overrides.get(presc.exerciseId) ?? null,
+  );
+  return {
+    ...presc,
+    exerciseName: merged.name,
+    unilateral: merged.unilateral,
+    primaryMuscles: merged.primaryMuscles,
+  };
 }
 
 /**

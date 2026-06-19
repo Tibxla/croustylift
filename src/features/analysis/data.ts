@@ -18,6 +18,27 @@ import { buildConfigTimeline } from './config-timeline';
 import { buildRawLog, type RawLogEntry } from './raw-log';
 import { buildSessionMetrics, type SessionMetricPoint } from './session-metrics';
 import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
+import { loadExerciseOverrides } from '../exercises/overrides';
+import {
+  mergeExerciseOverride,
+  type ExerciseOverrideValues,
+} from '../../domain/exercise-override';
+
+/**
+ * Nom d'exo personnalisé per-user (issue #50), via la règle PURE de fusion. Seul
+ * le nom est concerné en analyse : l'unilatéral / les muscles n'y servent pas
+ * (la courbe e1RM côté faible #46 dérive de `side` déjà loggé, pas du champ exo).
+ * On passe des valeurs neutres pour les autres champs (jamais utilisées ici).
+ */
+function overriddenName(
+  name: string,
+  override: ExerciseOverrideValues | undefined,
+): string {
+  return mergeExerciseOverride(
+    { name, unilateral: false, primaryMuscles: [] },
+    override ?? null,
+  ).name;
+}
 
 /** Un exercice pour lequel l'user a au moins une série loggée. */
 export interface TrainedExercise {
@@ -50,9 +71,12 @@ export interface ExerciseAnalysis extends TrainedExercise {
  * revient une fois par série, on n'en garde qu'un.
  */
 export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select('exercise_id, exercises ( name )');
+  const [{ data, error }, overrides] = await Promise.all([
+    supabase.from('performed_sets').select('exercise_id, exercises ( name )'),
+    // Nom personnalisé per-user (issue #50) : l'analyse affiche le même nom que
+    // partout ailleurs (catalogue, Capture, log brut).
+    loadExerciseOverrides(),
+  ]);
   if (error) throw error;
 
   type Row = { exercise_id: string; exercises: { name: string } | null };
@@ -63,7 +87,10 @@ export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
     if (byId.has(row.exercise_id)) continue;
     byId.set(row.exercise_id, {
       exerciseId: row.exercise_id,
-      name: row.exercises?.name ?? '(exercice inconnu)',
+      name: overriddenName(
+        row.exercises?.name ?? '(exercice inconnu)',
+        overrides.get(row.exercise_id),
+      ),
     });
   }
 
@@ -238,11 +265,15 @@ export async function loadBlockComparisonData(
  * le module pur `buildRawLog` ; cette couche ne fait que mapper et déléguer.
  */
 export async function loadRawLog(): Promise<RawLogEntry[]> {
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select(
-      'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
-    );
+  const [{ data, error }, overrides] = await Promise.all([
+    supabase
+      .from('performed_sets')
+      .select(
+        'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
+      ),
+    // Nom personnalisé per-user (issue #50) : le log brut affiche le nom override.
+    loadExerciseOverrides(),
+  ]);
   if (error) throw error;
 
   type Row = {
@@ -271,7 +302,10 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
           executionId: row.execution_id,
           date: execution.performed_on,
           exerciseId: row.exercise_id,
-          exerciseName: row.exercises?.name ?? '(exercice inconnu)',
+          exerciseName: overriddenName(
+            row.exercises?.name ?? '(exercice inconnu)',
+            overrides.get(row.exercise_id),
+          ),
           sessionName: execution.seance_versions?.seances?.name ?? null,
           bpmAvg: execution.bpm_avg === null ? null : Number(execution.bpm_avg),
           durationMin:
