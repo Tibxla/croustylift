@@ -35,10 +35,10 @@ function row(over: Partial<EditorRow> = {}): EditorRow {
 }
 
 describe('defaultFields — défauts produit d un exo ajouté', () => {
-  it('séries fixe 3, reps fourchette 8–12, RIR fixe 2', () => {
+  it('séries fixe 1, reps fourchette 5–10, RIR fixe 2', () => {
     expect(defaultFields()).toEqual({
-      sets: { mode: 'fixe', min: 3, max: 3 },
-      reps: { mode: 'fourchette', min: 8, max: 12 },
+      sets: { mode: 'fixe', min: 1, max: 1 },
+      reps: { mode: 'fourchette', min: 5, max: 10 },
       rir: { mode: 'fixe', min: 2, max: 2 },
     });
   });
