@@ -9,7 +9,7 @@ import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../dom
 import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
-import { pendingSide } from './state';
+import { pendingSide, resolveExerciseNoteSave } from './state';
 import { Stepper } from './Stepper';
 import { NoteField } from '../notes/NoteField';
 import { DeviationBadge, deviationVisual } from './DeviationBadge';
@@ -27,6 +27,12 @@ interface ExerciseCaptureProps {
   onDraftChange: (draft: { weightKg: number; reps: number; rir: number }) => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
+  /**
+   * Enregistre la note d'INSTRUCTIONS de l'exo, éditée sur place (issue #52).
+   * Corps vidé = note supprimée. La persistance + la MAJ optimiste sont gérées
+   * par le parent ; ici on remonte juste le corps saisi.
+   */
+  onSaveExerciseNote: (body: string) => void;
 }
 
 const WEIGHT_STEP = 2.5;
@@ -57,6 +63,7 @@ export function ExerciseCapture({
   onBack,
   onDraftChange,
   onSaveDatedNote,
+  onSaveExerciseNote,
 }: ExerciseCaptureProps) {
   const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
@@ -187,32 +194,16 @@ export function ExerciseCapture({
         )}
       </div>
 
-      {/* Note d'INSTRUCTIONS de l'exo (issue #26) : référence persistante, lecture
-          seule pendant la série (l'édition vit dans l'authoring). Affichée seulement
-          si elle porte du contenu. Icône + libellé : l'info ne tient pas à la couleur. */}
-      {!isBlankNote(perExerciseNote) && (
-        <div className="mt-2.5 rounded-2xl border border-line bg-surface px-4 py-3">
-          <p className="flex items-center gap-1.5 text-xs font-medium text-ink-muted">
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M4 6h16M4 12h10M4 18h7" />
-            </svg>
-            Note de l’exercice
-          </p>
-          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-ink">
-            {perExerciseNote}
-          </p>
-        </div>
-      )}
+      {/* Note d'INSTRUCTIONS de l'exo (issue #52, ex-#26) : référence persistante,
+          désormais repliable ET éditable sur place. key=exerciseId pour ré-amorcer
+          le pli/brouillon au changement d'exo. L'info (en-tête, états) tient au
+          texte + au glyphe, jamais à la couleur seule. */}
+      <ExerciseNoteSection
+        key={exercise.exerciseId}
+        value={perExerciseNote}
+        onSave={onSaveExerciseNote}
+      />
+
 
       {/* Séries déjà loggées (mono, alignées) */}
       {loggedCount > 0 && (
@@ -381,6 +372,223 @@ export function ExerciseCapture({
         value={datedNote}
         onSave={onSaveDatedNote}
       />
+    </div>
+  );
+}
+
+/**
+ * Section de la note d'INSTRUCTIONS de l'exo (issue #52), repliable ET éditable
+ * sur place en Capture. Trois états visuels :
+ *   - AUCUNE note : affordance discrète « Ajouter une note » (tap → édition) ;
+ *   - note existante, repliée/dépliée : en-tête tappable (≥44px) qui bascule le
+ *     pli ; dépliée, elle montre le texte + un bouton « Modifier » ;
+ *   - en ÉDITION : textarea (NoteField) + Annuler / Enregistrer.
+ * Le défaut est DÉPLIÉ si une note existe (consultation immédiate), conforme au
+ * critère #52. La persistance (et la MAJ optimiste) sont gérées par le parent ;
+ * ici, on remonte le corps à l'enregistrement explicite. `resolveExerciseNoteSave`
+ * évite un appel inutile quand le contenu réel n'a pas bougé. Vider puis
+ * enregistrer efface la note (géré côté data par `saveExerciseNote`).
+ */
+function ExerciseNoteSection({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (body: string) => void;
+}) {
+  const hasNote = !isBlankNote(value);
+  // Déplié par défaut si une note existe (consultation immédiate, critère #52).
+  const [open, setOpen] = useState(hasNote);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saved, setSaved] = useState(false);
+
+  const startEditing = () => {
+    setDraft(value);
+    setEditing(true);
+    setOpen(true);
+    setSaved(false);
+  };
+
+  const handleSave = () => {
+    const { changed, nextBody } = resolveExerciseNoteSave(value, draft);
+    // N'écrit que si le contenu réel a bougé (resaver à l'identique ou ne toucher
+    // que des espaces n'appelle pas le réseau).
+    if (changed) onSave(nextBody);
+    setEditing(false);
+    // Une note vidée se replie sur l'affordance « Ajouter » ; sinon on reste ouvert.
+    setOpen(!isBlankNote(nextBody));
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1600);
+  };
+
+  const handleCancel = () => {
+    setDraft(value);
+    setEditing(false);
+  };
+
+  // En ÉDITION : champ texte + actions. Sert aussi bien à créer qu'à modifier.
+  if (editing) {
+    return (
+      <div className="mt-2.5">
+        <NoteField
+          id="exercise-note"
+          label="Note de l’exercice"
+          hint="Consigne d’exécution persistante (prise, posture, tempo)."
+          value={draft}
+          placeholder="Omoplates rétractées, barre au sternum."
+          rows={3}
+          onChange={setDraft}
+        />
+        <div className="mt-2.5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          >
+            Enregistrer la note
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // AUCUNE note : affordance discrète pour en créer une (tap-target ≥44px).
+  if (!hasNote) {
+    return (
+      <button
+        type="button"
+        onClick={startEditing}
+        className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-line bg-surface px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="shrink-0"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        Ajouter une note
+        {saved && (
+          <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-good">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            Note supprimée.
+          </span>
+        )}
+      </button>
+    );
+  }
+
+  // Note existante : carte avec en-tête TAPPABLE (déplier/replier) + corps + Modifier.
+  return (
+    <div className="mt-2.5 rounded-2xl border border-line bg-surface">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex min-h-[2.75rem] w-full items-center gap-1.5 rounded-2xl px-4 py-2.5 text-left transition active:bg-surface-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="shrink-0 text-ink-muted"
+        >
+          <path d="M4 6h16M4 12h10M4 18h7" />
+        </svg>
+        <span className="text-xs font-medium text-ink-muted">Note de l’exercice</span>
+        {saved && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-good">
+            <svg
+              viewBox="0 0 24 24"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 6L9 17l-5-5" />
+            </svg>
+            Enregistrée.
+          </span>
+        )}
+        {/* Chevron : indique le pli par la FORME, pas par la couleur seule. */}
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={`ml-auto shrink-0 text-ink-muted transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="px-4 pb-3">
+          <p className="whitespace-pre-line text-sm leading-relaxed text-ink">{value}</p>
+          <button
+            type="button"
+            onClick={startEditing}
+            className="mt-2.5 inline-flex h-11 items-center gap-1.5 rounded-xl bg-surface-2 px-4 text-sm font-medium text-ink-muted transition active:text-ink"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+            </svg>
+            Modifier
+          </button>
+        </div>
+      )}
     </div>
   );
 }
