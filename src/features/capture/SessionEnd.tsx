@@ -24,15 +24,16 @@ export interface SessionSummary {
   exercisesDone: number;
   exercisesTotal: number;
   /**
-   * Total des séries selon la règle de décompte (issue #37) : une série
-   * unilatérale (gauche + droite) compte 2, une bilatérale 1. Pas un simple
-   * comptage de lignes loggées.
+   * Total des séries selon la règle de décompte pondérée par reps (issue #60,
+   * affine #37) : chaque série compte `min(reps,5)/5` ; une série unilatérale
+   * somme ses deux côtés. Valeur FRACTIONNAIRE (affichée à une décimale).
    */
   totalSets: number;
   /**
-   * Décompte RÉEL des séries par muscle principal (issue #37), dérivé des séries
-   * loggées : +1 par série logique pour chaque muscle principal de l'exo. Vide si
-   * aucune série loggée (ou aucun muscle renseigné sur les exos faits).
+   * Décompte RÉEL des séries par muscle principal (issue #60), dérivé des séries
+   * loggées et pondéré par reps (côté faible pour l'unilatéral), appliqué à chaque
+   * muscle principal de l'exo. Valeurs FRACTIONNAIRES. Vide si aucune série loggée
+   * (ou aucun muscle renseigné sur les exos faits).
    */
   setsByMuscle: Record<string, number>;
 }
@@ -65,6 +66,15 @@ const BPM_FINE = 1;
 
 function intFormat(value: number): string {
   return String(Math.round(value));
+}
+
+/**
+ * Format d'un décompte de séries FRACTIONNAIRE (issue #60, pondération par reps) :
+ * une décimale, virgule décimale FR (jamais de point, jamais de tiret long, cf.
+ * DESIGN.md). Ex. « 1,8 ».
+ */
+function fmtCount(value: number): string {
+  return value.toFixed(1).replace('.', ',');
 }
 
 export function SessionEnd({
@@ -228,7 +238,7 @@ function SummaryCard({
       <div className="rounded-2xl bg-surface px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Séries loggées</p>
         <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-          {summary.totalSets}
+          {fmtCount(summary.totalSets)}
         </p>
       </div>
       {durationMin != null && (
@@ -245,13 +255,14 @@ function SummaryCard({
 }
 
 /**
- * Décompte RÉEL des séries par muscle principal (issue #37), affiché en fin de
- * séance sous le récap. Dérivé des séries loggées (cf. buildSummary). On ne parle
- * PAS de « volume » (terme proscrit, CONTEXT.md) : « séries par muscle ».
+ * Décompte RÉEL des séries par muscle principal (issue #60), affiché en fin de
+ * séance sous le récap. Dérivé des séries loggées et pondéré par reps (cf.
+ * buildSummary). On ne parle PAS de « volume » (terme proscrit, CONTEXT.md) :
+ * « séries par muscle ».
  *
  * DESIGN.md : chiffres en mono tabulaire (.readout) alignés en colonne, un muscle
- * par ligne, ordre canonique stable. Rendu seulement s'il y a au moins un muscle
- * (sinon le récap suffit).
+ * par ligne, ordre canonique stable, décompte fractionnaire à une décimale
+ * (virgule FR). Rendu seulement s'il y a au moins un muscle (sinon le récap suffit).
  */
 function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number> }) {
   const muscles = orderMusclesCanonical(Object.keys(setsByMuscle));
@@ -268,7 +279,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
           <li key={muscle} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
             <span className="readout shrink-0 text-sm tabular-nums text-ink">
-              {setsByMuscle[muscle]}
+              {fmtCount(setsByMuscle[muscle])}
             </span>
           </li>
         ))}

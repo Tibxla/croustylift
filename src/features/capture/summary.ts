@@ -18,10 +18,12 @@ export function elapsedMinutesSince(startedAt: number | undefined): number | nul
 
 /**
  * Construit le récap sobre de l'exécution courante : exos faits / total + le
- * décompte RÉEL des séries (total + par muscle, issue #37). Le décompte applique
- * la règle exacte via le domaine pur `countPerformedSets` : une série logique =
- * un set_order (unilatéral G+D au même order = 1), unilatéral pèse 2 au total et
- * 1 par muscle, bilatéral 1/1, +1 par muscle principal de l'exo.
+ * décompte RÉEL des séries (total + par muscle), pondéré par reps (issue #60,
+ * affine #37). Le décompte applique la règle exacte via le domaine pur
+ * `countPerformedSets` : chaque série logique (un set_order ; unilatéral G+D au
+ * même order = 1) vaut `min(reps,5)/5` ; l'unilatéral somme ses deux côtés au
+ * total et retient le côté faible par muscle, pour chaque muscle principal de l'exo.
+ * Les comptes sont FRACTIONNAIRES (affichés à une décimale par SessionEnd).
  */
 export function buildSummary(session: Session, state: CaptureState): SessionSummary {
   const exercisesDone = session.exercises.filter((ex) => {
