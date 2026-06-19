@@ -2,7 +2,15 @@
 // `order` et sélection du CÔTÉ FAIBLE (e1RM le plus bas) pour la courbe primaire.
 // Logique PURE, aucun Supabase.
 import { describe, it, expect } from 'vitest'
-import { pairSidesByOrder, weakSideE1rm } from './unilateral'
+import {
+  pairSidesByOrder,
+  weakSideE1rm,
+  sidesDoneAt,
+  isSetComplete,
+  currentSetOrder,
+  defaultSide,
+  nextOrderForSide,
+} from './unilateral'
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet } from './types'
 
@@ -113,5 +121,178 @@ describe('weakSideE1rm', () => {
 
   it('renvoie null pour une exécution sans série', () => {
     expect(weakSideE1rm([])).toBeNull()
+  })
+})
+
+// --- Appariement agnostique de l'ordre (issue #63) --------------------------
+// Le logging unilatéral ne suppose plus « gauche d'abord » : l'utilisateur
+// choisit le côté. Une série logique se complète quand les DEUX côtés du même
+// set_order sont loggés, peu importe l'ordre de saisie.
+
+describe('sidesDoneAt', () => {
+  it('renvoie l’ensemble vide quand aucun côté n’est loggé à cet order', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+    expect(sidesDoneAt(sets, 2)).toEqual([])
+  })
+
+  it('renvoie le seul côté loggé à cet order', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(sidesDoneAt(sets, 1)).toEqual(['right'])
+  })
+
+  it('renvoie les deux côtés quand la série est complète', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+    expect(sidesDoneAt(sets, 1).sort()).toEqual(['left', 'right'])
+  })
+
+  it('ignore les séries d’un autre order', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 28, reps: 9, rir: 1, order: 2, side: 'right' },
+    ]
+    expect(sidesDoneAt(sets, 2)).toEqual(['right'])
+  })
+})
+
+describe('isSetComplete', () => {
+  it('vrai quand G et D du même order sont loggés', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(isSetComplete(sets, 1)).toBe(true)
+  })
+
+  it('vrai même si on a commencé par la droite (ordre de saisie indifférent)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+    expect(isSetComplete(sets, 1)).toBe(true)
+  })
+
+  it('faux quand un seul côté est loggé', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(isSetComplete(sets, 1)).toBe(false)
+  })
+})
+
+describe('currentSetOrder', () => {
+  it('vaut 1 pour une exécution sans série (la 1ʳᵉ série à venir)', () => {
+    expect(currentSetOrder([])).toBe(1)
+  })
+
+  it('reste sur l’order de la série EN COURS tant qu’un côté manque', () => {
+    // Droite loggée à l'order 1, gauche manque -> on est toujours sur la série 1.
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(currentSetOrder(sets)).toBe(1)
+  })
+
+  it('passe à l’order suivant quand la série courante est complète', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(currentSetOrder(sets)).toBe(2)
+  })
+
+  it('suit la dernière série incomplète sur plusieurs séries', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 30, reps: 9, rir: 1, order: 2, side: 'left' },
+    ]
+    expect(currentSetOrder(sets)).toBe(2)
+  })
+})
+
+describe('defaultSide', () => {
+  it('propose gauche par défaut quand aucune série n’est entamée (mais libre)', () => {
+    expect(defaultSide([])).toBe('left')
+  })
+
+  it('propose le côté MANQUANT de la série en cours (droite déjà faite -> gauche)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(defaultSide(sets)).toBe('left')
+  })
+
+  it('propose le côté MANQUANT (gauche déjà faite -> droite)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+    expect(defaultSide(sets)).toBe('right')
+  })
+
+  it('repart sur gauche après une série complète (nouvelle série, libre)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(defaultSide(sets)).toBe('left')
+  })
+})
+
+describe('nextOrderForSide', () => {
+  it('1ʳᵉ saisie, n’importe quel côté : ouvre l’order 1', () => {
+    expect(nextOrderForSide([], 'left')).toBe(1)
+    expect(nextOrderForSide([], 'right')).toBe(1)
+  })
+
+  it('on commence par la DROITE : la gauche complète la même série (même order)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    // Choisir gauche complète la série 1 entamée par la droite.
+    expect(nextOrderForSide(sets, 'left')).toBe(1)
+  })
+
+  it('on commence par la GAUCHE : la droite complète la même série (même order)', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+    ]
+    expect(nextOrderForSide(sets, 'right')).toBe(1)
+  })
+
+  it('re-logger le MÊME côté déjà fait ouvre une nouvelle série (pas d’écrasement)', () => {
+    // Droite déjà loggée à l'order 1 ; re-choisir droite ne doit pas viser l'order 1.
+    const sets: PerformedSet[] = [
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(nextOrderForSide(sets, 'right')).toBe(2)
+  })
+
+  it('série complète : le côté suivant ouvre la série suivante', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+    ]
+    expect(nextOrderForSide(sets, 'left')).toBe(2)
+    expect(nextOrderForSide(sets, 'right')).toBe(2)
+  })
+
+  it('multi-sets : complète la dernière série incomplète au bon order', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 30, reps: 9, rir: 1, order: 2, side: 'right' },
+    ]
+    // série 2 entamée par la droite ; gauche la complète à l'order 2.
+    expect(nextOrderForSide(sets, 'left')).toBe(2)
+    // re-droite à l'order 2 (déjà fait) ouvrirait la série 3.
+    expect(nextOrderForSide(sets, 'right')).toBe(3)
   })
 })
