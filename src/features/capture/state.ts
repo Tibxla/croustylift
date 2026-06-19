@@ -388,10 +388,19 @@ function mergeExerciseProgress(
   // Source de base = la plus avancée (à égalité, la base `a` : Supabase fait foi).
   const base = pa.sets.length >= pb.sets.length ? pa : pb;
   const other = base === pa ? pb : pa;
-  return {
-    ...base,
-    setIds: base.setIds.map((sid, i) => sid ?? other.setIds[i] ?? null),
-  };
+  // Complète un id manquant en cherchant dans `other` la série de MÊME (order, side)
+  // — PAS au même index. Un exo unilatéral peut être ordonné différemment entre la
+  // base (triée par order, gauche avant droite) et le cache local (ordre de saisie,
+  // la droite pouvant être loggée en 1er, issue #63) : l'alignement par index brut
+  // apparierait alors les côtés croisés → un undo viserait la mauvaise ligne en base.
+  // (order, side) est unique par exo (G/D par order, ou 1 série/order en bilatéral).
+  const setIds = base.sets.map((set, i) => {
+    const own = base.setIds[i];
+    if (own) return own;
+    const match = other.sets.findIndex((s) => s.order === set.order && s.side === set.side);
+    return match >= 0 ? other.setIds[match] ?? null : null;
+  });
+  return { ...base, setIds };
 }
 
 export function captureReducer(state: CaptureState, action: CaptureAction): CaptureState {

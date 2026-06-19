@@ -570,15 +570,22 @@ function CaptureBoard({
   // tranché par datedNoteOutboxOp). UI immédiate via le reducer ; sync en fond.
   const handleSaveDatedNote = useCallback(
     (exerciseId: string, body: string) => {
-      const existing = getDatedNote(state, exerciseId);
+      // Projection synchrone (stateRef), PAS le `state` capturé : deux sauvegardes
+      // rapprochées de la note d'un même exo voient ainsi le noteId déjà posé par la
+      // première → upsert idempotent par id, pas de 2ᵉ ligne dated_notes (bug M6,
+      // aligné sur handleLog/handleUndo). On avance la projection après le dispatch.
+      const current = stateRef.current;
+      const existing = getDatedNote(current, exerciseId);
       const noteId = existing?.id ?? newId();
-      dispatch({ type: 'set-dated-note', exerciseId, noteId, body });
+      const action = { type: 'set-dated-note', exerciseId, noteId, body } as const;
+      dispatch(action);
+      stateRef.current = captureReducer(current, action);
       enqueueExecutionOnce();
       enqueueAndFlush(
-        datedNoteOutboxOp({ id: noteId, executionId: state.executionId, exerciseId, body }),
+        datedNoteOutboxOp({ id: noteId, executionId: current.executionId, exerciseId, body }),
       );
     },
-    [state, enqueueExecutionOnce],
+    [enqueueExecutionOnce],
   );
 
   // Enregistre la NOTE D'INSTRUCTIONS d'un exo, éditée sur place (issue #52).
