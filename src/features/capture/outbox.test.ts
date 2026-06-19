@@ -67,6 +67,8 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const updateExecution = vi.fn(async (op) => void order.push(op));
   const upsertDatedNote = vi.fn(async (op) => void order.push(op));
   const deleteDatedNote = vi.fn(async (op) => void order.push(op));
+  const upsertExerciseNote = vi.fn(async (op) => void order.push(op));
+  const deleteExerciseNote = vi.fn(async (op) => void order.push(op));
   const deleteExecution = vi.fn(async (op) => void order.push(op));
   return {
     upsertExecution,
@@ -75,6 +77,8 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
     updateExecution,
     upsertDatedNote,
     deleteDatedNote,
+    upsertExerciseNote,
+    deleteExerciseNote,
     deleteExecution,
     calls: () => order,
   };
@@ -128,6 +132,8 @@ describe('flush (succès)', () => {
       body: 'épaule un peu raide',
     });
     enqueue({ type: 'deleteDatedNote', id: 'note-1' });
+    enqueue({ type: 'upsertExerciseNote', id: 'bench', body: 'prise serrée' });
+    enqueue({ type: 'deleteExerciseNote', id: 'bench' });
     enqueue({ type: 'deleteExecution', id: 'exec-1' });
     const fns = okFns();
 
@@ -139,6 +145,8 @@ describe('flush (succès)', () => {
     expect(fns.updateExecution).toHaveBeenCalledTimes(1);
     expect(fns.upsertDatedNote).toHaveBeenCalledTimes(1);
     expect(fns.deleteDatedNote).toHaveBeenCalledTimes(1);
+    expect(fns.upsertExerciseNote).toHaveBeenCalledTimes(1);
+    expect(fns.deleteExerciseNote).toHaveBeenCalledTimes(1);
     expect(fns.deleteExecution).toHaveBeenCalledTimes(1);
   });
 
@@ -580,6 +588,93 @@ describe('flush (op de type inconnu, Codex Q6a)', () => {
     expect(fns.calls()).toEqual([]);
     // L'op reste en file (jamais traitée comme un succès).
     expect(readQueue().map((o) => o.id)).toEqual(['mystere-1']);
+  });
+});
+
+// --- note d'instructions routée par l'outbox (issue #52, blind F3) ----------
+//
+// La note d'instructions (table exercise_notes, singleton par user+exo) était
+// écrite EN DIRECT hors outbox → perdue au reload en offline. Désormais routée
+// par l'outbox. Clé idempotente = exerciseId (porté par le champ `id`), pas un
+// UUID de ligne client : 1 note par couple (user, exo).
+
+describe('note d’instructions (upsert/deleteExerciseNote)', () => {
+  it('upsertExerciseNote : routée vers sa SyncFn (id = exerciseId), puis RETIRÉE', async () => {
+    enqueue({ type: 'upsertExerciseNote', id: 'bench', body: 'coudes rentrés' });
+    const fns = okFns();
+
+    const res = await flush(fns);
+
+    expect(fns.upsertExerciseNote).toHaveBeenCalledTimes(1);
+    expect((fns.upsertExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      type: 'upsertExerciseNote',
+      id: 'bench',
+      body: 'coudes rentrés',
+    });
+    // Aucune autre SyncFn touchée ; flush réussi → file vidée.
+    expect(fns.deleteExerciseNote).not.toHaveBeenCalled();
+    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('deleteExerciseNote : routée vers sa SyncFn (id = exerciseId), puis RETIRÉE', async () => {
+    enqueue({ type: 'deleteExerciseNote', id: 'squat' });
+    const fns = okFns();
+
+    const res = await flush(fns);
+
+    expect(fns.deleteExerciseNote).toHaveBeenCalledTimes(1);
+    expect((fns.deleteExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      type: 'deleteExerciseNote',
+      id: 'squat',
+    });
+    expect(fns.upsertExerciseNote).not.toHaveBeenCalled();
+    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('NE dépend PAS d’une exécution : s’enfile et part seule, sans upsertExecution', async () => {
+    // Contrairement à une note datée, elle ne porte pas d'executionId et n'exige
+    // aucune op d'exécution préalable : éditer la note d'instructions seule suffit.
+    enqueue({ type: 'upsertExerciseNote', id: 'bench', body: 'tempo lent' });
+    const fns = okFns();
+
+    await flush(fns);
+
+    expect(fns.upsertExecution).not.toHaveBeenCalled();
+    expect(fns.calls().map((o) => o.id)).toEqual(['bench']);
+  });
+
+  it('idempotence : rejouer après un échec partiel ne la dédouble pas en file', async () => {
+    // Une op d'exécution en tête, puis la note. L'exécution échoue → tout reste,
+    // dans l'ordre. Au re-flush OK, la note (même id 'bench') ne passe qu'une fois.
+    enqueue(execOp());
+    enqueue({ type: 'upsertExerciseNote', id: 'bench', body: 'prise large' });
+    const failing = okFns();
+    failing.upsertExecution = vi.fn().mockRejectedValueOnce(new Error('offline'));
+    await flush(failing);
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'bench']);
+
+    const ok = okFns();
+    await flush(ok);
+    expect(ok.upsertExerciseNote).toHaveBeenCalledTimes(1);
+    expect(pendingCount()).toBe(0);
+  });
+
+  it('SURVIT à purgeByExecution : la note vit sur la définition de l’exo, pas sur l’exécution', () => {
+    // « Réinitialiser » abandonne l'exécution courante mais NE doit PAS effacer une
+    // instruction tapée juste avant : elle n'est pas rattachée à l'exécution.
+    enqueue(execOp('exec-1'));
+    enqueue({ type: 'upsertExerciseNote', id: 'bench', body: 'serre les omoplates' });
+    enqueue({ type: 'deleteExerciseNote', id: 'squat' });
+
+    purgeByExecution('exec-1');
+
+    // L'op d'exécution est partie ; les deux ops de note d'instructions survivent.
+    expect(readQueue()).toEqual([
+      { type: 'upsertExerciseNote', id: 'bench', body: 'serre les omoplates' },
+      { type: 'deleteExerciseNote', id: 'squat' },
+    ]);
   });
 });
 

@@ -17,6 +17,8 @@ import {
 import {
   upsertDatedNote as upsertDatedNoteRow,
   deleteDatedNoteById,
+  upsertExerciseNoteRow,
+  deleteExerciseNoteByExercise,
 } from '../notes/data';
 import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
 
@@ -61,6 +63,11 @@ export const syncFns: SyncFns = {
       body: op.body,
     }),
   deleteDatedNote: (op) => deleteDatedNoteById(op.id),
+  // Note d'instructions (issue #52, blind F3) : l'`id` de l'op porte l'`exerciseId`
+  // (clé idempotente, 1 note par user+exo). Le corps est déjà normalisé en amont.
+  upsertExerciseNote: (op) =>
+    upsertExerciseNoteRow({ exerciseId: op.id, body: op.body }),
+  deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
   deleteExecution: (op) => deleteExecutionById(op.id),
 };
 

@@ -39,6 +39,8 @@ vi.mock('./data', () => ({
 vi.mock('../notes/data', () => ({
   upsertDatedNote: vi.fn(),
   deleteDatedNoteById: vi.fn(),
+  upsertExerciseNoteRow: vi.fn(),
+  deleteExerciseNoteByExercise: vi.fn(),
 }));
 
 import { flushOps } from './sync';

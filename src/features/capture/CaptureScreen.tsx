@@ -33,8 +33,8 @@ import {
 } from './session-edit';
 import {
   loadExerciseNote,
-  saveExerciseNote,
   datedNoteOutboxOp,
+  exerciseNoteOutboxOp,
 } from '../notes/data';
 import {
   captureReducer,
@@ -581,13 +581,15 @@ function CaptureBoard({
   );
 
   // Enregistre la NOTE D'INSTRUCTIONS d'un exo, éditée sur place (issue #52).
-  // Persistance DIRECTE via `saveExerciseNote` (upsert si corps réel, delete si
-  // vidé) — PAS l'outbox : cette note vit sur la définition de l'exo (table
-  // `exercise_notes`), pas sur l'exécution du jour. MAJ optimiste : on reflète le
-  // nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
-  // immédiat. Hors-ligne / erreur : on garde l'optimiste (ne pas effacer ce que
-  // l'utilisateur vient de taper en salle) et on trace ; la note ressera au
-  // prochain chargement si l'écriture a finalement échoué.
+  // Persistance via l'OUTBOX (blind F3) : cette note vit sur la définition de
+  // l'exo (table `exercise_notes`), persistante, mais l'éditer hors-ligne en
+  // salle doit survivre comme le reste — l'ancien chemin direct la PERDAIT au
+  // reload (le catch ne faisait qu'un console.error, rien en file). `exerciseNote
+  // OutboxOp` tranche upsert (corps réel) vs delete (corps vidé) ; l'op est
+  // idempotente par exerciseId (singleton par user+exo). NE dépend PAS de
+  // l'exécution → on n'enfile PAS d'upsertExecution. MAJ optimiste : on reflète
+  // le nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
+  // immédiat ; la durabilité est portée par l'outbox.
   const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
     setSession((s) => ({
       ...s,
@@ -595,9 +597,7 @@ function CaptureBoard({
         ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
       ),
     }));
-    void saveExerciseNote(exerciseId, body).catch((err) => {
-      console.error('Échec de l’enregistrement de la note d’exercice', err);
-    });
+    enqueueAndFlush(exerciseNoteOutboxOp({ exerciseId, body }));
   }, []);
 
   // --- Ajout / swap d'un exo à la volée (issue #36) -------------------------

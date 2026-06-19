@@ -91,6 +91,43 @@ export interface DeleteDatedNoteOp {
 }
 
 /**
+ * Crée (ou ré-affirme) la NOTE D'INSTRUCTIONS d'un exo (issue #52, blind F3) :
+ * texte persistant attaché à la DÉFINITION de l'exo, pas à l'exécution du jour
+ * (table `exercise_notes`, cf. domain/notes). Avant, l'éditeur en Capture
+ * écrivait Supabase EN DIRECT (hors outbox) : offline, la modif était perdue au
+ * reload. Routée par l'outbox, elle devient durable comme le reste.
+ *
+ * IDEMPOTENCE — par EXERCICE, pas par UUID de ligne client. Contrairement à une
+ * série ou une note datée (lignes créées à la volée, UUID client, ADR 0003), la
+ * note d'instructions est un SINGLETON : au plus une ligne par (user, exo),
+ * garantie par `unique (user_id, exercise_id)` (migration 0001). L'UI ne connaît
+ * d'ailleurs jamais d'id de ligne — elle ne charge que le `body` par exo. La clé
+ * idempotente est donc l'`exerciseId` : la sync upsert onConflict (user_id,
+ * exercise_id), rejouer écrase la même unique ligne sans doublon ni erreur.
+ *
+ * Ne dépend PAS de l'exécution (aucune FK vers `executions`) : enfilable seule,
+ * indépendamment de tout `upsertExecution`. Le champ `id` porte l'`exerciseId`
+ * pour rester homogène avec le mécanisme de l'outbox (shift par (type, id)).
+ */
+export interface UpsertExerciseNoteOp {
+  type: 'upsertExerciseNote';
+  /** L'`exerciseId` (clé idempotente : 1 note par user+exo). */
+  id: string;
+  /** Corps normalisé (cf. domain/notes). Vide → la note est effacée via deleteExerciseNote. */
+  body: string;
+}
+
+/**
+ * Supprime la note d'instructions d'un exo (corps vidé). Idempotent : delete par
+ * `exercise_id` (l'`id` de l'op porte l'`exerciseId`), sans effet si aucune ligne.
+ */
+export interface DeleteExerciseNoteOp {
+  type: 'deleteExerciseNote';
+  /** L'`exerciseId` dont la note est effacée. */
+  id: string;
+}
+
+/**
  * Supprime une EXÉCUTION entière par son id (issue #44, ADR 0008) : un jour de
  * séance avec ses séries et ses notes datées. Un unique delete par id ; la
  * CASCADE DB (`performed_sets`/`dated_notes` en on delete cascade, cf. migration
@@ -109,6 +146,8 @@ export type OutboxOp =
   | UpdateExecutionOp
   | UpsertDatedNoteOp
   | DeleteDatedNoteOp
+  | UpsertExerciseNoteOp
+  | DeleteExerciseNoteOp
   | DeleteExecutionOp;
 
 /**
@@ -123,6 +162,8 @@ export interface SyncFns {
   updateExecution: (op: UpdateExecutionOp) => Promise<void>;
   upsertDatedNote: (op: UpsertDatedNoteOp) => Promise<void>;
   deleteDatedNote: (op: DeleteDatedNoteOp) => Promise<void>;
+  upsertExerciseNote: (op: UpsertExerciseNoteOp) => Promise<void>;
+  deleteExerciseNote: (op: DeleteExerciseNoteOp) => Promise<void>;
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
 }
 
@@ -255,6 +296,10 @@ export function purgeByExecution(executionId: string): void {
         // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
         // la ligne (pas d'executionId rattachable) et sont idempotents par id
         // (sans effet si la ligne n'existe pas) → on les laisse.
+        // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
+        // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
+        // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
+        // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
         return true;
     }
   });
@@ -292,6 +337,10 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.upsertDatedNote(op);
     case 'deleteDatedNote':
       return fns.deleteDatedNote(op);
+    case 'upsertExerciseNote':
+      return fns.upsertExerciseNote(op);
+    case 'deleteExerciseNote':
+      return fns.deleteExerciseNote(op);
     case 'deleteExecution':
       return fns.deleteExecution(op);
     default:
