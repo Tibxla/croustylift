@@ -11,6 +11,7 @@ import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { pendingSide, resolveExerciseNoteSave } from './state';
 import { Stepper } from './Stepper';
+import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
 import { DeviationBadge, deviationVisual } from './DeviationBadge';
 import { formatE1rm, formatPrescription, formatSet, formatRange, formatWeight } from './format';
@@ -37,22 +38,6 @@ interface ExerciseCaptureProps {
 
 const WEIGHT_STEP = 2.5;
 const WEIGHT_FINE = 1.25;
-
-/** Valeurs pré-remplies : série N ↔ référence série N, sinon report de la dernière connue. */
-function seedFor(
-  exercise: SessionExercise,
-  loggedCount: number,
-): { weightKg: number; reps: number; rir: number } {
-  const ref = exercise.reference;
-  const nextOrder = loggedCount + 1;
-  if (ref && ref.length > 0) {
-    const atPosition = ref.find((s) => s.order === nextOrder);
-    const source = atPosition ?? ref[ref.length - 1];
-    return { weightKg: source.weightKg, reps: source.reps, rir: source.rir };
-  }
-  // Pas de référence : report de la dernière série loggée, ou un point de départ neutre.
-  return { weightKg: 20, reps: 10, rir: 1 };
-}
 
 export function ExerciseCapture({
   exercise,
@@ -90,19 +75,15 @@ export function ExerciseCapture({
     [progress.sets, exercise.personalRecord],
   );
 
-  // Brouillon de la série courante (steppers). Report de la dernière série loggée si elle existe.
-  const seed = useMemo(() => {
-    if (loggedCount > 0) {
-      const last = progress.sets[loggedCount - 1];
-      const refAt = reference?.find((s) => s.order === loggedCount + 1);
-      // Position suivante connue dans la référence ? on la propose ; sinon on reporte la dernière.
-      return refAt
-        ? { weightKg: refAt.weightKg, reps: refAt.reps, rir: refAt.rir }
-        : { weightKg: last.weightKg, reps: last.reps, rir: last.rir };
-    }
-    return seedFor(exercise, loggedCount);
+  // Brouillon de la série courante (steppers), pré-rempli par `seedDraft` (issue
+  // #58, logique pure testée) : poids reporté de la dernière série loggée dès la
+  // 2ᵉ, reps cadrées sur la borne basse prescrite. Ré-amorcé au changement d'exo
+  // ou au log/annulation d'une série (dépendances exerciseId + loggedCount).
+  const seed = useMemo(
+    () => seedDraft({ prescription, reference: reference ?? null, loggedSets: progress.sets }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exercise.exerciseId, loggedCount]);
+    [exercise.exerciseId, loggedCount],
+  );
 
   const [weightKg, setWeightKg] = useState(seed.weightKg);
   const [reps, setReps] = useState(seed.reps);
@@ -362,6 +343,36 @@ export function ExerciseCapture({
           Passer l&apos;exercice
         </button>
       </div>
+
+      {/* Retour à la liste des exos (issue #58). Affordance pleine largeur qui
+          apparaît dès que le minimum prescrit est atteint (exo « terminé ») :
+          c'est le moment d'enchaîner sur l'exo suivant sans friction. Surface-2
+          (pas l'accent violet, réservé à « Logger la série » — One Voice Rule).
+          Le retour amont (« Tous les exercices ») reste en haut pour quitter à
+          tout moment ; celui-ci est l'enchaînement naturel de fin d'exo. */}
+      {reachedMin && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-surface-2 text-base font-semibold text-ink transition active:scale-[0.99] active:bg-surface"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="shrink-0 text-ink-muted"
+          >
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          Retour aux exercices
+        </button>
+      )}
 
       {/* Note DATÉE du jour (issue #26) : contexte de la perf d'aujourd'hui sur cet
           exo. Saisissable et consultable ici. Repliée par défaut (zéro-friction),
