@@ -328,6 +328,19 @@ describe('persistance', () => {
     expect(pendingCount()).toBe(0);
     expect(readQueue()).toEqual([]);
   });
+
+  it('clearQueue supprime AUSSI le blob de quarantaine (BUG M5, fuite appareil partagé)', () => {
+    // Le blob :corrupt contient du réalisé en clair (issue F11). À la déconnexion
+    // (clearQueue), il ne doit pas survivre entre deux comptes sur le même appareil.
+    const CORRUPT = 'croustylift:outbox:corrupt';
+    enqueue(execOp());
+    localStorage.setItem(CORRUPT, '[{"type":"insertSet","id":"fuite"}]');
+
+    clearQueue();
+
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(localStorage.getItem(CORRUPT)).toBeNull();
+  });
 });
 
 // --- localStorage hostile (corruption / quota) — issue F11 ------------------
@@ -469,6 +482,107 @@ describe('flush (ré-armement, issue F12)', () => {
   });
 });
 
+// --- flush : shift conditionnel (file mutée pendant l'await) — BUG M3 --------
+//
+// runFlushOnce traitait l'op en tête puis faisait un `shift()` AVEUGLE après
+// l'await, en supposant que `current[0]` est encore l'op traitée. Si un
+// « Réinitialiser » (purgeByExecution) ou un clearQueue modifie la file PENDANT
+// l'await, la tête a changé → un shift aveugle retirerait la MAUVAISE op (perte
+// d'une op d'une NOUVELLE exécution). Le fix ne shift que si la tête est encore
+// l'op traitée (même type + même id).
+
+describe('flush (shift conditionnel, BUG M3)', () => {
+  it('op purgée pendant l’await : ne retire PAS l’op d’une nouvelle exécution', async () => {
+    // File = [execA]. Pendant le flush de execA, l'utilisateur « Réinitialise »
+    // (purge execA) puis logge une NOUVELLE exécution execB. Au retour de l'await,
+    // la tête est execB, pas execA : un shift aveugle perdrait execB.
+    enqueue(execOp('execA'));
+    const fns = okFns();
+    let mutated = false;
+    fns.upsertExecution = vi.fn(async (op) => {
+      if (op.id === 'execA' && !mutated) {
+        mutated = true;
+        purgeByExecution('execA'); // retire execA (la tête en cours de traitement)
+        enqueue(execOp('execB')); // nouvelle exécution -> nouvelle tête
+      }
+      return undefined;
+    });
+
+    const res = await flush(fns);
+
+    // execB n'a PAS été retiré par erreur : il a été traité au tour suivant.
+    expect((fns.upsertExecution as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].id)).toEqual(
+      ['execA', 'execB'],
+    );
+    // File vidée proprement, sans perte ni op orpheline.
+    expect(pendingCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+    expect(res.remaining).toBe(0);
+  });
+
+  it('clearQueue pendant l’await : ne retire rien à tort, reprend sur file vide', async () => {
+    // File = [execA, s1]. Pendant le flush de execA, un clearQueue vide tout.
+    // L'ancien shift aveugle aurait écrit une file « shiftée » par-dessus le vide.
+    enqueue(execOp('execA'));
+    enqueue(setOp('s1', 1, 'execA'));
+    const fns = okFns();
+    let cleared = false;
+    fns.upsertExecution = vi.fn(async () => {
+      if (!cleared) {
+        cleared = true;
+        clearQueue(); // la file disparaît pendant l'await
+      }
+      return undefined;
+    });
+
+    const res = await flush(fns);
+
+    // La tête a disparu : on ne shift pas, on ne ré-écrit pas une file fantôme.
+    // s1 n'est PAS rejouée (clearQueue l'a retirée), la file reste vide.
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(pendingCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+    expect(res.remaining).toBe(0);
+  });
+});
+
+// --- flush : op de type inconnu (Codex Q6a) ---------------------------------
+//
+// Une op dont le `type` ne matche aucun case ne doit PAS être retirée comme un
+// succès (runOp renvoyait undefined → traitée comme passée → perte silencieuse).
+// runOp JETTE désormais sur type inconnu : la passe s'arrête à cette op (arrêt-
+// sur-échec), l'op reste en file, jamais perdue ; les ops valides AVANT passent.
+
+describe('flush (op de type inconnu, Codex Q6a)', () => {
+  it('une op de type inconnu N’EST PAS retirée silencieusement (reste en file)', async () => {
+    // Op valide d'abord, puis une op au type hors-union (blob trafiqué / version
+    // future écrite par un autre onglet). L'exécution passe, l'op inconnue bloque.
+    enqueue(execOp('exec-1'));
+    enqueue({ type: 'mystereXYZ', id: 'mystere-1' } as unknown as OutboxOp);
+    const fns = okFns();
+
+    const res = await flush(fns);
+
+    // L'exécution valide est passée et retirée ; l'op inconnue reste en file.
+    expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
+    expect(res.flushed).toBe(1);
+    expect(res.remaining).toBe(1);
+    expect(readQueue().map((o) => o.id)).toEqual(['mystere-1']);
+  });
+
+  it('aucune SyncFn n’est appelée pour le type inconnu', async () => {
+    enqueue({ type: 'mystereXYZ', id: 'mystere-1' } as unknown as OutboxOp);
+    const fns = okFns();
+
+    await flush(fns);
+
+    // Aucune fonction de sync n'a été sollicitée : le type n'a pas de routage.
+    expect(fns.calls()).toEqual([]);
+    // L'op reste en file (jamais traitée comme un succès).
+    expect(readQueue().map((o) => o.id)).toEqual(['mystere-1']);
+  });
+});
+
 // --- purgeByExecution (reset CIBLÉ d'une exécution abandonnée) ---------------
 //
 // « Réinitialiser » abandonne l'exécution courante : on retire SES ops en
@@ -500,6 +614,35 @@ describe('purgeByExecution', () => {
     // Les ops qui CRÉENT/RÉ-AFFIRMENT exec-1 (upsertExecution, insertSet,
     // upsertDatedNote) sont parties ; tout le reste, dans l'ordre, survit.
     expect(readQueue().map((o) => o.id)).toEqual(['exec-2', 's2', 's1']);
+  });
+
+  it('retire AUSSI l’updateExecution de l’exécution ciblée (BUG M2)', () => {
+    // L'updateExecution porte l'`id` de l'exécution (BPM/durée de fin). Si on
+    // abandonne l'exécution sans le retirer, il survit et poserait ces métriques
+    // sur une coquille fantôme au prochain flush. Il doit partir avec le reste.
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('s1', 1, 'exec-1'));
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 130, durationMin: 52 });
+    // updateExecution d'une AUTRE exécution : survit (id différent).
+    enqueue({ type: 'updateExecution', id: 'exec-2', bpmAvg: 120, durationMin: 40 });
+
+    purgeByExecution('exec-1');
+
+    // Seul l'updateExecution de exec-2 reste (les ops de exec-1 sont toutes parties).
+    expect(readQueue()).toEqual([
+      { type: 'updateExecution', id: 'exec-2', bpmAvg: 120, durationMin: 40 },
+    ]);
+  });
+
+  it('laisse deleteExecution en place (idempotent par id, sans executionId rattachable)', () => {
+    // deleteExecution ne porte que l'id de la ligne et est idempotent : supprimer
+    // l'exécution abandonnée est sain → on le LAISSE (tombe dans le default).
+    enqueue(execOp('exec-1'));
+    enqueue({ type: 'deleteExecution', id: 'exec-1' });
+
+    purgeByExecution('exec-1');
+
+    expect(readQueue()).toEqual([{ type: 'deleteExecution', id: 'exec-1' }]);
   });
 
   it('laisse la file intacte si aucune op ne vise l’exécution', () => {

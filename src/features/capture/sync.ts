@@ -18,7 +18,7 @@ import {
   upsertDatedNote as upsertDatedNoteRow,
   deleteDatedNoteById,
 } from '../notes/data';
-import { enqueue, flush, type OutboxOp, type SyncFns } from './outbox';
+import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
 
 /**
  * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
@@ -62,12 +62,28 @@ export const syncFns: SyncFns = {
 /**
  * Enfile un lot d'ops (dans l'ordre) puis tente un flush immédiat. Les ops sont
  * durables dès l'enqueue (localStorage) : même si le flush échoue (offline),
- * elles remonteront au prochain flush — comme la capture du jour. Renvoie le
- * résultat du flush (combien restent / ont été synchronisées).
+ * elles remonteront au prochain flush — comme la capture du jour.
+ *
+ * Renvoie un `remaining` qui ne compte QUE NOS ops (les ids qu'on vient
+ * d'enfiler) encore présentes après la passe — PAS le `remaining` GLOBAL du
+ * `FlushResult` (BUG M4). Pourquoi : `flush` est mémoïsé (un seul flush à la fois,
+ * cf. outbox). Si une passe est déjà en vol, `flush(syncFns)` renvoie SA promesse,
+ * dont le `remaining` reflète l'état AU LANCEMENT de cette passe — avant qu'on
+ * enfile nos ops. Il pourrait donc valoir `0` alors que NOS ops dorment encore en
+ * file (faux succès → l'éditeur de séance se fermerait à tort). En recomptant nos
+ * propres ids dans `readQueue()` après l'attente, on obtient l'état réel des ops
+ * qu'on a soumises, indépendamment de la passe qui a effectivement tourné.
+ * `flushed` reste celui de la passe (best-effort, purement indicatif).
  */
-export async function flushOps(ops: OutboxOp[]) {
+export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
+  const ourIds = new Set(ops.map((op) => op.id));
   for (const op of ops) enqueue(op);
-  return flush(syncFns);
+  // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
+  // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
+  const { flushed } = await flush(syncFns);
+  // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
+  const remaining = readQueue().filter((op) => ourIds.has(op.id)).length;
+  return { remaining, flushed };
 }
 
 /**

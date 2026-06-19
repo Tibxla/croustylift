@@ -200,11 +200,17 @@ export function pendingCount(): number {
   return readQueue().length;
 }
 
-/** Vide entièrement la file (sert à la déconnexion / aux tests). */
+/**
+ * Vide entièrement la file (sert à la déconnexion / aux tests). Supprime AUSSI le
+ * blob de QUARANTAINE (`CORRUPT_KEY`) : à la déconnexion sur un appareil partagé,
+ * il contient du réalisé en clair (issue F11) et ne doit pas survivre au départ de
+ * l'utilisateur entre deux comptes — le retirer ferme cette fuite (BUG M5).
+ */
 export function clearQueue(): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CORRUPT_KEY);
   } catch {
     /* no-op */
   }
@@ -220,26 +226,32 @@ export function clearQueue(): void {
  * séries non synchronisées d'une AUTRE exécution ou une correction d'historique
  * en attente — celles-ci doivent survivre et remonter au retour du réseau.
  *
- * Retire : `upsertExecution` (`id === executionId`), `insertSet` et
- * `upsertDatedNote` (`executionId === executionId`). LAISSE les `deleteSet` /
- * `deleteDatedNote` : idempotents par id, ils sont sans effet si la ligne
- * n'existe pas (jamais créée parce qu'on a justement retiré son insert), donc
- * inoffensifs ; et ne portent que l'id de la ligne, pas l'`executionId`, donc on
- * ne peut de toute façon pas les rattacher à une exécution. LAISSE aussi toute
- * op d'une autre exécution.
+ * Retire : `upsertExecution` (`id === executionId`), `updateExecution`
+ * (`id === executionId`), `insertSet` et `upsertDatedNote`
+ * (`executionId === executionId`). L'`updateExecution` doit partir : il porte
+ * l'`id` de l'exécution (BPM/durée de fin), donc abandonner l'exécution sans le
+ * retirer poserait ces métriques sur une coquille fantôme au prochain flush.
+ * LAISSE les `deleteSet` / `deleteDatedNote` : idempotents par id, ils sont sans
+ * effet si la ligne n'existe pas (jamais créée parce qu'on a justement retiré son
+ * insert), donc inoffensifs ; et ne portent que l'id de la ligne, pas
+ * l'`executionId`, donc on ne peut de toute façon pas les rattacher à une
+ * exécution. LAISSE aussi `deleteExecution` (idempotent par id : supprimer
+ * l'exécution abandonnée est sain) et toute op d'une autre exécution.
  */
 export function purgeByExecution(executionId: string): void {
   const queue = readQueue();
   const kept = queue.filter((op) => {
     switch (op.type) {
       case 'upsertExecution':
+      case 'updateExecution':
         return op.id !== executionId;
       case 'insertSet':
       case 'upsertDatedNote':
         return op.executionId !== executionId;
       default:
-        // deleteSet / deleteDatedNote / updateExecution / deleteExecution : sans
-        // executionId rattachable ou idempotents par id → on les laisse.
+        // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
+        // la ligne (pas d'executionId rattachable) et sont idempotents par id
+        // (sans effet si la ligne n'existe pas) → on les laisse.
         return true;
     }
   });
@@ -279,6 +291,17 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.deleteDatedNote(op);
     case 'deleteExecution':
       return fns.deleteExecution(op);
+    default:
+      // Type inconnu (op d'une version future écrite par un autre onglet/appareil,
+      // ou blob trafiqué) : aucune SyncFn ne sait la jouer. On JETTE plutôt que de
+      // tomber dans un `return undefined` muet — sinon `runFlushOnce` la traiterait
+      // comme un succès et la RETIRERAIT (perte silencieuse). Le throw fait échouer
+      // la passe à cette op (arrêt-sur-échec) : l'op reste en file, jamais perdue.
+      // Les ops valides enfilées AVANT elle sont déjà passées (flush nominal intact).
+      // Bloquant tant que le type reste inconnu, mais préserver vaut mieux que perdre.
+      return Promise.reject(
+        new Error(`[outbox] op de type inconnu, non synchronisable : ${JSON.stringify(op)}`),
+      );
   }
 }
 
@@ -352,13 +375,21 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
       // telle quelle au prochain flush. Pas drainé → pas de ré-armement.
       return { flushed, drained: false };
     }
-    // Succès : on retire l'op en tête et on persiste le progrès. On relit la
-    // file à chaque tour pour absorber un enqueue concurrent arrivé entre-temps.
+    // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
+    // retire l'op qu'on vient de traiter. Mais la tête a pu CHANGER pendant
+    // l'`await` : un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue`
+    // déclenché par une autre exécution peut avoir retiré l'op traitée, voire
+    // toute la file. On ne `shift()` que si la tête est ENCORE l'op traitée
+    // (même type + même id) : sinon un shift aveugle retirerait la MAUVAISE op
+    // (perte d'une op d'une nouvelle exécution). Si la tête a changé, l'op a déjà
+    // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
     const current = readQueue();
-    current.shift();
-    writeQueue(current);
+    if (current.length > 0 && current[0].type === op.type && current[0].id === op.id) {
+      current.shift();
+      writeQueue(current);
+      flushed += 1;
+    }
     queue = current;
-    flushed += 1;
   }
 
   return { flushed, drained: true };
