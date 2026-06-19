@@ -305,43 +305,42 @@ export async function loadSeanceForCapture(
 // --- Historique d'un exo (base des dérivées : référence ET records) -----------
 
 /**
- * Historique réel d'un exo : ses exécutions (un jour = une `ExerciseExecution`),
- * chacune avec ses séries. Lit les performed_sets de l'user (scopés RLS) + la
- * date de leur exécution, regroupe par exécution. Base partagée des dérivées du
- * domaine : `lastReference` (dernière perf) ET `personalRecord` (records). User
- * neuf (aucune perf) -> liste vide.
+ * Une ligne plate `performed_sets` jointe à sa `executions` (performed_on +
+ * created_at), telle que la renvoie la requête de `loadExerciseExecutions`. La
+ * jointure peut manquer (`executions: null`) : une ligne sans exécution est une
+ * orpheline, ignorée à la reconstruction. Type exporté pour que la partie PURE
+ * (`reconstructExerciseExecutions`) soit testable sans Supabase.
  */
-async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at )')
-    .eq('exercise_id', exerciseId)
-    // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
-    // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
-    // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
-    // tie-break stable entre deux chargements.
-    .order('performed_on', { referencedTable: 'executions' })
-    .order('created_at', { referencedTable: 'executions' });
-  if (error) throw error;
+export type PerformedSetWithExecutionRow = {
+  weight_kg: number;
+  reps: number;
+  rir: number;
+  set_order: number;
+  side: string | null;
+  execution_id: string;
+  executions: { performed_on: string; created_at: string } | null;
+};
 
-  type SetRow = {
-    weight_kg: number;
-    reps: number;
-    rir: number;
-    set_order: number;
-    side: string | null;
-    execution_id: string;
-    executions: { performed_on: string; created_at: string } | null;
-  };
-  const rows = (data ?? []) as unknown as SetRow[];
-
-  // Regroupe les séries par exécution (une ExerciseExecution = un jour). Le `side`
-  // est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
-  // côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés. Le
-  // `created_at` est porté aussi : il départage deux exécutions à `performed_on`
-  // égal (cf. `lastReference`). L'`execution_id` (clé de regroupement) est posé
-  // comme `id` : tie-break FINAL stable des dérivées quand `performed_on` ET
-  // `created_at` sont égaux (cf. `isMoreRecent`, les courbes).
+/**
+ * Reconstruit l'historique domaine (`ExerciseExecution[]`) à partir des lignes
+ * plates `performed_sets`+`executions`. Partie PURE de `loadExerciseExecutions`
+ * (aucun accès Supabase), extraite pour être testée directement.
+ *
+ * Regroupe les séries par exécution (une ExerciseExecution = un jour). Le `side`
+ * est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
+ * côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés. Le
+ * `created_at` est porté aussi : il départage deux exécutions à `performed_on`
+ * égal (cf. `lastReference`). L'`execution_id` (clé de regroupement) est posé
+ * comme `id` : tie-break FINAL stable des dérivées quand `performed_on` ET
+ * `created_at` sont égaux (cf. `isMoreRecent`, les courbes). Une ligne dont la
+ * jointure `executions` manque (orpheline) est ignorée. L'ordre des exécutions
+ * renvoyé suit l'ordre de PREMIÈRE apparition des lignes (déjà trié par la
+ * requête : performed_on puis created_at).
+ */
+export function reconstructExerciseExecutions(
+  rows: PerformedSetWithExecutionRow[],
+  exerciseId: string,
+): ExerciseExecution[] {
   const byExecution = new Map<string, ExerciseExecution>();
   for (const row of rows) {
     const date = row.executions?.performed_on;
@@ -367,6 +366,31 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
   }
 
   return [...byExecution.values()];
+}
+
+/**
+ * Historique réel d'un exo : ses exécutions (un jour = une `ExerciseExecution`),
+ * chacune avec ses séries. Lit les performed_sets de l'user (scopés RLS) + la
+ * date de leur exécution, puis délègue le regroupement à la partie PURE
+ * `reconstructExerciseExecutions`. Base partagée des dérivées du domaine :
+ * `lastReference` (dernière perf) ET `personalRecord` (records). User neuf
+ * (aucune perf) -> liste vide.
+ */
+async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
+  const { data, error } = await supabase
+    .from('performed_sets')
+    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at )')
+    .eq('exercise_id', exerciseId)
+    // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
+    // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
+    // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
+    // tie-break stable entre deux chargements.
+    .order('performed_on', { referencedTable: 'executions' })
+    .order('created_at', { referencedTable: 'executions' });
+  if (error) throw error;
+
+  const rows = (data ?? []) as unknown as PerformedSetWithExecutionRow[];
+  return reconstructExerciseExecutions(rows, exerciseId);
 }
 
 // --- Référence (dernière perf réelle) -----------------------------------------
