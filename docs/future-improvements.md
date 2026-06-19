@@ -1,18 +1,8 @@
 # Améliorations futures
 
 Findings de l'audit (2026-06-19). Tout ce qui était actionnable a été livré sur `main`
-(CI verte). Ce fichier garde la trace du seul point restant — non actionnable sur le
-plan gratuit — et de ce qui a été fait.
-
-## Reste ouvert
-
-- **Protection « mots de passe compromis » (Supabase Auth)** — advisor
-  `auth_leaked_password_protection`. C'est une fonctionnalité du plan **Supabase Pro
-  (payante)** : non activable sur le free tier sans upgrade. Mitigation gratuite déjà
-  en place côté code : `MIN_PASSWORD_LENGTH` relevé à 10. À reconsidérer si le projet
-  passe Pro.
-
-Aucune dette code restante.
+(CI verte). **Aucune dette code ni tâche restante.** Ce fichier garde la trace de ce
+qui a été fait et des décisions actées.
 
 ## Fait (pour mémoire)
 
@@ -36,3 +26,10 @@ Aucune dette code restante.
 - ✅ **PWA** : `viewport-fit=cover` + safe-area, favicon SVG, icône maskable plein-bord.
 - ✅ **Couverture** : `reconstructExerciseExecutions` (rows→domaine) et `mergeRowWithOverride`
   (adaptateur d'override) extraites/testées.
+
+## Décisions actées (ne pas re-flaguer en TODO)
+
+- **Protection « mots de passe compromis » (advisor `auth_leaked_password_protection`)** :
+  fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée
+  désactivée en connaissance de cause ; mitigation gratuite en place : `MIN_PASSWORD_LENGTH`
+  relevé à 10. À ne reconsidérer que si le projet passe au plan Pro.
