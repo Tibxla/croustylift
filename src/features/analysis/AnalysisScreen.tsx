@@ -96,7 +96,11 @@ export function AnalysisScreen() {
       {tab === 'curves' ? (
         <CurvesTab analyses={load.analyses} metrics={load.metrics} />
       ) : (
-        <JournalTab />
+        // `onMutated` : une édition/suppression dans le journal doit aussi
+        // invalider les métriques de séance (BPM/durée) portées par le state
+        // racine, sinon le graphe « Cardio · séance » garde un point périmé
+        // (bug : durée encore visible après suppression d'une séance).
+        <JournalTab onMutated={() => setReloadKey((k) => k + 1)} />
       )}
     </div>
   );
@@ -207,7 +211,7 @@ export function CurvesTab({
 // Le log brut peut être lourd (tout l'historique de séries) ; on ne le charge
 // qu'à l'ouverture de l'onglet, pas avec le reste de l'écran. Composant à part
 // pour porter son propre cycle de chargement, le rendu restant pur (RawLogView).
-function JournalTab() {
+function JournalTab({ onMutated }: { onMutated: () => void }) {
   const [load, setLoad] = useState<
     | { phase: 'loading' }
     | { phase: 'error'; message: string }
@@ -271,17 +275,22 @@ function JournalTab() {
           onSaved={() => {
             // Corrections synchronisées : on ferme et on recharge le journal
             // pour refléter le réalisé corrigé (l'analyse e1RM se recalcule à sa
-            // prochaine ouverture, dérivée des mêmes séries).
+            // prochaine ouverture, dérivée des mêmes séries). `onMutated` rafraîchit
+            // aussi les métriques de séance du parent (une correction de BPM/durée
+            // d'une séance passée doit apparaître dans le graphe Cardio).
             setEditingExecutionId(null);
             setReloadKey((k) => k + 1);
+            onMutated();
           }}
           onDeleted={() => {
-            // Exécution supprimée (ADR 0008) : MÊME voie que `onSaved`. On ferme
-            // et on recharge le journal pour que la séance disparaisse ; la
-            // référence et les courbes se recalculent à la lecture (rien à
-            // invalider, aucun dérivé matérialisé).
+            // Exécution supprimée (ADR 0008). On ferme et on recharge le journal
+            // pour que la séance disparaisse, ET on invalide les métriques de
+            // séance du parent via `onMutated` : sans ça le point durée/BPM de la
+            // séance supprimée reste affiché dans le graphe Cardio (state racine
+            // jamais rechargé). Les courbes e1RM se recalculent à la lecture.
             setEditingExecutionId(null);
             setReloadKey((k) => k + 1);
+            onMutated();
           }}
         />
       )}
