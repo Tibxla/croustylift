@@ -12,6 +12,13 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Les modules data/* importent src/lib/supabase.ts, qui exige VITE_SUPABASE_* dès
+    # l'import (sinon il throw). Les tests mockent le réseau et le build n'établit
+    # aucune connexion : des valeurs FACTICES suffisent à instancier le client. La
+    # vraie config (clé publishable) vit côté Vercel, jamais ici.
+    env:
+      VITE_SUPABASE_URL: https://dummy.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_dummy_ci_not_a_secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
