@@ -135,27 +135,63 @@ export interface FlushResult {
 
 const STORAGE_KEY = 'croustylift:outbox';
 
-/** Lit la file persistée (vide si rien / illisible). */
+// Clé de QUARANTAINE : reçoit un blob illisible (JSON cassé / forme invalide)
+// AVANT que `readQueue` ne renvoie `[]`. Sans ça, la prochaine écriture écraserait
+// le blob fautif et les ops seraient perdues en silence. Conservé, il permet de
+// diagnostiquer voire récupérer à la main (issue F11).
+const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
+
+/**
+ * Lit la file persistée (vide si rien / illisible).
+ *
+ * Si le blob est présent mais ILLISIBLE (JSON cassé) ou de forme invalide (pas un
+ * tableau), on le SAUVEGARDE sous `CORRUPT_KEY` et on `console.warn` une fois avant
+ * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu — la
+ * prochaine écriture l'aurait sinon écrasé sans laisser de trace.
+ */
 export function readQueue(): OutboxOp[] {
   if (typeof localStorage === 'undefined') return [];
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as OutboxOp[]) : [];
+    if (Array.isArray(parsed)) return parsed as OutboxOp[];
+    quarantineBlob(raw, 'forme invalide (pas un tableau)');
+    return [];
   } catch {
+    quarantineBlob(raw, 'JSON illisible');
     return [];
   }
 }
 
-/** Écrit la file (dégrade silencieusement si quota plein / mode privé). */
+/** Met le blob fautif de côté (clé de quarantaine) et prévient une fois. */
+function quarantineBlob(raw: string, reason: string): void {
+  try {
+    localStorage.setItem(CORRUPT_KEY, raw);
+  } catch {
+    // Même un setItem de quarantaine peut échouer (quota/mode privé) : on ne
+    // peut alors rien sauvegarder, mais on prévient quand même ci-dessous.
+  }
+  console.warn(
+    `[outbox] file persistée corrompue (${reason}) : repartie vide, ` +
+      `blob conservé sous « ${CORRUPT_KEY} » pour diagnostic.`,
+  );
+}
+
+/** Écrit la file (dégrade en `console.warn` si quota plein / mode privé). */
 function writeQueue(queue: OutboxOp[]): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
   } catch {
     // Quota plein / mode privé : la file en mémoire reste correcte pour la
-    // session courante, on dégrade sans bloquer la capture.
+    // session courante, on dégrade sans bloquer la capture. On le SIGNALE
+    // (au lieu d'un no-op muet) : la persistance ne suit plus, donc un kill de
+    // l'app perdrait ce qui n'a pas pu être écrit — autant pouvoir le voir.
+    console.warn(
+      '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
+        'la file reste en mémoire pour la session mais ne survivra pas à un reload.',
+    );
   }
 }
 
@@ -252,14 +288,13 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
 let inFlight: Promise<FlushResult> | null = null;
 
 /**
- * Traite la file DANS L'ORDRE. Pour chaque op : appelle la fonction de sync
- * (idempotente), RETIRE l'op de la file si elle réussit, et persiste après
- * chaque retrait (progrès durable même si l'app meurt en cours de flush).
+ * Synchronise la file vers Supabase et renvoie l'état après la passe.
  *
- * À la PREMIÈRE op qui échoue (typiquement offline), on S'ARRÊTE et on GARDE
- * cette op + toutes les suivantes, dans l'ordre, pour la prochaine tentative.
- * On NE saute jamais une op : l'ordre exécution→séries (et insert→delete) est
- * une dépendance, pas une simple préférence.
+ * Traite DANS L'ORDRE (cf. `runFlushOnce`) : chaque op réussie est retirée et le
+ * progrès persisté, on S'ARRÊTE à la première qui échoue (offline) en gardant l'op
+ * + la suite. On NE saute jamais une op : l'ordre exécution→séries (et insert→delete)
+ * est une dépendance, pas une préférence. Une op enfilée en cours de flush est
+ * rattrapée (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
  *
  * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
  */
@@ -272,6 +307,38 @@ export function flush(fns: SyncFns): Promise<FlushResult> {
 }
 
 async function runFlush(fns: SyncFns): Promise<FlushResult> {
+  // RÉ-ARMEMENT (issue F12) : une op enfilée DANS la fenêtre étroite entre la fin
+  // d'une passe et le `finally` qui remet `inFlight` à null n'est pas traitée par
+  // cette passe ; un `flush` concurrent reçoit alors ce résultat périmé
+  // (`remaining: 0`) et l'op dort jusqu'au prochain déclencheur. On relance donc
+  // une passe SEULEMENT si la précédente a VIDÉ la file (`drained`) ET qu'une
+  // nouvelle op est apparue depuis. Une passe qui S'ARRÊTE sur un échec (offline)
+  // n'est JAMAIS relancée : son op reste en file pour le prochain déclencheur
+  // (comportement offline voulu) — sinon on rejouerait en boucle une op qui
+  // échoue. Borné par la longueur de file (chaque passe drainée en retire ≥ 1).
+  let totalFlushed = 0;
+  let budget = readQueue().length + 1;
+
+  while (true) {
+    const { flushed, drained } = await runFlushOnce(fns);
+    totalFlushed += flushed;
+    const remaining = readQueue().length;
+    // Arrêt sur échec (pas drainé), file vide, ou garde-fou de convergence atteint.
+    if (!drained || remaining === 0 || --budget <= 0) {
+      return { remaining, flushed: totalFlushed };
+    }
+    // Drainé mais la file s'est re-remplie (enqueue concurrent en fin de passe) :
+    // on relance pour traiter la nouvelle op.
+  }
+}
+
+/**
+ * UNE passe : traite la file DANS L'ORDRE, retire chaque op réussie et persiste le
+ * progrès, S'ARRÊTE à la première op qui échoue (offline) en gardant l'op + le reste.
+ * `drained` = true si la file a été entièrement vidée, false si on s'est arrêté sur
+ * un échec (la distinction pilote le ré-armement, cf. `runFlush`).
+ */
+async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: boolean }> {
   let queue = readQueue();
   let flushed = 0;
 
@@ -282,8 +349,8 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
     } catch {
       // Échec (réseau coupé le plus souvent) : on garde l'op et tout le reste,
       // dans l'ordre. La file persistée n'a pas bougé pour cette op → rejouée
-      // telle quelle au prochain flush.
-      break;
+      // telle quelle au prochain flush. Pas drainé → pas de ré-armement.
+      return { flushed, drained: false };
     }
     // Succès : on retire l'op en tête et on persiste le progrès. On relit la
     // file à chaque tour pour absorber un enqueue concurrent arrivé entre-temps.
@@ -294,5 +361,5 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
     flushed += 1;
   }
 
-  return { remaining: queue.length, flushed };
+  return { flushed, drained: true };
 }

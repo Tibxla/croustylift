@@ -330,6 +330,145 @@ describe('persistance', () => {
   });
 });
 
+// --- localStorage hostile (corruption / quota) — issue F11 ------------------
+//
+// readQueue ne doit JAMAIS perdre un blob illisible en silence : avant de repartir
+// vide, il le met en QUARANTAINE (clé dédiée) pour qu'on puisse diagnostiquer/récupérer.
+// writeQueue, lui, SIGNALE (console.warn) un quota plein au lieu d'un no-op muet.
+
+const STORAGE_KEY = 'croustylift:outbox';
+const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
+
+describe('readQueue (blob corrompu, issue F11)', () => {
+  it('JSON illisible → renvoie [] et PRÉSERVE le blob sous la clé de quarantaine', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const blob = '{ pas du JSON valide';
+    localStorage.setItem(STORAGE_KEY, blob);
+
+    expect(readQueue()).toEqual([]);
+    // Le blob fautif n'est pas perdu : on peut le récupérer pour diagnostic.
+    expect(localStorage.getItem(CORRUPT_KEY)).toBe(blob);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
+  });
+
+  it('forme invalide (pas un tableau) → renvoie [] et met le blob en quarantaine', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const blob = JSON.stringify({ oops: 'objet, pas un tableau' });
+    localStorage.setItem(STORAGE_KEY, blob);
+
+    expect(readQueue()).toEqual([]);
+    expect(localStorage.getItem(CORRUPT_KEY)).toBe(blob);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
+  });
+
+  it('blob valide → AUCUNE quarantaine, aucun warn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    enqueue(execOp());
+
+    expect(readQueue()).toHaveLength(1);
+    expect(localStorage.getItem(CORRUPT_KEY)).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+});
+
+describe('writeQueue (quota plein, issue F11)', () => {
+  it('setItem qui jette → console.warn (pas de no-op muet), la file mémoire reste correcte', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // setItem rejette systématiquement (simule un quota plein / mode privé).
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+
+    // enqueue → writeQueue échoue : on ne jette pas, on signale.
+    expect(() => enqueue(execOp())).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+    vi.restoreAllMocks();
+  });
+});
+
+// --- flush : ré-armement (op enfilée pendant la passe) — issue F12 ----------
+//
+// flush mémoïse `inFlight`. Une op enfilée alors qu'une passe est en cours ne doit
+// PAS rester orpheline en file : la passe la rattrape (relecture à chaque tour) et,
+// pour l'op qui se glisse dans la fenêtre entre la fin de boucle et la libération
+// d'`inFlight`, le ré-armement relance une passe. Le FlushResult reflète l'état réel.
+
+describe('flush (ré-armement, issue F12)', () => {
+  it('une op enfilée PENDANT la passe est flushée, pas laissée en file', async () => {
+    enqueue(execOp());
+    const fns = okFns();
+    // Pendant le traitement de l'exécution (dernière op de la file au départ), une
+    // série est enfilée — exactement le cas « enqueue concurrent en cours de passe ».
+    let injected = false;
+    fns.upsertExecution = vi.fn(async () => {
+      if (!injected) {
+        injected = true;
+        enqueue(setOp('s1', 1));
+      }
+      return undefined;
+    });
+
+    const res = await flush(fns);
+
+    // L'op injectée est bien partie ET comptée : file vide, FlushResult cohérent.
+    expect(pendingCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    expect((fns.insertSet as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      id: 's1',
+    });
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+  });
+
+  it('ré-arme jusqu’à vider même si une op est injectée à la TOUTE fin de file', async () => {
+    // L'injection se fait sur la DERNIÈRE op traitée d'une file à 2 éléments : le
+    // ré-armement doit fermer la file proprement et refléter remaining: 0.
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+    const fns = okFns();
+    let injected = false;
+    fns.insertSet = vi.fn(async () => {
+      if (!injected) {
+        injected = true;
+        enqueue(setOp('s2', 2));
+      }
+      return undefined;
+    });
+
+    const res = await flush(fns);
+
+    expect(pendingCount()).toBe(0);
+    // s1 puis s2 (l'op injectée) sont tous deux passés par insertSet : la file
+    // re-remplie en fin de passe a bien été drainée par le ré-armement.
+    expect(
+      (fns.insertSet as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].id),
+    ).toEqual(['s1', 's2']);
+    expect(res).toEqual({ remaining: 0, flushed: 3 });
+  });
+
+  it('reste borné : un échec en tête arrête le ré-armement (pas de boucle infinie)', async () => {
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+    const fns = okFns();
+    // L'exécution passe, la série échoue en boucle : la passe ne progresse plus,
+    // le ré-armement s'arrête, l'op reste en file pour le prochain flush.
+    fns.insertSet = vi.fn().mockRejectedValue(new Error('offline'));
+
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 1, flushed: 1 });
+    expect(readQueue().map((o) => o.id)).toEqual(['s1']);
+  });
+});
+
 // --- purgeByExecution (reset CIBLÉ d'une exécution abandonnée) ---------------
 //
 // « Réinitialiser » abandonne l'exécution courante : on retire SES ops en
