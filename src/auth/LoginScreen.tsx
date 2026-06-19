@@ -36,17 +36,20 @@ function frenchError(message: string): string {
 
 export function LoginScreen() {
   const { signIn, signUp } = useAuth()
+  // TOUS les hooks AVANT le moindre return conditionnel (règle des Hooks). Avant,
+  // le `if (mode === 'forgot') return …` précédait ces useState : passer en mode
+  // « mot de passe oublié » rendait MOINS de hooks que le render précédent et
+  // faisait planter React (« rendered fewer hooks than expected »).
   const [mode, setMode] = useState<Mode>('signin')
-
-  if (mode === 'forgot') {
-    return <ForgotPasswordScreen onBack={() => setMode('signin')} />
-  }
-
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [info, setInfo] = useState<string | null>(null)
+
+  if (mode === 'forgot') {
+    return <ForgotPasswordScreen onBack={() => setMode('signin')} />
+  }
 
   const isSignup = mode === 'signup'
 

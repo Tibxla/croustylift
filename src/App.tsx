@@ -1,15 +1,22 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
-import { AnalysisScreen } from './features/analysis/AnalysisScreen'
 import { SeancesScreen } from './features/authoring/SeancesScreen'
 import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
+import { ErrorBoundary } from './ErrorBoundary'
+
+// L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
+// PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
+// « zéro-friction ») : recharts n'est téléchargé qu'à l'ouverture de l'onglet.
+const AnalysisScreen = lazy(() =>
+  import('./features/analysis/AnalysisScreen').then((m) => ({ default: m.AnalysisScreen })),
+)
 
 type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
 
@@ -160,10 +167,18 @@ function AuthenticatedApp({
       </header>
 
       <div style={{ paddingBottom: 'var(--nav-offset)' }}>
-        {surface === 'capture' && <CaptureScreen />}
-        {surface === 'analysis' && <AnalysisScreen />}
-        {surface === 'seances' && <SeancesScreen />}
-        {surface === 'exercises' && <ExercisesScreen />}
+        {/* Frontière par surface (`key={surface}` la réarme au changement
+            d'onglet) : un crash de rendu d'un onglet n'efface pas la nav ni les
+            autres surfaces — l'utilisateur peut basculer pour s'en sortir. Le
+            Suspense couvre le chargement paresseux de l'Analyse. */}
+        <ErrorBoundary key={surface}>
+          <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
+            {surface === 'capture' && <CaptureScreen />}
+            {surface === 'analysis' && <AnalysisScreen />}
+            {surface === 'seances' && <SeancesScreen />}
+            {surface === 'exercises' && <ExercisesScreen />}
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       <BottomNav surface={surface} onSelect={setSurface} />
