@@ -694,11 +694,18 @@ function CaptureBoard({
 
   const handleFinish = useCallback(
     async (values: SessionEndValues) => {
-      // Clôture via l'outbox : on enfile l'exécution (au cas où aucune série
-      // n'aurait encore créé l'op, p. ex. clôture juste après un log offline)
-      // PUIS la pose des métriques. La durée vient du chrono (lancement →
-      // clôture), pas d'une saisie. Tout remonte seul au retour du réseau.
-      enqueueExecutionOnce();
+      // Clôture via l'outbox : on pose les métriques de fin (durée du chrono
+      // lancement → clôture, pas une saisie ; BPM optionnel). Tout remonte seul au
+      // retour du réseau.
+      //
+      // On NE (ré)affirme PLUS l'exécution ici (suppression de `enqueueExecutionOnce`,
+      // fix orphelines) : une exécution n'existe QUE par ses séries (CONTEXT.md
+      // « Exécution »), et elle est déjà créée au PREMIER log (`enqueueExecutionOnce`
+      // dans `handleLog`, durable même offline). Si AUCUNE série n'a été loggée dans
+      // CETTE exécution — cas où des séries fantômes restaurées du cache rendent
+      // `loggedAny` vrai sans qu'aucun log ne soit parti — la ligne n'existe pas en
+      // base : l'`updateExecution` ci-dessous ne touche AUCUNE ligne (no-op) au lieu
+      // de fabriquer une orpheline durée-sans-séries qui polluerait le graphe Cardio.
       // Un seul instant de clôture : en base (ISO) ET en mémoire (epoch ms).
       const closedAtMs = Date.now();
       enqueueAndFlush({
@@ -716,7 +723,7 @@ function CaptureBoard({
       // (son état `saved`) ; le câblage de persistance nettoie alors le cache.
       dispatch({ type: 'close', closedAt: closedAtMs });
     },
-    [enqueueExecutionOnce, state.executionId, durationMin],
+    [state.executionId, durationMin],
   );
 
   if (phase === 'finishing') {

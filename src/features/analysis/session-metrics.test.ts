@@ -10,6 +10,9 @@ const exec = (over: Partial<RawExecutionMetric> = {}): RawExecutionMetric => ({
   date: '2026-01-08',
   bpmAvg: 130,
   durationMin: 60,
+  // Une exécution réelle a des séries : c'est le cas par défaut. Le cas `false`
+  // (durée fantôme d'une exécution vide) est testé explicitement plus bas.
+  hasSets: true,
   ...over,
 })
 
@@ -38,6 +41,17 @@ describe('buildSessionMetrics', () => {
     const points = buildSessionMetrics([
       exec({ date: '2026-01-08', bpmAvg: null, durationMin: null }),
       exec({ date: '2026-01-09', bpmAvg: 120, durationMin: 50 }),
+    ])
+
+    expect(points.map((p) => p.date)).toEqual(['2026-01-09'])
+  })
+
+  it('ignore une exécution SANS série, même avec une durée (orpheline, cf. CONTEXT « exécution vide »)', () => {
+    const points = buildSessionMetrics([
+      // Durée posée mais aucune série loggée : exécution orpheline (clôture partie
+      // à zéro série). Le journal ne la montre pas ; le graphe Cardio non plus.
+      exec({ date: '2026-01-08', bpmAvg: null, durationMin: 374, hasSets: false }),
+      exec({ date: '2026-01-09', bpmAvg: 120, durationMin: 50, hasSets: true }),
     ])
 
     expect(points.map((p) => p.date)).toEqual(['2026-01-09'])
