@@ -65,7 +65,9 @@ export function ExercisesScreen() {
 
   useEffect(() => {
     let active = true;
-    setLoad({ phase: 'loading' });
+    // Loader au 1er chargement seulement ; un rafraîchissement (reload() après
+    // un save) garde le contenu monté → pas de saut de scroll en haut.
+    if (reloadKey === 0) setLoad({ phase: 'loading' });
 
     void (async () => {
       try {
