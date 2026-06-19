@@ -262,6 +262,16 @@ export function SeanceEditorView({
     bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [addCount]);
 
+  // Retour différé (900 ms) après une sauvegarde réussie. Id gardé en ref et
+  // annulé au démontage : si l'éditeur disparaît avant l'échéance, le timer ne
+  // déclenche pas `onBack` sur une instance démontée.
+  const backTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
+    };
+  }, []);
+
   function updateRow(rowId: string, key: FieldKey, next: FieldValue) {
     setRows((prev) =>
       prev.map((r) => (r.rowId === rowId ? { ...r, [key]: next } : r)),
@@ -306,7 +316,8 @@ export function SeanceEditorView({
       await onSave(rows);
       setSave({ busy: false, error: null, done: true });
       // Laisse la confirmation visible un instant, puis retour.
-      window.setTimeout(onBack, 900);
+      if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
+      backTimerRef.current = setTimeout(onBack, 900);
     } catch (err) {
       setSave({ busy: false, error: errMessage(err), done: false });
     }
@@ -681,13 +692,23 @@ function ExerciseNoteEditor({
 
   const dirty = draft !== note;
 
+  // Toast « enregistré » (1,6 s) : id en ref + clear au démontage, pour ne pas
+  // tirer setSaved sur une instance démontée si l'éditeur ferme entre-temps.
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
   async function submit() {
     setBusy(true);
     setError(null);
     try {
       await onSave(draft);
       setSaved(true);
-      window.setTimeout(() => setSaved(false), 1600);
+      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
     } catch (err) {
       setError(errMessage(err));
     } finally {

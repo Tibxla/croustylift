@@ -385,6 +385,37 @@ describe('captureReducer — undo-last-set', () => {
     state = captureReducer(state, { type: 'undo-last-set', exerciseId: 'bench-press' });
     expect(getProgress(state, 'seated-row').sets).toHaveLength(1);
   });
+
+  // Unilatéral (ADR 0005) : une série logique = 2 lignes G+D au MÊME order.
+  // L'undo travaille LIGNE PAR LIGNE (cohérent avec la saisie côté par côté et
+  // le compteur 0,5/1) : un undo retire le dernier côté, le suivant le premier.
+  const left = { weightKg: 28, reps: 10, rir: 2, side: 'left' as const };
+  const right = { weightKg: 32, reps: 10, rir: 2, side: 'right' as const };
+
+  it('unilatéral : un undo après G+D retire un seul côté (série à 0,5)', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l1', set: left });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right });
+    state = captureReducer(state, { type: 'undo-last-set', exerciseId: 'curl' });
+
+    const p = getProgress(state, 'curl');
+    // Il reste UNE ligne (le côté gauche, loggé en premier) à l'order 1.
+    expect(p.sets).toHaveLength(1);
+    expect(p.sets[0]).toEqual({ ...left, order: 1 });
+    expect(p.setIds).toEqual(['l1']);
+  });
+
+  it('unilatéral : un 2ᵉ undo retire le côté restant (plus aucune série)', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'l1', set: left });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right });
+    state = captureReducer(state, { type: 'undo-last-set', exerciseId: 'curl' });
+    state = captureReducer(state, { type: 'undo-last-set', exerciseId: 'curl' });
+
+    const p = getProgress(state, 'curl');
+    expect(p.sets).toEqual([]);
+    expect(p.setIds).toEqual([]);
+  });
 });
 
 // --- captureReducer — skip / unskip ------------------------------------------

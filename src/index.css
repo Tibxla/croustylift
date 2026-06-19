@@ -59,6 +59,12 @@ body {
   color: var(--color-ink);
   /* Évite le surlignage bleu natif au tap sur mobile (feedback géré nous-mêmes). */
   -webkit-tap-highlight-color: transparent;
+  /* Safe-area haute : avec viewport-fit=cover (index.html) et la status bar iOS
+     black-translucent, le contenu remonterait sous l'encoche. Ce padding décale
+     UNIFORMÉMENT tous les écrans (header, login, capture) sous la zone sûre. Nul
+     hors standalone / sans encoche (env() = 0). Les éléments `fixed` (nav, barres
+     d'action) sont relatifs au viewport et gèrent leur propre safe-area-inset-bottom. */
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 /* Readout Rule : chiffres mesurés en mono à chasse tabulaire, alignés en colonne. */

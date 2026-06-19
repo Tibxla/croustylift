@@ -2,8 +2,12 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover : en mode standalone iOS (status bar black-translucent),
+         le contenu passe SOUS l'encoche ; combiné aux env(safe-area-inset-*) en CSS
+         (padding-top sur body, padding-bottom de la nav), l'UI reste dégagée. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Croustylift</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
 
     <!-- PWA : meta iOS (Safari ne lit pas le manifest W3C pour l'installation) -->
     <!-- apple-mobile-web-app-capable active le mode "standalone" sur iOS :

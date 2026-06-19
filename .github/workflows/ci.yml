@@ -1,0 +1,24 @@
+# CI : garde le code vert sur chaque push / PR. Le projet est déployé sur Vercel,
+# qui exécute `tsc -b && vite build` au déploiement (un typecheck cassé bloque le
+# déploiement) mais NE LANCE PAS les tests — d'où ce workflow : lint + tests +
+# build (qui inclut le typecheck) avant tout merge.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:run
+      - run: npm run build

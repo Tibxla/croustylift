@@ -441,6 +441,12 @@ export async function loadTodayExecution(
     // coexister (reprise / 2 séances) ; on prend la PLUS RÉCENTE des NON clôturées.
     // Séries ET notes visent CETTE id.
     .is('closed_at', null)
+    // Ceinture-bretelles : `duration_min` n'est posé QUE par la clôture (même op
+    // que `closed_at`). Une exécution avec une durée enregistrée est donc TERMINÉE,
+    // même si `closed_at` manque — cas des lignes héritées clôturées par un bundle
+    // antérieur au fix, ou écrites par un service worker encore obsolète. On les
+    // exclut aussi pour ne jamais ressusciter une séance déjà finie après refresh.
+    .is('duration_min', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();

@@ -54,6 +54,29 @@ export function pairSidesByOrder(sets: PerformedSet[]): SidePair[] {
   return [...byOrder.values()].sort((a, b) => a.order - b.order)
 }
 
+/**
+ * Décompte de séries en ÉQUIVALENT-SÉRIE pour l'affichage capture (« faites /
+ * prévu ») : chaque CÔTÉ présent vaut 0,5, donc une série unilatérale complète
+ * (G + D au même order) vaut 1 et un seul côté loggé vaut 0,5. Bilatéral (séries
+ * sans `side`) : une ligne = 1 série.
+ *
+ * C'est une 3ᵉ convention de comptage, distincte et volontaire :
+ *   - `countLogicalSetsDone` (set-count.ts) : orders distincts, un côté seul = 1
+ *     (série « entamée ») — pour le décompte logique d'analyse ;
+ *   - `countPerformedSets` (set-count.ts) : pondéré par reps, G + D = 2 au total
+ *     — pour le volume d'analyse ;
+ *   - ici : fraction de série RÉELLEMENT faite, un côté = 0,5 — pour le compteur
+ *     de progression de la vue capture, qui se lit « faites / prévu ».
+ */
+export function loggedSetEquivalents(sets: PerformedSet[]): number {
+  const isUnilateral = sets.some((s) => s.side !== undefined)
+  if (!isUnilateral) return sets.length
+  return pairSidesByOrder(sets).reduce(
+    (sum, pair) => sum + (pair.left ? 0.5 : 0) + (pair.right ? 0.5 : 0),
+    0,
+  )
+}
+
 /** e1RM d'une série, ou null si elle est absente (côté manquant). */
 function e1rmOf(set: PerformedSet | null): number | null {
   return set === null ? null : estimateE1rm(set.weightKg, set.reps, set.rir)
