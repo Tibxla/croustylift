@@ -15,6 +15,13 @@ export interface RawLogSet {
   rir: number
   /** Rang d'ordre de la série dans l'exo (à partir de 1), pour le tri. */
   order: number
+  /**
+   * Côté d'une série UNILATÉRALE (cf. ADR 0005) : deux lignes au même `order`,
+   * une `'left'` et une `'right'`, chacune avec ses valeurs. `undefined` = série
+   * bilatérale (un seul côté implicite). Sert au libellé G/D et à différencier les
+   * deux lignes d'une même série logique (clé React, tri G avant D à order égal).
+   */
+  side?: 'left' | 'right'
 }
 
 /**
@@ -60,9 +67,21 @@ export interface RawLogEntry extends RawLogExecutionMeta {
 }
 
 /**
+ * Rang de côté pour départager deux lignes au même `order` (série unilatérale,
+ * ADR 0005) : gauche avant droite, le bilatéral (`undefined`) restant seul à son
+ * rang. Donne un ordre de lecture stable G puis D dans le journal.
+ */
+function sideRank(side: RawLogSet['side']): number {
+  if (side === 'left') return 0
+  if (side === 'right') return 1
+  return 0
+}
+
+/**
  * Regroupe des lignes plates `(exécution, exo, série)` en log brut consultable :
  * exécutions triées par date DÉCROISSANTE (la plus récente en tête), exos triés
- * par nom (locale fr), séries triées par order croissant. Pure.
+ * par nom (locale fr), séries triées par order croissant (et, à order égal pour
+ * une série unilatérale, gauche avant droite). Pure.
  */
 export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
   const byExecution = new Map<string, RawLogEntry>()
@@ -96,7 +115,9 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
   for (const entry of entries) {
     entry.exercises.sort((a, b) => a.name.localeCompare(b.name, 'fr'))
     for (const exercise of entry.exercises) {
-      exercise.sets.sort((a, b) => a.order - b.order)
+      exercise.sets.sort(
+        (a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side),
+      )
     }
   }
 

@@ -3,8 +3,9 @@ import { buildRawLog, type RawLogRow, type RawLogSet } from './raw-log'
 
 // Le log brut regroupe les séries réellement loggées par EXÉCUTION (une séance un
 // jour donné), et dans chaque exécution par EXO, en gardant poids × reps × RIR.
-// On vérifie le regroupement, les tris et le report des métadonnées de séance
-// (nom/BPM/durée), pas l'estimation e1RM (vue ailleurs).
+// On vérifie le regroupement, les tris (dont G avant D à order égal en unilatéral,
+// ADR 0005) et le report des métadonnées de séance (nom/BPM/durée) ainsi que du
+// `side`, pas l'estimation e1RM (vue ailleurs).
 
 const set = (over: Partial<RawLogSet> = {}): RawLogSet => ({
   weightKg: 100,
@@ -84,6 +85,40 @@ describe('buildRawLog', () => {
     ])
 
     expect(log[0].exercises[0].sets.map((s) => s.order)).toEqual([1, 2, 3])
+  })
+
+  it('transporte le côté G/D des séries unilatérales (ADR 0005)', () => {
+    const log = buildRawLog([
+      row({ set: set({ order: 1, side: 'left', weightKg: 14 }) }),
+      row({ set: set({ order: 1, side: 'right', weightKg: 16 }) }),
+    ])
+
+    const sets = log[0].exercises[0].sets
+    expect(sets.map((s) => s.side)).toEqual(['left', 'right'])
+    expect(sets.map((s) => s.weightKg)).toEqual([14, 16])
+  })
+
+  it('garde undefined le côté d’une série bilatérale', () => {
+    const log = buildRawLog([row({ set: set({ order: 1 }) })])
+
+    expect(log[0].exercises[0].sets[0].side).toBeUndefined()
+  })
+
+  it('trie gauche avant droite à order égal (série unilatérale)', () => {
+    // Saisie dans le désordre (droite d'abord) : le tri remet G avant D au même rang.
+    const log = buildRawLog([
+      row({ set: set({ order: 2, side: 'right' }) }),
+      row({ set: set({ order: 2, side: 'left' }) }),
+      row({ set: set({ order: 1, side: 'right' }) }),
+      row({ set: set({ order: 1, side: 'left' }) }),
+    ])
+
+    expect(log[0].exercises[0].sets.map((s) => [s.order, s.side])).toEqual([
+      [1, 'left'],
+      [1, 'right'],
+      [2, 'left'],
+      [2, 'right'],
+    ])
   })
 
   it('trie les exos d’une exécution par nom (locale fr)', () => {

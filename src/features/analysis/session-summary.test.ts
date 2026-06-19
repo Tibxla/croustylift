@@ -3,9 +3,11 @@ import { summarizeSession } from './session-summary'
 import type { RawLogEntry, RawLogSet } from './raw-log'
 
 // Le récap d'une séance (en-tête du journal, cf. issue #32) agrège ce que la
-// séance contient : nombre de séries loggées et volume total (Σ poids×reps). Les
-// métadonnées (nom, durée, BPM) sont PORTÉES par l'entrée, pas calculées ; le
-// récap ne fait que les exposer fidèlement, sans inventer une valeur manquante.
+// séance contient : nombre de SÉRIES LOGIQUES et total Σ poids×reps. En unilatéral
+// (ADR 0005), les deux côtés G/D d'une série partagent un `order` et ne comptent
+// qu'une série (le total Σ poids×reps cumule bien les deux). Les métadonnées (nom,
+// durée, BPM) sont PORTÉES par l'entrée, pas calculées ; le récap ne fait que les
+// exposer fidèlement, sans inventer une valeur manquante.
 
 const set = (over: Partial<RawLogSet> = {}): RawLogSet => ({
   weightKg: 100,
@@ -42,6 +44,32 @@ describe('summarizeSession', () => {
       }),
     )
     expect(summary.setCount).toBe(3)
+  })
+
+  it('compte une série unilatérale une seule fois (les deux côtés au même order)', () => {
+    // Exo unilatéral, 3 séries logiques = 6 lignes (G + D à chaque order, ADR 0005).
+    const summary = summarizeSession(
+      entry({
+        exercises: [
+          {
+            exerciseId: 'curl',
+            name: 'Curl haltère',
+            sets: [
+              set({ order: 1, side: 'left', weightKg: 14, reps: 10 }),
+              set({ order: 1, side: 'right', weightKg: 16, reps: 10 }),
+              set({ order: 2, side: 'left', weightKg: 14, reps: 9 }),
+              set({ order: 2, side: 'right', weightKg: 16, reps: 9 }),
+              set({ order: 3, side: 'left', weightKg: 12, reps: 8 }),
+              set({ order: 3, side: 'right', weightKg: 14, reps: 8 }),
+            ],
+          },
+        ],
+      }),
+    )
+    expect(summary.setCount).toBe(3)
+    // Le total Σ poids×reps cumule bien LES DEUX côtés de chaque série :
+    // (14+16)*10 + (14+16)*9 + (12+14)*8 = 300 + 270 + 208 = 778.
+    expect(summary.totalVolumeKg).toBe(778)
   })
 
   it('somme le volume Σ poids×reps de toutes les séries', () => {
