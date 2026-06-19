@@ -38,6 +38,7 @@ import {
 } from './session-edit';
 import {
   loadExerciseNote,
+  saveExerciseNote,
   upsertDatedNote as upsertDatedNoteRow,
   deleteDatedNoteById,
   datedNoteOutboxOp,
@@ -540,6 +541,26 @@ function CaptureBoard({
     [state, enqueueExecutionOnce],
   );
 
+  // Enregistre la NOTE D'INSTRUCTIONS d'un exo, éditée sur place (issue #52).
+  // Persistance DIRECTE via `saveExerciseNote` (upsert si corps réel, delete si
+  // vidé) — PAS l'outbox : cette note vit sur la définition de l'exo (table
+  // `exercise_notes`), pas sur l'exécution du jour. MAJ optimiste : on reflète le
+  // nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
+  // immédiat. Hors-ligne / erreur : on garde l'optimiste (ne pas effacer ce que
+  // l'utilisateur vient de taper en salle) et on trace ; la note ressera au
+  // prochain chargement si l'écriture a finalement échoué.
+  const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
+    setSession((s) => ({
+      ...s,
+      exercises: s.exercises.map((ex) =>
+        ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
+      ),
+    }));
+    void saveExerciseNote(exerciseId, body).catch((err) => {
+      console.error('Échec de l’enregistrement de la note d’exercice', err);
+    });
+  }, []);
+
   // --- Ajout / swap d'un exo à la volée (issue #36) -------------------------
   // L'exo (catalogue base/perso) entre dans la SÉANCE COURANTE en mémoire ; le
   // template versionné en base reste intact. Pas d'écriture dédiée : la déviation
@@ -675,6 +696,9 @@ function CaptureBoard({
           }
           onUndo={() => handleUndo(activeExercise.exerciseId)}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
+          onSaveExerciseNote={(body) =>
+            handleSaveExerciseNote(activeExercise.exerciseId, body)
+          }
         />
       ) : (
         <>
@@ -804,6 +828,7 @@ function CapturePanel({
   onLog,
   onUndo,
   onSaveDatedNote,
+  onSaveExerciseNote,
 }: {
   exercise: SessionExercise;
   progress: ExerciseProgress;
@@ -814,6 +839,8 @@ function CapturePanel({
   onUndo: () => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
+  /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
+  onSaveExerciseNote: (body: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre fixe puisse logger.
   const [draft, setDraft] = useState<{ weightKg: number; reps: number; rir: number } | null>(
@@ -861,6 +888,7 @@ function CapturePanel({
         onBack={() => dispatch({ type: 'back-to-picker' })}
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
+        onSaveExerciseNote={onSaveExerciseNote}
       />
 
       <p className="sr-only" role="status" aria-live="assertive">

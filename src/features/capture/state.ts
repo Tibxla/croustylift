@@ -1,6 +1,7 @@
 // État de la capture : l'Exécution en cours d'une séance, + reducer + persistance.
 // Pas de Supabase cette passe — l'état vit en mémoire et survit au background via localStorage.
 import type { PerformedSet, Side } from '../../domain/types';
+import { normalizeNoteBody } from '../../domain/notes';
 import type { Session } from './fixtures';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -172,6 +173,25 @@ export function nextSetOrder(progress: ExerciseProgress, side: Side | undefined)
 export function pendingSide(progress: ExerciseProgress): Side | null {
   if (progress.sets.length === 0) return null;
   return hasPendingLeft(progress) ? 'right' : 'left';
+}
+
+/**
+ * Décide la sauvegarde de la NOTE D'INSTRUCTIONS d'un exo éditée sur place en
+ * Capture (issue #52). Compare les corps NORMALISÉS (espaces de bord, fins de
+ * ligne \r\n) pour :
+ *   - `changed` : ne déclencher l'écriture que si le contenu réel a bougé (resaver
+ *     une note inchangée, ou n'avoir touché que des espaces, n'appelle pas le
+ *     réseau) ; un corps vidé compte comme un changement (= suppression côté data) ;
+ *   - `nextBody` : le corps NORMALISÉ à persister et à refléter à l'écran (vide =
+ *     « rien à noter », que `saveExerciseNote` traduit en suppression de la ligne).
+ * Pur : aucune écriture, miroir local de la sémantique de `saveExerciseNote`.
+ */
+export function resolveExerciseNoteSave(
+  currentBody: string,
+  draft: string,
+): { changed: boolean; nextBody: string } {
+  const nextBody = normalizeNoteBody(draft);
+  return { changed: nextBody !== normalizeNoteBody(currentBody), nextBody };
 }
 
 /** Aujourd'hui en ISO 'YYYY-MM-DD' (timezone locale). */
