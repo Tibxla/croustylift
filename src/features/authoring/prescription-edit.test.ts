@@ -8,6 +8,7 @@ import {
   toggleMode,
   fieldToRange,
   rowsToPrescriptionInputs,
+  rowsToPlannedExercises,
   moveRow,
   type FieldValue,
   type EditorRow,
@@ -24,6 +25,8 @@ function row(over: Partial<EditorRow> = {}): EditorRow {
     exerciseId: 'ex',
     exerciseName: 'Exo',
     muscleGroup: 'groupe',
+    primaryMuscles: ['pectoraux'],
+    unilateral: false,
     sets: { mode: 'fixe', min: 3, max: 3 },
     reps: { mode: 'fourchette', min: 8, max: 12 },
     rir: { mode: 'fixe', min: 2, max: 2 },
@@ -238,6 +241,38 @@ describe('rowsToPrescriptionInputs — mapping vers PrescriptionInput[]', () => 
     const rows = [row({ exerciseId: 'ex-x', sets: { mode: 'fixe', min: 4, max: 9 } })];
     const out = rowsToPrescriptionInputs(rows);
     expect(out[0].sets).toEqual({ min: 4, max: 4 });
+  });
+});
+
+describe('rowsToPlannedExercises — mapping vers le décompte PRÉVU (issue #37)', () => {
+  it('porte unilateral + muscles principaux et aplatit les séries en fourchette', () => {
+    const rows: EditorRow[] = [
+      row({
+        exerciseId: 'ex-a',
+        primaryMuscles: ['pectoraux', 'triceps'],
+        unilateral: false,
+        sets: { mode: 'fourchette', min: 3, max: 4 },
+      }),
+      row({
+        exerciseId: 'ex-b',
+        primaryMuscles: ['quadriceps'],
+        unilateral: true,
+        sets: { mode: 'fixe', min: 3, max: 3 },
+      }),
+    ];
+    expect(rowsToPlannedExercises(rows)).toEqual([
+      { unilateral: false, primaryMuscles: ['pectoraux', 'triceps'], sets: { min: 3, max: 4 } },
+      { unilateral: true, primaryMuscles: ['quadriceps'], sets: { min: 3, max: 3 } },
+    ]);
+  });
+
+  it('un champ fixe avec max résiduel est aplati (min === max), comme à la sauvegarde', () => {
+    const rows = [row({ sets: { mode: 'fixe', min: 4, max: 9 } })];
+    expect(rowsToPlannedExercises(rows)[0].sets).toEqual({ min: 4, max: 4 });
+  });
+
+  it('liste vide => []', () => {
+    expect(rowsToPlannedExercises([])).toEqual([]);
   });
 });
 

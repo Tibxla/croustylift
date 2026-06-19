@@ -5,8 +5,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { elapsedMinutesSince, buildSummary } from './summary';
 import { captureReducer, initialState } from './state';
-import { upperA } from './fixtures';
+import { upperA, type Session } from './fixtures';
 import type { CaptureState } from './state';
+
+/** Fourchette (min, max), comme dans fixtures.ts. */
+const r = (min: number, max: number): { min: number; max: number } => ({ min, max });
 
 // --- Fabriques ---------------------------------------------------------------
 
@@ -114,6 +117,12 @@ describe('buildSummary', () => {
     expect(buildSummary(upperA, state).totalSets).toBe(3);
   });
 
+  it('upperA sans primary_muscles : setsByMuscle vide (compte au total, pas par muscle)', () => {
+    let state = mkState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId: 's1', set: set1 });
+    expect(buildSummary(upperA, state).setsByMuscle).toEqual({});
+  });
+
   it('exercisesTotal vaut le nombre d\'exercices de la séance', () => {
     const state = mkState();
     expect(buildSummary(upperA, state).exercisesTotal).toBe(4);
@@ -153,5 +162,94 @@ describe('buildSummary', () => {
     expect(s.exercisesDone).toBe(0);
     expect(s.exercisesTotal).toBe(0);
     expect(s.totalSets).toBe(0);
+    expect(s.setsByMuscle).toEqual({});
+  });
+});
+
+// --- buildSummary : décompte RÉEL par muscle (issue #37) ---------------------
+//
+// Session ad hoc portant primaryMuscles + unilateral, pour vérifier la règle de
+// décompte sur des séries loggées (le domaine pur est testé à part : ici on
+// vérifie le BRANCHEMENT correct des séries de l'état et des champs d'exo).
+
+const mono: Session = {
+  id: 'mono',
+  name: 'Mono',
+  exercises: [
+    {
+      exerciseId: 'bench',
+      name: 'Développé couché',
+      primaryMuscles: ['pectoraux', 'triceps'],
+      prescription: { sets: r(3, 4), reps: r(8, 12), rir: r(1, 2) },
+      reference: null,
+      perExerciseNote: '',
+    },
+    {
+      exerciseId: 'split-squat',
+      name: 'Fente bulgare',
+      unilateral: true,
+      primaryMuscles: ['quadriceps', 'fessiers'],
+      prescription: { sets: r(3, 3), reps: r(8, 10), rir: r(1, 2) },
+      reference: null,
+      perExerciseNote: '',
+    },
+  ],
+};
+
+function monoState(): CaptureState {
+  return { ...initialState(mono, '2026-06-18'), startedAt: 1_000_000 };
+}
+
+function logUni(
+  state: CaptureState,
+  exerciseId: string,
+  setId: string,
+  side: 'left' | 'right',
+): CaptureState {
+  return captureReducer(state, {
+    type: 'log-set',
+    exerciseId,
+    setId,
+    set: { weightKg: 30, reps: 10, rir: 2, side },
+  });
+}
+
+describe('buildSummary — décompte réel par muscle (issue #37)', () => {
+  it('exo bilatéral multi-muscles : +1 par muscle et au total par série', () => {
+    let state = monoState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench', setId: 'b1', set: set1 });
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench', setId: 'b2', set: set1 });
+    const s = buildSummary(mono, state);
+    expect(s.totalSets).toBe(2);
+    expect(s.setsByMuscle).toEqual({ pectoraux: 2, triceps: 2 });
+  });
+
+  it('exo unilatéral : G+D au même order = 1 série logique, +2 total mais +1 par muscle', () => {
+    let state = monoState();
+    state = logUni(state, 'split-squat', 'u1l', 'left');
+    state = logUni(state, 'split-squat', 'u1r', 'right'); // série logique 1 complète
+    state = logUni(state, 'split-squat', 'u2l', 'left');
+    state = logUni(state, 'split-squat', 'u2r', 'right'); // série logique 2 complète
+    const s = buildSummary(mono, state);
+    // 2 séries logiques unilatérales : total = 2 × 2 = 4 ; muscles = 2 chacun.
+    expect(s.totalSets).toBe(4);
+    expect(s.setsByMuscle).toEqual({ quadriceps: 2, fessiers: 2 });
+  });
+
+  it('mélange bilatéral + unilatéral : cumule total et muscles', () => {
+    let state = monoState();
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench', setId: 'b1', set: set1 });
+    state = logUni(state, 'split-squat', 'u1l', 'left');
+    state = logUni(state, 'split-squat', 'u1r', 'right');
+    const s = buildSummary(mono, state);
+    // bench : 1 série bilatérale (total 1, pecs/triceps +1) ;
+    // split-squat : 1 série unilatérale (total 2, quads/fessiers +1).
+    expect(s.totalSets).toBe(3);
+    expect(s.setsByMuscle).toEqual({
+      pectoraux: 1,
+      triceps: 1,
+      quadriceps: 1,
+      fessiers: 1,
+    });
   });
 });

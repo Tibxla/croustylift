@@ -55,13 +55,17 @@ export interface PrescriptionInput {
 }
 
 /**
- * Une prescription chargée pour l'éditeur : la prescription + le nom et le
- * groupe musculaire de l'exo (joints), dans la forme `PrescriptionInput` pour
- * être ré-éditable et re-sauvegardée telle quelle.
+ * Une prescription chargée pour l'éditeur : la prescription + le nom, le groupe
+ * musculaire (legacy), les muscles principaux et le drapeau unilatéral de l'exo
+ * (joints), dans la forme `PrescriptionInput` pour être ré-éditable et
+ * re-sauvegardée telle quelle. `primaryMuscles` + `unilateral` alimentent le
+ * décompte PRÉVU des séries (issue #37).
  */
 export interface EditablePrescription extends PrescriptionInput {
   exerciseName: string;
   muscleGroup: string;
+  primaryMuscles: string[];
+  unilateral: boolean;
 }
 
 // =====================================================================
@@ -91,7 +95,12 @@ interface PrescriptionRowWithExercise {
   reps_max: number;
   rir_min: number;
   rir_max: number;
-  exercises: { name: string; muscle_group: string } | null;
+  exercises: {
+    name: string;
+    muscle_group: string;
+    primary_muscles: string[];
+    unilateral: boolean;
+  } | null;
 }
 
 /** Mappe une ligne `prescriptions` (jointe à l'exo) vers la forme éditable. */
@@ -106,6 +115,11 @@ export function rowToEditablePrescription(
     rir: { min: row.rir_min, max: row.rir_max },
     exerciseName: row.exercises?.name ?? '(exercice inconnu)',
     muscleGroup: row.exercises?.muscle_group ?? '',
+    // Décompte PRÉVU (issue #37) : la LISTE des muscles principaux (#33). Vide si
+    // l'exo legacy n'a pas (encore) de primary_muscles -> il ne compte pour aucun
+    // muscle, mais reste compté au total via son drapeau unilatéral.
+    primaryMuscles: row.exercises?.primary_muscles ?? [],
+    unilateral: row.exercises?.unilateral ?? false,
   };
 }
 
@@ -355,7 +369,7 @@ export async function loadSeanceEditor(seanceId: string): Promise<EditablePrescr
   const { data, error } = await supabase
     .from('prescriptions')
     .select(
-      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, muscle_group )',
+      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, muscle_group, primary_muscles, unilateral )',
     )
     .eq('seance_version_id', versionId)
     .order('position', { ascending: true });
