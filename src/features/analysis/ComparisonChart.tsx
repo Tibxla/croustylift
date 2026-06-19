@@ -59,35 +59,37 @@ function formatWeekTick(week: number): string {
   return `S${Math.round(week) + 1}`;
 }
 
-// Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
-// fournit donc vides au typage statique → on les rend partielles. Avec deux
-// séries empilées, `payload` peut contenir l'un ou l'autre bloc (ou les deux).
-function makeComparisonTooltip(firstLabel: string, secondLabel: string) {
-  return function ComparisonTooltip({
-    active,
-    payload,
-  }: Partial<TooltipContentProps<number, string>>) {
-    if (!active || !payload || payload.length === 0) return null;
-    const first = payload[0];
-    if (!first) return null;
-    const point = first.payload as WeeklyPoint;
-    return (
-      <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
-        <p className="readout text-[11px] text-ink-muted">{formatWeekTick(point.week)}</p>
-        {payload.map((entry) => {
-          const p = entry.payload as WeeklyPoint;
-          const label = entry.name === 'first' ? firstLabel : secondLabel;
-          return (
-            <p key={entry.name} className="readout text-sm font-medium text-ink">
-              <span className="text-xs font-normal text-ink-muted">{label} </span>
-              {Math.round(p.e1rm)}
-              <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
-            </p>
-          );
-        })}
-      </div>
-    );
-  };
+// Tooltip de comparaison : composant STABLE au niveau module (pas une fabrique
+// appelée au render, qui recréerait un composant à chaque rendu — static-components).
+// Recharts injecte active/payload à l'exécution (typage partiel) ; les labels sont
+// passés en props par la render-function de <Tooltip content={…}>. Avec deux séries
+// empilées, `payload` peut contenir l'un ou l'autre bloc (ou les deux).
+type ComparisonTooltipProps = Partial<TooltipContentProps<number, string>> & {
+  firstLabel: string;
+  secondLabel: string;
+};
+
+function ComparisonTooltip({ active, payload, firstLabel, secondLabel }: ComparisonTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const first = payload[0];
+  if (!first) return null;
+  const point = first.payload as WeeklyPoint;
+  return (
+    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
+      <p className="readout text-[11px] text-ink-muted">{formatWeekTick(point.week)}</p>
+      {payload.map((entry) => {
+        const p = entry.payload as WeeklyPoint;
+        const label = entry.name === 'first' ? firstLabel : secondLabel;
+        return (
+          <p key={entry.name} className="readout text-sm font-medium text-ink">
+            <span className="text-xs font-normal text-ink-muted">{label} </span>
+            {Math.round(p.e1rm)}
+            <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 export function ComparisonChart({
@@ -99,7 +101,6 @@ export function ComparisonChart({
 }: ComparisonChartProps) {
   const firstColor = colorFor('first', winner);
   const secondColor = colorFor('second', winner);
-  const ComparisonTooltip = makeComparisonTooltip(firstLabel, secondLabel);
 
   return (
     <div>
@@ -130,7 +131,16 @@ export function ComparisonChart({
               tickFormatter={(v: number) => `${Math.round(v)}`}
               allowDecimals={false}
             />
-            <Tooltip content={<ComparisonTooltip />} cursor={{ stroke: LINE, strokeWidth: 1 }} />
+            <Tooltip
+              content={(props) => (
+                <ComparisonTooltip
+                  {...(props as Partial<TooltipContentProps<number, string>>)}
+                  firstLabel={firstLabel}
+                  secondLabel={secondLabel}
+                />
+              )}
+              cursor={{ stroke: LINE, strokeWidth: 1 }}
+            />
             {/* Le perdant d'abord, sous l'accent : le gagnant reste lisible au-dessus. */}
             <Line
               name="second"

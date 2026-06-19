@@ -618,6 +618,14 @@ function CaptureBoard({
     [],
   );
 
+  // Phase locale de fin de séance + durée chronométrée. Déclarés AVANT les callbacks
+  // qui les utilisent (handleReset/handleNewSession/openFinish) : sinon `setPhase` est
+  // référencé avant sa déclaration, ce qui empêche la mémoïsation d'openFinish d'être
+  // préservée (React Compiler). `phase` : capture (sélecteur + panneaux) -> finishing
+  // (clôture, BPM optionnel). `durationMin` null = cas dégénéré (startedAt absent).
+  const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
+  const [durationMin, setDurationMin] = useState<number | null>(null);
+
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
     // Nouvelle exécution = id client neuf (la précédente reste en base). On purge
@@ -662,13 +670,9 @@ function CaptureBoard({
   }, [session, date, initialSession]);
 
   // --- Flux de fin de séance ------------------------------------------------
-  // Phase locale : capture (sélecteur + panneaux) -> fin (clôture, BPM optionnel).
-  // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd.
-  const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
-  // Durée CHRONOMÉTRÉE, figée à l'ouverture du flux de fin (lancement -> clôture).
-  // `null` = cas dégénéré (startedAt absent) : pas de durée envoyée ni affichée.
-  const [durationMin, setDurationMin] = useState<number | null>(null);
-
+  // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
+  // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
+  // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
   const openFinish = useCallback(() => {
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');

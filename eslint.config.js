@@ -29,8 +29,20 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
-      'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
+      ...reactHooks.configs['recommended-latest'].rules,
+      // Le preset v7 embarque les règles React-Compiler. Deux d'entre elles flaguent
+      // SYSTÉMATIQUEMENT des patterns légitimes ici (le projet n'utilise PAS le
+      // Compiler) → on les rétrograde en `warn` (visibles, non bloquantes) plutôt que
+      // de refactorer du code qui marche ou d'empiler des eslint-disable :
+      //   - set-state-in-effect : le « reset à loading » en tête des effets de
+      //     chargement (un setState synchrone par écran), idiome de fetch-in-effect ;
+      //   - refs : les miroirs de ref INTENTIONNELS et documentés de la capture
+      //     (stateRef synchrone du bug M6, init-ref de réhydratation, templateIdsRef).
+      // Les autres règles Compiler (static-components, immutability, purity,
+      // preserve-manual-memoization…) restent en `error` : elles attrapent de vrais
+      // problèmes, déjà corrigés.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       // Convention `_` = volontairement inutilisé (déstructuration partielle,
       // param ignoré) : on respecte le préfixe au lieu de le signaler.
