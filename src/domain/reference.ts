@@ -18,14 +18,21 @@ export function lastReference(
 }
 
 /**
- * `candidate` est-elle plus récente que `current` ? `date` (jour) départage en
- * premier ; à égalité, `createdAt` (la dernière créée gagne). Le `>=`/`>` garde
- * le comportement « le candidat l'emporte à égalité stricte » du reduce d'origine,
- * mais l'égalité est maintenant tranchée par `createdAt` quand il est présent.
+ * `candidate` est-elle plus récente que `current` ? Départage en cascade :
+ *   1. `date` (jour) — l'ordre lexicographique ISO est chronologique ;
+ *   2. à `date` égale, `createdAt` (la dernière créée gagne) ;
+ *   3. à `createdAt` aussi égal (timestamps tronqués, import groupé, horloge
+ *      imprécise, ou tout simplement absent), l'`id` (UUID stable, cf. ADR 0003).
+ * Sans l'étape 3, l'égalité retombait sur l'ordre du tableau — non garanti côté
+ * data — donc le repère « dernière fois » pouvait basculer entre deux chargements.
+ * Le `>=` final garde le « le candidat l'emporte à égalité stricte » du reduce
+ * d'origine : il ne se déclenche que quand date, createdAt ET id sont identiques
+ * (deux objets indiscernables : le choix est alors sans conséquence).
  */
 function isMoreRecent(candidate: ExerciseExecution, current: ExerciseExecution): boolean {
   if (candidate.date !== current.date) return candidate.date > current.date
   const candidateCreatedAt = candidate.createdAt ?? ''
   const currentCreatedAt = current.createdAt ?? ''
-  return candidateCreatedAt >= currentCreatedAt
+  if (candidateCreatedAt !== currentCreatedAt) return candidateCreatedAt > currentCreatedAt
+  return (candidate.id ?? '') >= (current.id ?? '')
 }

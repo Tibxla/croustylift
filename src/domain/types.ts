@@ -50,6 +50,15 @@ export interface ExerciseExecution {
    * consommateurs qui n'en ont pas besoin construisent l'objet sans.
    */
   createdAt?: string;
+  /**
+   * Id de l'exécution (UUID client, cf. ADR 0003). Tie-break FINAL des dérivées
+   * sensibles aux égalités (`lastReference`, les courbes) : à `date` ET
+   * `createdAt` égaux (timestamps tronqués, import groupé, horloge imprécise),
+   * il départage de façon stable plutôt que de laisser l'ordre du tableau —
+   * non garanti côté data — trancher. Optionnel comme `createdAt` : seuls ces
+   * consommateurs le portent.
+   */
+  id?: string;
 }
 
 /** Un point de la courbe e1RM : un 1RM estimé à une date. */

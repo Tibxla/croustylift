@@ -1,5 +1,6 @@
 import { estimateE1rm } from './e1rm'
 import { pairSidesByOrder } from './unilateral'
+import { compareCurvePoints } from './primary-curve'
 import type { ExerciseExecution, E1rmPoint, PerformedSet } from './types'
 
 // Courbe SECONDAIRE : la tendance des séries 2+ (order >= 2), subordonnée à la
@@ -33,11 +34,15 @@ export function buildSecondaryCurve(
     }
     const meanE1rm =
       followUpE1rms.reduce((sum, e1rm) => sum + e1rm, 0) / followUpE1rms.length
-    return [{ date: execution.date, e1rm: meanE1rm }]
+    // On garde `createdAt`/`id` le temps du tri (cf. compareCurvePoints) pour
+    // départager deux exécutions le même jour de façon STABLE, comme la primaire,
+    // puis on les jette : `E1rmPoint` reste `{ date, e1rm }` pour l'UI.
+    return [{ date: execution.date, e1rm: meanE1rm, createdAt: execution.createdAt, id: execution.id }]
   })
 
-  // Dates ISO 'YYYY-MM-DD' : l'ordre lexicographique est l'ordre chronologique.
-  return points.sort((a, b) => a.date.localeCompare(b.date))
+  return points
+    .sort(compareCurvePoints)
+    .map(({ date, e1rm }) => ({ date, e1rm }))
 }
 
 /**

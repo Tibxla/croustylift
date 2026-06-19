@@ -72,7 +72,19 @@ export function weakSideE1rm(sets: PerformedSet[]): number | null {
 
   const isUnilateral = sets.some((s) => s.side !== undefined)
   if (!isUnilateral) {
-    const first = sets.reduce((earliest, s) => (s.order < earliest.order ? s : earliest))
+    // Pré-condition : un exo bilatéral a UNE série par `order` (une série = un
+    // rang, cf. CONTEXT.md « Série »). Deux séries bilatérales au même order est
+    // une anomalie (jamais produite par la capture). On la rend néanmoins
+    // déterministe au lieu de laisser l'ordre du tableau — non garanti côté data
+    // — trancher : à `order` égal on retient le plus petit e1RM, cohérent avec la
+    // lecture « côté faible » du module (on ne surévalue jamais la progression).
+    const first = sets.reduce((earliest, s) => {
+      if (s.order !== earliest.order) return s.order < earliest.order ? s : earliest
+      return estimateE1rm(s.weightKg, s.reps, s.rir) <
+        estimateE1rm(earliest.weightKg, earliest.reps, earliest.rir)
+        ? s
+        : earliest
+    })
     return estimateE1rm(first.weightKg, first.reps, first.rir)
   }
 

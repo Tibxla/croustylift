@@ -340,14 +340,22 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
   // est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
   // côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés. Le
   // `created_at` est porté aussi : il départage deux exécutions à `performed_on`
-  // égal (cf. `lastReference`).
+  // égal (cf. `lastReference`). L'`execution_id` (clé de regroupement) est posé
+  // comme `id` : tie-break FINAL stable des dérivées quand `performed_on` ET
+  // `created_at` sont égaux (cf. `isMoreRecent`, les courbes).
   const byExecution = new Map<string, ExerciseExecution>();
   for (const row of rows) {
     const date = row.executions?.performed_on;
     if (!date) continue; // garde-fou : exécution orpheline.
     let exec = byExecution.get(row.execution_id);
     if (!exec) {
-      exec = { date, exerciseId, sets: [], createdAt: row.executions?.created_at };
+      exec = {
+        date,
+        exerciseId,
+        sets: [],
+        createdAt: row.executions?.created_at,
+        id: row.execution_id,
+      };
       byExecution.set(row.execution_id, exec);
     }
     exec.sets.push({

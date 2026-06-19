@@ -119,6 +119,25 @@ describe('weakSideE1rm', () => {
     expect(weakSideE1rm(sets)).toBeCloseTo(estimateE1rm(28, 10, 2))
   })
 
+  it('bilatéral : deux séries au même order (anomalie) départagent de façon déterministe (plus petit e1RM), stable', () => {
+    // Anomalie : un exo bilatéral a normalement UNE série par order. Si deux
+    // existent au même order 1, le résultat ne doit pas dépendre de l'ordre du
+    // tableau. On retient le plus petit e1RM (lecture « côté faible »).
+    const strongFirst: PerformedSet[] = [
+      { weightKg: 110, reps: 5, rir: 2, order: 1 },
+      { weightKg: 100, reps: 5, rir: 2, order: 1 },
+    ]
+    const weakFirst: PerformedSet[] = [
+      { weightKg: 100, reps: 5, rir: 2, order: 1 },
+      { weightKg: 110, reps: 5, rir: 2, order: 1 },
+    ]
+    const expected = estimateE1rm(100, 5, 2)
+    expect(weakSideE1rm(strongFirst)).toBeCloseTo(expected)
+    expect(weakSideE1rm(weakFirst)).toBeCloseTo(expected)
+    // Même valeur quel que soit l'ordre d'entrée : déterministe.
+    expect(weakSideE1rm(strongFirst)).toBeCloseTo(weakSideE1rm(weakFirst) as number)
+  })
+
   it('renvoie null pour une exécution sans série', () => {
     expect(weakSideE1rm([])).toBeNull()
   })

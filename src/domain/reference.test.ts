@@ -100,6 +100,36 @@ describe('lastReference', () => {
     expect(lastReference([newer, older], 'squat')).toEqual(expected)
   })
 
+  it('départage deux exécutions au même jour ET createdAt égal par id, peu importe l’ordre d’entrée', () => {
+    // performed_on identique (granularité jour) ET created_at identique (timestamp
+    // tronqué / import groupé) : sans tie-break final par id, l'ordre du tableau
+    // décidait. L'id (UUID stable, ADR 0003) fige le choix entre deux chargements.
+    const a: ExerciseExecution = {
+      date: '2026-01-17',
+      createdAt: '2026-01-17T10:00:00Z',
+      id: 'exec-a',
+      exerciseId: 'squat',
+      sets: [{ weightKg: 100, reps: 5, rir: 2, order: 1 }],
+    }
+    const b: ExerciseExecution = {
+      date: '2026-01-17',
+      createdAt: '2026-01-17T10:00:00Z',
+      id: 'exec-b',
+      exerciseId: 'squat',
+      sets: [{ weightKg: 110, reps: 5, rir: 1, order: 1 }],
+    }
+    // L'id le plus grand ('exec-b') gagne, quel que soit l'ordre dans le tableau.
+    const expected = [{ weightKg: 110, reps: 5, rir: 1, order: 1 }]
+    expect(lastReference([a, b], 'squat')).toEqual(expected)
+    expect(lastReference([b, a], 'squat')).toEqual(expected)
+  })
+
+  // Note : deux exécutions sans `id` NI `createdAt` sont indiscernables (aucun
+  // critère de départage) — cas absent en base (toute exécution porte un UUID) et
+  // non satisfiable par construction (un reduce ne peut pas être ordre-indépendant
+  // sans critère stable). Le départage par id à date+createdAt égaux est couvert
+  // par le test ci-dessus.
+
   it('renvoie null si aucune exécution réelle de cet exo (liste vide ou que des trous)', () => {
     expect(lastReference([], 'squat')).toBeNull()
 

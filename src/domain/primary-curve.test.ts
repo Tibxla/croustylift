@@ -108,6 +108,74 @@ describe('buildPrimaryCurve', () => {
     expect(buildPrimaryCurve([], 'bench')).toEqual([])
   })
 
+  it('ordonne deux exécutions du même jour de façon STABLE (createdAt puis id), peu importe l’entrée', () => {
+    // Même date (granularité jour) : sans tie-break, l'ordre du tableau d'entrée
+    // décidait. On départage par createdAt, puis par id à createdAt égal.
+    const morning: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      id: 'exec-1',
+      exerciseId: 'bench',
+      sets: [{ weightKg: 100, reps: 5, rir: 2, order: 1 }],
+    }
+    const evening: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T18:00:00Z',
+      id: 'exec-2',
+      exerciseId: 'bench',
+      sets: [{ weightKg: 105, reps: 5, rir: 2, order: 1 }],
+    }
+    const expected = [estimateE1rm(100, 5, 2), estimateE1rm(105, 5, 2)]
+
+    for (const input of [[morning, evening], [evening, morning]]) {
+      const curve = buildPrimaryCurve(input, 'bench')
+      expect(curve.map((p) => p.e1rm)).toEqual(
+        expected.map((e) => expect.closeTo(e)),
+      )
+    }
+  })
+
+  it('ordonne par id quand date ET createdAt sont égaux', () => {
+    const a: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      id: 'exec-a',
+      exerciseId: 'bench',
+      sets: [{ weightKg: 100, reps: 5, rir: 2, order: 1 }],
+    }
+    const b: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      id: 'exec-b',
+      exerciseId: 'bench',
+      sets: [{ weightKg: 105, reps: 5, rir: 2, order: 1 }],
+    }
+    // id 'exec-a' < 'exec-b' : a vient avant b, dans les deux ordres d'entrée.
+    const expected = [estimateE1rm(100, 5, 2), estimateE1rm(105, 5, 2)]
+    for (const input of [[a, b], [b, a]]) {
+      const curve = buildPrimaryCurve(input, 'bench')
+      expect(curve.map((p) => p.e1rm)).toEqual(
+        expected.map((e) => expect.closeTo(e)),
+      )
+    }
+  })
+
+  it('ne fait fuiter ni createdAt ni id dans le point de sortie (E1rmPoint = { date, e1rm })', () => {
+    const curve = buildPrimaryCurve(
+      [
+        {
+          date: '2026-01-01',
+          createdAt: '2026-01-01T09:00:00Z',
+          id: 'exec-1',
+          exerciseId: 'bench',
+          sets: [{ weightKg: 100, reps: 5, rir: 2, order: 1 }],
+        },
+      ],
+      'bench',
+    )
+    expect(Object.keys(curve[0]).sort()).toEqual(['date', 'e1rm'])
+  })
+
   it('unilatéral : le point suit le CÔTÉ FAIBLE de la 1ʳᵉ série (e1RM min des 2 côtés)', () => {
     const executions: ExerciseExecution[] = [
       {

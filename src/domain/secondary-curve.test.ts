@@ -163,6 +163,58 @@ describe('buildSecondaryCurve', () => {
     expect(buildSecondaryCurve([], 'bench')).toEqual([])
   })
 
+  it('ordonne deux exécutions du même jour de façon STABLE (createdAt puis id), peu importe l’entrée', () => {
+    // Même date : sans tie-break, l'ordre du tableau décidait. Aligné sur la
+    // primaire (createdAt, puis id à createdAt égal).
+    const morning: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T09:00:00Z',
+      id: 'exec-1',
+      exerciseId: 'bench',
+      sets: [
+        { weightKg: 100, reps: 5, rir: 2, order: 1 },
+        { weightKg: 95, reps: 5, rir: 1, order: 2 },
+      ],
+    }
+    const evening: ExerciseExecution = {
+      date: '2026-01-01',
+      createdAt: '2026-01-01T18:00:00Z',
+      id: 'exec-2',
+      exerciseId: 'bench',
+      sets: [
+        { weightKg: 100, reps: 5, rir: 2, order: 1 },
+        { weightKg: 90, reps: 5, rir: 1, order: 2 },
+      ],
+    }
+    const expected = [estimateE1rm(95, 5, 1), estimateE1rm(90, 5, 1)]
+
+    for (const input of [[morning, evening], [evening, morning]]) {
+      const curve = buildSecondaryCurve(input, 'bench')
+      expect(curve.map((p) => p.e1rm)).toEqual(
+        expected.map((e) => expect.closeTo(e)),
+      )
+    }
+  })
+
+  it('ne fait fuiter ni createdAt ni id dans le point de sortie (E1rmPoint = { date, e1rm })', () => {
+    const curve = buildSecondaryCurve(
+      [
+        {
+          date: '2026-01-01',
+          createdAt: '2026-01-01T09:00:00Z',
+          id: 'exec-1',
+          exerciseId: 'bench',
+          sets: [
+            { weightKg: 100, reps: 5, rir: 2, order: 1 },
+            { weightKg: 95, reps: 5, rir: 1, order: 2 },
+          ],
+        },
+      ],
+      'bench',
+    )
+    expect(Object.keys(curve[0]).sort()).toEqual(['date', 'e1rm'])
+  })
+
   // --- Unilatéral : la moyenne porte sur le CÔTÉ FAIBLE des séries 2+ (ADR 0005),
   // pas sur l'e1RM moyen des deux côtés (qui noierait le déséquilibre).
   it('unilatéral : moyenne le CÔTÉ FAIBLE des séries 2+ (pas les e1RM des deux côtés)', () => {
