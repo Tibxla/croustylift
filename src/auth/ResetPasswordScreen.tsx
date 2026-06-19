@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 
 /** Longueur minimale du mot de passe, alignée sur la politique Supabase et le signup. */
-const MIN_PASSWORD_LENGTH = 8
+const MIN_PASSWORD_LENGTH = 10
 
 /** Traduit les erreurs Supabase de mise a jour en français lisible. */
 function frenchError(message: string): string {

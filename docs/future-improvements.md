@@ -16,28 +16,20 @@ Findings d'audit (2026-06-19). Les bugs reproduits et les findings high/medium o
   intentionnels M6/init de la capture). Le projet n'utilise pas le React Compiler.
 - ✅ Licence MIT. ✅ Backfill `closed_at` (migration 0010) appliqué en prod.
 
-## Reste ouvert
+## Reste ouvert (action hors-code)
 
-- **Split vendor du chunk principal (optionnel).** Le lazy-load de l'Analyse a sorti
-  recharts du chunk critique (Capture : 266 → 152 kB gzip). Le chunk principal reste
-  ~565 kB (React + Supabase + fontsource). Un `build.rollupOptions.output.manualChunks`
-  réduirait encore le premier chargement.
 - **Protection « mots de passe compromis » (Supabase Auth).** Désactivée (advisor
-  `auth_leaked_password_protection`). Toggle dans le dashboard Supabase →
-  Authentication → Policies (gratuit, aucun impact code). Optionnel : relever
-  `MIN_PASSWORD_LENGTH` (8 → 10-12) dans `src/auth/LoginScreen.tsx`.
+  `auth_leaked_password_protection`). SEUL point restant : un toggle dans le dashboard
+  Supabase → Authentication → Policies (gratuit, aucun impact code, ~10 s). Côté code,
+  `MIN_PASSWORD_LENGTH` a été relevé à 10.
 
-## Petites dettes (low, non urgentes)
+## Fait depuis (pour mémoire)
 
-- `handleSaveDatedNote` (CaptureScreen) ne lit pas la projection `stateRef` comme
-  `handleLog` (fix M6) → double note datée possible sur deux saves très rapprochés.
-  Pas de corruption (la plus récente gagne). Aligner sur `handleLog` si on retouche.
-- Garde-fou de shift de l'outbox (`outbox.ts`) identifie la tête par `(type, id)`,
-  non unique pour `upsertExerciseNote`/`updateExecution` ré-enfilés. Fenêtre étroite
-  (mutation concurrente). Rendre l'identité robuste (référence d'objet / jeton).
-- `mergeProgress` (state.ts) aligne les `setId` par index : sur un unilatéral au cache
-  pré-id ET loggé à l'envers (droite d'abord), peut apparier les côtés croisés.
-  Aligner par `(order, side)`.
-- Couverture de test : transformation rows Supabase → domaine (`capture/data.ts`,
-  `loadExerciseExecutions` : `toSide`, regroupement, garde orpheline) et mapping
-  `mergeRowWithOverride` (`exercises/overrides.ts`) testés seulement indirectement.
+- ✅ Split vendor : `manualChunks` (react, supabase) → chunk critique Capture
+  152 → 94 kB gzip, Supabase isolé en chunk caché.
+- ✅ `handleSaveDatedNote` lit la projection `stateRef` (aligné sur handleLog, M6).
+- ✅ Garde-fou de shift de l'outbox robuste via `_seq` (identité unique stampée à
+  l'enqueue ; repli `(type,id)` pour les ops héritées) + test de concurrence.
+- ✅ `mergeProgress` aligne les `setId` par `(order, side)`, plus par index brut.
+- ✅ Couverture : `reconstructExerciseExecutions` (rows→domaine) extraite et testée,
+  + `overrides.test.ts` pour l'adaptateur `mergeRowWithOverride`.

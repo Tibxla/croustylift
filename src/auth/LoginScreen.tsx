@@ -5,7 +5,7 @@ import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 type Mode = 'signin' | 'signup' | 'forgot'
 
 /** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
-const MIN_PASSWORD_LENGTH = 8
+const MIN_PASSWORD_LENGTH = 10
 
 /** Traduit les messages d'erreur Supabase courants en français lisible. */
 function frenchError(message: string): string {
