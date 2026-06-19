@@ -280,6 +280,18 @@ describe('countPlannedSets (prévu, pondéré par reps_min)', () => {
     expect(result.byMuscle.quadriceps).toEqual({ min: 2, max: 3 })
     expect(result.byMuscle.fessiers).toEqual({ min: 2, max: 3 })
   })
+
+  it('prescription invalide (sets.min > sets.max) : la fourchette reste min <= max (normalisée)', () => {
+    // sets.min = 4 > sets.max = 3 → sans garde, on renverrait { min: 4, max: 3 }.
+    const result = countPlannedSets([
+      { unilateral: false, primaryMuscles: ['pectoraux'], sets: { min: 4, max: 3 }, reps: { min: 8, max: 12 } },
+    ])
+    expect(result.total.min).toBeLessThanOrEqual(result.total.max)
+    expect(result.byMuscle.pectoraux.min).toBeLessThanOrEqual(result.byMuscle.pectoraux.max)
+    // Bornes attendues après normalisation : c(8)=1, séries {3,4} → {3,4}.
+    expect(result.total).toEqual({ min: 3, max: 4 })
+    expect(result.byMuscle.pectoraux).toEqual({ min: 3, max: 4 })
+  })
 })
 
 // =====================================================================

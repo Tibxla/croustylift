@@ -34,6 +34,14 @@ export function weeklyProgressionRate(
     return null
   }
 
+  // Base nulle (tous les e1RM à 0) → taux RELATIF indéfini : division par 0 qui
+  // donnerait NaN/Infinity et contaminerait compareBlocks/decideWinner. On
+  // renvoie null, dans le même esprit que la garde sxx ci-dessus : pas de
+  // pourcentage de progression mesurable sans base non nulle.
+  if (meanY === 0) {
+    return null
+  }
+
   const slope = sxy / sxx // kg / semaine
   return (slope / meanY) * 100
 }

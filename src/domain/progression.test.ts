@@ -72,4 +72,13 @@ describe('weeklyProgressionRate', () => {
     ]
     expect(weeklyProgressionRate(points)).toBeNull()
   })
+
+  it('renvoie null si tous les e1RM sont nuls (base 0, taux relatif indéfini)', () => {
+    const points: E1rmPoint[] = [
+      { date: '2026-01-01', e1rm: 0 },
+      { date: '2026-01-08', e1rm: 0 },
+      { date: '2026-01-15', e1rm: 0 },
+    ]
+    expect(weeklyProgressionRate(points)).toBeNull()
+  })
 })

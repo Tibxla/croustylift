@@ -220,17 +220,26 @@ export function countPlannedSets(exercises: PlannedExercise[]): PlannedSetCount 
 
   // Réunit les deux passes en fourchettes. Union des clés muscle pour rester
   // robuste à un min à 0 (fourchette 0..n) — les clés diffèrent alors.
+  // NORMALISATION DÉFENSIVE : la borne basse vient de la passe `sets.min`, la
+  // haute de `sets.max` ; une prescription invalide (sets.min > sets.max)
+  // renverrait sinon une fourchette inversée. On garantit min <= max au total
+  // ET pour chaque muscle.
   const muscles = new Set([...Object.keys(atMin.byMuscle), ...Object.keys(atMax.byMuscle)])
   const byMuscle: Record<string, CountRange> = {}
   for (const muscle of muscles) {
-    byMuscle[muscle] = {
-      min: atMin.byMuscle[muscle] ?? 0,
-      max: atMax.byMuscle[muscle] ?? 0,
-    }
+    byMuscle[muscle] = normalizeRange(
+      atMin.byMuscle[muscle] ?? 0,
+      atMax.byMuscle[muscle] ?? 0,
+    )
   }
 
   return {
-    total: { min: atMin.total, max: atMax.total },
+    total: normalizeRange(atMin.total, atMax.total),
     byMuscle,
   }
+}
+
+/** Ordonne deux bornes en fourchette croissante (garantit `min <= max`). */
+function normalizeRange(a: number, b: number): CountRange {
+  return { min: Math.min(a, b), max: Math.max(a, b) }
 }
