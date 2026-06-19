@@ -173,12 +173,20 @@ export function PastSessionEditor({
     setDel({ phase: 'deleting' });
     try {
       // Hard delete (ADR 0008) : une seule op `deleteExecution`, la cascade DB
-      // efface séries + notes datées. L'op est DURABLE dès l'enqueue (localStorage),
-      // donc on ferme et on recharge de façon OPTIMISTE sans attendre le réseau :
-      // même offline, elle remontera au prochain flush comme la capture du jour.
-      // On n'inspecte pas `remaining` (contrairement à `save`) : il n'y a plus
-      // rien à rouvrir, l'éditeur se ferme sur cette exécution dans tous les cas.
-      await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      // efface séries + notes datées. L'op est DURABLE dès l'enqueue (localStorage)
+      // et le flush GLOBAL de l'app (App.tsx, montage + 'online') garantit sa
+      // remontée même si on ne repasse pas par la Capture.
+      // `flush` ne REJETTE PAS sur une coupure : il s'arrête à l'op en échec et
+      // renvoie `remaining > 0` (cf. outbox.ts). Si la suppression n'a pas pu
+      // remonter tout de suite (offline), on GARDE la feuille en `error` pour le
+      // signaler honnêtement (« partira au retour du réseau ») plutôt que de
+      // fermer en laissant croire à une synchro immédiate. Sinon, fermeture
+      // optimiste : l'éditeur se referme sur l'exécution supprimée.
+      const result = await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      if (result.remaining > 0) {
+        setDel({ phase: 'error', message: 'Pas de réseau pour le moment.' });
+        return;
+      }
       onDeleted();
     } catch (err) {
       // Erreur inattendue (pas une simple coupure) : l'op reste durable et

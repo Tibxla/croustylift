@@ -56,7 +56,7 @@ import {
   enqueue,
   flush,
   pendingCount,
-  clearQueue,
+  purgeByExecution,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -543,9 +543,14 @@ function CaptureBoard({
 
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
-    // Nouvelle exécution = id client neuf (la précédente reste en base). La file
-    // est vidée : ses ops visaient l'ancienne exécution, déjà close.
-    clearQueue();
+    // Nouvelle exécution = id client neuf (la précédente reste en base). On purge
+    // de la file UNIQUEMENT les ops de l'exécution abandonnée (purgeByExecution),
+    // PAS toute la file (clearQueue) : en offline, elle peut aussi porter les
+    // séries non synchronisées d'une AUTRE exécution ou une correction d'historique
+    // en attente — celles-ci survivent et remonteront au retour du réseau. Les
+    // deleteSet/deleteDatedNote éventuels restent (idempotents par id, sans effet
+    // si la ligne, dont l'insert vient d'être retiré, n'a jamais existé en base).
+    purgeByExecution(state.executionId);
     notifySync();
     executionEnqueuedRef.current = false;
     // La séance repart du template d'origine : les ajouts/swaps de l'exécution
@@ -553,7 +558,7 @@ function CaptureBoard({
     setSession(initialSession);
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
-  }, [session, date, initialSession]);
+  }, [session, date, initialSession, state.executionId]);
 
   // Après clôture : repartir sur une séance fraîche. On NE vide PAS la file —
   // les ops de la séance close doivent encore se synchroniser (contrairement à

@@ -11,6 +11,7 @@ import {
   readQueue,
   pendingCount,
   clearQueue,
+  purgeByExecution,
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
@@ -325,6 +326,54 @@ describe('persistance', () => {
     expect(pendingCount()).toBe(1);
     clearQueue();
     expect(pendingCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+  });
+});
+
+// --- purgeByExecution (reset CIBLÉ d'une exécution abandonnée) ---------------
+//
+// « Réinitialiser » abandonne l'exécution courante : on retire SES ops en
+// attente sans vider toute la file (sinon on perd les séries non synchronisées
+// d'AUTRES exécutions ou une correction d'historique offline).
+
+describe('purgeByExecution', () => {
+  it('retire les ops de l’exécution ciblée et conserve TOUT le reste', () => {
+    // File mixte : ops de exec-1 (à purger), une op de exec-2 (à garder),
+    // un deleteSet (idempotent par id, à garder), une correction d'historique.
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('s1', 1, 'exec-1'));
+    enqueue({
+      type: 'upsertDatedNote',
+      id: 'note-1',
+      executionId: 'exec-1',
+      exerciseId: 'bench',
+      body: 'épaule raide',
+    });
+    // Op d'une AUTRE exécution (séries non synchronisées en offline) : survit.
+    enqueue(execOp('exec-2'));
+    enqueue(setOp('s2', 1, 'exec-2'));
+    // deleteSet : ne porte que l'id de la ligne (pas d'executionId) → laissé,
+    // idempotent par id (sans effet si la ligne n'a jamais existé en base).
+    enqueue({ type: 'deleteSet', id: 's1' });
+
+    purgeByExecution('exec-1');
+
+    // Les ops qui CRÉENT/RÉ-AFFIRMENT exec-1 (upsertExecution, insertSet,
+    // upsertDatedNote) sont parties ; tout le reste, dans l'ordre, survit.
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-2', 's2', 's1']);
+  });
+
+  it('laisse la file intacte si aucune op ne vise l’exécution', () => {
+    enqueue(execOp('exec-2'));
+    enqueue(setOp('s2', 1, 'exec-2'));
+
+    purgeByExecution('exec-1');
+
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-2', 's2']);
+  });
+
+  it('est un no-op sur une file vide', () => {
+    purgeByExecution('exec-1');
     expect(readQueue()).toEqual([]);
   });
 });

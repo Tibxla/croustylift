@@ -164,7 +164,7 @@ export function pendingCount(): number {
   return readQueue().length;
 }
 
-/** Vide entièrement la file (sert au reset d'une nouvelle séance / aux tests). */
+/** Vide entièrement la file (sert à la déconnexion / aux tests). */
 export function clearQueue(): void {
   if (typeof localStorage === 'undefined') return;
   try {
@@ -172,6 +172,42 @@ export function clearQueue(): void {
   } catch {
     /* no-op */
   }
+}
+
+/**
+ * Purge CIBLÉE : retire de la file les ops qui CRÉENT/RÉ-AFFIRMENT l'exécution
+ * `executionId` (et ses lignes filles), sans toucher au reste de la file.
+ *
+ * Sert au « Réinitialiser » de la capture, qui ABANDONNE l'exécution courante
+ * avant tout flush : on ne veut effacer QUE ses ops en attente, pas vider toute
+ * la file (`clearQueue`). En offline, la file globale peut aussi porter les
+ * séries non synchronisées d'une AUTRE exécution ou une correction d'historique
+ * en attente — celles-ci doivent survivre et remonter au retour du réseau.
+ *
+ * Retire : `upsertExecution` (`id === executionId`), `insertSet` et
+ * `upsertDatedNote` (`executionId === executionId`). LAISSE les `deleteSet` /
+ * `deleteDatedNote` : idempotents par id, ils sont sans effet si la ligne
+ * n'existe pas (jamais créée parce qu'on a justement retiré son insert), donc
+ * inoffensifs ; et ne portent que l'id de la ligne, pas l'`executionId`, donc on
+ * ne peut de toute façon pas les rattacher à une exécution. LAISSE aussi toute
+ * op d'une autre exécution.
+ */
+export function purgeByExecution(executionId: string): void {
+  const queue = readQueue();
+  const kept = queue.filter((op) => {
+    switch (op.type) {
+      case 'upsertExecution':
+        return op.id !== executionId;
+      case 'insertSet':
+      case 'upsertDatedNote':
+        return op.executionId !== executionId;
+      default:
+        // deleteSet / deleteDatedNote / updateExecution / deleteExecution : sans
+        // executionId rattachable ou idempotents par id → on les laisse.
+        return true;
+    }
+  });
+  if (kept.length !== queue.length) writeQueue(kept);
 }
 
 // --- Enfilement ---------------------------------------------------------------

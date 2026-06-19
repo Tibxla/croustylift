@@ -69,3 +69,16 @@ export async function flushOps(ops: OutboxOp[]) {
   for (const op of ops) enqueue(op);
   return flush(syncFns);
 }
+
+/**
+ * Flush GLOBAL de la file, sans rien enfiler. Câblé au niveau de l'app (montage
+ * + retour réseau, cf. App.tsx) pour que TOUTE op en attente — capture du jour,
+ * correction ou suppression d'une séance passée — remonte au retour du réseau,
+ * quel que soit l'onglet monté. Avant ce point, seul `CaptureBoard` déclenchait
+ * un flush au montage / 'online' : une suppression faite depuis l'Analyse en
+ * offline restait en file tant qu'on ne passait pas en Capture (« delete
+ * zombie » au reload). Renvoie le résultat du flush (combien restent / passées).
+ */
+export function flushOutbox() {
+  return flush(syncFns);
+}
