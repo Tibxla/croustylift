@@ -659,6 +659,39 @@ describe('mergeProgress', () => {
     expect(p.setIds).toEqual(['real-1', 'c-2', 'c-3']);
   });
 
+  it('unilatéral : complète un setId null par (order, side), pas par index (ordre G/D croisé)', () => {
+    // base = local (plus avancé, 3 séries) en ordre de SAISIE (droite d'abord, #63),
+    // avec l'id de la série GAUCHE@1 manquant (cache ancien format).
+    const b = local({
+      progress: {
+        curl: {
+          sets: [
+            { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'right' },
+            { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'left' },
+            { weightKg: 20, reps: 10, rir: 1, order: 2, side: 'right' },
+          ],
+          setIds: ['c-r1', null, 'c-r2'],
+          skipped: false,
+        },
+      },
+    });
+    // other = Supabase, TRIÉ (gauche avant droite) : ordre DIFFÉRENT du local.
+    const a = supa({
+      curl: {
+        sets: [
+          { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'left' },
+          { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'right' },
+        ],
+        setIds: ['real-l1', 'real-r1'],
+      },
+    });
+    const merged = mergeProgress(a, b);
+    // L'id manquant (gauche@1) est complété par l'id GAUCHE de la base (real-l1),
+    // PAS par l'id au même index (real-r1 = la droite) : alignement par (order, side).
+    // L'alignement par index brut aurait croisé les côtés → undo de la mauvaise ligne.
+    expect(getProgress(merged, 'curl').setIds).toEqual(['c-r1', 'real-l1', 'c-r2']);
+  });
+
   it('un exo présent dans une seule source est conservé tel quel', () => {
     const a = supa({
       'bench-press': {

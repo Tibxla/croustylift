@@ -17,6 +17,10 @@ import {
   type InsertSetOp,
 } from './outbox';
 
+// La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
+// le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
+const queueNoSeq = () => readQueue().map(({ _seq, ...op }) => op);
+
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
 class MemoryStorage {
@@ -207,7 +211,7 @@ describe('flush (succès)', () => {
     enqueue(right);
 
     // Persistées telles quelles (le `side` n'est pas perdu au passage localStorage).
-    expect(readQueue()).toEqual([left, right]);
+    expect(queueNoSeq()).toEqual([left, right]);
 
     const fns = okFns();
     await flush(fns);
@@ -215,6 +219,32 @@ describe('flush (succès)', () => {
     const inserts = fns.calls().filter((o): o is InsertSetOp => o.type === 'insertSet');
     expect(inserts.map((o) => o.side)).toEqual(['left', 'right']);
     expect(inserts.map((o) => o.setOrder)).toEqual([1, 1]);
+  });
+
+  it('garde-fou de tête (_seq) : deux ops même (type,id), retrait concurrent de la tête traitée ne saute pas la suivante', async () => {
+    // Deux updateExecution sur le MÊME id (re-clôture) : (type,id) IDENTIQUE, _seq
+    // distinct. C'est exactement le cas où l'ancien garde-fou (type,id) pouvait
+    // confondre la 2ᵉ op avec « la tête déjà traitée » et la shifter sans la jouer.
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 100 });
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 200 });
+
+    const fns = okFns();
+    let n = 0;
+    (fns.updateExecution as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      n += 1;
+      // Pendant le traitement de la 1ʳᵉ op, une mutation concurrente (ex. purge)
+      // retire EXACTEMENT la tête traitée, laissant la 2ᵉ op (même type,id) en tête.
+      if (n === 1) {
+        localStorage.setItem('croustylift:outbox', JSON.stringify(readQueue().slice(1)));
+      }
+    });
+
+    await flush(fns);
+
+    // La 2ᵉ op n'est PAS sautée : updateExecution est appelée 2 fois. L'ancien garde
+    // (type,id) aurait matché la 2ᵉ op et l'aurait shiftée sans la jouer (1 appel).
+    expect(n).toBe(2);
+    expect(readQueue()).toEqual([]);
   });
 });
 
@@ -721,7 +751,7 @@ describe('note d’instructions (upsert/deleteExerciseNote)', () => {
     purgeByExecution('exec-1');
 
     // L'op d'exécution est partie ; les deux ops de note d'instructions survivent.
-    expect(readQueue()).toEqual([
+    expect(queueNoSeq()).toEqual([
       { type: 'upsertExerciseNote', id: 'bench', body: 'serre les omoplates' },
       { type: 'deleteExerciseNote', id: 'squat' },
     ]);
@@ -774,7 +804,7 @@ describe('purgeByExecution', () => {
     purgeByExecution('exec-1');
 
     // Seul l'updateExecution de exec-2 reste (les ops de exec-1 sont toutes parties).
-    expect(readQueue()).toEqual([
+    expect(queueNoSeq()).toEqual([
       { type: 'updateExecution', id: 'exec-2', bpmAvg: 120, durationMin: 40 },
     ]);
   });
@@ -787,7 +817,7 @@ describe('purgeByExecution', () => {
 
     purgeByExecution('exec-1');
 
-    expect(readQueue()).toEqual([{ type: 'deleteExecution', id: 'exec-1' }]);
+    expect(queueNoSeq()).toEqual([{ type: 'deleteExecution', id: 'exec-1' }]);
   });
 
   it('laisse la file intacte si aucune op ne vise l’exécution', () => {

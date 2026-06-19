@@ -139,7 +139,14 @@ export interface DeleteExecutionOp {
   id: string;
 }
 
-export type OutboxOp =
+// `_seq` : identité interne UNIQUE d'une op en file, stampée par `enqueue`. Sert à
+// retirer SANS ambiguïté la tête traitée après l'await du flush — la paire (type,id)
+// n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés sur
+// le même id). Optionnel : une op héritée d'un bundle antérieur n'en a pas (repli
+// sur (type,id) le temps qu'elle soit drainée).
+type Sequenced = { _seq?: number };
+
+export type OutboxOp = (
   | UpsertExecutionOp
   | InsertSetOp
   | DeleteSetOp
@@ -148,7 +155,9 @@ export type OutboxOp =
   | DeleteDatedNoteOp
   | UpsertExerciseNoteOp
   | DeleteExerciseNoteOp
-  | DeleteExecutionOp;
+  | DeleteExecutionOp
+) &
+  Sequenced;
 
 /**
  * Les fonctions de SYNC réelles, une par type d'op (injectées → testable sans
@@ -313,36 +322,49 @@ export function purgeByExecution(executionId: string): void {
  * dès cet instant : même si l'app meurt avant le flush, elle remontera au
  * prochain montage. Renvoie la nouvelle longueur de file.
  */
+let seqCounter = 0;
+
 export function enqueue(op: OutboxOp): number {
   const queue = readQueue();
-  queue.push(op);
+  // Stampe une identité unique monotone. Ré-amorcée sur le max déjà persisté pour
+  // rester unique après un reload (le compteur en mémoire repart à 0, pas la file).
+  const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
+  seqCounter = Math.max(seqCounter, maxSeq) + 1;
+  queue.push({ ...op, _seq: seqCounter });
   writeQueue(queue);
   return queue.length;
 }
 
 // --- Flush --------------------------------------------------------------------
 
+/** Retire le champ interne `_seq` (mécanique de file) : la couche sync reçoit l'op
+ *  DOMAINE, jamais l'identité de queue. Générique → préserve le type narrowé. */
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq'> {
+  const { _seq: _ignored, ...rest } = op;
+  return rest;
+}
+
 /** Aiguille une op vers sa fonction de sync. */
 function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
   switch (op.type) {
     case 'upsertExecution':
-      return fns.upsertExecution(op);
+      return fns.upsertExecution(stripSeq(op));
     case 'insertSet':
-      return fns.insertSet(op);
+      return fns.insertSet(stripSeq(op));
     case 'deleteSet':
-      return fns.deleteSet(op);
+      return fns.deleteSet(stripSeq(op));
     case 'updateExecution':
-      return fns.updateExecution(op);
+      return fns.updateExecution(stripSeq(op));
     case 'upsertDatedNote':
-      return fns.upsertDatedNote(op);
+      return fns.upsertDatedNote(stripSeq(op));
     case 'deleteDatedNote':
-      return fns.deleteDatedNote(op);
+      return fns.deleteDatedNote(stripSeq(op));
     case 'upsertExerciseNote':
-      return fns.upsertExerciseNote(op);
+      return fns.upsertExerciseNote(stripSeq(op));
     case 'deleteExerciseNote':
-      return fns.deleteExerciseNote(op);
+      return fns.deleteExerciseNote(stripSeq(op));
     case 'deleteExecution':
-      return fns.deleteExecution(op);
+      return fns.deleteExecution(stripSeq(op));
     default:
       // Type inconnu (op d'une version future écrite par un autre onglet/appareil,
       // ou blob trafiqué) : aucune SyncFn ne sait la jouer. On JETTE plutôt que de
@@ -441,7 +463,15 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
     // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
     const current = readQueue();
     const head = current[0];
-    if (head && head.type === op.type && head.id === op.id) {
+    // Identité par `_seq` (unique, stampé à l'enqueue) : on retire la tête SEULEMENT
+    // si c'est encore l'op qu'on vient de traiter. Repli sur (type,id) pour une op
+    // héritée sans `_seq` (file d'un bundle antérieur), le temps qu'elle soit drainée.
+    const sameHead = head
+      ? op._seq !== undefined
+        ? head._seq === op._seq
+        : head.type === op.type && head.id === op.id
+      : false;
+    if (sameHead) {
       current.shift();
       writeQueue(current);
       flushed += 1;

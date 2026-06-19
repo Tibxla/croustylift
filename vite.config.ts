@@ -74,6 +74,20 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // Sépare les gros vendors stables du code applicatif : meilleur cache (React
+        // et Supabase changent rarement → pas re-téléchargés à chaque déploiement) et
+        // chunk principal plus léger au 1ᵉʳ chargement. recharts reste dans le chunk
+        // paresseux de l'Analyse (déjà sorti du critique via React.lazy).
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          supabase: ['@supabase/supabase-js'],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'node',
