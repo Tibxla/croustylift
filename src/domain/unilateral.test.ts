@@ -68,9 +68,9 @@ describe('pairSidesByOrder', () => {
     const pairs = pairSidesByOrder(sets)
 
     expect(pairs).toHaveLength(1)
-    expect(pairs[0].order).toBe(1)
-    expect(pairs[0].left).toMatchObject({ weightKg: 30, side: 'left' })
-    expect(pairs[0].right).toMatchObject({ weightKg: 32, side: 'right' })
+    expect(pairs[0]!.order).toBe(1)
+    expect(pairs[0]!.left).toMatchObject({ weightKg: 30, side: 'left' })
+    expect(pairs[0]!.right).toMatchObject({ weightKg: 32, side: 'right' })
   })
 
   it('renvoie les paires triées par order, plusieurs séries appariées', () => {
@@ -94,8 +94,8 @@ describe('pairSidesByOrder', () => {
     const pairs = pairSidesByOrder(sets)
 
     expect(pairs).toHaveLength(1)
-    expect(pairs[0].left).toMatchObject({ side: 'left' })
-    expect(pairs[0].right).toBeNull()
+    expect(pairs[0]!.left).toMatchObject({ side: 'left' })
+    expect(pairs[0]!.right).toBeNull()
   })
 
   it('renvoie [] pour une entrée vide', () => {

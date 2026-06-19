@@ -113,7 +113,7 @@ export function weakSideE1rm(sets: PerformedSet[]): number | null {
 
   const pairs = pairSidesByOrder(sets)
   if (pairs.length === 0) return null
-  const firstPair = pairs[0] // déjà trié par order : le rang 1
+  const firstPair = pairs[0]! // déjà trié par order : le rang 1 (length > 0 garanti ci-dessus)
   const left = e1rmOf(firstPair.left)
   const right = e1rmOf(firstPair.right)
   if (left !== null && right !== null) return Math.min(left, right)
@@ -169,7 +169,7 @@ export function currentSetOrder(sets: PerformedSet[]): number {
 export function defaultSide(sets: PerformedSet[]): Side {
   const order = currentSetOrder(sets)
   const done = sidesDoneAt(sets, order)
-  if (done.length === 1) return otherSide(done[0])
+  if (done.length === 1) return otherSide(done[0]!)
   return 'left'
 }
 

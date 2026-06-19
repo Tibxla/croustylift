@@ -47,7 +47,9 @@ function SessionMetricsTooltip({
   payload,
 }: Partial<TooltipContentProps<number, string>>) {
   if (!active || !payload || payload.length === 0) return null;
-  const point = payload[0].payload as SessionMetricPoint;
+  const first = payload[0];
+  if (!first) return null;
+  const point = first.payload as SessionMetricPoint;
   return (
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>

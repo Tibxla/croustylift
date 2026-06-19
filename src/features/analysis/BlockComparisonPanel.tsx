@@ -125,8 +125,12 @@ export function ComparisonView({
   // blocs arrivent triés par date croissante : les deux derniers de `options`).
   useEffect(() => {
     if (options.length >= 2 && firstIdx === null && secondIdx === null) {
-      setFirstIdx(options[options.length - 2].index);
-      setSecondIdx(options[options.length - 1].index);
+      const beforeLast = options[options.length - 2];
+      const last = options[options.length - 1];
+      if (beforeLast && last) {
+        setFirstIdx(beforeLast.index);
+        setSecondIdx(last.index);
+      }
     }
   }, [options, firstIdx, secondIdx]);
 
@@ -157,14 +161,17 @@ export function ComparisonView({
         />
       </div>
 
-      {firstIdx !== null && secondIdx !== null && (
-        <ComparisonResult
-          executions={executions}
-          exerciseId={exerciseId}
-          first={blocks[firstIdx]}
-          second={blocks[secondIdx]}
-        />
-      )}
+      {firstIdx !== null &&
+        secondIdx !== null &&
+        blocks[firstIdx] &&
+        blocks[secondIdx] && (
+          <ComparisonResult
+            executions={executions}
+            exerciseId={exerciseId}
+            first={blocks[firstIdx]}
+            second={blocks[secondIdx]}
+          />
+        )}
     </div>
   );
 }

@@ -142,6 +142,10 @@ export function moveRow(rows: EditorRow[], index: number, direction: -1 | 1): Ed
   const target = index + direction;
   if (target < 0 || target >= rows.length) return rows;
   const next = rows.slice();
-  [next[index], next[target]] = [next[target], next[index]];
+  const a = next[index];
+  const b = next[target];
+  if (a === undefined || b === undefined) return rows;
+  next[index] = b;
+  next[target] = a;
   return next;
 }

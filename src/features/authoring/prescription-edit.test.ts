@@ -240,7 +240,7 @@ describe('rowsToPrescriptionInputs — mapping vers PrescriptionInput[]', () => 
   it('un champ fixe avec max résiduel != min est bien aplati (min === max)', () => {
     const rows = [row({ exerciseId: 'ex-x', sets: { mode: 'fixe', min: 4, max: 9 } })];
     const out = rowsToPrescriptionInputs(rows);
-    expect(out[0].sets).toEqual({ min: 4, max: 4 });
+    expect(out[0]!.sets).toEqual({ min: 4, max: 4 });
   });
 });
 
@@ -280,7 +280,7 @@ describe('rowsToPlannedExercises — mapping vers le décompte PRÉVU (issues #3
 
   it('un champ fixe avec max résiduel est aplati (min === max), comme à la sauvegarde', () => {
     const rows = [row({ sets: { mode: 'fixe', min: 4, max: 9 } })];
-    expect(rowsToPlannedExercises(rows)[0].sets).toEqual({ min: 4, max: 4 });
+    expect(rowsToPlannedExercises(rows)[0]!.sets).toEqual({ min: 4, max: 4 });
   });
 
   it('liste vide => []', () => {

@@ -1,37 +1,31 @@
 # Améliorations futures
 
-Findings d'audit (2026-06-19) volontairement reportés, avec leur raison. Les bugs
-reproduits et les findings high/medium ont été corrigés dans la même passe ; ce qui
-suit est ce qui mérite un lot dédié ou une décision.
+Findings d'audit (2026-06-19). Les bugs reproduits et les findings high/medium ont
+été corrigés sur `fix/reported-bugs-and-audit` ; les gros chantiers reportés
+(`noUncheckedIndexedAccess`, preset react-hooks v7, licence) ont été traités sur
+`chore/hardening-types-hooks`. Ce qui suit est ce qui reste réellement ouvert.
 
-## Passes dédiées (gros blast radius)
+## Fait (pour mémoire)
 
-- **`noUncheckedIndexedAccess` (tsconfig.app.json).** Typerait `arr[i]` / `map[k]`
-  comme potentiellement `undefined` et forcerait des gardes — pertinent sur un domaine
-  local-first plein d'accès indexés. Mais l'activer révèle plusieurs dizaines de sites
-  à durcir : à faire en une passe isolée, pas mêlé à des correctifs fonctionnels.
-- **Règles React-Compiler de `eslint-plugin-react-hooks` v7 (`recommended`).** On n'a
-  branché que les deux règles historiques (`rules-of-hooks`, `exhaustive-deps`). Le
-  preset complet ajoute `set-state-in-effect`, `refs`, `immutability`,
-  `preserve-manual-memoization`… (~40 signalements). Plusieurs sont de vrais points
-  d'attention (état dérivé en effet) ; à trier dans un lot dédié.
-- **Split vendor du chunk principal.** Le lazy-load de l'Analyse a sorti recharts du
-  chunk critique (Capture : 266 → 152 kB gzip). Le chunk principal reste ~565 kB
-  (React + Supabase + fontsource). Un `build.rollupOptions.output.manualChunks`
-  (vendor split) réduirait encore le premier chargement. Optionnel.
+- ✅ `noUncheckedIndexedAccess` activé + 167 accès indexés durcis (gardes côté source,
+  assertions côté tests).
+- ✅ Preset react-hooks v7 (React-Compiler) activé. Vrais findings corrigés
+  (`static-components`, `immutability`, `preserve-manual-memoization`).
+  `set-state-in-effect` et `refs` laissés en `warn` : ils flaguent systématiquement
+  des patterns légitimes (reset-à-loading des effets de chargement ; miroirs de ref
+  intentionnels M6/init de la capture). Le projet n'utilise pas le React Compiler.
+- ✅ Licence MIT. ✅ Backfill `closed_at` (migration 0010) appliqué en prod.
 
-## Décisions / actions hors-code
+## Reste ouvert
 
+- **Split vendor du chunk principal (optionnel).** Le lazy-load de l'Analyse a sorti
+  recharts du chunk critique (Capture : 266 → 152 kB gzip). Le chunk principal reste
+  ~565 kB (React + Supabase + fontsource). Un `build.rollupOptions.output.manualChunks`
+  réduirait encore le premier chargement.
 - **Protection « mots de passe compromis » (Supabase Auth).** Désactivée (advisor
   `auth_leaked_password_protection`). Toggle dans le dashboard Supabase →
   Authentication → Policies (gratuit, aucun impact code). Optionnel : relever
   `MIN_PASSWORD_LENGTH` (8 → 10-12) dans `src/auth/LoginScreen.tsx`.
-- **Champ `license` (package.json).** Repo public sans licence = « tous droits
-  réservés » par défaut. Décision du mainteneur (MIT recommandé si partage assumé)
-  → ajouter `"license"` + fichier `LICENSE`.
-- **Migration `0010_backfill_closed_at`.** Écrite (`supabase/migrations/`), pas encore
-  appliquée en prod (hygiène de données ; le filtre `loadTodayExecution` couvre déjà
-  le symptôme côté code). À pousser via `supabase db push` ou le dashboard.
 
 ## Petites dettes (low, non urgentes)
 

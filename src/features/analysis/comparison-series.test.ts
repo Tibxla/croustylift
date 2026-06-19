@@ -9,8 +9,8 @@ describe('toWeeklySeries', () => {
       { date: '2026-01-08', e1rm: 102 },
     ]
     const series = toWeeklySeries(curve)
-    expect(series[0].week).toBe(0)
-    expect(series[0].e1rm).toBe(100)
+    expect(series[0]!.week).toBe(0)
+    expect(series[0]!.e1rm).toBe(100)
   })
 
   it('convertit l\'écart de dates en semaines (7 jours = 1 semaine)', () => {
@@ -20,8 +20,8 @@ describe('toWeeklySeries', () => {
       { date: '2026-01-22', e1rm: 106 }, // +21 jours
     ]
     const series = toWeeklySeries(curve)
-    expect(series[1].week).toBeCloseTo(1, 10)
-    expect(series[2].week).toBeCloseTo(3, 10)
+    expect(series[1]!.week).toBeCloseTo(1, 10)
+    expect(series[2]!.week).toBeCloseTo(3, 10)
   })
 
   it('normalise depuis le point le plus ancien même si l\'entrée est désordonnée', () => {
@@ -32,7 +32,7 @@ describe('toWeeklySeries', () => {
     ]
     const series = toWeeklySeries(curve)
     expect(series.map((p) => p.week)).toEqual([0, 1, 2])
-    expect(series[0].e1rm).toBe(100)
+    expect(series[0]!.e1rm).toBe(100)
   })
 
   it('renvoie [] pour une courbe vide', () => {

@@ -9,7 +9,13 @@ export function weeklyProgressionRate(
   }
 
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date))
-  const t0 = Date.parse(sorted[0].date)
+  const first = sorted[0]
+  // Garde indépendante de `minPoints` : un appel `minPoints <= 0` sur un tableau
+  // vide franchirait la garde ci-dessus mais n'a aucune pente mesurable.
+  if (first === undefined) {
+    return null
+  }
+  const t0 = Date.parse(first.date)
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
   const xs = sorted.map((p) => (Date.parse(p.date) - t0) / MS_PER_WEEK)
@@ -22,9 +28,9 @@ export function weeklyProgressionRate(
   let sxx = 0
   let sxy = 0
   for (let i = 0; i < n; i++) {
-    const dx = xs[i] - meanX
+    const dx = xs[i]! - meanX
     sxx += dx * dx
-    sxy += dx * (ys[i] - meanY)
+    sxy += dx * (ys[i]! - meanY)
   }
 
   // Timespan nul (tous les points à la même date) → pente indéfinie : on

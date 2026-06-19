@@ -235,7 +235,7 @@ describe('countPlannedSets (prévu, pondéré par reps_min)', () => {
     ])
     expect(result.total.min).toBeCloseTo(1.8)
     expect(result.total.max).toBeCloseTo(1.8)
-    expect(result.byMuscle.pectoraux.min).toBeCloseTo(1.8)
+    expect(result.byMuscle.pectoraux!.min).toBeCloseTo(1.8)
   })
 
   it('fourchette de séries : la fourchette de décompte suit les séries, reps figés à reps_min', () => {
@@ -245,8 +245,8 @@ describe('countPlannedSets (prévu, pondéré par reps_min)', () => {
     ])
     expect(result.total.min).toBeCloseTo(1.8)
     expect(result.total.max).toBeCloseTo(2.4)
-    expect(result.byMuscle.pectoraux.min).toBeCloseTo(1.8)
-    expect(result.byMuscle.pectoraux.max).toBeCloseTo(2.4)
+    expect(result.byMuscle.pectoraux!.min).toBeCloseTo(1.8)
+    expect(result.byMuscle.pectoraux!.max).toBeCloseTo(2.4)
   })
 
   it('unilatéral : total = 2 côtés (les deux à reps_min), muscle = côté faible (= reps_min)', () => {
@@ -287,7 +287,7 @@ describe('countPlannedSets (prévu, pondéré par reps_min)', () => {
       { unilateral: false, primaryMuscles: ['pectoraux'], sets: { min: 4, max: 3 }, reps: { min: 8, max: 12 } },
     ])
     expect(result.total.min).toBeLessThanOrEqual(result.total.max)
-    expect(result.byMuscle.pectoraux.min).toBeLessThanOrEqual(result.byMuscle.pectoraux.max)
+    expect(result.byMuscle.pectoraux!.min).toBeLessThanOrEqual(result.byMuscle.pectoraux!.max)
     // Bornes attendues après normalisation : c(8)=1, séries {3,4} → {3,4}.
     expect(result.total).toEqual({ min: 3, max: 4 })
     expect(result.byMuscle.pectoraux).toEqual({ min: 3, max: 4 })

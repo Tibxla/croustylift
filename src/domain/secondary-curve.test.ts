@@ -25,8 +25,8 @@ describe('buildSecondaryCurve', () => {
 
     const expected = (estimateE1rm(95, 5, 1) + estimateE1rm(90, 5, 0)) / 2
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-01')
-    expect(curve[0].e1rm).toBeCloseTo(expected)
+    expect(curve[0]!.date).toBe('2026-01-01')
+    expect(curve[0]!.e1rm).toBeCloseTo(expected)
   })
 
   it('ignore une exécution sans série 2+ (1ʳᵉ série seule = trou, pas un zéro)', () => {
@@ -49,8 +49,8 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-08')
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
+    expect(curve[0]!.date).toBe('2026-01-08')
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
   })
 
   it('renvoie [] quand AUCUNE exécution n’a de série 2+ (pas de graphe secondaire)', () => {
@@ -86,7 +86,7 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-08')
+    expect(curve[0]!.date).toBe('2026-01-08')
   })
 
   it('ignore les exécutions d’un autre exerciseId', () => {
@@ -112,8 +112,8 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-08')
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
+    expect(curve[0]!.date).toBe('2026-01-08')
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
   })
 
   it('moyenne les séries 2+ quel que soit leur ordre d’arrivée (entrée désordonnée)', () => {
@@ -132,7 +132,7 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'bench')
 
     const expected = (estimateE1rm(95, 5, 1) + estimateE1rm(90, 5, 0)) / 2
-    expect(curve[0].e1rm).toBeCloseTo(expected)
+    expect(curve[0]!.e1rm).toBeCloseTo(expected)
   })
 
   it('renvoie les points triés par date même si l’entrée est désordonnée', () => {
@@ -212,7 +212,7 @@ describe('buildSecondaryCurve', () => {
       ],
       'bench',
     )
-    expect(Object.keys(curve[0]).sort()).toEqual(['date', 'e1rm'])
+    expect(Object.keys(curve[0]!).sort()).toEqual(['date', 'e1rm'])
   })
 
   // --- Unilatéral : la moyenne porte sur le CÔTÉ FAIBLE des séries 2+ (ADR 0005),
@@ -241,8 +241,8 @@ describe('buildSecondaryCurve', () => {
     // Moyenne des côtés faibles : (85x5@1 puis 80x5@0).
     const expected = (estimateE1rm(85, 5, 1) + estimateE1rm(80, 5, 0)) / 2
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-01')
-    expect(curve[0].e1rm).toBeCloseTo(expected)
+    expect(curve[0]!.date).toBe('2026-01-01')
+    expect(curve[0]!.e1rm).toBeCloseTo(expected)
   })
 
   it('unilatéral : côté faible apparié par order, insensible à l’ordre de saisie', () => {
@@ -265,7 +265,7 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'curl')
 
     const expected = (estimateE1rm(85, 5, 1) + estimateE1rm(80, 5, 0)) / 2
-    expect(curve[0].e1rm).toBeCloseTo(expected)
+    expect(curve[0]!.e1rm).toBeCloseTo(expected)
   })
 
   it('unilatéral : un côté manquant sur une série 2+ retombe sur le côté présent', () => {
@@ -285,6 +285,6 @@ describe('buildSecondaryCurve', () => {
     const curve = buildSecondaryCurve(executions, 'curl')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
   })
 })

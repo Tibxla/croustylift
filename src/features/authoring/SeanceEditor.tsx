@@ -494,14 +494,18 @@ function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
         </p>
       ) : (
         <ul className="mt-3 flex flex-col gap-1.5">
-          {muscles.map((muscle) => (
-            <li key={muscle} className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-sm text-ink-muted">{muscle}</span>
-              <span className="readout shrink-0 text-sm tabular-nums text-ink">
-                {fmtCountRange(count.byMuscle[muscle])}
-              </span>
-            </li>
-          ))}
+          {muscles.map((muscle) => {
+            const range = count.byMuscle[muscle];
+            if (!range) return null;
+            return (
+              <li key={muscle} className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0 truncate text-sm text-ink-muted">{muscle}</span>
+                <span className="readout shrink-0 text-sm tabular-nums text-ink">
+                  {fmtCountRange(range)}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

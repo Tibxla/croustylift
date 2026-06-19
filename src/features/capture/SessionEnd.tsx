@@ -274,7 +274,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
           <li key={muscle} className="flex items-baseline justify-between gap-3">
             <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
             <span className="readout shrink-0 text-sm tabular-nums text-ink">
-              {fmtCount(setsByMuscle[muscle])}
+              {fmtCount(setsByMuscle[muscle] ?? 0)}
             </span>
           </li>
         ))}

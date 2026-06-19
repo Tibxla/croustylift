@@ -129,9 +129,12 @@ function buildPersonalExerciseFields(input: PersonalExerciseInput): {
   if (error) throw new Error(error);
 
   const muscles = normalizeMuscles(input.primaryMuscles);
+  const primary = muscles[0];
+  // validatePersonalExercise garantit ≥ 1 muscle ; garde pour le typage strict.
+  if (primary === undefined) throw new Error('Choisis au moins un muscle principal.');
   return {
     name: input.name.trim(),
-    muscle_group: muscles[0],
+    muscle_group: primary,
     primary_muscles: muscles,
     unilateral: input.unilateral ?? false,
   };

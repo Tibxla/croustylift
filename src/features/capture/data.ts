@@ -490,13 +490,22 @@ export async function loadTodayExecution(
   // un tableau d'INDEX pour réordonner `sets` ET `setIds` ENSEMBLE (ne pas casser
   // l'alignement série↔id réel).
   for (const id of Object.keys(progress)) {
-    const { sets, setIds } = progress[id];
+    const entry = progress[id];
+    if (!entry) continue;
+    const { sets, setIds } = entry;
     const order = sets
       .map((_, i) => i)
-      .sort((i, j) => sets[i].order - sets[j].order || sideRank(sets[i].side) - sideRank(sets[j].side));
+      .sort((i, j) => {
+        // `i`/`j` proviennent de `sets.map((_, i) => i)` → toujours des index valides
+        // de `sets`. La garde rassure `noUncheckedIndexedAccess` sans toucher l'ordre.
+        const si = sets[i];
+        const sj = sets[j];
+        if (!si || !sj) return 0;
+        return si.order - sj.order || sideRank(si.side) - sideRank(sj.side);
+      });
     progress[id] = {
-      sets: order.map((i) => sets[i]),
-      setIds: order.map((i) => setIds[i]),
+      sets: order.map((i) => sets[i]).filter((s): s is PerformedSet => s !== undefined),
+      setIds: order.map((i) => setIds[i]).filter((id): id is string => id !== undefined),
     };
   }
 
