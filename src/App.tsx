@@ -5,11 +5,12 @@ import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
 import { AnalysisScreen } from './features/analysis/AnalysisScreen'
 import { SeancesScreen } from './features/authoring/SeancesScreen'
+import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { isFirstLaunch } from './features/onboarding/template'
 
-type Surface = 'capture' | 'analysis' | 'seances'
+type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
 
 // La hauteur de la tab bar vit dans une variable CSS partagée `--nav-height`
 // (`--nav-offset` = + safe-area iOS), définie une seule fois sur `:root`
@@ -145,6 +146,7 @@ function AuthenticatedApp({
         {surface === 'capture' && <CaptureScreen />}
         {surface === 'analysis' && <AnalysisScreen />}
         {surface === 'seances' && <SeancesScreen />}
+        {surface === 'exercises' && <ExercisesScreen />}
       </div>
 
       <BottomNav surface={surface} onSelect={setSurface} />
@@ -178,7 +180,7 @@ function BottomNav({
       className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 backdrop-blur-sm"
       aria-label="Navigation principale"
     >
-      <div className="mx-auto grid w-full max-w-md grid-cols-3 pb-[env(safe-area-inset-bottom,0)]">
+      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[env(safe-area-inset-bottom,0)]">
         <TabButton
           label="Capture"
           active={surface === 'capture'}
@@ -206,6 +208,17 @@ function BottomNav({
             <>
               <path d="M8 6h11M8 12h11M8 18h11" />
               <path d="M3 6h.01M3 12h.01M3 18h.01" />
+            </>
+          }
+        />
+        <TabButton
+          label="Exercices"
+          active={surface === 'exercises'}
+          onClick={() => onSelect('exercises')}
+          icon={
+            <>
+              <path d="M6.5 6.5l11 11" />
+              <path d="M4 9l-1.5-1.5M2 12l3 3 3-3-3-3zM20 12l-3-3-3 3 3 3zM20 15l1.5 1.5" />
             </>
           }
         />

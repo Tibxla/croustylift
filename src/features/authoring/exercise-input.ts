@@ -113,15 +113,18 @@ export function validatePersonalExercise(input: PersonalExerciseInput): string |
 }
 
 /**
- * Construit la row d'insert `exercises` à partir d'une saisie validée.
- * `owner_id` est OMIS (rempli par default auth.uid(), jamais écrit côté client).
- * `muscle_group` = premier muscle principal (ordre canonique) pour la compat.
- * Jette si la saisie est invalide (garde-fou : appeler validatePersonalExercise
- * avant pour un message utilisateur propre).
+ * Champs persistés d'un exo perso, dérivés d'une saisie validée. `owner_id` est
+ * TOUJOURS omis : il est posé par default auth.uid() à l'insert et jamais réécrit
+ * (RLS). `muscle_group` = premier muscle principal (ordre canonique) pour la
+ * compat legacy. Jette si la saisie est invalide (appeler validatePersonalExercise
+ * avant pour un message utilisateur propre). Mutualisé par l'insert et l'update.
  */
-export function buildPersonalExerciseInsert(
-  input: PersonalExerciseInput,
-): Database['public']['Tables']['exercises']['Insert'] {
+function buildPersonalExerciseFields(input: PersonalExerciseInput): {
+  name: string;
+  muscle_group: string;
+  primary_muscles: string[];
+  unilateral: boolean;
+} {
   const error = validatePersonalExercise(input);
   if (error) throw new Error(error);
 
@@ -132,4 +135,25 @@ export function buildPersonalExerciseInsert(
     primary_muscles: muscles,
     unilateral: input.unilateral ?? false,
   };
+}
+
+/**
+ * Construit la row d'insert `exercises` à partir d'une saisie validée.
+ * `owner_id` est OMIS (rempli par default auth.uid(), jamais écrit côté client).
+ */
+export function buildPersonalExerciseInsert(
+  input: PersonalExerciseInput,
+): Database['public']['Tables']['exercises']['Insert'] {
+  return buildPersonalExerciseFields(input);
+}
+
+/**
+ * Construit la row d'update `exercises` (renommer / éditer un exo perso, issue
+ * #49). Mêmes champs que l'insert MOINS `owner_id` (jamais réécrit, RLS) : on ne
+ * change que name, muscle_group, primary_muscles, unilateral. Jette si invalide.
+ */
+export function buildPersonalExerciseUpdate(
+  input: PersonalExerciseInput,
+): Database['public']['Tables']['exercises']['Update'] {
+  return buildPersonalExerciseFields(input);
 }
