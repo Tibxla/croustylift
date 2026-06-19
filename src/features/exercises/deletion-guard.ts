@@ -6,10 +6,11 @@
 // donc rejeté par Postgres (23503). Plutôt que d'attendre l'erreur SQL brute, on
 // COMPTE les références avant et on bloque proprement avec un message lisible.
 //
-// On ne compte que prescriptions (le template) et performed_sets (l'historique
-// réel) : ce sont les deux références qui PORTENT du sens pour l'utilisateur et qui
-// bloquent vraiment. Les dated_notes sont rares et toujours adossées à une série ;
-// la couche data.ts les inclut dans le filet de sécurité 23503 sans les exposer ici.
+// On compte prescriptions (le template), performed_sets (l'historique réel) ET
+// dated_notes (les notes datées #26) : les trois FK bloquent vraiment la
+// suppression. Une note datée peut subsister sans série (la série a pu être
+// annulée) ; si on l'ignorait, un exo perso à 0 prescription / 0 série mais 1 note
+// datée passerait la garde et la base lèverait alors un 23503 au message générique.
 //
 // Sans React ni Supabase : déterministe et testé (cf. deletion-guard.test.ts).
 
@@ -19,11 +20,13 @@ export interface ExerciseReferenceCounts {
   prescriptions: number;
   /** Nombre de séries réellement faites loggées sur l'exo (historique). */
   performedSets: number;
+  /** Nombre de notes datées (#26) attachées à une exécution de l'exo. */
+  datedNotes: number;
 }
 
 /** Vrai si l'exo est référencé quelque part (suppression à bloquer). */
 export function isReferenced(counts: ExerciseReferenceCounts): boolean {
-  return counts.prescriptions > 0 || counts.performedSets > 0;
+  return counts.prescriptions > 0 || counts.performedSets > 0 || counts.datedNotes > 0;
 }
 
 /** Accorde un nom commun (singulier/pluriel) selon le compte. */
@@ -46,6 +49,9 @@ export function describeReferenceBlock(counts: ExerciseReferenceCounts): string 
   }
   if (counts.performedSets > 0) {
     causes.push(`${plural(counts.performedSets, 'série a été loggée dessus', 'séries ont été loggées dessus')}`);
+  }
+  if (counts.datedNotes > 0) {
+    causes.push(`${plural(counts.datedNotes, 'note datée y est attachée', 'notes datées y sont attachées')}`);
   }
 
   return `Impossible de supprimer cet exercice : ${causes.join(', ')}. Retire-le de tes séances avant de le supprimer ; ton historique reste intact.`;

@@ -82,3 +82,38 @@ export function isOverridden(override: ExerciseOverrideValues | null): boolean {
     hasMuscles(override.primaryMuscles)
   )
 }
+
+/** Deux listes de muscles sont ÉGALES si elles ont les mêmes éléments, à l'ORDRE près. */
+function sameMuscles(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const sortedA = [...a].sort()
+  const sortedB = [...b].sort()
+  return sortedA.every((m, i) => m === sortedB[i])
+}
+
+/**
+ * Calcule l'override MINIMAL à stocker pour une saisie complète, par rapport à la
+ * base partagée : chaque champ ÉGAL à la base devient `null` (= « pas d'override
+ * sur ce champ », la base est gardée à la lecture), seuls les champs DIVERGENTS
+ * sont persistés. Sans ça, un override partiel (« j'ai juste renommé ») figerait
+ * AUSSI les muscles et l'unilatéral à leur valeur du moment, et une correction
+ * ultérieure du catalogue de base ne serait plus jamais vue (cf. ADR 0007).
+ *
+ * Comparaison : nom par égalité de chaîne (après trim, comme la fusion), drapeau
+ * par égalité booléenne, muscles par mêmes éléments À L'ORDRE PRÈS (`sameMuscles`).
+ * Pur et symétrique de `mergeExerciseOverride` : `merge(base, diff(base, input))`
+ * redonne `input` (à la normalisation du nom et de l'ordre des muscles près).
+ */
+export function diffExerciseOverride(
+  base: ExerciseShared,
+  input: ExerciseShared,
+): ExerciseOverrideValues {
+  const name = input.name.trim()
+  return {
+    name: name === base.name ? null : name,
+    unilateral: input.unilateral === base.unilateral ? null : input.unilateral,
+    primaryMuscles: sameMuscles(input.primaryMuscles, base.primaryMuscles)
+      ? null
+      : [...input.primaryMuscles],
+  }
+}

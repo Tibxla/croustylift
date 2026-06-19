@@ -14,6 +14,7 @@ import {
   setCurrentRoutine,
   createSeance,
   saveSeanceVersion,
+  type PrescriptionInput,
 } from '../authoring/data';
 import { listExercises } from '../capture/data';
 import { STARTER_TEMPLATE, resolveStarterPrescriptions } from './template';
@@ -50,16 +51,23 @@ export interface FirstRoutineResult {
  * séance avec les prescriptions du modèle de départ (une nouvelle version créée
  * via `saveSeanceVersion`, qui résout chaque exo de base par son nom).
  *
+ * Ordre VOLONTAIRE (atomicité) : on RÉSOUT d'abord le modèle (chargement du
+ * catalogue + `resolveStarterPrescriptions`, qui jette si un exo de base manque)
+ * AVANT toute écriture. Sans ça, la résolution jetait APRÈS la création de la
+ * routine / séance : l'utilisateur restait avec un état à moitié créé,
+ * `isFirstLaunch` repassait à false, et il se retrouvait coincé sans modèle.
+ * Pas de transaction client : les inserts qui suivent passent par les fonctions
+ * de l'authoring (chacune borne le pire cas à un état déjà valide du système).
+ *
  * N'écrit jamais owner_id (default auth.uid(), cf. authoring/data.ts) et ne
  * duplique aucune logique d'insert : tout passe par les fonctions de l'authoring.
  */
 export async function createFirstRoutine(
   input: FirstRoutineInput,
 ): Promise<FirstRoutineResult> {
-  const routine = await createRoutine({ name: input.routineName });
-  await setCurrentRoutine(routine.id);
-  const seance = await createSeance(routine.id, { name: input.seanceName });
-
+  // Résolution AVANT écriture : on construit les prescriptions du modèle (et on
+  // jette si le catalogue de base est incomplet) tant que rien n'est encore créé.
+  let prescriptions: PrescriptionInput[] | null = null;
   if (input.withTemplate) {
     // Résolution des UUID des exos de base par nom (pas de hardcode d'UUID).
     const wantedNames = new Set(STARTER_TEMPLATE.exercises.map((e) => e.name));
@@ -67,7 +75,14 @@ export async function createFirstRoutine(
     const idByName = new Map(
       catalogue.filter((e) => wantedNames.has(e.name)).map((e) => [e.name, e.id]),
     );
-    const prescriptions = resolveStarterPrescriptions(STARTER_TEMPLATE, idByName);
+    prescriptions = resolveStarterPrescriptions(STARTER_TEMPLATE, idByName);
+  }
+
+  const routine = await createRoutine({ name: input.routineName });
+  await setCurrentRoutine(routine.id);
+  const seance = await createSeance(routine.id, { name: input.seanceName });
+
+  if (prescriptions) {
     await saveSeanceVersion(seance.id, prescriptions);
   }
 
