@@ -203,7 +203,7 @@ describe('reorderSets', () => {
     expect(ordered.map((s) => s.id)).toEqual(['r1', 'l2', 'r2']);
     expect(ordered.map((s) => s.order)).toEqual([1, 2, 2]);
     // r1 n'est JAMAIS apparié au côté gauche d'une autre série.
-    expect(ordered[0].side).toBe('right');
+    expect(ordered[0]!.side).toBe('right');
   });
 
   it('unilatéral : deux séries incomplètes du même côté restent deux séries', () => {
@@ -510,7 +510,7 @@ describe('diffSetsToOps (unilatéral)', () => {
       { id: 'r1', exerciseId: 'db', exerciseName: 'Curl', order: 1, weightKg: 28, reps: 10, rir: 2, side: 'right' },
       { id: 'l2', exerciseId: 'db', exerciseName: 'Curl', order: 2, weightKg: 30, reps: 9, rir: 1, side: 'left' },
       { id: 'r2', exerciseId: 'db', exerciseName: 'Curl', order: 2, weightKg: 28, reps: 9, rir: 1, side: 'right' },
-    ])[0].sets;
+    ])[0]!.sets;
 
   it('série incomplète chargée -> aucune édition ne produit aucune op (appariement stable)', () => {
     const sets = incompleteUni();
@@ -533,9 +533,9 @@ describe('groupIntoLogicalSets', () => {
   it('bilatéral : une ligne = une série logique sur `both`', () => {
     const groups = groupIntoLogicalSets([mkSet('s1', 80, 8, 2), mkSet('s2', 80, 7, 1)]);
     expect(groups).toHaveLength(2);
-    expect(groups[0].both?.id).toBe('s1');
-    expect(groups[0].left).toBeNull();
-    expect(groups[0].right).toBeNull();
+    expect(groups[0]!.both?.id).toBe('s1');
+    expect(groups[0]!.left).toBeNull();
+    expect(groups[0]!.right).toBeNull();
   });
 
   it('unilatéral : la paire G/D forme UNE série logique (left + right)', () => {
@@ -546,18 +546,18 @@ describe('groupIntoLogicalSets', () => {
       mkSide('r2', 'right', 14, 9, 1),
     ]);
     expect(groups).toHaveLength(2);
-    expect(groups[0].left?.id).toBe('l1');
-    expect(groups[0].right?.id).toBe('r1');
-    expect(groups[0].both).toBeNull();
-    expect(groups[1].left?.id).toBe('l2');
-    expect(groups[1].right?.id).toBe('r2');
+    expect(groups[0]!.left?.id).toBe('l1');
+    expect(groups[0]!.right?.id).toBe('r1');
+    expect(groups[0]!.both).toBeNull();
+    expect(groups[1]!.left?.id).toBe('l2');
+    expect(groups[1]!.right?.id).toBe('r2');
   });
 
   it('unilatéral incomplet : un seul côté loggé reste une série (l’autre côté null)', () => {
     const groups = groupIntoLogicalSets([mkSide('l1', 'left', 16, 10, 2)]);
     expect(groups).toHaveLength(1);
-    expect(groups[0].left?.id).toBe('l1');
-    expect(groups[0].right).toBeNull();
+    expect(groups[0]!.left?.id).toBe('l1');
+    expect(groups[0]!.right).toBeNull();
   });
 
   // Bug H3 par le VRAI chemin de chargement : une série incomplète (D seul) en
@@ -570,13 +570,13 @@ describe('groupIntoLogicalSets', () => {
       { id: 'l2', exerciseId: 'db', exerciseName: 'Curl haltère', order: 2, weightKg: 30, reps: 9, rir: 1, side: 'left' },
       { id: 'r2', exerciseId: 'db', exerciseName: 'Curl haltère', order: 2, weightKg: 28, reps: 9, rir: 1, side: 'right' },
     ]);
-    const groups = groupIntoLogicalSets(exercise.sets);
+    const groups = groupIntoLogicalSets(exercise!.sets);
     expect(groups).toHaveLength(2);
     // Série 1 : seulement le côté droit (orphelin), jamais apparié à un gauche.
-    expect(groups[0].right?.id).toBe('r1');
-    expect(groups[0].left).toBeNull();
+    expect(groups[0]!.right?.id).toBe('r1');
+    expect(groups[0]!.left).toBeNull();
     // Série 2 : la VRAIE paire G/D au même set_order d'origine.
-    expect(groups[1].left?.id).toBe('l2');
-    expect(groups[1].right?.id).toBe('r2');
+    expect(groups[1]!.left?.id).toBe('l2');
+    expect(groups[1]!.right?.id).toBe('r2');
   });
 });

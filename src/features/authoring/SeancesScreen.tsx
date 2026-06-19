@@ -466,7 +466,11 @@ export function SeancesView({
     const target = index + direction;
     if (target < 0 || target >= seances.length) return Promise.resolve();
     const orderedIds = seances.map((s) => s.id);
-    [orderedIds[index], orderedIds[target]] = [orderedIds[target], orderedIds[index]];
+    const a = orderedIds[index];
+    const b = orderedIds[target];
+    if (a === undefined || b === undefined) return Promise.resolve();
+    orderedIds[index] = b;
+    orderedIds[target] = a;
     return onReorder(orderedIds);
   }
 

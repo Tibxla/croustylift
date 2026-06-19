@@ -41,7 +41,9 @@ function formatDateTick(iso: string): string {
 // fournit donc vides au typage statique → on les rend partielles.
 function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, string>>) {
   if (!active || !payload || payload.length === 0) return null;
-  const point = payload[0].payload as E1rmPoint;
+  const first = payload[0];
+  if (!first) return null;
+  const point = first.payload as E1rmPoint;
   return (
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>

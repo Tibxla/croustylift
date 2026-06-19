@@ -16,8 +16,8 @@ describe('buildPrimaryCurve', () => {
     const curve = buildPrimaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-01')
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
+    expect(curve[0]!.date).toBe('2026-01-01')
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
   })
 
   it('prend la 1ʳᵉ série (plus petit order), pas la plus lourde ni la dernière', () => {
@@ -36,7 +36,7 @@ describe('buildPrimaryCurve', () => {
     const curve = buildPrimaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
   })
 
   it('ignore une exécution vide (trou ≠ zéro : aucun point)', () => {
@@ -52,7 +52,7 @@ describe('buildPrimaryCurve', () => {
     const curve = buildPrimaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-08')
+    expect(curve[0]!.date).toBe('2026-01-08')
   })
 
   it('ignore les exécutions d’un autre exerciseId', () => {
@@ -72,8 +72,8 @@ describe('buildPrimaryCurve', () => {
     const curve = buildPrimaryCurve(executions, 'bench')
 
     expect(curve).toHaveLength(1)
-    expect(curve[0].date).toBe('2026-01-08')
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
+    expect(curve[0]!.date).toBe('2026-01-08')
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(100, 5, 2))
   })
 
   it('renvoie les points triés par date même si l’entrée est désordonnée', () => {
@@ -173,7 +173,7 @@ describe('buildPrimaryCurve', () => {
       ],
       'bench',
     )
-    expect(Object.keys(curve[0]).sort()).toEqual(['date', 'e1rm'])
+    expect(Object.keys(curve[0]!).sort()).toEqual(['date', 'e1rm'])
   })
 
   it('unilatéral : le point suit le CÔTÉ FAIBLE de la 1ʳᵉ série (e1RM min des 2 côtés)', () => {
@@ -198,7 +198,7 @@ describe('buildPrimaryCurve', () => {
 
     expect(curve).toHaveLength(1)
     // côté faible = gauche (e1RM le plus bas), pas droite ni une moyenne
-    expect(curve[0].e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
-    expect(curve[0].e1rm).toBeLessThan(estimateE1rm(32, 10, 2))
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
+    expect(curve[0]!.e1rm).toBeLessThan(estimateE1rm(32, 10, 2))
   })
 })

@@ -419,6 +419,10 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
 
   while (queue.length > 0) {
     const op = queue[0];
+    // `queue.length > 0` garantit la tête : on prouve l'index au compilateur sans
+    // changer le flux (la file persistée n'est jamais vidée sous nos pieds ici,
+    // c'est `current` plus bas qui peut l'être).
+    if (!op) break;
     try {
       await runOp(op, fns);
     } catch {
@@ -436,7 +440,8 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
     // (perte d'une op d'une nouvelle exécution). Si la tête a changé, l'op a déjà
     // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
     const current = readQueue();
-    if (current.length > 0 && current[0].type === op.type && current[0].id === op.id) {
+    const head = current[0];
+    if (head && head.type === op.type && head.id === op.id) {
       current.shift();
       writeQueue(current);
       flushed += 1;

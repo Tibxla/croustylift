@@ -28,7 +28,7 @@ describe('buildConfigTimeline', () => {
       }),
     )
     expect(timeline).toHaveLength(1)
-    expect(timeline[0].date).toBe('2026-01-05')
+    expect(timeline[0]!.date).toBe('2026-01-05')
   })
 
   it('deux routines différentes donnent deux configs distinctes', () => {
@@ -41,7 +41,7 @@ describe('buildConfigTimeline', () => {
       }),
     )
     expect(timeline.map((c) => c.date)).toEqual(['2026-01-01', '2026-02-01'])
-    expect(timeline[0].configId).not.toBe(timeline[1].configId)
+    expect(timeline[0]!.configId).not.toBe(timeline[1]!.configId)
   })
 
   it('réactiver la routine déjà courante ne change pas la config', () => {
@@ -55,9 +55,9 @@ describe('buildConfigTimeline', () => {
         ],
       }),
     )
-    expect(timeline[0].configId).toBe(timeline[1].configId)
+    expect(timeline[0]!.configId).toBe(timeline[1]!.configId)
     expect(detectBlocks(timeline)).toEqual([
-      { configId: timeline[0].configId, start: '2026-01-01', end: null },
+      { configId: timeline[0]!.configId, start: '2026-01-01', end: null },
     ])
   })
 
@@ -70,7 +70,7 @@ describe('buildConfigTimeline', () => {
       }),
     )
     expect(timeline.map((c) => c.date)).toEqual(['2026-01-01', '2026-01-20'])
-    expect(timeline[0].configId).not.toBe(timeline[1].configId)
+    expect(timeline[0]!.configId).not.toBe(timeline[1]!.configId)
   })
 
   it('une version d\'une séance hors routine courante est ignorée', () => {
@@ -142,7 +142,7 @@ describe('buildConfigTimeline', () => {
     )
     // Deux événements le même jour, états successifs distincts.
     expect(timeline).toHaveLength(2)
-    expect(timeline[0].configId).not.toBe(timeline[1].configId)
+    expect(timeline[0]!.configId).not.toBe(timeline[1]!.configId)
     expect(timeline.every((c) => c.date === '2026-01-01')).toBe(true)
   })
 
@@ -157,8 +157,8 @@ describe('buildConfigTimeline', () => {
         ],
       }),
     )
-    expect(timeline[0].configId).toBe(timeline[2].configId)
-    expect(timeline[0].configId).not.toBe(timeline[1].configId)
+    expect(timeline[0]!.configId).toBe(timeline[2]!.configId)
+    expect(timeline[0]!.configId).not.toBe(timeline[1]!.configId)
   })
 
   it('bout-en-bout : detectBlocks dérive les blocs des changements de config', () => {

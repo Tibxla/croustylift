@@ -161,7 +161,7 @@ describe('compareBlocks', () => {
 
     expect(result.first.curve).toHaveLength(2)
     expect(result.second.curve).toHaveLength(2)
-    expect(result.first.curve[0].date).toBe('2026-01-01')
+    expect(result.first.curve[0]!.date).toBe('2026-01-01')
     expect(result.first.curve.every((p) => typeof p.e1rm === 'number')).toBe(true)
   })
 })
@@ -184,11 +184,11 @@ describe('summarizeBlocks', () => {
     const summaries = summarizeBlocks(executions, EXO, blocks)
 
     expect(summaries).toHaveLength(2)
-    expect(summaries[0].block).toBe(blocks[0])
-    expect(summaries[1].block).toBe(blocks[1])
-    expect(summaries[0].pointCount).toBe(3)
-    expect(summaries[1].pointCount).toBe(3)
-    expect(summaries[0].weeklyRate).not.toBeNull()
+    expect(summaries[0]!.block).toBe(blocks[0])
+    expect(summaries[1]!.block).toBe(blocks[1])
+    expect(summaries[0]!.pointCount).toBe(3)
+    expect(summaries[1]!.pointCount).toBe(3)
+    expect(summaries[0]!.weeklyRate).not.toBeNull()
   })
 
   it('marque pointCount 0 pour un bloc sans exécution de cet exo', () => {
@@ -200,9 +200,9 @@ describe('summarizeBlocks', () => {
 
     const summaries = summarizeBlocks(executions, EXO, blocks)
 
-    expect(summaries[0].pointCount).toBe(0)
-    expect(summaries[0].weeklyRate).toBeNull()
-    expect(summaries[1].pointCount).toBe(1)
+    expect(summaries[0]!.pointCount).toBe(0)
+    expect(summaries[0]!.weeklyRate).toBeNull()
+    expect(summaries[1]!.pointCount).toBe(1)
   })
 
   it('renvoie [] pour une liste de blocs vide', () => {

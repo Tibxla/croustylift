@@ -207,6 +207,9 @@ export function todayIso(): string {
  */
 export function previousDayIso(dateIso: string): string {
   const [y, m, d] = dateIso.split('-').map(Number);
+  if (y === undefined || m === undefined || d === undefined) {
+    throw new Error(`previousDayIso: date ISO invalide « ${dateIso} »`);
+  }
   const prev = new Date(y, m - 1, d - 1);
   const z = (n: number) => String(n).padStart(2, '0');
   return `${prev.getFullYear()}-${z(prev.getMonth() + 1)}-${z(prev.getDate())}`;
@@ -345,9 +348,12 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   for (const id of ids) {
     const pa = a.progress[id];
     const pb = b.progress[id];
-    if (!pa) progress[id] = pb;
-    else if (!pb) progress[id] = pa;
-    else progress[id] = mergeExerciseProgress(pa, pb);
+    // `id` vient de l'union des clés des deux états : au moins une source existe.
+    // On préserve l'ordre exact (a seul, b seul, ou fusion) ; le cas « ni l'un ni
+    // l'autre » est inatteignable et n'écrit simplement rien.
+    if (pa && pb) progress[id] = mergeExerciseProgress(pa, pb);
+    else if (pa) progress[id] = pa;
+    else if (pb) progress[id] = pb;
   }
   // Notes datées : le LOCAL (b) prime par exo (une saisie offline pas encore
   // synchronisée ne doit pas être écrasée par la base), mais on garde la note de

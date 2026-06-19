@@ -76,6 +76,7 @@ function refAt(
 function lastLoggedFor(loggedSets: PerformedSet[], side: Side | undefined): PerformedSet | null {
   for (let i = loggedSets.length - 1; i >= 0; i--) {
     const s = loggedSets[i];
+    if (!s) continue;
     if (side === undefined || s.side === side) return s;
   }
   return null;
@@ -90,6 +91,7 @@ function lastRefFor(reference: PerformedSet[] | null, side: Side | undefined): P
   if (!reference || reference.length === 0) return null;
   for (let i = reference.length - 1; i >= 0; i--) {
     const s = reference[i];
+    if (!s) continue;
     if (side === undefined || s.side === side) return s;
   }
   return null;

@@ -28,7 +28,9 @@ export function toWeeklySeries(curve: E1rmPoint[]): WeeklyPoint[] {
   // Tri chronologique (dates ISO : ordre lexicographique = chronologique), pour
   // ancrer la semaine 0 au point le plus ancien quelle que soit l'entrée.
   const sorted = [...curve].sort((a, b) => a.date.localeCompare(b.date))
-  const t0 = Date.parse(sorted[0].date)
+  const first = sorted[0]
+  if (!first) return []
+  const t0 = Date.parse(first.date)
 
   return sorted.map((point) => ({
     week: (Date.parse(point.date) - t0) / MS_PER_WEEK,

@@ -6,12 +6,12 @@ export function detectBlocks(changes: ConfigChange[]): Block[] {
 
   // Fusionne les entrées consécutives de même config (redondantes, pas un vrai changement).
   const runs = sorted.filter(
-    (change, i) => i === 0 || change.configId !== sorted[i - 1].configId,
+    (change, i) => i === 0 || change.configId !== sorted[i - 1]!.configId,
   )
 
   return runs.map((run, i) => ({
     configId: run.configId,
     start: run.date,
-    end: i + 1 < runs.length ? runs[i + 1].date : null,
+    end: i + 1 < runs.length ? runs[i + 1]!.date : null,
   }))
 }

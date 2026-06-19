@@ -426,10 +426,12 @@ export async function reorderSeances(
   orderedIds: string[],
 ): Promise<void> {
   for (let position = 0; position < orderedIds.length; position++) {
+    const id = orderedIds[position];
+    if (id === undefined) continue;
     const { error } = await supabase
       .from('seances')
       .update({ position })
-      .eq('id', orderedIds[position]);
+      .eq('id', id);
     if (error) throw error;
   }
 }

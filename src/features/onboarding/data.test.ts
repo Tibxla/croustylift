@@ -74,7 +74,7 @@ describe('createFirstRoutine — atomicité (résolution AVANT écriture)', () =
 
     // saveSeanceVersion reçoit les prescriptions résolues (une par exo du modèle).
     expect(saveSeanceVersion).toHaveBeenCalledTimes(1);
-    const [seanceId, prescriptions] = vi.mocked(saveSeanceVersion).mock.calls[0];
+    const [seanceId, prescriptions] = vi.mocked(saveSeanceVersion).mock.calls[0]!;
     expect(seanceId).toBe('seance-1');
     expect(prescriptions).toHaveLength(STARTER_TEMPLATE.exercises.length);
   });

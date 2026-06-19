@@ -44,9 +44,9 @@ describe('resolveStarterPrescriptions', () => {
     out.forEach((p, i) => {
       expect(p.exerciseId).toBe(`ex-${i}`);
       expect(p.position).toBe(i);
-      expect(p.sets).toEqual(STARTER_TEMPLATE.exercises[i].prescription.sets);
-      expect(p.reps).toEqual(STARTER_TEMPLATE.exercises[i].prescription.reps);
-      expect(p.rir).toEqual(STARTER_TEMPLATE.exercises[i].prescription.rir);
+      expect(p.sets).toEqual(STARTER_TEMPLATE.exercises[i]!.prescription.sets);
+      expect(p.reps).toEqual(STARTER_TEMPLATE.exercises[i]!.prescription.reps);
+      expect(p.rir).toEqual(STARTER_TEMPLATE.exercises[i]!.prescription.rir);
     });
   });
 

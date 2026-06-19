@@ -188,9 +188,9 @@ describe('importUserData', () => {
 
     const calls = upsertArgs.filter((a) => a.table === 'exercise_overrides');
     expect(calls).toHaveLength(2);
-    expect(calls[0].rows).toEqual([override]);
-    expect(calls[0].onConflict).toBe('id');
-    expect(calls[1].onConflict).toBe('id');
+    expect(calls[0]!.rows).toEqual([override]);
+    expect(calls[0]!.onConflict).toBe('id');
+    expect(calls[1]!.onConflict).toBe('id');
   });
 
   it('saute les tables vides (pas d appel upsert)', async () => {
@@ -240,8 +240,8 @@ describe('importUserData', () => {
 
     // upsert appelé 2 fois, toujours avec onConflict: 'id'.
     expect(upsertArgs).toHaveLength(2);
-    expect(upsertArgs[0].onConflict).toBe('id');
-    expect(upsertArgs[1].onConflict).toBe('id');
+    expect(upsertArgs[0]!.onConflict).toBe('id');
+    expect(upsertArgs[1]!.onConflict).toBe('id');
   });
 
   it('remonte l erreur Supabase d une table', async () => {

@@ -223,8 +223,8 @@ describe('captureReducer — log-set unilatéral', () => {
     state = captureReducer(state, { type: 'log-set', exerciseId: 'curl', setId: 'r1', set: right1 });
 
     const p = getProgress(state, 'curl');
-    expect(p.sets[0].weightKg).toBe(28);
-    expect(p.sets[1].weightKg).toBe(32);
+    expect(p.sets[0]!.weightKg).toBe(28);
+    expect(p.sets[1]!.weightKg).toBe(32);
   });
 });
 

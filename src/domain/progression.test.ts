@@ -60,7 +60,7 @@ describe('weeklyProgressionRate', () => {
       { date: '2026-01-15', e1rm: 105 },
       { date: '2026-01-22', e1rm: 109 },
     ]
-    const shuffled: E1rmPoint[] = [sorted[2], sorted[0], sorted[3], sorted[1]]
+    const shuffled: E1rmPoint[] = [sorted[2]!, sorted[0]!, sorted[3]!, sorted[1]!]
     expect(weeklyProgressionRate(shuffled)!).toBeCloseTo(weeklyProgressionRate(sorted)!, 10)
   })
 

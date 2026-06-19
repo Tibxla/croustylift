@@ -160,7 +160,7 @@ describe('flush (succès)', () => {
     const res = await flush(fns);
 
     expect(fns.deleteExecution).toHaveBeenCalledTimes(1);
-    expect((fns.deleteExecution as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+    expect((fns.deleteExecution as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       type: 'deleteExecution',
       id: 'exec-42',
     });
@@ -306,7 +306,7 @@ describe('idempotence', () => {
     const ok = okFns();
     await flush(ok);
     expect(ok.insertSet).toHaveBeenCalledTimes(1);
-    expect((ok.insertSet as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+    expect((ok.insertSet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       id: 's1',
     });
     expect(pendingCount()).toBe(0);
@@ -443,7 +443,7 @@ describe('flush (ré-armement, issue F12)', () => {
     expect(pendingCount()).toBe(0);
     expect(readQueue()).toEqual([]);
     expect(fns.insertSet).toHaveBeenCalledTimes(1);
-    expect((fns.insertSet as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+    expect((fns.insertSet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       id: 's1',
     });
     expect(res).toEqual({ remaining: 0, flushed: 2 });
@@ -656,7 +656,7 @@ describe('note d’instructions (upsert/deleteExerciseNote)', () => {
     const res = await flush(fns);
 
     expect(fns.upsertExerciseNote).toHaveBeenCalledTimes(1);
-    expect((fns.upsertExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+    expect((fns.upsertExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       type: 'upsertExerciseNote',
       id: 'bench',
       body: 'coudes rentrés',
@@ -674,7 +674,7 @@ describe('note d’instructions (upsert/deleteExerciseNote)', () => {
     const res = await flush(fns);
 
     expect(fns.deleteExerciseNote).toHaveBeenCalledTimes(1);
-    expect((fns.deleteExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+    expect((fns.deleteExerciseNote as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       type: 'deleteExerciseNote',
       id: 'squat',
     });

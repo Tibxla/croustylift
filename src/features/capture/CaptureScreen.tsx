@@ -177,8 +177,9 @@ export function CaptureScreen() {
 
         if (source.kind === 'choose') {
           // Choix d'une seule séance : inutile de demander, on la charge direct.
-          if (source.seances.length === 1) {
-            const chosen = await loadChosenSeance(source.seances[0]);
+          const only = source.seances.length === 1 ? source.seances[0] : undefined;
+          if (only) {
+            const chosen = await loadChosenSeance(only);
             await loadSeance(chosen, active);
             return;
           }
