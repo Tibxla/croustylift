@@ -315,8 +315,14 @@ export async function loadSeanceForCapture(
 async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on )')
-    .eq('exercise_id', exerciseId);
+    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at )')
+    .eq('exercise_id', exerciseId)
+    // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
+    // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
+    // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
+    // tie-break stable entre deux chargements.
+    .order('performed_on', { referencedTable: 'executions' })
+    .order('created_at', { referencedTable: 'executions' });
   if (error) throw error;
 
   type SetRow = {
@@ -326,20 +332,22 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
     set_order: number;
     side: string | null;
     execution_id: string;
-    executions: { performed_on: string } | null;
+    executions: { performed_on: string; created_at: string } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
 
   // Regroupe les séries par exécution (une ExerciseExecution = un jour). Le `side`
   // est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
-  // côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés.
+  // côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés. Le
+  // `created_at` est porté aussi : il départage deux exécutions à `performed_on`
+  // égal (cf. `lastReference`).
   const byExecution = new Map<string, ExerciseExecution>();
   for (const row of rows) {
     const date = row.executions?.performed_on;
     if (!date) continue; // garde-fou : exécution orpheline.
     let exec = byExecution.get(row.execution_id);
     if (!exec) {
-      exec = { date, exerciseId, sets: [] };
+      exec = { date, exerciseId, sets: [], createdAt: row.executions?.created_at };
       byExecution.set(row.execution_id, exec);
     }
     exec.sets.push({
@@ -400,7 +408,11 @@ export async function loadTodayProgress(
     .select('id')
     .eq('seance_version_id', seanceVersionId)
     .eq('performed_on', today)
-    .order('created_at', { ascending: true })
+    // PLUS RÉCENTE exécution du jour : `performed_on` est à la granularité du jour,
+    // donc deux exécutions de la même séance peuvent coexister aujourd'hui (reprise
+    // après clôture, ou 2 séances le même jour). On réhydrate la séance EN COURS,
+    // pas une exécution déjà clôturée plus tôt. `loadTodayDatedNotes` vise la MÊME.
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (execErr) throw execErr;
@@ -450,7 +462,9 @@ export async function loadTodayDatedNotes(
     .select('id')
     .eq('seance_version_id', seanceVersionId)
     .eq('performed_on', today)
-    .order('created_at', { ascending: true })
+    // Même résolution que `loadTodayProgress` : PLUS RÉCENTE exécution du jour.
+    // Les deux DOIVENT viser la même, sinon notes et séries réhydratées divergent.
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (execErr) throw execErr;

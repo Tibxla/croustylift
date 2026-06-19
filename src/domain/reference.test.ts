@@ -80,6 +80,26 @@ describe('lastReference', () => {
     ])
   })
 
+  it('départage deux exécutions au même jour par created_at, peu importe l’ordre d’entrée', () => {
+    const older: ExerciseExecution = {
+      date: '2026-01-17',
+      createdAt: '2026-01-17T09:00:00Z',
+      exerciseId: 'squat',
+      sets: [{ weightKg: 100, reps: 5, rir: 2, order: 1 }],
+    }
+    const newer: ExerciseExecution = {
+      date: '2026-01-17',
+      createdAt: '2026-01-17T18:00:00Z',
+      exerciseId: 'squat',
+      sets: [{ weightKg: 110, reps: 5, rir: 1, order: 1 }],
+    }
+    const expected = [{ weightKg: 110, reps: 5, rir: 1, order: 1 }]
+
+    // La plus récemment créée gagne, quel que soit l’ordre dans le tableau.
+    expect(lastReference([older, newer], 'squat')).toEqual(expected)
+    expect(lastReference([newer, older], 'squat')).toEqual(expected)
+  })
+
   it('renvoie null si aucune exécution réelle de cet exo (liste vide ou que des trous)', () => {
     expect(lastReference([], 'squat')).toBeNull()
 

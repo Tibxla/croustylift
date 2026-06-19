@@ -42,6 +42,14 @@ export interface ExerciseExecution {
   date: string;
   exerciseId: string;
   sets: PerformedSet[];
+  /**
+   * Timestamp ISO de création de l'exécution. Départage de façon déterministe
+   * deux exécutions à `date` égale (reprise après clôture, ou 2 séances le même
+   * jour — `performed_on` est à la granularité du jour). Optionnel : seules les
+   * dérivées sensibles aux égalités (cf. `lastReference`) le portent ; les
+   * consommateurs qui n'en ont pas besoin construisent l'objet sans.
+   */
+  createdAt?: string;
 }
 
 /** Un point de la courbe e1RM : un 1RM estimé à une date. */
