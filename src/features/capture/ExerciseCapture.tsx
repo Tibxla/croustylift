@@ -5,6 +5,7 @@ import { estimateE1rm } from '../../domain/e1rm';
 import {
   currentSetOrder,
   defaultSide,
+  pairSidesByOrder,
   sidesDoneAt,
   weakSideE1rm,
 } from '../../domain/unilateral';
@@ -69,13 +70,14 @@ export function ExerciseCapture({
   // Logging unilatéral (issue #46, sélecteur #63) : une série se complète quand
   // ses DEUX côtés sont loggés au même set_order, dans l'ordre qu'on veut.
   // L'utilisateur CHOISIT le côté (sélecteur G/D plus bas) ; `currentSide` porte
-  // ce choix. Le compteur de SÉRIES complètes (= saisies droites loggées : toute
-  // série complète a un droit, peu importe l'ordre) sert au compteur, à la cible
-  // « à battre » et au statut de fin. Bilatéral : currentSide null, une saisie =
-  // une série.
+  // ce choix. Le compteur de SÉRIES complètes compte les ORDERS dont les DEUX
+  // côtés (G et D) sont présents (blind F4) : compter « saisies droites » restait
+  // à 0 si l'utilisateur loggeait deux fois le même côté. Sert au compteur, à la
+  // cible « à battre » et au statut de fin. Bilatéral : currentSide null, une
+  // saisie = une série.
   const unilateral = exercise.unilateral ?? false;
   const completedSets = unilateral
-    ? progress.sets.filter((s) => s.side === 'right').length
+    ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
     : loggedCount;
 
   // Côté CHOISI pour la prochaine saisie (issue #63). Amorcé sur le côté MANQUANT
@@ -375,7 +377,10 @@ export function ExerciseCapture({
               <path d="M9 14L4 9l5-5" />
               <path d="M4 9h11a5 5 0 0 1 0 10h-1" />
             </svg>
-            Annuler la dernière
+            {/* En unilatéral, l'annulation retire UNE ligne (un côté), pas la série
+                logique entière (G + D) : le libellé le dit (décision produit 2b).
+                La logique d'undo-last-set reste inchangée. */}
+            {unilateral ? 'Annuler le dernier côté' : 'Annuler la dernière'}
           </button>
         )}
         <button

@@ -9,6 +9,8 @@ import {
   statusOf,
   initialState,
   clearCaptureState,
+  hydratedState,
+  mergeProgress,
   loadPersisted,
   persist,
   clearPersisted,
@@ -19,6 +21,7 @@ import {
   resolveExerciseNoteSave,
   type CaptureState,
   type ExerciseProgress,
+  type HydratedProgress,
 } from './state';
 import { upperA } from './fixtures';
 
@@ -459,6 +462,187 @@ describe('captureReducer — close', () => {
     const after = captureReducer(state, { type: 'close', closedAt: 1_700_600 });
     expect(getProgress(after, 'bench-press').sets).toHaveLength(1);
     expect(after.executionId).toBe(state.executionId);
+  });
+});
+
+// --- hydratedState (réhydratation depuis la base) ----------------------------
+
+describe('hydratedState', () => {
+  // Un réalisé réhydraté porte l'id RÉEL de chaque ligne (bug H2/F1) : c'est lui
+  // qui rend la série annulable (deleteSet) au reload / après une clôture.
+  const hydrated: Record<string, HydratedProgress> = {
+    'bench-press': {
+      sets: [
+        { weightKg: 80, reps: 8, rir: 2, order: 1 },
+        { weightKg: 82.5, reps: 6, rir: 1, order: 2 },
+      ],
+      setIds: ['real-1', 'real-2'],
+    },
+  };
+
+  it('pose les setIds = ids RÉELS de la base (plus jamais null)', () => {
+    const state = hydratedState(upperA, hydrated, {}, '2026-06-18', 'exec-real');
+    const p = getProgress(state, 'bench-press');
+    expect(p.sets).toHaveLength(2);
+    expect(p.setIds).toEqual(['real-1', 'real-2']);
+    // Aucun id null : toute série réhydratée est annulable en base.
+    expect(p.setIds.every((id) => id !== null)).toBe(true);
+  });
+
+  it('adopte l’executionId RÉEL fourni quand une exécution existe en base (bug H1)', () => {
+    const state = hydratedState(upperA, hydrated, {}, '2026-06-18', 'exec-real');
+    expect(state.executionId).toBe('exec-real');
+  });
+
+  it('séance neuve (aucun executionId fourni) → un id client neuf, défini', () => {
+    const state = hydratedState(upperA, {}, {}, '2026-06-18');
+    expect(typeof state.executionId).toBe('string');
+    expect(state.executionId.length).toBeGreaterThan(0);
+    // Pas de progrès à réhydrater : capture vierge sous la date donnée.
+    expect(state.progress).toEqual({});
+    expect(state.date).toBe('2026-06-18');
+  });
+
+  it('ignore un exo sans série (réalisé vide) et porte les notes datées', () => {
+    const state = hydratedState(
+      upperA,
+      { 'bench-press': { sets: [], setIds: [] }, ...hydrated },
+      { 'bench-press': { id: 'note-1', body: 'fatigué' } },
+      '2026-06-18',
+      'exec-real',
+    );
+    // L'exo à 0 série n'entre pas dans le progrès (cf. hydratedState).
+    expect(Object.keys(state.progress)).toEqual(['bench-press']);
+    expect(getProgress(state, 'bench-press').sets).toHaveLength(2);
+    expect(getDatedNote(state, 'bench-press')).toEqual({ id: 'note-1', body: 'fatigué' });
+    expect(state.closedAt).toBeNull();
+  });
+});
+
+// --- mergeProgress (fusion Supabase ↔ cache local au montage) -----------------
+
+describe('mergeProgress', () => {
+  // États « en cours » : `a` = hydraté de Supabase (ids réels), `b` = cache local
+  // (ids client). On fabrique `b` à partir de `a` puis on le déforme par exo.
+  const supa = (
+    progress: Record<string, HydratedProgress>,
+    executionId = 'exec-supa',
+  ): CaptureState => hydratedState(upperA, progress, {}, '2026-06-18', executionId);
+
+  const local = (overrides: Partial<CaptureState>): CaptureState => ({
+    ...supa({}, 'exec-local'),
+    startedAt: 555_000,
+    ...overrides,
+  });
+
+  it('garde le réalisé le PLUS AVANCÉ par exo', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
+        setIds: ['real-1'],
+      },
+    });
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+          ],
+          setIds: ['c-1', 'c-2'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    // b est plus long → on le garde.
+    expect(getProgress(merged, 'bench-press').sets).toHaveLength(2);
+  });
+
+  it('executionId et startedAt viennent du LOCAL (exécution en cours, ops en outbox)', () => {
+    const a = supa({});
+    const b = local({});
+    const merged = mergeProgress(a, b);
+    expect(merged.executionId).toBe('exec-local');
+    expect(merged.startedAt).toBe(555_000);
+  });
+
+  it('à longueur égale, garde la base Supabase (a) qui porte les ids réels', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [
+          { weightKg: 80, reps: 8, rir: 2, order: 1 },
+          { weightKg: 82, reps: 6, rir: 1, order: 2 },
+        ],
+        setIds: ['real-1', 'real-2'],
+      },
+    });
+    // Local de même longueur mais ids client : à égalité, Supabase fait foi.
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+          ],
+          setIds: ['c-1', 'c-2'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1', 'real-2']);
+  });
+
+  it('complète un setId null de la base la plus avancée par l’id de l’autre source', () => {
+    // Base la plus avancée = local (3 séries) MAIS son 1ᵉʳ id manque (cache ancien
+    // format). On le complète par l'id réel de la base au même index : aucune série
+    // ne reste sans id annulable (objectif du fix H2/F1).
+    const a = supa({
+      'bench-press': {
+        sets: [
+          { weightKg: 80, reps: 8, rir: 2, order: 1 },
+          { weightKg: 82, reps: 6, rir: 1, order: 2 },
+        ],
+        setIds: ['real-1', 'real-2'],
+      },
+    });
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+            { weightKg: 84, reps: 5, rir: 0, order: 3 },
+          ],
+          setIds: [null, 'c-2', 'c-3'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    const p = getProgress(merged, 'bench-press');
+    expect(p.sets).toHaveLength(3);
+    // index 0 : null du local complété par real-1 ; les autres gardent l'id local ;
+    // index 2 : la base n'a pas de 3ᵉ id → reste l'id client local (c-3).
+    expect(p.setIds).toEqual(['real-1', 'c-2', 'c-3']);
+  });
+
+  it('un exo présent dans une seule source est conservé tel quel', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
+        setIds: ['real-1'],
+      },
+    });
+    const b = local({}); // aucun progrès local
+    const merged = mergeProgress(a, b);
+    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1']);
+  });
+
+  it('reste « en cours » : closedAt null après fusion', () => {
+    const merged = mergeProgress(supa({}), local({}));
+    expect(merged.closedAt).toBeNull();
   });
 });
 

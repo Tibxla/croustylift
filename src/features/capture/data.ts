@@ -13,8 +13,7 @@ import type { ExerciseExecution, PerformedSet, Side } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
 import { personalRecord, type PersonalRecord } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
-import { todayIso } from './state';
-import type { DatedNoteDraft } from './state';
+import type { DatedNoteDraft, HydratedProgress } from './state';
 import type { Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -399,98 +398,109 @@ export async function loadPersonalRecord(exerciseId: string): Promise<PersonalRe
 // create » du jour. Depuis l'ajout de l'outbox (ADR 0003), il est GÉNÉRÉ CÔTÉ
 // CLIENT au démarrage de la session (state.executionId) et posé via
 // `upsertExecution`, pour qu'une séance loggée offline remonte sans collision.
+// La RÉHYDRATATION, elle, doit RETROUVER l'exécution du jour déjà en base (après
+// un reload, ou une reprise après clôture transitoire) et ADOPTER son id réel,
+// sinon l'UI repartirait sous un id fantôme décorrélé des séries (bug H1).
 
 /**
- * Charge le réalisé déjà persisté de l'exécution du jour, par exerciseId, dans
- * la forme du reducer (`PerformedSet[]` triés par order). Sert à RÉHYDRATER la
- * capture au montage : c'est Supabase qui fait foi après un reload. Renvoie une
- * map vide si aucune exécution n'existe encore aujourd'hui.
+ * L'exécution du jour réhydratée depuis la base : son id RÉEL, son réalisé (par
+ * exerciseId, avec l'id réel de chaque série pour rester annulable) et ses notes
+ * datées (avec leur id réel). `null` = aucune exécution ce jour-là (séance neuve).
+ * Les trois vues décrivent la MÊME exécution (une seule résolution), pour que
+ * séries et notes réhydratées ne divergent jamais.
  */
-export async function loadTodayProgress(
-  seanceVersionId: string,
-): Promise<Record<string, PerformedSet[]>> {
-  const today = todayIso();
+export interface TodayExecution {
+  executionId: string;
+  progress: Record<string, HydratedProgress>;
+  datedNotes: Record<string, DatedNoteDraft>;
+}
 
+/**
+ * Charge l'exécution EN COURS du jour `date` pour cette séance, et tout son
+ * réalisé persisté (séries + notes datées), pour RÉHYDRATER la capture au montage
+ * — c'est Supabase qui fait foi après un reload. `date` est la date ADOPTÉE par
+ * `resolveCaptureDate` (today, ou la VEILLE si une séance entamée hier n'a pas été
+ * clôturée, bug H1/F10) : on interroge ce jour-là, pas un `todayIso()` interne qui
+ * basculerait après minuit. Remonte l'id RÉEL de l'exécution ET de chaque ligne
+ * `performed_sets`/`dated_notes`, pour que l'état réhydraté reste corrélé à la
+ * base (annulation, idempotence). `null` si aucune exécution ce jour-là.
+ */
+export async function loadTodayExecution(
+  seanceVersionId: string,
+  date: string,
+): Promise<TodayExecution | null> {
   const { data: exec, error: execErr } = await supabase
     .from('executions')
     .select('id')
     .eq('seance_version_id', seanceVersionId)
-    .eq('performed_on', today)
-    // PLUS RÉCENTE exécution du jour : `performed_on` est à la granularité du jour,
-    // donc deux exécutions de la même séance peuvent coexister aujourd'hui (reprise
-    // après clôture, ou 2 séances le même jour). On réhydrate la séance EN COURS,
-    // pas une exécution déjà clôturée plus tôt. `loadTodayDatedNotes` vise la MÊME.
+    .eq('performed_on', date)
+    // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
+    // `closed_at` en base (ADR 0009), donc une séance déjà RANGÉE ce jour-là est
+    // exclue ici → on repart vierge, sans la ressusciter ni y rattacher un nouveau
+    // log. À la granularité du jour deux exécutions de la même séance peuvent
+    // coexister (reprise / 2 séances) ; on prend la PLUS RÉCENTE des NON clôturées.
+    // Séries ET notes visent CETTE id.
+    .is('closed_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (execErr) throw execErr;
-  if (!exec) return {};
+  if (!exec) return null;
 
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select('exercise_id, weight_kg, reps, rir, set_order, side')
-    .eq('execution_id', exec.id)
-    .order('set_order', { ascending: true });
-  if (error) throw error;
+  // Séries et notes de la MÊME exécution, en parallèle (toutes deux par execution_id).
+  const [setsRes, notesRes] = await Promise.all([
+    supabase
+      .from('performed_sets')
+      .select('id, exercise_id, weight_kg, reps, rir, set_order, side')
+      .eq('execution_id', exec.id)
+      .order('set_order', { ascending: true }),
+    supabase
+      .from('dated_notes')
+      .select('id, exercise_id, body, created_at')
+      .eq('execution_id', exec.id)
+      .order('created_at', { ascending: true }),
+  ]);
+  if (setsRes.error) throw setsRes.error;
+  if (notesRes.error) throw notesRes.error;
 
-  const byExercise: Record<string, PerformedSet[]> = {};
-  for (const row of data ?? []) {
-    const list = byExercise[row.exercise_id] ?? (byExercise[row.exercise_id] = []);
-    list.push({
+  // Réalisé par exo : on porte l'id RÉEL de chaque série (aligné par index avec
+  // `sets`) pour qu'une série réhydratée reste ANNULABLE (deleteSet vise la bonne
+  // ligne, bug H2/F1). Les deux tableaux restent alignés car remplis ensemble.
+  const progress: Record<string, HydratedProgress> = {};
+  for (const row of setsRes.data ?? []) {
+    const p = progress[row.exercise_id] ?? (progress[row.exercise_id] = { sets: [], setIds: [] });
+    p.sets.push({
       weightKg: Number(row.weight_kg),
       reps: row.reps,
       rir: row.rir,
       order: row.set_order,
       side: toSide(row.side),
     });
+    p.setIds.push(row.id);
   }
   // Tri par order, puis gauche AVANT droite à order égal (série unilatérale,
   // issue #46) : l'état réhydraté garde G/D dans l'ordre de saisie, donc
-  // `pendingSide`/`nextSetOrder` repartent juste après une série complète.
-  for (const id of Object.keys(byExercise)) {
-    byExercise[id].sort((a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side));
+  // `pendingSide`/`nextSetOrder` repartent juste après une série complète. On trie
+  // un tableau d'INDEX pour réordonner `sets` ET `setIds` ENSEMBLE (ne pas casser
+  // l'alignement série↔id réel).
+  for (const id of Object.keys(progress)) {
+    const { sets, setIds } = progress[id];
+    const order = sets
+      .map((_, i) => i)
+      .sort((i, j) => sets[i].order - sets[j].order || sideRank(sets[i].side) - sideRank(sets[j].side));
+    progress[id] = {
+      sets: order.map((i) => sets[i]),
+      setIds: order.map((i) => setIds[i]),
+    };
   }
-  return byExercise;
-}
-
-/**
- * Charge les NOTES DATÉES déjà persistées de l'exécution du jour (issue #26),
- * par exerciseId, avec leur id réel (pour que l'édition vise la bonne ligne).
- * Même résolution de l'exécution du jour que `loadTodayProgress` (seance_version
- * + performed_on). Sert à RÉHYDRATER la saisie en Capture après un reload :
- * Supabase fait foi. Map vide si aucune exécution / aucune note aujourd'hui.
- */
-export async function loadTodayDatedNotes(
-  seanceVersionId: string,
-): Promise<Record<string, DatedNoteDraft>> {
-  const today = todayIso();
-
-  const { data: exec, error: execErr } = await supabase
-    .from('executions')
-    .select('id')
-    .eq('seance_version_id', seanceVersionId)
-    .eq('performed_on', today)
-    // Même résolution que `loadTodayProgress` : PLUS RÉCENTE exécution du jour.
-    // Les deux DOIVENT viser la même, sinon notes et séries réhydratées divergent.
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (execErr) throw execErr;
-  if (!exec) return {};
-
-  const { data, error } = await supabase
-    .from('dated_notes')
-    .select('id, exercise_id, body, created_at')
-    .eq('execution_id', exec.id)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
 
   // Une note par exo : la dernière créée gagne (l'UI n'en crée qu'une, garde-fou).
-  const byExercise: Record<string, DatedNoteDraft> = {};
-  for (const row of data ?? []) {
-    byExercise[row.exercise_id] = { id: row.id, body: row.body };
+  const datedNotes: Record<string, DatedNoteDraft> = {};
+  for (const row of notesRes.data ?? []) {
+    datedNotes[row.exercise_id] = { id: row.id, body: row.body };
   }
-  return byExercise;
+
+  return { executionId: exec.id, progress, datedNotes };
 }
 
 // --- Édition d'une séance passée (issue #38) ----------------------------------
@@ -650,10 +660,14 @@ export async function updateExecution(params: {
   id: string;
   bpmAvg?: number | null;
   durationMin?: number | null;
+  /** Horodatage de clôture (ISO) : matérialise une séance « rangée » (ADR 0009) ;
+   *  `loadTodayExecution` filtre dessus pour ne pas réhydrater une exécution close. */
+  closedAt?: string | null;
 }): Promise<void> {
   const patch: Database['public']['Tables']['executions']['Update'] = {};
   if (params.bpmAvg !== undefined) patch.bpm_avg = params.bpmAvg;
   if (params.durationMin !== undefined) patch.duration_min = params.durationMin;
+  if (params.closedAt !== undefined) patch.closed_at = params.closedAt;
 
   // Rien à poser : on évite un update vide (no-op réseau).
   if (Object.keys(patch).length === 0) return;

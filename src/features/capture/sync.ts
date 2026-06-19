@@ -47,7 +47,12 @@ export const syncFns: SyncFns = {
     }),
   deleteSet: (op) => deleteSetById(op.id),
   updateExecution: (op) =>
-    updateExecution({ id: op.id, bpmAvg: op.bpmAvg, durationMin: op.durationMin }),
+    updateExecution({
+      id: op.id,
+      bpmAvg: op.bpmAvg,
+      durationMin: op.durationMin,
+      closedAt: op.closedAt,
+    }),
   upsertDatedNote: (op) =>
     upsertDatedNoteRow({
       id: op.id,

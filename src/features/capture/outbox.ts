@@ -64,6 +64,9 @@ export interface UpdateExecutionOp {
   id: string;
   bpmAvg?: number | null;
   durationMin?: number | null;
+  /** Horodatage de clôture (ISO) : la séance est « rangée » (ADR 0009), exclue de
+   *  la réhydratation. Idempotent (rejouer repose le même closed_at). */
+  closedAt?: string | null;
 }
 
 /**
