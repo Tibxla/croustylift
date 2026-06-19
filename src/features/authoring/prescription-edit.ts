@@ -52,8 +52,8 @@ export interface EditorRow {
 /** Prescription par défaut d'un exo fraîchement ajouté (cf. brief). */
 export function defaultFields(): { sets: FieldValue; reps: FieldValue; rir: FieldValue } {
   return {
-    sets: { mode: 'fixe', min: 3, max: 3 },
-    reps: { mode: 'fourchette', min: 8, max: 12 },
+    sets: { mode: 'fixe', min: 1, max: 1 },
+    reps: { mode: 'fourchette', min: 5, max: 10 },
     rir: { mode: 'fixe', min: 2, max: 2 },
   };
 }
