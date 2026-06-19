@@ -30,6 +30,11 @@ import { isBlankNote } from '../../domain/notes';
 import type { Database } from '../../lib/database.types';
 import { loadSeanceEditor, saveSeanceVersion, createPersonalExercise } from './data';
 import {
+  MUSCLE_GROUPS,
+  toggleMuscle,
+  validatePersonalExercise,
+} from './exercise-input';
+import {
   type EditorRow,
   type FieldKey,
   type FieldValue,
@@ -44,25 +49,6 @@ import {
 } from './prescription-edit';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
-
-/** Vocabulaire canonique des 15 groupes musculaires (cf. CONTEXT.md). */
-const MUSCLE_GROUPS = [
-  'pectoraux',
-  'avant épaule',
-  'milieu épaule',
-  'arrière épaule',
-  'trapèzes',
-  'dorsaux',
-  'biceps',
-  'triceps',
-  'brachioradial',
-  'abdominaux',
-  'quadriceps',
-  'ischio-jambiers',
-  'adducteurs',
-  'fessiers',
-  'mollets',
-] as const;
 
 // =====================================================================
 // Conteneur : chargement + sauvegarde
@@ -182,6 +168,17 @@ export interface CatalogueExercise {
   muscleGroup: string;
 }
 
+/**
+ * Saisie de création d'un exo perso (issue #33) : nom, LISTE de muscles
+ * principaux (>= 1, vocabulaire canonique) et drapeau unilatéral. Le mapping vers
+ * la row DB (muscle_group = 1er muscle, compat legacy) vit dans exercise-input.ts.
+ */
+export interface PersonalExerciseFormInput {
+  name: string;
+  primaryMuscles: string[];
+  unilateral: boolean;
+}
+
 export interface SeanceEditorViewProps {
   seanceName: string;
   initialRows: EditorRow[];
@@ -199,7 +196,7 @@ export interface SeanceEditorViewProps {
    */
   onSaveExerciseNote: (exerciseId: string, body: string) => Promise<void>;
   /** Crée un exo perso et renvoie sa forme réduite (pour l'ajouter aussitôt). */
-  onCreatePersonal: (input: { name: string; muscleGroup: string }) => Promise<CatalogueExercise>;
+  onCreatePersonal: (input: PersonalExerciseFormInput) => Promise<CatalogueExercise>;
   /** Fabrique de rowId (injectée pour rester déterministe en test/harness). */
   makeRowId: () => string;
 }
@@ -734,7 +731,7 @@ function AddExerciseSheet({
   catalogue: CatalogueExercise[];
   onCancel: () => void;
   onPick: (exo: CatalogueExercise) => void;
-  onCreatePersonal: (input: { name: string; muscleGroup: string }) => Promise<void>;
+  onCreatePersonal: (input: PersonalExerciseFormInput) => Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [muscle, setMuscle] = useState<string>('');
@@ -839,28 +836,41 @@ function AddExerciseSheet({
   );
 }
 
-/** Création d'un exo perso : nom (texte) + muscle (select natif). */
+/**
+ * Création d'un exo perso (issue #33) : nom (texte) + LISTE de muscles principaux
+ * (>= 1, chips cochables) + drapeau unilatéral (segment).
+ *
+ * DESIGN.md : l'info n'est jamais portée par la couleur seule. Un muscle
+ * sélectionné porte une coche « ✓ » EN PLUS de l'accent ; le segment unilatéral a
+ * un libellé texte explicite ("Bilatéral" / "Unilatéral") et aria-pressed. La
+ * validation (>= 1 muscle, nom non vide) est mutualisée avec la couche data via
+ * validatePersonalExercise (exercise-input.ts) : un seul message de vérité.
+ */
 function CreatePersonalForm({
   onCancel,
   onSubmit,
 }: {
   onCancel: () => void;
-  onSubmit: (input: { name: string; muscleGroup: string }) => Promise<void>;
+  onSubmit: (input: PersonalExerciseFormInput) => Promise<void>;
 }) {
   const [name, setName] = useState('');
-  const [muscle, setMuscle] = useState<string>(MUSCLE_GROUPS[0]);
+  const [muscles, setMuscles] = useState<string[]>([]);
+  const [unilateral, setUnilateral] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const trimmed = name.trim();
-  const canSubmit = trimmed.length > 0 && !busy;
+  // validatePersonalExercise renvoie null quand la saisie est valide.
+  const canSubmit =
+    !busy &&
+    validatePersonalExercise({ name: trimmed, primaryMuscles: muscles }) === null;
 
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({ name: trimmed, muscleGroup: muscle });
+      await onSubmit({ name: trimmed, primaryMuscles: muscles, unilateral });
       // En cas de succès, le parent quitte la sheet : pas de reset nécessaire.
     } catch (err) {
       setError(errMessage(err));
@@ -889,20 +899,48 @@ function CreatePersonalForm({
         className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
       />
 
-      <label className="mt-2.5 block text-xs font-medium text-ink-muted">
-        Groupe musculaire principal
-      </label>
-      <select
-        value={muscle}
-        onChange={(e) => setMuscle(e.target.value)}
-        className="mt-1 h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink focus:border-accent focus:outline-none"
+      <p className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">Type de mouvement</p>
+      <div
+        className="inline-flex rounded-lg bg-bg/60 p-0.5"
+        role="group"
+        aria-label="Type de mouvement"
       >
-        {MUSCLE_GROUPS.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
+        <SegButton
+          label="Bilatéral"
+          active={!unilateral}
+          onClick={unilateral ? () => setUnilateral(false) : undefined}
+        />
+        <SegButton
+          label="Unilatéral"
+          active={unilateral}
+          onClick={unilateral ? undefined : () => setUnilateral(true)}
+        />
+      </div>
+
+      <p id="muscles-label" className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">
+        Muscles principaux{' '}
+        <span className="readout tabular-nums">({muscles.length})</span>
+      </p>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby="muscles-label">
+        {MUSCLE_GROUPS.map((m) => {
+          const active = muscles.includes(m);
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
+              className={`min-h-[36px] rounded-lg px-2.5 text-xs font-medium transition active:scale-[0.97] ${
+                active
+                  ? 'bg-accent-strong text-on-accent'
+                  : 'bg-bg text-ink-muted active:text-ink'
+              }`}
+            >
+              {active ? `✓ ${m}` : m}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="mt-3 flex items-center gap-2">
         <button

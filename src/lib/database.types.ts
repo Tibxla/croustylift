@@ -142,6 +142,8 @@ export type Database = {
           muscle_group: string
           name: string
           owner_id: string | null
+          primary_muscles: string[]
+          unilateral: boolean
           updated_at: string
         }
         Insert: {
@@ -150,6 +152,8 @@ export type Database = {
           muscle_group: string
           name: string
           owner_id?: string | null
+          primary_muscles?: string[]
+          unilateral?: boolean
           updated_at?: string
         }
         Update: {
@@ -158,6 +162,8 @@ export type Database = {
           muscle_group?: string
           name?: string
           owner_id?: string | null
+          primary_muscles?: string[]
+          unilateral?: boolean
           updated_at?: string
         }
         Relationships: []
