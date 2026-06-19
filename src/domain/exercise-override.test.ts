@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mergeExerciseOverride,
+  diffExerciseOverride,
   isOverridden,
   type ExerciseShared,
   type ExerciseOverrideValues,
@@ -94,6 +95,123 @@ describe('mergeExerciseOverride', () => {
     mergeExerciseOverride(baseCopy, override)
     expect(baseCopy.primaryMuscles).toEqual(['quadriceps'])
     expect(override.primaryMuscles).toEqual(['fessiers'])
+  })
+})
+
+describe('diffExerciseOverride', () => {
+  // base partagée de référence pour le diff (mêmes valeurs que `base` ci-dessus).
+  const ref: ExerciseShared = {
+    name: 'Développé couché',
+    unilateral: false,
+    primaryMuscles: ['pectoraux'],
+  }
+
+  it('saisie identique à la base : tous les champs reviennent à null (reset)', () => {
+    const diff = diffExerciseOverride(ref, { ...ref })
+    expect(diff).toEqual({ name: null, unilateral: null, primaryMuscles: null })
+    // Équivalent reset : aucun champ effectif -> pas une personnalisation.
+    expect(isOverridden(diff)).toBe(false)
+  })
+
+  it('seul le nom diverge : nom persisté, les autres champs à null', () => {
+    const diff = diffExerciseOverride(ref, { ...ref, name: 'DC haltères' })
+    expect(diff).toEqual({
+      name: 'DC haltères',
+      unilateral: null,
+      primaryMuscles: null,
+    })
+  })
+
+  it('nom égal à la base (au trim près) : null (pas d override sur le nom)', () => {
+    const diff = diffExerciseOverride(ref, { ...ref, name: '  Développé couché  ' })
+    expect(diff.name).toBeNull()
+  })
+
+  it('seul l unilatéral diverge : drapeau persisté, le reste à null', () => {
+    const diff = diffExerciseOverride(ref, { ...ref, unilateral: true })
+    expect(diff).toEqual({ name: null, unilateral: true, primaryMuscles: null })
+  })
+
+  it('seuls les muscles divergent : liste persistée, le reste à null', () => {
+    const diff = diffExerciseOverride(ref, {
+      ...ref,
+      primaryMuscles: ['pectoraux', 'triceps'],
+    })
+    expect(diff.primaryMuscles).toEqual(['pectoraux', 'triceps'])
+    expect(diff.name).toBeNull()
+    expect(diff.unilateral).toBeNull()
+  })
+
+  it('mêmes muscles dans un AUTRE ordre : considérés égaux -> null', () => {
+    const base: ExerciseShared = {
+      name: 'Développé couché',
+      unilateral: false,
+      primaryMuscles: ['pectoraux', 'triceps'],
+    }
+    const diff = diffExerciseOverride(base, {
+      ...base,
+      primaryMuscles: ['triceps', 'pectoraux'],
+    })
+    expect(diff.primaryMuscles).toBeNull()
+  })
+
+  it('muscles différents (ajout) : la liste saisie est persistée', () => {
+    const diff = diffExerciseOverride(ref, {
+      ...ref,
+      primaryMuscles: ['pectoraux', 'avant épaule'],
+    })
+    expect(diff.primaryMuscles).toEqual(['pectoraux', 'avant épaule'])
+  })
+
+  it('plusieurs champs divergent : seuls les divergents sont persistés', () => {
+    const diff = diffExerciseOverride(ref, {
+      name: 'DC haltères',
+      unilateral: true,
+      primaryMuscles: ['pectoraux'], // identique à la base -> null
+    })
+    expect(diff).toEqual({
+      name: 'DC haltères',
+      unilateral: true,
+      primaryMuscles: null,
+    })
+  })
+
+  it('symétrie : merge(base, diff(base, input)) redonne input (normalisé)', () => {
+    const input: ExerciseShared = {
+      name: 'DC haltères',
+      unilateral: true,
+      primaryMuscles: ['pectoraux', 'avant épaule'],
+    }
+    const diff = diffExerciseOverride(ref, input)
+    expect(mergeExerciseOverride(ref, diff)).toEqual(input)
+  })
+
+  it('symétrie sur un override partiel : la lecture redonne les champs personnalisés et garde la base ailleurs', () => {
+    const input: ExerciseShared = {
+      name: 'Développé couché', // = base -> non personnalisé
+      unilateral: true, // diverge
+      primaryMuscles: ['pectoraux'], // = base -> non personnalisé
+    }
+    const diff = diffExerciseOverride(ref, input)
+    // Seul l'unilatéral est stocké ; à la lecture, nom et muscles suivent la base
+    // (donc une correction ultérieure du catalogue de base resterait visible).
+    expect(mergeExerciseOverride(ref, diff)).toEqual(input)
+  })
+
+  it('ne mute ni la base ni la saisie', () => {
+    const base: ExerciseShared = {
+      name: 'Squat',
+      unilateral: false,
+      primaryMuscles: ['quadriceps'],
+    }
+    const input: ExerciseShared = {
+      name: 'Squat',
+      unilateral: false,
+      primaryMuscles: ['fessiers'],
+    }
+    diffExerciseOverride(base, input)
+    expect(base.primaryMuscles).toEqual(['quadriceps'])
+    expect(input.primaryMuscles).toEqual(['fessiers'])
   })
 })
 

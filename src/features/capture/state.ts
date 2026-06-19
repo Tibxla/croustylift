@@ -24,12 +24,16 @@ export interface ExerciseProgress {
   /** Séries réellement loggées (ordre = index + 1). */
   sets: PerformedSet[];
   /**
-   * Id CLIENT de chaque série (UUID, cf. ADR 0003), aligné par index avec `sets`.
-   * Généré au log, persisté avec l'état : c'est lui qui rend l'écriture Supabase
-   * idempotente (upsert/delete par id) et permet à l'outbox de viser exactement
-   * la bonne ligne au rejeu. Tableau parallèle car `PerformedSet` (domaine) ne
-   * porte pas d'id. Une série réhydratée depuis la base n'a pas d'id client :
-   * son entrée vaut `null` (pas de mutation outbox dessus, déjà en base).
+   * Id de chaque série (UUID, cf. ADR 0003), aligné par index avec `sets`. Au log
+   * d'une série neuve c'est un id CLIENT, généré et persisté avec l'état : c'est
+   * lui qui rend l'écriture Supabase idempotente (upsert/delete par id) et permet
+   * à l'outbox de viser exactement la bonne ligne au rejeu. Tableau parallèle car
+   * `PerformedSet` (domaine) ne porte pas d'id. Une série RÉHYDRATÉE depuis la base
+   * porte son id RÉEL (DB), pour rester annulable (`handleUndo` enfile un
+   * `deleteSet` qui vise la bonne ligne) — sans déclencher d'`insertSet`, déjà en
+   * base (cf. hydratedState). `null` ne subsiste que pour un cache d'ANCIEN format
+   * (séries persistées sans id avant ce champ) : ces séries restent affichées mais
+   * non annulables en base, faute d'id connu.
    */
   setIds: (string | null)[];
   /** Exo explicitement passé par l'utilisateur (un trou assumé, pas un oubli). */
@@ -196,6 +200,56 @@ export function todayIso(): string {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
 }
 
+/**
+ * La VEILLE d'une date ISO 'YYYY-MM-DD', en ISO. Pur (dérivé de l'argument, pas de
+ * `Date.now()`) → testable et déterministe. Le `Date(y, m-1, d)` local gère les
+ * débordements de mois/année et le DST (on ne manipule que la partie calendaire).
+ */
+export function previousDayIso(dateIso: string): string {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  const prev = new Date(y, m - 1, d - 1);
+  const z = (n: number) => String(n).padStart(2, '0');
+  return `${prev.getFullYear()}-${z(prev.getMonth() + 1)}-${z(prev.getDate())}`;
+}
+
+/**
+ * Résout la séance de capture à reprendre au montage, gérant la FRONTIÈRE MINUIT
+ * (bug F10) : une séance ENTAMÉE la veille et NON CLÔTURÉE doit pouvoir être
+ * reprise après minuit, sinon elle « disparaît » de l'écran (la clé de cache
+ * `sessionId:date` basculait sur `today` au remontage et ne retrouvait plus le
+ * cache d'hier).
+ *
+ * Stratégie, dans l'ordre :
+ *   1. cache de `today` présent → on l'adopte tel quel (cas NOMINAL, strictement
+ *      inchangé : le repli ci-dessous n'intervient JAMAIS si `today` existe) ;
+ *   2. sinon, cache de la VEILLE présent ET non clôturé (`closedAt === null`,
+ *      garanti par `loadPersisted`, qui ne restaure jamais une clôture) → on le
+ *      reprend en CONSERVANT SA date (la veille), pour que la persistance et les
+ *      ops (`performed_on`) continuent de viser la bonne journée ;
+ *   3. sinon → capture vierge pour `today` (rien à reprendre, ou veille clôturée
+ *      donc rangée — cohérent ADR 0009 : une clôture ne se restaure jamais).
+ *
+ * `date` est la date ADOPTÉE (today ou la veille) : le composant DOIT l'utiliser
+ * partout (clé de persistance, `performedOn`) pour rester cohérent avec `restored`.
+ */
+export function resolveCaptureDate(
+  session: Session,
+  today = todayIso(),
+): { date: string; restored: CaptureState | null } {
+  const fromToday = loadPersisted(session, today);
+  if (fromToday) return { date: today, restored: fromToday };
+
+  // Rien aujourd'hui : une séance d'hier non clôturée se reprend telle quelle.
+  // `loadPersisted` a déjà écarté toute clôture (closedAt forcé à null) ET ne
+  // renvoie un état que pour un cache d'une séance EN COURS — une veille clôturée
+  // a vu son cache nettoyé à la clôture, donc `fromYesterday` y vaut null.
+  const yesterday = previousDayIso(today);
+  const fromYesterday = loadPersisted(session, yesterday);
+  if (fromYesterday) return { date: yesterday, restored: fromYesterday };
+
+  return { date: today, restored: null };
+}
+
 export function initialState(session: Session, date = todayIso()): CaptureState {
   return {
     sessionId: session.id,
@@ -210,24 +264,50 @@ export function initialState(session: Session, date = todayIso()): CaptureState 
 }
 
 /**
+ * Réalisé d'un exo réhydraté depuis la base : ses séries ET l'id RÉEL de chaque
+ * ligne `performed_sets` (aligné par index avec `sets`). Cet id réel est ce qui
+ * rend une série réhydratée ANNULABLE : `handleUndo` peut enfiler un `deleteSet`
+ * qui vise la bonne ligne en base (bug H2/F1 : avant, ces séries portaient `null`
+ * et l'annulation restait sans effet en base). Il ne déclenche AUCUN `insertSet`
+ * (l'insert n'est enfilé qu'au LOG d'une série neuve, cf. handleLog) : la ligne
+ * est déjà en base.
+ */
+export interface HydratedProgress {
+  sets: PerformedSet[];
+  /** Id réel (DB) de chaque série, aligné par index avec `sets`. */
+  setIds: string[];
+}
+
+/**
  * État construit à partir du réalisé persisté en base (Supabase fait foi au
- * reload). `progressByExercise` = séries déjà loggées par exerciseId ;
+ * reload). `progressByExercise` = séries déjà loggées par exerciseId, AVEC leur
+ * id réel (`HydratedProgress`) pour qu'une série réhydratée reste annulable ;
  * `datedNotesByExercise` = notes datées déjà en base (issue #26), par exerciseId,
- * avec leur id réel pour que l'édition vise la bonne ligne.
+ * avec leur id réel pour que l'édition vise la bonne ligne. `executionId` est
+ * l'id RÉEL de l'exécution du jour quand elle existe en base (à fournir par le
+ * caller) ; à défaut un `newId()` (séance neuve, aucune exécution en base) — sans
+ * quoi l'UI repartirait sous un id fantôme, décorrélé des séries en base, et les
+ * nouvelles ops créeraient une 2ᵉ exécution orpheline (bug H1).
  */
 export function hydratedState(
   session: Session,
-  progressByExercise: Record<string, PerformedSet[]>,
+  progressByExercise: Record<string, HydratedProgress>,
   datedNotesByExercise: Record<string, DatedNoteDraft> = {},
   date = todayIso(),
   executionId = newId(),
 ): CaptureState {
   const progress: Record<string, ExerciseProgress> = {};
-  for (const [exerciseId, sets] of Object.entries(progressByExercise)) {
-    // Séries venues de la base : déjà persistées, pas d'id client (null) → elles
-    // ne génèrent aucune op d'outbox. L'outbox ne porte que le réalisé LOCAL.
-    if (sets.length > 0) {
-      progress[exerciseId] = { sets, setIds: sets.map(() => null), skipped: false };
+  for (const [exerciseId, hydrated] of Object.entries(progressByExercise)) {
+    // Séries venues de la base : déjà persistées. On porte leur id RÉEL (et non
+    // plus `null`) pour qu'une annulation puisse viser la bonne ligne (deleteSet)
+    // ; aucun `insertSet` n'en découle (l'insert ne part qu'au log d'une série
+    // neuve, jamais d'une réhydratée — cf. handleLog/HydratedProgress).
+    if (hydrated.sets.length > 0) {
+      progress[exerciseId] = {
+        sets: hydrated.sets,
+        setIds: [...hydrated.setIds],
+        skipped: false,
+      };
     }
   }
   return {
@@ -240,6 +320,71 @@ export function hydratedState(
     datedNotes: { ...datedNotesByExercise },
     // Le réalisé venu de la base ne porte pas la notion de clôture (locale).
     closedAt: null,
+  };
+}
+
+/**
+ * Fusionne deux états « en cours » au montage : `a` = hydraté de Supabase (fait
+ * foi au reload), `b` = restauré du localStorage (filet offline : écriture pas
+ * encore synchronisée, survie au background). Pour chaque exo on garde le réalisé
+ * le plus avancé, ET on aligne les `setIds` index par index pour qu'AUCUNE série
+ * affichée ne reste sans id annulable (bug H2/F1) :
+ *   - longueurs différentes → on garde la source la plus longue (le réalisé le
+ *     plus avancé), mais on COMPLÈTE chaque id manquant par celui de l'autre
+ *     source au même index (la base porte l'id réel, le local l'id client) ;
+ *   - chaque série affichée porte ainsi un id (réel OU client) → `handleUndo` peut
+ *     toujours enfiler un `deleteSet`.
+ * `b` prime pour `executionId` et `startedAt` : c'est l'exécution EN COURS, celle
+ * que visent les ops déjà en outbox (sinon le rejeu créerait une exécution
+ * orpheline), et son `startedAt` est le lancement réel persisté (la durée
+ * chronométrée survit au background). Pur (aucun React/localStorage) → testable.
+ */
+export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
+  const ids = new Set([...Object.keys(a.progress), ...Object.keys(b.progress)]);
+  const progress: CaptureState['progress'] = {};
+  for (const id of ids) {
+    const pa = a.progress[id];
+    const pb = b.progress[id];
+    if (!pa) progress[id] = pb;
+    else if (!pb) progress[id] = pa;
+    else progress[id] = mergeExerciseProgress(pa, pb);
+  }
+  // Notes datées : le LOCAL (b) prime par exo (une saisie offline pas encore
+  // synchronisée ne doit pas être écrasée par la base), mais on garde la note de
+  // la base (a) pour un exo que le local ne porte pas. Les ids alignés sur
+  // b.executionId restent cohérents avec les ops déjà en outbox.
+  const datedNotes: CaptureState['datedNotes'] = { ...a.datedNotes, ...b.datedNotes };
+  // `closedAt` reste `null` : on ne fusionne QUE des états « en cours ». La clôture
+  // est transitoire (ADR 0009) et n'est jamais restaurée — `loadPersisted` (b) la
+  // force à null et la base (a) ne la connaît pas. Une séance close a vu son cache
+  // nettoyé, donc `mergeProgress` ne s'exécute même pas dessus (fromLocal == null).
+  return {
+    ...a,
+    executionId: b.executionId,
+    startedAt: b.startedAt,
+    progress,
+    datedNotes,
+    closedAt: null,
+  };
+}
+
+/**
+ * Fusionne le réalisé d'UN exo présent dans les deux sources. On retient la source
+ * la plus avancée (plus de séries) pour les `sets`, mais on aligne les `setIds`
+ * index par index : un id manquant (`null`, série venue d'un cache d'ancien format)
+ * est complété par l'id de l'autre source au même index. Objectif : toute série
+ * affichée porte un id annulable (cf. mergeProgress).
+ */
+function mergeExerciseProgress(
+  pa: ExerciseProgress,
+  pb: ExerciseProgress,
+): ExerciseProgress {
+  // Source de base = la plus avancée (à égalité, la base `a` : Supabase fait foi).
+  const base = pa.sets.length >= pb.sets.length ? pa : pb;
+  const other = base === pa ? pb : pa;
+  return {
+    ...base,
+    setIds: base.setIds.map((sid, i) => sid ?? other.setIds[i] ?? null),
   };
 }
 

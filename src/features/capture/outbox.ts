@@ -64,6 +64,9 @@ export interface UpdateExecutionOp {
   id: string;
   bpmAvg?: number | null;
   durationMin?: number | null;
+  /** Horodatage de clôture (ISO) : la séance est « rangée » (ADR 0009), exclue de
+   *  la réhydratation. Idempotent (rejouer repose le même closed_at). */
+  closedAt?: string | null;
 }
 
 /**
@@ -88,6 +91,43 @@ export interface DeleteDatedNoteOp {
 }
 
 /**
+ * Crée (ou ré-affirme) la NOTE D'INSTRUCTIONS d'un exo (issue #52, blind F3) :
+ * texte persistant attaché à la DÉFINITION de l'exo, pas à l'exécution du jour
+ * (table `exercise_notes`, cf. domain/notes). Avant, l'éditeur en Capture
+ * écrivait Supabase EN DIRECT (hors outbox) : offline, la modif était perdue au
+ * reload. Routée par l'outbox, elle devient durable comme le reste.
+ *
+ * IDEMPOTENCE — par EXERCICE, pas par UUID de ligne client. Contrairement à une
+ * série ou une note datée (lignes créées à la volée, UUID client, ADR 0003), la
+ * note d'instructions est un SINGLETON : au plus une ligne par (user, exo),
+ * garantie par `unique (user_id, exercise_id)` (migration 0001). L'UI ne connaît
+ * d'ailleurs jamais d'id de ligne — elle ne charge que le `body` par exo. La clé
+ * idempotente est donc l'`exerciseId` : la sync upsert onConflict (user_id,
+ * exercise_id), rejouer écrase la même unique ligne sans doublon ni erreur.
+ *
+ * Ne dépend PAS de l'exécution (aucune FK vers `executions`) : enfilable seule,
+ * indépendamment de tout `upsertExecution`. Le champ `id` porte l'`exerciseId`
+ * pour rester homogène avec le mécanisme de l'outbox (shift par (type, id)).
+ */
+export interface UpsertExerciseNoteOp {
+  type: 'upsertExerciseNote';
+  /** L'`exerciseId` (clé idempotente : 1 note par user+exo). */
+  id: string;
+  /** Corps normalisé (cf. domain/notes). Vide → la note est effacée via deleteExerciseNote. */
+  body: string;
+}
+
+/**
+ * Supprime la note d'instructions d'un exo (corps vidé). Idempotent : delete par
+ * `exercise_id` (l'`id` de l'op porte l'`exerciseId`), sans effet si aucune ligne.
+ */
+export interface DeleteExerciseNoteOp {
+  type: 'deleteExerciseNote';
+  /** L'`exerciseId` dont la note est effacée. */
+  id: string;
+}
+
+/**
  * Supprime une EXÉCUTION entière par son id (issue #44, ADR 0008) : un jour de
  * séance avec ses séries et ses notes datées. Un unique delete par id ; la
  * CASCADE DB (`performed_sets`/`dated_notes` en on delete cascade, cf. migration
@@ -106,6 +146,8 @@ export type OutboxOp =
   | UpdateExecutionOp
   | UpsertDatedNoteOp
   | DeleteDatedNoteOp
+  | UpsertExerciseNoteOp
+  | DeleteExerciseNoteOp
   | DeleteExecutionOp;
 
 /**
@@ -120,6 +162,8 @@ export interface SyncFns {
   updateExecution: (op: UpdateExecutionOp) => Promise<void>;
   upsertDatedNote: (op: UpsertDatedNoteOp) => Promise<void>;
   deleteDatedNote: (op: DeleteDatedNoteOp) => Promise<void>;
+  upsertExerciseNote: (op: UpsertExerciseNoteOp) => Promise<void>;
+  deleteExerciseNote: (op: DeleteExerciseNoteOp) => Promise<void>;
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
 }
 
@@ -135,27 +179,63 @@ export interface FlushResult {
 
 const STORAGE_KEY = 'croustylift:outbox';
 
-/** Lit la file persistée (vide si rien / illisible). */
+// Clé de QUARANTAINE : reçoit un blob illisible (JSON cassé / forme invalide)
+// AVANT que `readQueue` ne renvoie `[]`. Sans ça, la prochaine écriture écraserait
+// le blob fautif et les ops seraient perdues en silence. Conservé, il permet de
+// diagnostiquer voire récupérer à la main (issue F11).
+const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
+
+/**
+ * Lit la file persistée (vide si rien / illisible).
+ *
+ * Si le blob est présent mais ILLISIBLE (JSON cassé) ou de forme invalide (pas un
+ * tableau), on le SAUVEGARDE sous `CORRUPT_KEY` et on `console.warn` une fois avant
+ * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu — la
+ * prochaine écriture l'aurait sinon écrasé sans laisser de trace.
+ */
 export function readQueue(): OutboxOp[] {
   if (typeof localStorage === 'undefined') return [];
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as OutboxOp[]) : [];
+    if (Array.isArray(parsed)) return parsed as OutboxOp[];
+    quarantineBlob(raw, 'forme invalide (pas un tableau)');
+    return [];
   } catch {
+    quarantineBlob(raw, 'JSON illisible');
     return [];
   }
 }
 
-/** Écrit la file (dégrade silencieusement si quota plein / mode privé). */
+/** Met le blob fautif de côté (clé de quarantaine) et prévient une fois. */
+function quarantineBlob(raw: string, reason: string): void {
+  try {
+    localStorage.setItem(CORRUPT_KEY, raw);
+  } catch {
+    // Même un setItem de quarantaine peut échouer (quota/mode privé) : on ne
+    // peut alors rien sauvegarder, mais on prévient quand même ci-dessous.
+  }
+  console.warn(
+    `[outbox] file persistée corrompue (${reason}) : repartie vide, ` +
+      `blob conservé sous « ${CORRUPT_KEY} » pour diagnostic.`,
+  );
+}
+
+/** Écrit la file (dégrade en `console.warn` si quota plein / mode privé). */
 function writeQueue(queue: OutboxOp[]): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
   } catch {
     // Quota plein / mode privé : la file en mémoire reste correcte pour la
-    // session courante, on dégrade sans bloquer la capture.
+    // session courante, on dégrade sans bloquer la capture. On le SIGNALE
+    // (au lieu d'un no-op muet) : la persistance ne suit plus, donc un kill de
+    // l'app perdrait ce qui n'a pas pu être écrit — autant pouvoir le voir.
+    console.warn(
+      '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
+        'la file reste en mémoire pour la session mais ne survivra pas à un reload.',
+    );
   }
 }
 
@@ -164,14 +244,66 @@ export function pendingCount(): number {
   return readQueue().length;
 }
 
-/** Vide entièrement la file (sert au reset d'une nouvelle séance / aux tests). */
+/**
+ * Vide entièrement la file (sert à la déconnexion / aux tests). Supprime AUSSI le
+ * blob de QUARANTAINE (`CORRUPT_KEY`) : à la déconnexion sur un appareil partagé,
+ * il contient du réalisé en clair (issue F11) et ne doit pas survivre au départ de
+ * l'utilisateur entre deux comptes — le retirer ferme cette fuite (BUG M5).
+ */
 export function clearQueue(): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CORRUPT_KEY);
   } catch {
     /* no-op */
   }
+}
+
+/**
+ * Purge CIBLÉE : retire de la file les ops qui CRÉENT/RÉ-AFFIRMENT l'exécution
+ * `executionId` (et ses lignes filles), sans toucher au reste de la file.
+ *
+ * Sert au « Réinitialiser » de la capture, qui ABANDONNE l'exécution courante
+ * avant tout flush : on ne veut effacer QUE ses ops en attente, pas vider toute
+ * la file (`clearQueue`). En offline, la file globale peut aussi porter les
+ * séries non synchronisées d'une AUTRE exécution ou une correction d'historique
+ * en attente — celles-ci doivent survivre et remonter au retour du réseau.
+ *
+ * Retire : `upsertExecution` (`id === executionId`), `updateExecution`
+ * (`id === executionId`), `insertSet` et `upsertDatedNote`
+ * (`executionId === executionId`). L'`updateExecution` doit partir : il porte
+ * l'`id` de l'exécution (BPM/durée de fin), donc abandonner l'exécution sans le
+ * retirer poserait ces métriques sur une coquille fantôme au prochain flush.
+ * LAISSE les `deleteSet` / `deleteDatedNote` : idempotents par id, ils sont sans
+ * effet si la ligne n'existe pas (jamais créée parce qu'on a justement retiré son
+ * insert), donc inoffensifs ; et ne portent que l'id de la ligne, pas
+ * l'`executionId`, donc on ne peut de toute façon pas les rattacher à une
+ * exécution. LAISSE aussi `deleteExecution` (idempotent par id : supprimer
+ * l'exécution abandonnée est sain) et toute op d'une autre exécution.
+ */
+export function purgeByExecution(executionId: string): void {
+  const queue = readQueue();
+  const kept = queue.filter((op) => {
+    switch (op.type) {
+      case 'upsertExecution':
+      case 'updateExecution':
+        return op.id !== executionId;
+      case 'insertSet':
+      case 'upsertDatedNote':
+        return op.executionId !== executionId;
+      default:
+        // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
+        // la ligne (pas d'executionId rattachable) et sont idempotents par id
+        // (sans effet si la ligne n'existe pas) → on les laisse.
+        // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
+        // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
+        // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
+        // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
+        return true;
+    }
+  });
+  if (kept.length !== queue.length) writeQueue(kept);
 }
 
 // --- Enfilement ---------------------------------------------------------------
@@ -205,8 +337,23 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.upsertDatedNote(op);
     case 'deleteDatedNote':
       return fns.deleteDatedNote(op);
+    case 'upsertExerciseNote':
+      return fns.upsertExerciseNote(op);
+    case 'deleteExerciseNote':
+      return fns.deleteExerciseNote(op);
     case 'deleteExecution':
       return fns.deleteExecution(op);
+    default:
+      // Type inconnu (op d'une version future écrite par un autre onglet/appareil,
+      // ou blob trafiqué) : aucune SyncFn ne sait la jouer. On JETTE plutôt que de
+      // tomber dans un `return undefined` muet — sinon `runFlushOnce` la traiterait
+      // comme un succès et la RETIRERAIT (perte silencieuse). Le throw fait échouer
+      // la passe à cette op (arrêt-sur-échec) : l'op reste en file, jamais perdue.
+      // Les ops valides enfilées AVANT elle sont déjà passées (flush nominal intact).
+      // Bloquant tant que le type reste inconnu, mais préserver vaut mieux que perdre.
+      return Promise.reject(
+        new Error(`[outbox] op de type inconnu, non synchronisable : ${JSON.stringify(op)}`),
+      );
   }
 }
 
@@ -216,14 +363,13 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
 let inFlight: Promise<FlushResult> | null = null;
 
 /**
- * Traite la file DANS L'ORDRE. Pour chaque op : appelle la fonction de sync
- * (idempotente), RETIRE l'op de la file si elle réussit, et persiste après
- * chaque retrait (progrès durable même si l'app meurt en cours de flush).
+ * Synchronise la file vers Supabase et renvoie l'état après la passe.
  *
- * À la PREMIÈRE op qui échoue (typiquement offline), on S'ARRÊTE et on GARDE
- * cette op + toutes les suivantes, dans l'ordre, pour la prochaine tentative.
- * On NE saute jamais une op : l'ordre exécution→séries (et insert→delete) est
- * une dépendance, pas une simple préférence.
+ * Traite DANS L'ORDRE (cf. `runFlushOnce`) : chaque op réussie est retirée et le
+ * progrès persisté, on S'ARRÊTE à la première qui échoue (offline) en gardant l'op
+ * + la suite. On NE saute jamais une op : l'ordre exécution→séries (et insert→delete)
+ * est une dépendance, pas une préférence. Une op enfilée en cours de flush est
+ * rattrapée (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
  *
  * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
  */
@@ -236,6 +382,38 @@ export function flush(fns: SyncFns): Promise<FlushResult> {
 }
 
 async function runFlush(fns: SyncFns): Promise<FlushResult> {
+  // RÉ-ARMEMENT (issue F12) : une op enfilée DANS la fenêtre étroite entre la fin
+  // d'une passe et le `finally` qui remet `inFlight` à null n'est pas traitée par
+  // cette passe ; un `flush` concurrent reçoit alors ce résultat périmé
+  // (`remaining: 0`) et l'op dort jusqu'au prochain déclencheur. On relance donc
+  // une passe SEULEMENT si la précédente a VIDÉ la file (`drained`) ET qu'une
+  // nouvelle op est apparue depuis. Une passe qui S'ARRÊTE sur un échec (offline)
+  // n'est JAMAIS relancée : son op reste en file pour le prochain déclencheur
+  // (comportement offline voulu) — sinon on rejouerait en boucle une op qui
+  // échoue. Borné par la longueur de file (chaque passe drainée en retire ≥ 1).
+  let totalFlushed = 0;
+  let budget = readQueue().length + 1;
+
+  while (true) {
+    const { flushed, drained } = await runFlushOnce(fns);
+    totalFlushed += flushed;
+    const remaining = readQueue().length;
+    // Arrêt sur échec (pas drainé), file vide, ou garde-fou de convergence atteint.
+    if (!drained || remaining === 0 || --budget <= 0) {
+      return { remaining, flushed: totalFlushed };
+    }
+    // Drainé mais la file s'est re-remplie (enqueue concurrent en fin de passe) :
+    // on relance pour traiter la nouvelle op.
+  }
+}
+
+/**
+ * UNE passe : traite la file DANS L'ORDRE, retire chaque op réussie et persiste le
+ * progrès, S'ARRÊTE à la première op qui échoue (offline) en gardant l'op + le reste.
+ * `drained` = true si la file a été entièrement vidée, false si on s'est arrêté sur
+ * un échec (la distinction pilote le ré-armement, cf. `runFlush`).
+ */
+async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: boolean }> {
   let queue = readQueue();
   let flushed = 0;
 
@@ -246,17 +424,25 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
     } catch {
       // Échec (réseau coupé le plus souvent) : on garde l'op et tout le reste,
       // dans l'ordre. La file persistée n'a pas bougé pour cette op → rejouée
-      // telle quelle au prochain flush.
-      break;
+      // telle quelle au prochain flush. Pas drainé → pas de ré-armement.
+      return { flushed, drained: false };
     }
-    // Succès : on retire l'op en tête et on persiste le progrès. On relit la
-    // file à chaque tour pour absorber un enqueue concurrent arrivé entre-temps.
+    // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
+    // retire l'op qu'on vient de traiter. Mais la tête a pu CHANGER pendant
+    // l'`await` : un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue`
+    // déclenché par une autre exécution peut avoir retiré l'op traitée, voire
+    // toute la file. On ne `shift()` que si la tête est ENCORE l'op traitée
+    // (même type + même id) : sinon un shift aveugle retirerait la MAUVAISE op
+    // (perte d'une op d'une nouvelle exécution). Si la tête a changé, l'op a déjà
+    // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
     const current = readQueue();
-    current.shift();
-    writeQueue(current);
+    if (current.length > 0 && current[0].type === op.type && current[0].id === op.id) {
+      current.shift();
+      writeQueue(current);
+      flushed += 1;
+    }
     queue = current;
-    flushed += 1;
   }
 
-  return { remaining: queue.length, flushed };
+  return { flushed, drained: true };
 }

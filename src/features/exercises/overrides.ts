@@ -13,6 +13,8 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
 import {
+  diffExerciseOverride,
+  isOverridden,
   mergeExerciseOverride,
   type ExerciseOverrideValues,
   type ExerciseShared,
@@ -115,22 +117,59 @@ export async function loadMergedExerciseRow(
   return mergeRowWithOverride(data as ExerciseRow, override);
 }
 
+/** Lit les CHAMPS PARTAGÉS d'un exo de base, NON fusionnés (la ligne de base est la référence du diff). */
+async function loadSharedBase(exerciseId: string): Promise<ExerciseShared> {
+  const { data, error } = await supabase
+    .from('exercises')
+    .select('name, unilateral, primary_muscles')
+    .eq('id', exerciseId)
+    .single();
+  if (error) throw error;
+  const row = data as Pick<ExerciseRow, 'name' | 'unilateral' | 'primary_muscles'>;
+  return {
+    name: row.name,
+    unilateral: row.unilateral ?? false,
+    primaryMuscles: row.primary_muscles ?? [],
+  };
+}
+
 /**
- * Crée ou met à jour l'override d'un exo de base (per-user). `upsert` par
- * (user_id, exercise_id) : ré-éditer écrase l'unique ligne, sans doublon.
- * `user_id` est OMIS (posé par default auth.uid(), jamais réécrit). On écrit les
- * trois champs surchargeables tels quels (la fusion à la lecture gère les NULL).
+ * Crée ou met à jour l'override d'un exo de base (per-user) en ne persistant que
+ * les champs RÉELLEMENT DIVERGENTS de la base (ADR 0007). Le formulaire renvoie la
+ * saisie COMPLÈTE (pré-remplie avec les valeurs déjà fusionnées) ; si on stockait
+ * ces trois champs tels quels, tout override deviendrait TOTAL et figerait les
+ * champs non touchés à leur valeur du moment (une correction ultérieure du
+ * catalogue de base ne serait plus jamais vue). On lit donc la ligne de BASE non
+ * fusionnée, on calcule l'override minimal (`diffExerciseOverride` met `null` sur
+ * chaque champ égal à la base), et :
+ *   - tout revient à la base (override vide) -> on SUPPRIME la ligne (= reset),
+ *     plutôt que de stocker un override fantôme tout-`null` ;
+ *   - sinon `upsert` par (user_id, exercise_id) : ré-éditer écrase l'unique ligne.
+ * `user_id` est OMIS (posé par default auth.uid(), jamais réécrit).
  */
 export async function upsertExerciseOverride(
   exerciseId: string,
   values: { name: string; primaryMuscles: string[]; unilateral: boolean },
 ): Promise<void> {
+  const base = await loadSharedBase(exerciseId);
+  const override = diffExerciseOverride(base, {
+    name: values.name,
+    unilateral: values.unilateral,
+    primaryMuscles: values.primaryMuscles,
+  });
+
+  // Aucun champ ne diverge plus de la base : c'est un reset, on retire l'override.
+  if (!isOverridden(override)) {
+    await resetExerciseOverride(exerciseId);
+    return;
+  }
+
   const { error } = await supabase.from('exercise_overrides').upsert(
     {
       exercise_id: exerciseId,
-      name: values.name,
-      unilateral: values.unilateral,
-      primary_muscles: values.primaryMuscles,
+      name: override.name,
+      unilateral: override.unilateral,
+      primary_muscles: override.primaryMuscles,
     },
     { onConflict: 'user_id,exercise_id' },
   );

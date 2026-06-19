@@ -23,6 +23,19 @@ function performedSets(count: number): PerformedSet[] {
   }));
 }
 
+// Fabrique `count` séries UNILATÉRALES : chacune tient sur DEUX lignes (gauche +
+// droite) au MÊME `order`, soit 2 × count lignes. Sert à prouver qu'on compare
+// des séries logiques (orders distincts), pas des lignes.
+function unilateralSets(count: number): PerformedSet[] {
+  const sets: PerformedSet[] = [];
+  for (let i = 0; i < count; i++) {
+    const order = i + 1;
+    sets.push({ weightKg: 100, reps: 10, rir: 2, order, side: 'left' });
+    sets.push({ weightKg: 100, reps: 10, rir: 2, order, side: 'right' });
+  }
+  return sets;
+}
+
 describe('deriveDeviations — déviations de compte de séries', () => {
   it('ne renvoie aucune déviation quand le compte est dans la fourchette', () => {
     const prescription = prescriptionWithSets(3, 4);
@@ -58,6 +71,38 @@ describe('deriveDeviations — déviations de compte de séries', () => {
   it('traite la borne max comme respectée (inclusif) : count === max → []', () => {
     const prescription = prescriptionWithSets(3, 4);
     expect(deriveDeviations(prescription, performedSets(4))).toEqual([]);
+  });
+
+  describe('unilatéral : compte des séries logiques, pas des lignes', () => {
+    it('cible tenue : 3 séries (6 lignes) face à {3,4} → aucune déviation', () => {
+      // En comptant les LIGNES (6 > 4), on aurait à tort signalé "extra-sets".
+      const prescription = prescriptionWithSets(3, 4);
+      expect(deriveDeviations(prescription, unilateralSets(3))).toEqual([]);
+    });
+
+    it('au-dessus réel : 5 séries (10 lignes) face à {3,4} → "extra-sets" actual=5', () => {
+      const prescription = prescriptionWithSets(3, 4);
+      expect(deriveDeviations(prescription, unilateralSets(5))).toEqual([
+        { kind: 'extra-sets', expected: { min: 3, max: 4 }, actual: 5 },
+      ]);
+    });
+
+    it('en dessous : 2 séries (4 lignes) face à {3,4} → "fewer-sets" actual=2', () => {
+      const prescription = prescriptionWithSets(3, 4);
+      expect(deriveDeviations(prescription, unilateralSets(2))).toEqual([
+        { kind: 'fewer-sets', expected: { min: 3, max: 4 }, actual: 2 },
+      ]);
+    });
+
+    it('série entamée d\'un seul côté (1 ligne) compte la série logique entamée : 3 séries → tenue', () => {
+      // 2 séries complètes (4 lignes) + 1 côté seul (1 ligne) = 3 orders distincts.
+      const prescription = prescriptionWithSets(3, 4);
+      const sets: PerformedSet[] = [
+        ...unilateralSets(2),
+        { weightKg: 100, reps: 10, rir: 2, order: 3, side: 'left' },
+      ];
+      expect(deriveDeviations(prescription, sets)).toEqual([]);
+    });
   });
 
   describe('prescription fixe (min === max)', () => {

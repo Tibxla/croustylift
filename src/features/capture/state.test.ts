@@ -9,14 +9,19 @@ import {
   statusOf,
   initialState,
   clearCaptureState,
+  hydratedState,
+  mergeProgress,
   loadPersisted,
   persist,
   clearPersisted,
   nextSetOrder,
   pendingSide,
+  previousDayIso,
+  resolveCaptureDate,
   resolveExerciseNoteSave,
   type CaptureState,
   type ExerciseProgress,
+  type HydratedProgress,
 } from './state';
 import { upperA } from './fixtures';
 
@@ -460,6 +465,187 @@ describe('captureReducer — close', () => {
   });
 });
 
+// --- hydratedState (réhydratation depuis la base) ----------------------------
+
+describe('hydratedState', () => {
+  // Un réalisé réhydraté porte l'id RÉEL de chaque ligne (bug H2/F1) : c'est lui
+  // qui rend la série annulable (deleteSet) au reload / après une clôture.
+  const hydrated: Record<string, HydratedProgress> = {
+    'bench-press': {
+      sets: [
+        { weightKg: 80, reps: 8, rir: 2, order: 1 },
+        { weightKg: 82.5, reps: 6, rir: 1, order: 2 },
+      ],
+      setIds: ['real-1', 'real-2'],
+    },
+  };
+
+  it('pose les setIds = ids RÉELS de la base (plus jamais null)', () => {
+    const state = hydratedState(upperA, hydrated, {}, '2026-06-18', 'exec-real');
+    const p = getProgress(state, 'bench-press');
+    expect(p.sets).toHaveLength(2);
+    expect(p.setIds).toEqual(['real-1', 'real-2']);
+    // Aucun id null : toute série réhydratée est annulable en base.
+    expect(p.setIds.every((id) => id !== null)).toBe(true);
+  });
+
+  it('adopte l’executionId RÉEL fourni quand une exécution existe en base (bug H1)', () => {
+    const state = hydratedState(upperA, hydrated, {}, '2026-06-18', 'exec-real');
+    expect(state.executionId).toBe('exec-real');
+  });
+
+  it('séance neuve (aucun executionId fourni) → un id client neuf, défini', () => {
+    const state = hydratedState(upperA, {}, {}, '2026-06-18');
+    expect(typeof state.executionId).toBe('string');
+    expect(state.executionId.length).toBeGreaterThan(0);
+    // Pas de progrès à réhydrater : capture vierge sous la date donnée.
+    expect(state.progress).toEqual({});
+    expect(state.date).toBe('2026-06-18');
+  });
+
+  it('ignore un exo sans série (réalisé vide) et porte les notes datées', () => {
+    const state = hydratedState(
+      upperA,
+      { 'bench-press': { sets: [], setIds: [] }, ...hydrated },
+      { 'bench-press': { id: 'note-1', body: 'fatigué' } },
+      '2026-06-18',
+      'exec-real',
+    );
+    // L'exo à 0 série n'entre pas dans le progrès (cf. hydratedState).
+    expect(Object.keys(state.progress)).toEqual(['bench-press']);
+    expect(getProgress(state, 'bench-press').sets).toHaveLength(2);
+    expect(getDatedNote(state, 'bench-press')).toEqual({ id: 'note-1', body: 'fatigué' });
+    expect(state.closedAt).toBeNull();
+  });
+});
+
+// --- mergeProgress (fusion Supabase ↔ cache local au montage) -----------------
+
+describe('mergeProgress', () => {
+  // États « en cours » : `a` = hydraté de Supabase (ids réels), `b` = cache local
+  // (ids client). On fabrique `b` à partir de `a` puis on le déforme par exo.
+  const supa = (
+    progress: Record<string, HydratedProgress>,
+    executionId = 'exec-supa',
+  ): CaptureState => hydratedState(upperA, progress, {}, '2026-06-18', executionId);
+
+  const local = (overrides: Partial<CaptureState>): CaptureState => ({
+    ...supa({}, 'exec-local'),
+    startedAt: 555_000,
+    ...overrides,
+  });
+
+  it('garde le réalisé le PLUS AVANCÉ par exo', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
+        setIds: ['real-1'],
+      },
+    });
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+          ],
+          setIds: ['c-1', 'c-2'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    // b est plus long → on le garde.
+    expect(getProgress(merged, 'bench-press').sets).toHaveLength(2);
+  });
+
+  it('executionId et startedAt viennent du LOCAL (exécution en cours, ops en outbox)', () => {
+    const a = supa({});
+    const b = local({});
+    const merged = mergeProgress(a, b);
+    expect(merged.executionId).toBe('exec-local');
+    expect(merged.startedAt).toBe(555_000);
+  });
+
+  it('à longueur égale, garde la base Supabase (a) qui porte les ids réels', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [
+          { weightKg: 80, reps: 8, rir: 2, order: 1 },
+          { weightKg: 82, reps: 6, rir: 1, order: 2 },
+        ],
+        setIds: ['real-1', 'real-2'],
+      },
+    });
+    // Local de même longueur mais ids client : à égalité, Supabase fait foi.
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+          ],
+          setIds: ['c-1', 'c-2'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1', 'real-2']);
+  });
+
+  it('complète un setId null de la base la plus avancée par l’id de l’autre source', () => {
+    // Base la plus avancée = local (3 séries) MAIS son 1ᵉʳ id manque (cache ancien
+    // format). On le complète par l'id réel de la base au même index : aucune série
+    // ne reste sans id annulable (objectif du fix H2/F1).
+    const a = supa({
+      'bench-press': {
+        sets: [
+          { weightKg: 80, reps: 8, rir: 2, order: 1 },
+          { weightKg: 82, reps: 6, rir: 1, order: 2 },
+        ],
+        setIds: ['real-1', 'real-2'],
+      },
+    });
+    const b = local({
+      progress: {
+        'bench-press': {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 82, reps: 6, rir: 1, order: 2 },
+            { weightKg: 84, reps: 5, rir: 0, order: 3 },
+          ],
+          setIds: [null, 'c-2', 'c-3'],
+          skipped: false,
+        },
+      },
+    });
+    const merged = mergeProgress(a, b);
+    const p = getProgress(merged, 'bench-press');
+    expect(p.sets).toHaveLength(3);
+    // index 0 : null du local complété par real-1 ; les autres gardent l'id local ;
+    // index 2 : la base n'a pas de 3ᵉ id → reste l'id client local (c-3).
+    expect(p.setIds).toEqual(['real-1', 'c-2', 'c-3']);
+  });
+
+  it('un exo présent dans une seule source est conservé tel quel', () => {
+    const a = supa({
+      'bench-press': {
+        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
+        setIds: ['real-1'],
+      },
+    });
+    const b = local({}); // aucun progrès local
+    const merged = mergeProgress(a, b);
+    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1']);
+  });
+
+  it('reste « en cours » : closedAt null après fusion', () => {
+    const merged = mergeProgress(supa({}), local({}));
+    expect(merged.closedAt).toBeNull();
+  });
+});
+
 // --- progression (statut global via statusOf) --------------------------------
 
 describe('progression globale via statusOf', () => {
@@ -658,5 +844,100 @@ describe('resolveExerciseNoteSave', () => {
     const r = resolveExerciseNoteSave('', '   ');
     expect(r.changed).toBe(false);
     expect(r.nextBody).toBe('');
+  });
+});
+
+// --- previousDayIso (pur) ----------------------------------------------------
+// La veille d'une date ISO, dérivée de l'argument (pas de Date.now()) → testable.
+
+describe('previousDayIso', () => {
+  it('recule d’un jour dans le même mois', () => {
+    expect(previousDayIso('2026-06-19')).toBe('2026-06-18');
+  });
+
+  it('passe la frontière de mois (1er du mois -> dernier du mois précédent)', () => {
+    expect(previousDayIso('2026-07-01')).toBe('2026-06-30');
+  });
+
+  it('passe la frontière d’année (1er janvier -> 31 décembre)', () => {
+    expect(previousDayIso('2026-01-01')).toBe('2025-12-31');
+  });
+
+  it('gère le 29 février d’une année bissextile', () => {
+    expect(previousDayIso('2024-03-01')).toBe('2024-02-29');
+  });
+});
+
+// --- resolveCaptureDate (frontière minuit, bug F10) --------------------------
+//
+// Une séance entamée la veille et NON clôturée doit pouvoir être reprise après
+// minuit : si rien n'est persisté pour `today`, on retombe sur le cache de la
+// veille (s'il existe et n'est pas clôturé), en conservant SA date. Une veille
+// clôturée a vu son cache nettoyé → rien à reprendre, capture vierge du jour.
+// Même polyfill localStorage indexable que plus haut.
+
+describe('resolveCaptureDate', () => {
+  const TODAY = '2026-06-19';
+  const YESTERDAY = '2026-06-18';
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('cas NOMINAL : cache d’aujourd’hui présent → on adopte today (veille ignorée)', () => {
+    // Une séance en cours du jour, ET un cache de la veille : today doit primer.
+    persist(mkState({ date: TODAY }));
+    persist(mkState({ date: YESTERDAY }));
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).not.toBeNull();
+    expect((restored as CaptureState).date).toBe(TODAY);
+  });
+
+  it('frontière minuit : rien pour today + veille NON clôturée → on reprend la veille (date = veille)', () => {
+    // Logge une série hier, persiste sous la date d'hier, rien aujourd'hui.
+    let yesterdayState = mkState({ date: YESTERDAY });
+    yesterdayState = captureReducer(yesterdayState, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(yesterdayState);
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(YESTERDAY);
+    expect(restored).not.toBeNull();
+    // La date adoptée est celle de la veille : les ops continueront de viser la
+    // bonne `performed_on`, et la série loggée hier est bien restaurée.
+    expect((restored as CaptureState).date).toBe(YESTERDAY);
+    expect(getProgress(restored as CaptureState, 'bench-press').sets).toHaveLength(1);
+  });
+
+  it('veille CLÔTURÉE → pas de restauration (capture vierge du jour)', () => {
+    // Geste de clôture câblé (ADR 0009) : on persiste l'état d'hier puis le cache
+    // est NETTOYÉ (clearPersisted). Le lendemain, plus rien à reprendre pour la
+    // veille → on repart vierge sous today, jamais sur la séance close d'hier.
+    let yesterdayState = mkState({ date: YESTERDAY });
+    yesterdayState = captureReducer(yesterdayState, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(yesterdayState);
+    clearPersisted(upperA, YESTERDAY);
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
+  });
+
+  it('rien nulle part → capture vierge sous today (premier montage)', () => {
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
   });
 });

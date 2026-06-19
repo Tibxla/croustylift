@@ -5,11 +5,37 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ExerciseRow } from './data';
 import type { Session, SessionExercise } from './fixtures';
-import type { CaptureState } from './state';
-import { getProgress, statusOf } from './state';
+import type { CaptureState, ExerciseProgress, ExerciseStatus } from './state';
+import { getProgress } from './state';
 import { deriveExerciseDeviations } from './session-edit';
 import { formatPrescription, formatRange } from './format';
 import { foldAccents } from '../../domain/text';
+import { countLogicalSetsDone } from '../../domain/set-count';
+
+/**
+ * Nombre de SÉRIES LOGIQUES faites d'un exo, et non de lignes loggées : en
+ * UNILATÉRAL une série tient sur deux lignes (gauche + droite au même `order`,
+ * cf. CONTEXT.md « Série »), donc `progress.sets.length` double le compte. On
+ * compte les `order` distincts (`countLogicalSetsDone`), juste pour les deux cas
+ * (bilatéral : 1 ligne = 1 order = 1 série). C'est ce compte qu'on compare à la
+ * prescription (un nombre de SÉRIES) et qu'on affiche « X/N séries ».
+ */
+function logicalSetsDone(progress: ExerciseProgress): number {
+  return countLogicalSetsDone(progress.sets);
+}
+
+/**
+ * Statut d'un exo dans le sélecteur, calé sur le décompte de SÉRIES LOGIQUES (et
+ * non sur `sets.length` comme `statusOf`, qui surcompterait l'unilatéral). Même
+ * sémantique : passé → `skipped` ; aucune série → `todo` ; au moins le min de
+ * séries prescrit → `done` ; sinon `in-progress`.
+ */
+function statusFromLogicalSets(progress: ExerciseProgress, prescribedMin: number): ExerciseStatus {
+  if (progress.skipped) return 'skipped';
+  const done = logicalSetsDone(progress);
+  if (done === 0) return 'todo';
+  return done >= prescribedMin ? 'done' : 'in-progress';
+}
 
 interface ExercisePickerProps {
   session: Session;
@@ -56,7 +82,7 @@ export function ExercisePicker({
 }: ExercisePickerProps) {
   const doneCount = session.exercises.filter((ex) => {
     const p = getProgress(state, ex.exerciseId);
-    return p.skipped || p.sets.length >= ex.prescription.sets.min;
+    return p.skipped || logicalSetsDone(p) >= ex.prescription.sets.min;
   }).length;
   const allDone = doneCount === session.exercises.length;
 
@@ -105,8 +131,8 @@ export function ExercisePicker({
         <ul className="flex flex-col gap-2.5">
           {session.exercises.map((ex) => {
             const progress = getProgress(state, ex.exerciseId);
-            const status = statusOf(progress, ex.prescription.sets.min);
-            const count = progress.sets.length;
+            const status = statusFromLogicalSets(progress, ex.prescription.sets.min);
+            const count = logicalSetsDone(progress);
             const deviation = deviationByExercise.get(ex.exerciseId) ?? null;
             return (
               <li key={ex.exerciseId}>

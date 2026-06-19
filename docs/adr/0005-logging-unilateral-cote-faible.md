@@ -15,5 +15,5 @@ Un exo unilatéral n'a pas une charge mais deux, potentiellement déséquilibré
 ## Conséquences
 
 - L'appariement des côtés se fait par `set_order` ; un seul côté loggé (saisie incomplète) reste une série entamée, sans côté fabriqué.
-- L'édition d'une exécution passée doit rester consciente du `side` : recompacter les `order` sans lui dé-apparierait gauche/droite (limite connue, hors périmètre).
+- L'édition d'une exécution passée est consciente du `side` : il est porté de bout en bout (chargement → diff → outbox → DB) et `reorderSets` recompacte par **série logique** (les deux côtés gardent un `order` commun), sinon l'édition dé-apparierait gauche/droite.
 - Le décompte de séries (ADR 0006) traite la paire G/D comme une seule série logique.

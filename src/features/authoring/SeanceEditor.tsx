@@ -857,7 +857,16 @@ function AddExerciseSheet({
   const filtered = useMemo(() => {
     const q = foldAccents(query.trim());
     return catalogue
-      .filter((e) => (muscle ? e.muscleGroup === muscle : true))
+      // Filtre par muscle sur la LISTE des muscles principaux (#33), pas le
+      // muscle_group legacy : sinon un exo multi-muscles (pris dans son seul 1er
+      // muscle) ou un muscle ajouté par override per-user (#50) serait raté. Repli
+      // sur muscleGroup quand la liste est vide (exo legacy non backfillé).
+      .filter((e) => {
+        if (!muscle) return true;
+        return e.primaryMuscles.length > 0
+          ? e.primaryMuscles.includes(muscle)
+          : e.muscleGroup === muscle;
+      })
       .filter((e) => (q ? foldAccents(e.name).includes(q) : true))
       .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   }, [catalogue, query, muscle]);

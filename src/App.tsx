@@ -9,6 +9,7 @@ import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { isFirstLaunch } from './features/onboarding/template'
+import { flushOutbox } from './features/capture/sync'
 
 type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
 
@@ -86,6 +87,22 @@ function AuthenticatedApp({
       active = false
     }
   }, [reloadKey])
+
+  // Flush GLOBAL de l'outbox : au montage (reprise après reload, p. ex. en ligne
+  // sans repasser par la Capture) et au retour réseau ('online'). Sans ce point,
+  // les SEULS déclencheurs de flush vivaient dans CaptureBoard : une suppression
+  // (ou correction) faite depuis l'Analyse en offline restait durable mais
+  // n'était jamais tentée tant qu'on n'ouvrait pas la Capture → au reload, la
+  // séance « supprimée » réapparaissait (« delete zombie »). La file étant
+  // globale et idempotente par id (ADR 0003), un flush ici remonte toute op en
+  // attente quel que soit l'onglet monté ; le flush est sérialisé (outbox), donc
+  // ce déclencheur ne double pas ceux de la Capture.
+  useEffect(() => {
+    void flushOutbox()
+    const onOnline = () => void flushOutbox()
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [])
 
   if (check.phase === 'checking') {
     return <FullScreenSpinner label="Chargement" />

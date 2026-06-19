@@ -62,6 +62,7 @@ export type Database = {
       executions: {
         Row: {
           bpm_avg: number | null
+          closed_at: string | null
           created_at: string
           duration_min: number | null
           id: string
@@ -72,6 +73,7 @@ export type Database = {
         }
         Insert: {
           bpm_avg?: number | null
+          closed_at?: string | null
           created_at?: string
           duration_min?: number | null
           id?: string
@@ -82,6 +84,7 @@ export type Database = {
         }
         Update: {
           bpm_avg?: number | null
+          closed_at?: string | null
           created_at?: string
           duration_min?: number | null
           id?: string

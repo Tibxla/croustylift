@@ -269,7 +269,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     supabase
       .from('performed_sets')
       .select(
-        'weight_kg, reps, rir, set_order, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
+        'weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
       ),
     // Nom personnalisé per-user (issue #50) : le log brut affiche le nom override.
     loadExerciseOverrides(),
@@ -281,6 +281,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     reps: number;
     rir: number;
     set_order: number;
+    side: string | null;
     execution_id: string;
     exercise_id: string;
     exercises: { name: string } | null;
@@ -315,6 +316,9 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
             reps: row.reps,
             rir: row.rir,
             order: row.set_order,
+            // Côté unilatéral (ADR 0005) : deux lignes au même order, libellées
+            // G/D dans le journal. null (bilatéral) -> undefined, comme ailleurs.
+            side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
           },
         },
       ];

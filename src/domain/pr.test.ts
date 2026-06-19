@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ExerciseExecution, PerformedSet } from './types'
+import type { ExerciseExecution, PerformedSet, Side } from './types'
 import {
   personalRecord,
   isE1rmRecord,
@@ -14,6 +14,15 @@ const set = (weightKg: number, reps: number, rir: number, order = 1): PerformedS
   rir,
   order,
 })
+
+// Série unilatérale : porte un `side` (les deux côtés d'une série partagent l'order).
+const sideSet = (
+  side: Side,
+  weightKg: number,
+  reps: number,
+  rir: number,
+  order = 1,
+): PerformedSet => ({ weightKg, reps, rir, order, side })
 
 describe('personalRecord', () => {
   it('renvoie un record nul (les deux à null) sans aucun historique', () => {
@@ -62,6 +71,53 @@ describe('personalRecord', () => {
     const pr = personalRecord(executions, 'squat')
     // meilleur des 1ʳᵉˢ séries : 105x5@1 = 105 * (1 + 6/30) = 126
     expect(pr.bestE1rm).toBeCloseTo(126, 6)
+  })
+
+  it('e1RM unilatéral : le record suit le CÔTÉ FAIBLE de la 1ʳᵉ série (pas le côté fort)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        // 1ʳᵉ série déséquilibrée : G fort (120), D faible (96). Les deux côtés
+        // partagent l'order 1. Le record e1RM doit valoir le côté faible (96),
+        // pas le 1er élément du tableau (G, le côté fort) — cf. ADR 0005.
+        date: '2026-01-10',
+        exerciseId: 'curl',
+        sets: [sideSet('left', 100, 5, 1, 1), sideSet('right', 80, 5, 1, 1)],
+      },
+    ]
+    // côté faible : 80x5@1 = 80 * (1 + 6/30) = 96 (et NON 100x5@1 = 120)
+    expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(96, 6)
+  })
+
+  it('e1RM unilatéral : insensible à l’ordre de saisie (droite saisie d’abord)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        // Même série, mais le côté FAIBLE (D) est saisi en 1er dans le tableau :
+        // le record doit rester le côté faible, l'appariement étant par order.
+        date: '2026-01-10',
+        exerciseId: 'curl',
+        sets: [sideSet('right', 80, 5, 1, 1), sideSet('left', 100, 5, 1, 1)],
+      },
+    ]
+    expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(96, 6)
+  })
+
+  it('e1RM unilatéral : seule la 1ʳᵉ série (order 1) compte, côté faible', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-10',
+        exerciseId: 'curl',
+        sets: [
+          // 1ʳᵉ série : faible = D à 90x5@1 = 108.
+          sideSet('left', 100, 5, 1, 1),
+          sideSet('right', 90, 5, 1, 1),
+          // 2ᵉ série plus lourde : ignorée pour l'e1RM (comme en bilatéral).
+          sideSet('left', 120, 5, 1, 2),
+          sideSet('right', 110, 5, 1, 2),
+        ],
+      },
+    ]
+    // côté faible de la 1ʳᵉ série : 90x5@1 = 90 * 1.2 = 108
+    expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(108, 6)
   })
 
   it('poids×reps : balaie TOUTES les séries (pas seulement la 1ʳᵉ)', () => {

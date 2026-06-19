@@ -1,11 +1,12 @@
 // Le LOG BRUT consultable, en JOURNAL DE SÉANCES enrichi (cf. issues #27/#32,
 // DESIGN.md). Chaque séance s'ouvre sur un EN-TÊTE DE RÉCAP — nom, date, durée,
-// BPM moyen (si saisi), nombre de séries, volume total — qui se lit replié d'un
-// coup d'œil ; dépliée, l'entrée montre le détail des séries telles qu'elles ont
-// été loggées (poids × reps × RIR), sans aucune dérivation.
+// BPM moyen (si saisi), nombre de séries, kg soulevés (Σ poids×reps) — qui se lit
+// replié d'un coup d'œil ; dépliée, l'entrée montre le détail des séries telles
+// qu'elles ont été loggées (poids × reps × RIR), sans aucune dérivation. Sur un
+// exo unilatéral (ADR 0005), chaque côté est sur sa propre ligne, libellé G/D.
 //
 // Readout Rule : tout chiffre mesuré (poids, reps, RIR, dates, durée, BPM,
-// volume) en mono tabulaire, aligné pour se lire comme un cadran. Sobre, sans
+// kg soulevés) en mono tabulaire, aligné pour se lire comme un cadran. Sobre, sans
 // accent (le log est une consultation, pas un signal de progression : l'accent
 // reste aux courbes). Pas de récap trompeur : une métrique manquante (durée, BPM,
 // nom hors-template) n'est tout simplement pas affichée. Composant pur : il prend
@@ -34,9 +35,16 @@ function formatDuration(min: number): string {
   return `${hours} h ${String(rest).padStart(2, '0')}`;
 }
 
-/** Volume en kg, séparateurs de milliers fr ('1 840 kg', espace insécable). */
-function formatVolume(kg: number): string {
+/** kg soulevés (Σ poids×reps), séparateurs de milliers fr ('1 840', espace insécable). */
+function formatLifted(kg: number): string {
   return kg.toLocaleString('fr-FR');
+}
+
+/** Libellé de côté d'une série unilatérale (ADR 0005), sobre : 'G'/'D' (rien en bilatéral). */
+function sideLabel(side: 'left' | 'right' | undefined): string | null {
+  if (side === 'left') return 'G';
+  if (side === 'right') return 'D';
+  return null;
 }
 
 export function RawLogView({
@@ -118,12 +126,19 @@ function SessionEntry({
 
               <ul className="mt-1.5 flex flex-col gap-0.5">
                 {exercise.sets.map((set) => (
+                  // Clé COMPOSITE : en unilatéral (ADR 0005) deux lignes partagent
+                  // le même order ; le côté les distingue (sinon clé dupliquée).
                   <li
-                    key={set.order}
+                    key={`${set.order}-${set.side ?? 'both'}`}
                     className="readout flex items-baseline gap-2 text-sm tabular-nums text-ink"
                   >
-                    <span className="w-5 shrink-0 text-xs text-ink-muted">
+                    <span className="flex min-w-[1.25rem] shrink-0 items-baseline gap-1 text-xs text-ink-muted">
                       {set.order}
+                      {sideLabel(set.side) && (
+                        <span className="font-medium text-ink">
+                          {sideLabel(set.side)}
+                        </span>
+                      )}
                     </span>
                     <span className="font-medium">
                       {set.weightKg}
@@ -204,13 +219,8 @@ function SessionHeader({ summary }: { summary: SessionSummary }) {
           value={String(summary.setCount)}
         />
         <SummaryMetric
-          label="volume"
-          value={
-            <>
-              {formatVolume(summary.totalVolumeKg)}
-              <span className="ml-0.5 font-normal text-ink-muted">kg</span>
-            </>
-          }
+          label="kg soulevés"
+          value={formatLifted(summary.totalVolumeKg)}
         />
         {summary.durationMin !== null && (
           <SummaryMetric label="durée" value={formatDuration(summary.durationMin)} />

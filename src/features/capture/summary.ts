@@ -4,7 +4,7 @@ import type { CaptureState } from './state';
 import { getProgress } from './state';
 import type { Session } from './fixtures';
 import type { SessionSummary } from './SessionEnd';
-import { countPerformedSets } from '../../domain/set-count';
+import { countLogicalSetsDone, countPerformedSets } from '../../domain/set-count';
 
 /**
  * Durée écoulée en minutes (arrondi) depuis le lancement de la séance, ou `null`
@@ -28,7 +28,11 @@ export function elapsedMinutesSince(startedAt: number | undefined): number | nul
 export function buildSummary(session: Session, state: CaptureState): SessionSummary {
   const exercisesDone = session.exercises.filter((ex) => {
     const p = getProgress(state, ex.exerciseId);
-    return p.skipped || p.sets.length >= ex.prescription.sets.min;
+    // Séries LOGIQUES (orders distincts), pas lignes : un exo unilatéral logge
+    // deux lignes par série (G + D), donc `sets.length` le déclarerait « fait »
+    // à mi-chemin du prescrit. `countLogicalSetsDone` vaut `sets.length` en
+    // bilatéral (1 ligne = 1 order) et reste juste en unilatéral.
+    return p.skipped || countLogicalSetsDone(p.sets) >= ex.prescription.sets.min;
   }).length;
 
   const count = countPerformedSets(

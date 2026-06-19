@@ -203,16 +203,17 @@ export async function updatePersonalExercise(
 }
 
 /**
- * Compte les références BLOQUANTES d'un exo : prescriptions (template) et
- * performed_sets (historique réel). Sert à la garde de suppression (issue #49) :
- * ces FK n'ont pas de ON DELETE CASCADE, supprimer un exo référencé est rejeté
- * par la base. On lit juste les comptes (head + count: 'exact'), sans tirer les
- * lignes. La RLS scope chaque table au user, on n'ajoute donc aucun filtre owner.
+ * Compte les références BLOQUANTES d'un exo : prescriptions (template),
+ * performed_sets (historique réel) et dated_notes (notes datées #26). Sert à la
+ * garde de suppression (issue #49) : ces FK n'ont pas de ON DELETE CASCADE,
+ * supprimer un exo référencé est rejeté par la base (23503). On lit juste les
+ * comptes (head + count: 'exact'), sans tirer les lignes. La RLS scope chaque
+ * table au user, on n'ajoute donc aucun filtre owner.
  */
 export async function countExerciseReferences(
   exerciseId: string,
 ): Promise<ExerciseReferenceCounts> {
-  const [presc, sets] = await Promise.all([
+  const [presc, sets, notes] = await Promise.all([
     supabase
       .from('prescriptions')
       .select('id', { count: 'exact', head: true })
@@ -221,12 +222,18 @@ export async function countExerciseReferences(
       .from('performed_sets')
       .select('id', { count: 'exact', head: true })
       .eq('exercise_id', exerciseId),
+    supabase
+      .from('dated_notes')
+      .select('id', { count: 'exact', head: true })
+      .eq('exercise_id', exerciseId),
   ]);
   if (presc.error) throw presc.error;
   if (sets.error) throw sets.error;
+  if (notes.error) throw notes.error;
   return {
     prescriptions: presc.count ?? 0,
     performedSets: sets.count ?? 0,
+    datedNotes: notes.count ?? 0,
   };
 }
 
@@ -238,9 +245,9 @@ export async function countExerciseReferences(
  * perdu : on demande à l'utilisateur de détacher l'exo d'abord.
  *
  * Filet de sécurité : même après le compte (course possible avec une autre
- * session ou une note datée non comptée), si la base rejette la suppression pour
- * violation de FK (code Postgres 23503), on retraduit en message lisible plutôt
- * que de remonter l'erreur SQL brute.
+ * session qui rattacherait une référence entre le compte et le DELETE), si la
+ * base rejette la suppression pour violation de FK (code Postgres 23503), on
+ * retraduit en message lisible plutôt que de remonter l'erreur SQL brute.
  */
 export async function deletePersonalExercise(id: string): Promise<void> {
   const counts = await countExerciseReferences(id);

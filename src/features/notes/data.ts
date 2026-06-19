@@ -47,6 +47,27 @@ export function datedNoteOutboxOp(params: {
   };
 }
 
+/**
+ * Décide l'op d'outbox pour une note d'INSTRUCTIONS (issue #52, blind F3), à
+ * partir du corps saisi :
+ *   - corps réel  -> `upsertExerciseNote` (corps NORMALISÉ) ;
+ *   - corps vide  -> `deleteExerciseNote` (on efface plutôt que stocker du blanc).
+ * Miroir de `datedNoteOutboxOp`, mais la clé idempotente est l'`exerciseId` (pas
+ * un UUID de ligne client) : la note est un singleton par (user, exo), unique en
+ * base — rejouer ou alterner upsert/delete vise toujours cette même ligne.
+ * Logique PURE, sans réseau.
+ */
+export function exerciseNoteOutboxOp(params: { exerciseId: string; body: string }): OutboxOp {
+  if (isBlankNote(params.body)) {
+    return { type: 'deleteExerciseNote', id: params.exerciseId };
+  }
+  return {
+    type: 'upsertExerciseNote',
+    id: params.exerciseId,
+    body: normalizeNoteBody(params.body),
+  };
+}
+
 // =====================================================================
 // Note par exo (exercise_notes) — éditée en authoring, lue en Capture
 // =====================================================================
@@ -142,5 +163,46 @@ export async function upsertDatedNote(params: {
 /** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
 export async function deleteDatedNoteById(id: string): Promise<void> {
   const { error } = await supabase.from('dated_notes').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// =====================================================================
+// Note d'instructions par exo, routée par l'OUTBOX (issue #52, blind F3)
+// =====================================================================
+//
+// `saveExerciseNote` ci-dessus reste le chemin DIRECT de l'authoring (éditeur de
+// séance, écran Exercices) : là, on est forcément en ligne et l'écriture est
+// synchrone. En Capture, on édite la même note hors-ligne → l'écriture passe par
+// l'outbox via ces deux fonctions atomiques (upsert / delete), idempotentes,
+// consommées par les SyncFns. Le corps arrive DÉJÀ normalisé/tranché par
+// `exerciseNoteOutboxOp` ; on ne re-décide rien ici, on écrit.
+
+/**
+ * Crée (ou ré-affirme) la note d'instructions d'un exo. Upsert onConflict
+ * (user_id, exercise_id) : rejouer (retry après coupure) écrase l'unique ligne
+ * du couple (user, exo), jamais de doublon. user_id via default auth.uid().
+ * Idempotent → consommé par l'outbox (SyncFns).
+ */
+export async function upsertExerciseNoteRow(params: {
+  exerciseId: string;
+  body: string;
+}): Promise<void> {
+  const { error } = await supabase.from('exercise_notes').upsert(
+    { exercise_id: params.exerciseId, body: params.body },
+    { onConflict: 'user_id,exercise_id' },
+  );
+  if (error) throw error;
+}
+
+/**
+ * Supprime la note d'instructions d'un exo (corps vidé). RLS scope à l'user (au
+ * plus une ligne par exo) : delete par `exercise_id`, idempotent (sans effet si
+ * aucune ligne). Consommé par l'outbox (SyncFns).
+ */
+export async function deleteExerciseNoteByExercise(exerciseId: string): Promise<void> {
+  const { error } = await supabase
+    .from('exercise_notes')
+    .delete()
+    .eq('exercise_id', exerciseId);
   if (error) throw error;
 }

@@ -14,8 +14,6 @@ import {
   type Dispatch,
 } from 'react';
 import {
-  deleteExecutionById,
-  deleteSetById,
   listExercises,
   loadCaptureSource,
   loadCatalogExercise,
@@ -23,11 +21,7 @@ import {
   loadPersonalRecord,
   loadReference,
   loadSeanceForCapture,
-  loadTodayDatedNotes,
-  loadTodayProgress,
-  updateExecution,
-  upsertExecution,
-  upsertSet,
+  loadTodayExecution,
   type LoadedSeance,
   type SeanceChoice,
   type Session,
@@ -39,10 +33,8 @@ import {
 } from './session-edit';
 import {
   loadExerciseNote,
-  saveExerciseNote,
-  upsertDatedNote as upsertDatedNoteRow,
-  deleteDatedNoteById,
   datedNoteOutboxOp,
+  exerciseNoteOutboxOp,
 } from '../notes/data';
 import {
   captureReducer,
@@ -50,23 +42,29 @@ import {
   getDatedNote,
   getProgress,
   hydratedState,
-  loadPersisted,
+  mergeProgress,
   newId,
   nextSetOrder,
   pendingSide,
   persist,
+  resolveCaptureDate,
   statusOf,
   todayIso,
   type DatedNoteDraft,
+  type HydratedProgress,
 } from './state';
 import {
   enqueue,
   flush,
   pendingCount,
-  clearQueue,
-  type SyncFns,
+  purgeByExecution,
 } from './outbox';
-import type { PerformedSet, Side } from '../../domain/types';
+// Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
+// (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
+// `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces.
+import { syncFns } from './sync';
+import type { Side } from '../../domain/types';
+import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
@@ -79,13 +77,35 @@ type LoadState =
   | { phase: 'empty' }
   | { phase: 'ready'; session: Session; seanceVersionId: string };
 
+/**
+ * Tout ce dont l'initialiseur du reducer de `CaptureBoard` a besoin, résolu au
+ * chargement (avant le 1ᵉʳ render) pour que séries, notes et id d'exécution
+ * désignent la MÊME exécution du jour ADOPTÉE :
+ *   - `date` : la date adoptée (today, ou la veille si une séance entamée hier
+ *     n'a pas été clôturée — frontière minuit, bug H1/F10). Résolue UNE fois ici,
+ *     puis utilisée pour interroger Supabase ET comme clé de persistance ;
+ *   - `executionId` : l'id RÉEL de l'exécution du jour en base si elle existe,
+ *     sinon `newId()` (séance neuve). Sans quoi l'UI repartirait sous un id
+ *     fantôme et créerait une 2ᵉ exécution orpheline (bug H1) ;
+ *   - `progress` / `datedNotes` : le réalisé réhydraté (avec ses ids réels) ;
+ *   - `restored` : le cache localStorage de la date adoptée (filet offline),
+ *     fusionné par `mergeProgress` au montage.
+ */
+interface CaptureInit {
+  date: string;
+  executionId: string;
+  progress: Record<string, HydratedProgress>;
+  datedNotes: Record<string, DatedNoteDraft>;
+  restored: CaptureState | null;
+}
+
 export function CaptureScreen() {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
-  // Le réalisé Supabase du jour, posé par l'effet de chargement, lu par CaptureBoard.
-  const hydrationRef = useRef<Record<string, PerformedSet[]>>({});
-  // Les notes datées Supabase du jour (issue #26), posées au chargement, lues par CaptureBoard.
-  const datedNotesRef = useRef<Record<string, DatedNoteDraft>>({});
+  // L'init du reducer (date adoptée, id d'exécution réel, réalisé + notes du jour,
+  // cache local), posée par l'effet de chargement et lue par CaptureBoard à son
+  // 1ᵉʳ render. Une seule ref : séries, notes et id décrivent la même exécution.
+  const initRef = useRef<CaptureInit | null>(null);
 
   // Charge une séance résolue (sa version courante) vers la phase « ready » :
   // template -> références par exo -> réhydratation du réalisé du jour. Le drapeau
@@ -96,10 +116,16 @@ export function CaptureScreen() {
     async ({ seance, seanceVersionId }: LoadedSeance, active: () => boolean) => {
       const base = await loadSeanceForCapture(seance, seanceVersionId);
 
+      // Date ADOPTÉE résolue AVANT d'interroger Supabase (frontière minuit, bug
+      // H1/F10) : on réhydrate le jour réellement repris, pas un `todayIso()` figé
+      // qui basculerait après minuit. `resolveCaptureDate` ne dépend que de
+      // l'id de séance (clé localStorage) — la séance est déjà connue ici.
+      const { date, restored } = resolveCaptureDate(base);
+
       // Par exo : référence (dernière fois) ET note d'instructions (issue #26),
-      // affichée comme référence en Capture. En parallèle : le réalisé du jour et
-      // les notes datées du jour (réhydratation au montage, Supabase fait foi).
-      const [withRefs, todayProgress, todayDatedNotes] = await Promise.all([
+      // affichée comme référence en Capture. En parallèle : l'exécution du jour
+      // ADOPTÉ (réalisé + notes + son id réel) pour la réhydratation au montage.
+      const [withRefs, today] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
             // Référence (dernière fois), note d'instructions ET records (issue #34),
@@ -112,17 +138,22 @@ export function CaptureScreen() {
             return { ...ex, reference, perExerciseNote, personalRecord };
           }),
         ),
-        loadTodayProgress(seanceVersionId),
-        loadTodayDatedNotes(seanceVersionId),
+        loadTodayExecution(seanceVersionId, date),
       ]);
 
       if (!active()) return;
       const session: Session = { ...base, exercises: withRefs };
-      // On transporte le réalisé et les notes datées chargés vers le reducer via
-      // des refs, posés AVANT le passage en « ready » pour être prêts au 1ᵉʳ
-      // render de CaptureBoard.
-      hydrationRef.current = todayProgress;
-      datedNotesRef.current = todayDatedNotes;
+      // On transporte l'init vers le reducer via une ref, posée AVANT le passage
+      // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
+      // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
+      // réalisé/notes vides. Sinon on ADOPTE l'id réel de l'exécution du jour.
+      initRef.current = {
+        date,
+        executionId: today?.executionId ?? newId(),
+        progress: today?.progress ?? {},
+        datedNotes: today?.datedNotes ?? {},
+        restored,
+      };
       setLoad({ phase: 'ready', session, seanceVersionId });
     },
     [],
@@ -243,8 +274,8 @@ export function CaptureScreen() {
       key={load.session.id}
       session={load.session}
       seanceVersionId={load.seanceVersionId}
-      initialProgress={hydrationRef.current}
-      initialDatedNotes={datedNotesRef.current}
+      // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
+      init={initRef.current!}
     />
   );
 }
@@ -306,48 +337,6 @@ function SeancePicker({
     </div>
   );
 }
-
-// --- Couche de synchronisation (outbox) -------------------------------------
-
-/**
- * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
- * toutes idempotentes par id (cf. data.ts). C'est le seul point de couplage
- * entre l'outbox (logique pure) et Supabase.
- */
-const syncFns: SyncFns = {
-  upsertExecution: (op) =>
-    upsertExecution({
-      id: op.id,
-      seanceVersionId: op.seanceVersionId,
-      performedOn: op.performedOn,
-    }),
-  insertSet: (op) =>
-    upsertSet({
-      id: op.id,
-      executionId: op.executionId,
-      exerciseId: op.exerciseId,
-      setOrder: op.setOrder,
-      weightKg: op.weightKg,
-      reps: op.reps,
-      rir: op.rir,
-      side: op.side,
-    }),
-  deleteSet: (op) => deleteSetById(op.id),
-  updateExecution: (op) =>
-    updateExecution({ id: op.id, bpmAvg: op.bpmAvg, durationMin: op.durationMin }),
-  upsertDatedNote: (op) =>
-    upsertDatedNoteRow({
-      id: op.id,
-      executionId: op.executionId,
-      exerciseId: op.exerciseId,
-      body: op.body,
-    }),
-  deleteDatedNote: (op) => deleteDatedNoteById(op.id),
-  // La capture du jour n'enfile jamais cette op (la suppression d'exécution vient
-  // du journal, cf. ADR 0008), mais l'objet doit satisfaire `SyncFns` ; on câble
-  // le même chemin idempotent par id.
-  deleteExecution: (op) => deleteExecutionById(op.id),
-};
 
 // --- Indicateur de sync réactif --------------------------------------------
 // La bannière est pilotée par la LONGUEUR de l'outbox + l'état réseau. On
@@ -414,15 +403,21 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 function CaptureBoard({
   session: initialSession,
   seanceVersionId,
-  initialProgress,
-  initialDatedNotes,
+  init,
 }: {
   session: Session;
   seanceVersionId: string;
-  initialProgress: Record<string, PerformedSet[]>;
-  initialDatedNotes: Record<string, DatedNoteDraft>;
+  init: CaptureInit;
 }) {
-  const [date] = useState(todayIso);
+  // Date de la séance ADOPTÉE au montage : aujourd'hui en temps normal, MAIS la
+  // veille si une séance entamée hier n'a pas été clôturée (frontière minuit,
+  // bug H1/F10 — sinon le réalisé en cours « disparaît » après minuit). Résolue
+  // UNE fois AU CHARGEMENT (`loadSeance`), pour que l'exécution Supabase réhydratée
+  // et la clé de persistance visent le MÊME jour. `date` en dérive et reste figé
+  // tant que la séance reprise dure — un reset / une nouvelle séance le repassent
+  // à `todayIso()` (la séance neuve démarre aujourd'hui, jamais sous la veille).
+  const initRef = useRef(init);
+  const [date, setDate] = useState(initRef.current.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
   // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
@@ -431,14 +426,35 @@ function CaptureBoard({
   const templateIdsRef = useRef(templateExerciseIds(initialSession));
 
   // Restauration au montage : Supabase fait foi, localStorage est un filet
-  // (survie au background / écriture offline non encore synchronisée). Pour
-  // chaque exo on garde la source ayant le plus de séries.
+  // (survie au background / écriture offline non encore synchronisée). On fusionne
+  // (mergeProgress) : pour chaque exo on garde la source la plus avancée, en
+  // alignant les ids pour qu'aucune série affichée ne reste non annulable. On
+  // ADOPTE l'id RÉEL de l'exécution du jour (init.executionId) quand elle existe
+  // en base — sinon un id client neuf (séance neuve) — pour que les nouvelles ops
+  // ne créent pas une exécution orpheline décorrélée des séries (bug H1).
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const fromSupabase = hydratedState(initialSession, initialProgress, initialDatedNotes, date);
-    const fromLocal = loadPersisted(initialSession, date);
-    if (!fromLocal) return fromSupabase;
-    return mergeProgress(fromSupabase, fromLocal);
+    const { date: adoptedDate, executionId, progress, datedNotes, restored } = initRef.current;
+    const fromSupabase = hydratedState(
+      initialSession,
+      progress,
+      datedNotes,
+      adoptedDate,
+      executionId,
+    );
+    if (!restored) return fromSupabase;
+    return mergeProgress(fromSupabase, restored);
   });
+
+  // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
+  // capturé par les handlers est figé entre deux renders : deux taps « Logger »
+  // rapprochés liraient le MÊME state et calculeraient le MÊME set_order, alors
+  // que le reducer en pose deux distincts → deux lignes au même order en base.
+  // On tient donc une projection à jour : assignée à chaque render (suit undo /
+  // reset / réhydratation) ET avancée localement par les handlers JUSTE après leur
+  // dispatch, pour que le tap suivant parte de l'état projeté, pas du périmé. Ainsi
+  // l'order (et l'id à annuler) de l'op et celui du reducer coïncident toujours.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
   // clôturée : la clôture est transitoire (ADR 0009). On nettoie alors le cache
@@ -487,7 +503,10 @@ function CaptureBoard({
       exerciseId: string,
       set: { weightKg: number; reps: number; rir: number; side?: Side },
     ) => {
-      const progress = getProgress(state, exerciseId);
+      // On part de l'état PROJETÉ (stateRef), pas du `state` capturé : deux taps
+      // rapprochés voient ainsi la 1ʳᵉ série déjà posée (bug M6).
+      const current = stateRef.current;
+      const progress = getProgress(current, exerciseId);
       // Côté de cette saisie : pour un exo unilatéral, c'est le côté CHOISI par
       // l'utilisateur via le sélecteur (issue #63), remonté dans le brouillon ;
       // bilatéral = pas de côté. On ne dérive plus « gauche d'abord ».
@@ -498,13 +517,18 @@ function CaptureBoard({
       const order = nextSetOrder(progress, side);
       const setId = newId();
       const loggedSet = { weightKg: set.weightKg, reps: set.reps, rir: set.rir, side };
-      // 1. UI immédiate. 2. Durabilité : exécution (1×) puis la série, dans l'ordre.
-      dispatch({ type: 'log-set', exerciseId, setId, set: loggedSet });
+      // 1. UI immédiate : on dispatch ET on avance la projection synchroniquement
+      //    (même reducer) pour que le tap suivant parte de cet état, pas du périmé.
+      const action = { type: 'log-set', exerciseId, setId, set: loggedSet } as const;
+      dispatch(action);
+      stateRef.current = captureReducer(current, action);
+      // 2. Durabilité : exécution (1×) puis la série, dans l'ordre. L'order dérivé
+      //    de la projection coïncide donc toujours avec celui que le reducer a posé.
       enqueueExecutionOnce();
       enqueueAndFlush({
         type: 'insertSet',
         id: setId,
-        executionId: state.executionId,
+        executionId: current.executionId,
         exerciseId,
         setOrder: order,
         weightKg: set.weightKg,
@@ -513,23 +537,29 @@ function CaptureBoard({
         side,
       });
     },
-    [state, enqueueExecutionOnce],
+    [enqueueExecutionOnce],
   );
 
   const handleUndo = useCallback(
     (exerciseId: string) => {
       // Id de la dernière série encore loggée localement : c'est elle qu'on annule.
-      const prev = getProgress(state, exerciseId);
+      // On lit la projection (stateRef) pour viser la BONNE dernière série même
+      // après des logs synchrones non encore re-rendus (cohérent avec handleLog).
+      const current = stateRef.current;
+      const prev = getProgress(current, exerciseId);
       const lastId = prev.setIds[prev.setIds.length - 1] ?? null;
-      dispatch({ type: 'undo-last-set', exerciseId });
-      // `null` = série réhydratée de la base (pas d'id client connu) : rien à
-      // enfiler (le delete par id ne saurait pas quoi viser). Cas marginal :
-      // on annule en local sans op ; la base garde la ligne (rare, assumé).
+      const action = { type: 'undo-last-set', exerciseId } as const;
+      dispatch(action);
+      stateRef.current = captureReducer(current, action);
+      // Une série réhydratée porte DÉSORMAIS son id réel (bug H2/F1) → on enfile un
+      // `deleteSet` qui retire la ligne en base. `null` ne subsiste que pour un
+      // cache d'ANCIEN format (série sans id) : rien à enfiler (le delete par id ne
+      // saurait quoi viser), on annule en local seulement (rare, assumé).
       if (lastId) {
         enqueueAndFlush({ type: 'deleteSet', id: lastId });
       }
     },
-    [state],
+    [],
   );
 
   // Enregistre la NOTE DATÉE d'un exo (issue #26). L'id de ligne est stable :
@@ -551,13 +581,15 @@ function CaptureBoard({
   );
 
   // Enregistre la NOTE D'INSTRUCTIONS d'un exo, éditée sur place (issue #52).
-  // Persistance DIRECTE via `saveExerciseNote` (upsert si corps réel, delete si
-  // vidé) — PAS l'outbox : cette note vit sur la définition de l'exo (table
-  // `exercise_notes`), pas sur l'exécution du jour. MAJ optimiste : on reflète le
-  // nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
-  // immédiat. Hors-ligne / erreur : on garde l'optimiste (ne pas effacer ce que
-  // l'utilisateur vient de taper en salle) et on trace ; la note ressera au
-  // prochain chargement si l'écriture a finalement échoué.
+  // Persistance via l'OUTBOX (blind F3) : cette note vit sur la définition de
+  // l'exo (table `exercise_notes`), persistante, mais l'éditer hors-ligne en
+  // salle doit survivre comme le reste — l'ancien chemin direct la PERDAIT au
+  // reload (le catch ne faisait qu'un console.error, rien en file). `exerciseNote
+  // OutboxOp` tranche upsert (corps réel) vs delete (corps vidé) ; l'op est
+  // idempotente par exerciseId (singleton par user+exo). NE dépend PAS de
+  // l'exécution → on n'enfile PAS d'upsertExecution. MAJ optimiste : on reflète
+  // le nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
+  // immédiat ; la durabilité est portée par l'outbox.
   const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
     setSession((s) => ({
       ...s,
@@ -565,9 +597,7 @@ function CaptureBoard({
         ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
       ),
     }));
-    void saveExerciseNote(exerciseId, body).catch((err) => {
-      console.error('Échec de l’enregistrement de la note d’exercice', err);
-    });
+    enqueueAndFlush(exerciseNoteOutboxOp({ exerciseId, body }));
   }, []);
 
   // --- Ajout / swap d'un exo à la volée (issue #36) -------------------------
@@ -589,17 +619,26 @@ function CaptureBoard({
 
   const handleReset = useCallback(() => {
     clearPersisted(session, date);
-    // Nouvelle exécution = id client neuf (la précédente reste en base). La file
-    // est vidée : ses ops visaient l'ancienne exécution, déjà close.
-    clearQueue();
+    // Nouvelle exécution = id client neuf (la précédente reste en base). On purge
+    // de la file UNIQUEMENT les ops de l'exécution abandonnée (purgeByExecution),
+    // PAS toute la file (clearQueue) : en offline, elle peut aussi porter les
+    // séries non synchronisées d'une AUTRE exécution ou une correction d'historique
+    // en attente — celles-ci survivent et remonteront au retour du réseau. Les
+    // deleteSet/deleteDatedNote éventuels restent (idempotents par id, sans effet
+    // si la ligne, dont l'insert vient d'être retiré, n'a jamais existé en base).
+    purgeByExecution(state.executionId);
     notifySync();
     executionEnqueuedRef.current = false;
     // La séance repart du template d'origine : les ajouts/swaps de l'exécution
     // close ne se reportent pas sur la suivante (un swap se redécide chaque jour).
     setSession(initialSession);
+    // Une séance neuve démarre AUJOURD'HUI, même si on venait de reprendre une
+    // séance entamée la veille (frontière minuit) : la nouvelle exécution doit
+    // viser `today` (`performed_on` + clé de persistance), pas la veille.
+    setDate(todayIso());
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
-  }, [session, date, initialSession]);
+  }, [session, date, initialSession, state.executionId]);
 
   // Après clôture : repartir sur une séance fraîche. On NE vide PAS la file —
   // les ops de la séance close doivent encore se synchroniser (contrairement à
@@ -608,6 +647,8 @@ function CaptureBoard({
     clearPersisted(session, date);
     executionEnqueuedRef.current = false;
     setSession(initialSession);
+    // Comme le reset : une séance neuve repart sous AUJOURD'HUI (cf. handleReset).
+    setDate(todayIso());
     dispatch({ type: 'reset', executionId: newId() });
     setPhase('capture');
   }, [session, date, initialSession]);
@@ -639,17 +680,22 @@ function CaptureBoard({
       // PUIS la pose des métriques. La durée vient du chrono (lancement →
       // clôture), pas d'une saisie. Tout remonte seul au retour du réseau.
       enqueueExecutionOnce();
+      // Un seul instant de clôture : en base (ISO) ET en mémoire (epoch ms).
+      const closedAtMs = Date.now();
       enqueueAndFlush({
         type: 'updateExecution',
         id: state.executionId,
         bpmAvg: values.bpmAvg,
         durationMin: durationMin ?? undefined,
+        // Matérialise la clôture EN BASE (ADR 0009) : `loadTodayExecution` filtre
+        // sur `closed_at`, donc cette séance « rangée » n'est PLUS réhydratée — on
+        // repart vraiment vierge même après un reload (le cache local, lui, est
+        // nettoyé par le câblage de persistance, cf. l'effet plus bas).
+        closedAt: new Date(closedAtMs).toISOString(),
       });
       // Pose la CLÔTURE en mémoire : SessionEnd montre le récap dans la foulée
-      // (son état `saved`). Le câblage de persistance nettoie alors le cache
-      // (ADR 0009 : clôture transitoire) → au remontage on repart vierge, on ne
-      // réaffiche PLUS « Séance terminée ».
-      dispatch({ type: 'close', closedAt: Date.now() });
+      // (son état `saved`) ; le câblage de persistance nettoie alors le cache.
+      dispatch({ type: 'close', closedAt: closedAtMs });
     },
     [enqueueExecutionOnce, state.executionId, durationMin],
   );
@@ -715,43 +761,6 @@ function CaptureBoard({
       )}
     </div>
   );
-}
-
-/**
- * Fusionne deux états : pour chaque exo, on garde le réalisé le plus avancé.
- * `b` = état restauré du localStorage : son `startedAt` (le lancement réel,
- * persisté) prime sur celui fraîchement re-créé par l'hydratation Supabase, pour
- * que la durée chronométrée survive au passage en arrière-plan. Son `executionId`
- * prime aussi : c'est l'exécution EN COURS, celle que visent les ops déjà en
- * outbox (sinon le rejeu créerait une exécution orpheline).
- */
-function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
-  const ids = new Set([...Object.keys(a.progress), ...Object.keys(b.progress)]);
-  const progress: CaptureState['progress'] = {};
-  for (const id of ids) {
-    const pa = a.progress[id];
-    const pb = b.progress[id];
-    if (!pa) progress[id] = pb;
-    else if (!pb) progress[id] = pa;
-    else progress[id] = pa.sets.length >= pb.sets.length ? pa : pb;
-  }
-  // Notes datées : le LOCAL (b) prime par exo (une saisie offline pas encore
-  // synchronisée ne doit pas être écrasée par la base), mais on garde la note de
-  // la base (a) pour un exo que le local ne porte pas. Les ids alignés sur
-  // b.executionId restent cohérents avec les ops déjà en outbox.
-  const datedNotes: CaptureState['datedNotes'] = { ...a.datedNotes, ...b.datedNotes };
-  // `closedAt` reste `null` : on ne fusionne QUE des états « en cours ». La clôture
-  // est transitoire (ADR 0009) et n'est jamais restaurée — `loadPersisted` (b) la
-  // force à null et la base (a) ne la connaît pas. Une séance close a vu son cache
-  // nettoyé, donc `mergeProgress` ne s'exécute même pas dessus (fromLocal == null).
-  return {
-    ...a,
-    executionId: b.executionId,
-    startedAt: b.startedAt,
-    progress,
-    datedNotes,
-    closedAt: null,
-  };
 }
 
 /**
@@ -854,9 +863,11 @@ function CapturePanel({
     ? draft?.side ?? pendingSide(progress) ?? 'left'
     : null;
   // Nombre de SÉRIES complètes : pour l'unilatéral, une série = gauche + droite,
-  // donc on compte les saisies droites déjà loggées. Bilatéral = une saisie/série.
+  // donc on compte les ORDERS dont les DEUX côtés sont présents (blind F4 : compter
+  // les saisies droites restait à 0 si l'utilisateur loggeait deux fois le même
+  // côté). Bilatéral = une saisie/série. Sert au numéro annoncé en aria-live.
   const completedSets = unilateral
-    ? progress.sets.filter((s) => s.side === 'right').length
+    ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
     : progress.sets.length;
   const reachedMax = completedSets >= exercise.prescription.sets.max;
 

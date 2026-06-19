@@ -18,10 +18,13 @@ import {
   updateSet,
   removeSet,
   diffSetsToOps,
+  groupIntoLogicalSets,
   type EditableSet,
+  type LogicalSet,
 } from '../capture/past-session-edit';
 import { flushOps } from '../capture/sync';
 import type { OutboxOp } from '../capture/outbox';
+import type { Side } from '../../domain/types';
 
 const WEIGHT_STEP = 2.5;
 const WEIGHT_FINE = 1.25;
@@ -46,6 +49,14 @@ interface ExerciseEditState {
   original: EditableSet[];
   /** Séries après éditions de l'user. */
   edited: EditableSet[];
+  /**
+   * L'exo est-il UNILATÉRAL ? Figé AU CHARGEMENT depuis l'ORIGINAL (un côté loggé
+   * suffit, ADR 0005), jamais réinféré de la liste éditée. Sinon, après avoir
+   * supprimé toutes les séries d'un exo unilatéral, « Ajouter une série »
+   * retomberait sur une ligne bilatérale (side null) faute de côté restant à
+   * inspecter — la nouvelle paire G/D serait perdue.
+   */
+  unilateral: boolean;
 }
 
 type LoadPhase =
@@ -170,12 +181,20 @@ export function PastSessionEditor({
     setDel({ phase: 'deleting' });
     try {
       // Hard delete (ADR 0008) : une seule op `deleteExecution`, la cascade DB
-      // efface séries + notes datées. L'op est DURABLE dès l'enqueue (localStorage),
-      // donc on ferme et on recharge de façon OPTIMISTE sans attendre le réseau :
-      // même offline, elle remontera au prochain flush comme la capture du jour.
-      // On n'inspecte pas `remaining` (contrairement à `save`) : il n'y a plus
-      // rien à rouvrir, l'éditeur se ferme sur cette exécution dans tous les cas.
-      await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      // efface séries + notes datées. L'op est DURABLE dès l'enqueue (localStorage)
+      // et le flush GLOBAL de l'app (App.tsx, montage + 'online') garantit sa
+      // remontée même si on ne repasse pas par la Capture.
+      // `flush` ne REJETTE PAS sur une coupure : il s'arrête à l'op en échec et
+      // renvoie `remaining > 0` (cf. outbox.ts). Si la suppression n'a pas pu
+      // remonter tout de suite (offline), on GARDE la feuille en `error` pour le
+      // signaler honnêtement (« partira au retour du réseau ») plutôt que de
+      // fermer en laissant croire à une synchro immédiate. Sinon, fermeture
+      // optimiste : l'éditeur se referme sur l'exécution supprimée.
+      const result = await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      if (result.remaining > 0) {
+        setDel({ phase: 'error', message: 'Pas de réseau pour le moment.' });
+        return;
+      }
       onDeleted();
     } catch (err) {
       // Erreur inattendue (pas une simple coupure) : l'op reste durable et
@@ -205,10 +224,15 @@ export function PastSessionEditor({
   }
 
   // Ce que la suppression effacera, chiffré pour la confirmation (ADR 0008) :
-  //   M = nombre d'exos chargés ; N = total des séries RÉELLES en base (`original`,
-  // jamais `edited` qui refléterait des corrections non encore sauvegardées).
+  //   M = nombre d'exos chargés ; N = total des SÉRIES LOGIQUES réelles en base
+  // (`original`, jamais `edited` qui refléterait des corrections non sauvegardées).
+  // On compte les séries, pas les lignes : une série unilatérale = 2 lignes (G/D)
+  // mais UNE série (le libellé de confirmation parle de « séries », ADR 0005).
   const exerciseCount = load.exercises.length;
-  const setCount = load.exercises.reduce((sum, ex) => sum + ex.original.length, 0);
+  const setCount = load.exercises.reduce(
+    (sum, ex) => sum + groupIntoLogicalSets(ex.original).length,
+    0,
+  );
 
   return (
     <EditorShell onClose={onClose} date={load.date}>
@@ -220,11 +244,20 @@ export function PastSessionEditor({
             onUpdateSet={(id, values) =>
               patchExercise(ex.exerciseId, (sets) => updateSet(sets, id, values))
             }
-            onRemoveSet={(id) =>
-              patchExercise(ex.exerciseId, (sets) => removeSet(sets, id))
+            onRemoveSet={(ids) =>
+              patchExercise(ex.exerciseId, (sets) =>
+                // Une série unilatérale supprimée part en entier (les deux côtés) :
+                // jamais une série à un seul côté (ADR 0005).
+                ids.reduce((acc, id) => removeSet(acc, id), sets),
+              )
             }
             onAddSet={() =>
-              patchExercise(ex.exerciseId, (sets) => addSet(sets, seedNewSet(sets)))
+              patchExercise(ex.exerciseId, (sets) =>
+                // Reprend la même paire G/D pour un exo unilatéral, une ligne sinon.
+                // L'unilatéralité vient de l'état (figé au chargement), pas de la
+                // liste courante : ajouter reste correct même après tout supprimer.
+                seedNewSets(sets, ex.unilateral).reduce((acc, s) => addSet(acc, s), sets),
+              )
             }
           />
         ))}
@@ -377,6 +410,17 @@ function DeleteConfirmSheet({
 }
 
 // --- Édition d'un exo --------------------------------------------------------
+//
+// On édite par SÉRIE LOGIQUE, pas par ligne (ADR 0005) : une série bilatérale
+// tient sur une ligne, une série unilatérale sur deux côtés (gauche/droite)
+// éditables séparément mais dans UN bloc « Série N ». Conséquences pour ne jamais
+// corrompre le côté faible : (a) `side` n'est jamais touché par l'édition de
+// valeurs (`updateSet` ne change que poids/reps/RIR) ; (b) supprimer une série
+// unilatérale retire LES DEUX côtés d'un coup ; (c) ajouter une série rajoute la
+// paire complète. Le regroupement vient de `groupIntoLogicalSets` (module pur).
+
+type RemoveSet = (ids: string[]) => void;
+type UpdateSet = (id: string, values: Pick<EditableSet, 'weightKg' | 'reps' | 'rir'>) => void;
 
 function ExerciseEditor({
   exercise,
@@ -385,77 +429,25 @@ function ExerciseEditor({
   onAddSet,
 }: {
   exercise: ExerciseEditState;
-  onUpdateSet: (id: string, values: Pick<EditableSet, 'weightKg' | 'reps' | 'rir'>) => void;
-  onRemoveSet: (id: string) => void;
+  onUpdateSet: UpdateSet;
+  onRemoveSet: RemoveSet;
   onAddSet: () => void;
 }) {
+  const logicalSets = groupIntoLogicalSets(exercise.edited);
+
   return (
     <section className="rounded-2xl border border-line bg-surface p-4">
       <h3 className="text-base font-semibold leading-tight text-ink">{exercise.name}</h3>
 
       <ol className="mt-3 flex flex-col gap-4">
-        {exercise.edited.map((set, index) => (
-          <li key={set.id} className="rounded-xl bg-surface-2/60 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="readout text-sm font-medium tabular-nums text-ink-muted">
-                Série <span className="text-ink">{index + 1}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => onRemoveSet(set.id)}
-                className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
-                aria-label={`Supprimer la série ${index + 1}`}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
-                </svg>
-                Supprimer
-              </button>
-            </div>
-
-            <Stepper
-              label="Poids"
-              unit="kg"
-              value={set.weightKg}
-              step={WEIGHT_STEP}
-              fineStep={WEIGHT_FINE}
-              min={0}
-              format={formatWeight}
-              onChange={(weightKg) =>
-                onUpdateSet(set.id, { weightKg, reps: set.reps, rir: set.rir })
-              }
-            />
-            <div className="mt-3 grid grid-cols-2 gap-4">
-              <Stepper
-                label="Reps"
-                value={set.reps}
-                step={1}
-                min={1}
-                onChange={(reps) =>
-                  onUpdateSet(set.id, { weightKg: set.weightKg, reps, rir: set.rir })
-                }
-              />
-              <Stepper
-                label="RIR"
-                value={set.rir}
-                step={1}
-                min={0}
-                onChange={(rir) =>
-                  onUpdateSet(set.id, { weightKg: set.weightKg, reps: set.reps, rir })
-                }
-              />
-            </div>
-          </li>
+        {logicalSets.map((logical, index) => (
+          <LogicalSetEditor
+            key={logical.both?.id ?? `${logical.left?.id ?? 'l'}-${logical.right?.id ?? 'r'}`}
+            logical={logical}
+            index={index}
+            onUpdateSet={onUpdateSet}
+            onRemoveSet={onRemoveSet}
+          />
         ))}
       </ol>
 
@@ -480,6 +472,122 @@ function ExerciseEditor({
         Ajouter une série
       </button>
     </section>
+  );
+}
+
+/** Une série logique éditable : une ligne (bilatéral) ou deux côtés G/D (unilatéral). */
+function LogicalSetEditor({
+  logical,
+  index,
+  onUpdateSet,
+  onRemoveSet,
+}: {
+  logical: LogicalSet;
+  index: number;
+  onUpdateSet: UpdateSet;
+  onRemoveSet: RemoveSet;
+}) {
+  // Les ids des lignes de CETTE série logique : 1 (bilatéral) ou 2 (la paire G/D).
+  const ids = [logical.both, logical.left, logical.right]
+    .filter((s): s is EditableSet => s !== null)
+    .map((s) => s.id);
+
+  return (
+    <li className="rounded-xl bg-surface-2/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="readout text-sm font-medium tabular-nums text-ink-muted">
+          Série <span className="text-ink">{index + 1}</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => onRemoveSet(ids)}
+          className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
+          aria-label={`Supprimer la série ${index + 1}`}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+          </svg>
+          Supprimer
+        </button>
+      </div>
+
+      {logical.both !== null ? (
+        <SetFields set={logical.both} onUpdateSet={onUpdateSet} />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {logical.left !== null && (
+            <SetFields set={logical.left} side="left" onUpdateSet={onUpdateSet} />
+          )}
+          {logical.right !== null && (
+            <SetFields set={logical.right} side="right" onUpdateSet={onUpdateSet} />
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** Les steppers d'UNE ligne (poids/reps/RIR), précédés du label de côté en unilatéral. */
+function SetFields({
+  set,
+  side,
+  onUpdateSet,
+}: {
+  set: EditableSet;
+  /** Côté affiché (unilatéral) ; absent en bilatéral (pas de label). */
+  side?: Side;
+  onUpdateSet: UpdateSet;
+}) {
+  return (
+    <div>
+      {side !== undefined && (
+        <span className="mb-1.5 inline-block text-xs font-semibold uppercase tracking-wide text-ink-muted">
+          {side === 'left' ? 'Gauche' : 'Droite'}
+        </span>
+      )}
+      <Stepper
+        label="Poids"
+        unit="kg"
+        value={set.weightKg}
+        step={WEIGHT_STEP}
+        fineStep={WEIGHT_FINE}
+        min={0}
+        format={formatWeight}
+        onChange={(weightKg) =>
+          onUpdateSet(set.id, { weightKg, reps: set.reps, rir: set.rir })
+        }
+      />
+      <div className="mt-3 grid grid-cols-2 gap-4">
+        <Stepper
+          label="Reps"
+          value={set.reps}
+          step={1}
+          min={1}
+          onChange={(reps) =>
+            onUpdateSet(set.id, { weightKg: set.weightKg, reps, rir: set.rir })
+          }
+        />
+        <Stepper
+          label="RIR"
+          value={set.rir}
+          step={1}
+          min={0}
+          onChange={(rir) =>
+            onUpdateSet(set.id, { weightKg: set.weightKg, reps: set.reps, rir })
+          }
+        />
+      </div>
+    </div>
   );
 }
 
@@ -559,6 +667,9 @@ function toEditStates(exec: EditableExecution): ExerciseEditState[] {
     original: ex.sets,
     // Copie distincte : l'édition ne doit jamais muter la référence du diff.
     edited: ex.sets.map((s) => ({ ...s })),
+    // Unilatéralité figée depuis l'ORIGINAL : un côté loggé suffit (ADR 0005).
+    // Reste vrai même si l'user supprime ensuite toutes les séries.
+    unilateral: ex.sets.some((s) => s.side !== undefined),
   }));
 }
 
@@ -571,14 +682,32 @@ function buildOps(ex: ExerciseEditState, executionId: string): OutboxOp[] {
 }
 
 /**
- * Valeurs de la série ajoutée : report de la dernière série (le plus probable
- * en muscu, on reprend la même charge), sinon un point de départ neutre. L'id
- * est un UUID client neuf (cf. ADR 0003) pour que l'insert ne collisionne pas.
+ * Les lignes d'une série AJOUTÉE : report des valeurs de la dernière série (le
+ * plus probable en muscu, on reprend la même charge), sinon un point de départ
+ * neutre. Chaque ligne reçoit un UUID client neuf (cf. ADR 0003) pour que
+ * l'insert ne collisionne pas.
+ *
+ * `unilateral` vient de l'état d'édition (figé au chargement depuis l'original),
+ * PAS de la liste `sets` courante : sinon, après avoir supprimé toutes les séries
+ * d'un exo unilatéral, la liste vide ferait conclure « bilatéral » et l'ajout
+ * créerait une ligne `side: null` (upsert bilatéral) au lieu d'une paire G/D.
+ *
+ * Pour un exo UNILATÉRAL, on ajoute une PAIRE complète (gauche + droite) : jamais
+ * une série à un seul côté (ADR 0005), avec les valeurs du côté correspondant en
+ * base. Pour un exo bilatéral, une seule ligne sans `side`. Les `sets` ne servent
+ * qu'au REPORT des valeurs (dernière série du côté visé), jamais à décider du côté.
  */
-function seedNewSet(sets: EditableSet[]): EditableSet {
-  const last = sets[sets.length - 1];
-  if (last) {
-    return { id: newId(), weightKg: last.weightKg, reps: last.reps, rir: last.rir };
+function seedNewSets(sets: EditableSet[], unilateral: boolean): EditableSet[] {
+  const seedValues = (side?: Side): EditableSet => {
+    const ref =
+      [...sets].reverse().find((s) => s.side === side) ?? sets[sets.length - 1];
+    const base = ref
+      ? { weightKg: ref.weightKg, reps: ref.reps, rir: ref.rir }
+      : { weightKg: 20, reps: 10, rir: 1 };
+    return { id: newId(), ...base, side };
+  };
+  if (unilateral) {
+    return [seedValues('left'), seedValues('right')];
   }
-  return { id: newId(), weightKg: 20, reps: 10, rir: 1 };
+  return [seedValues(undefined)];
 }

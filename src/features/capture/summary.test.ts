@@ -236,6 +236,23 @@ describe('buildSummary — décompte réel par muscle (issue #37)', () => {
     expect(s.setsByMuscle).toEqual({ quadriceps: 2, fessiers: 2 });
   });
 
+  it('exo unilatéral "fait" : on compte les SÉRIES LOGIQUES (orders), pas les lignes', () => {
+    // split-squat : unilatéral, prescrit min=3 séries. Deux séries logiques
+    // tiennent sur QUATRE lignes : compter les lignes (4 ≥ 3) le déclarerait
+    // « fait » à tort dès la 2ᵉ série. Il faut 3 séries logiques (6 lignes).
+    let state = monoState();
+    state = logUni(state, 'split-squat', 'u1l', 'left');
+    state = logUni(state, 'split-squat', 'u1r', 'right'); // série logique 1
+    state = logUni(state, 'split-squat', 'u2l', 'left');
+    state = logUni(state, 'split-squat', 'u2r', 'right'); // série logique 2 (4 lignes)
+    // 4 lignes mais seulement 2 séries logiques < 3 → PAS encore fait.
+    expect(buildSummary(mono, state).exercisesDone).toBe(0);
+
+    state = logUni(state, 'split-squat', 'u3l', 'left');
+    state = logUni(state, 'split-squat', 'u3r', 'right'); // série logique 3 → fait
+    expect(buildSummary(mono, state).exercisesDone).toBe(1);
+  });
+
   it('mélange bilatéral + unilatéral : cumule total et muscles', () => {
     let state = monoState();
     state = captureReducer(state, { type: 'log-set', exerciseId: 'bench', setId: 'b1', set: set1 });
