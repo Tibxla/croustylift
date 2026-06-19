@@ -39,6 +39,21 @@ const mkSide = (
   rir: number,
 ): EditableSet => ({ id, weightKg, reps, rir, side });
 
+/**
+ * Une ligne unilatérale CHARGÉE DEPUIS LA BASE : `mkSide` + son `sourceOrder`
+ * (le set_order d'origine, ancre du regroupement en série logique, ADR 0005).
+ * Simule ce que `groupSetsForEdit` porte ; les lignes neuves (via `mkSide`) n'en
+ * ont pas.
+ */
+const mkAt = (
+  id: string,
+  side: Side,
+  sourceOrder: number,
+  weightKg: number,
+  reps: number,
+  rir: number,
+): EditableSet => ({ id, weightKg, reps, rir, side, sourceOrder });
+
 // Trois séries « en base » d'un exo (ids réels, comme renvoyés par le chargement).
 const original = (): EditableSet[] => [
   mkSet('s1', 80, 8, 2),
@@ -167,6 +182,63 @@ describe('reorderSets', () => {
       mkSide('l2', 'left', 30, 9, 1),
     ]);
     expect(ordered.map((s) => s.order)).toEqual([1, 1, 2]);
+  });
+
+  // --- Côté ORPHELIN ancré sur `sourceOrder` (bug H3) -----------------------
+  // Régression : une série INCOMPLÈTE (un seul côté loggé, ADR 0005) chargée
+  // depuis la base apparaît AVANT une série complète au tri par set_order. Sans
+  // ancrage sur l'order d'origine, le recompactage par contiguïté fusionnait le
+  // côté orphelin (D de S1) avec le premier côté de la série suivante (G de S2),
+  // produisant une paire fausse — côté faible / décompte / courbe e1RM faux.
+
+  it('unilatéral : un côté orphelin (série incomplète) n’est pas fusionné avec la série suivante', () => {
+    // Base : right@1 (incomplète, D seul), puis left@2 + right@2 (complète).
+    // Tri de chargement par (order, côté G<D) -> [r1, l2, r2].
+    const ordered = reorderSets([
+      mkAt('r1', 'right', 1, 28, 10, 2),
+      mkAt('l2', 'left', 2, 30, 9, 1),
+      mkAt('r2', 'right', 2, 28, 9, 1),
+    ]);
+    // r1 (sourceOrder 1) reste seul -> rang 1 ; l2+r2 (sourceOrder 2) -> rang 2.
+    expect(ordered.map((s) => s.id)).toEqual(['r1', 'l2', 'r2']);
+    expect(ordered.map((s) => s.order)).toEqual([1, 2, 2]);
+    // r1 n'est JAMAIS apparié au côté gauche d'une autre série.
+    expect(ordered[0].side).toBe('right');
+  });
+
+  it('unilatéral : deux séries incomplètes du même côté restent deux séries', () => {
+    // left@1 (D manque), left@2 (D manque) : sans `sourceOrder`, la contiguïté
+    // les sépare déjà ; avec, l'ancre confirme deux rangs distincts.
+    const ordered = reorderSets([
+      mkAt('l1', 'left', 1, 30, 10, 2),
+      mkAt('l2', 'left', 2, 30, 9, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 2]);
+  });
+
+  it('unilatéral : l’order d’origine prime sur la contiguïté si la base a des set_order non contigus', () => {
+    // Deux paires complètes mais aux set_order 2 et 5 (trous en base après des
+    // suppressions antérieures) : recompactées en rangs 1 et 2, paires intactes.
+    const ordered = reorderSets([
+      mkAt('l1', 'left', 2, 30, 10, 2),
+      mkAt('r1', 'right', 2, 28, 10, 2),
+      mkAt('l2', 'left', 5, 30, 9, 1),
+      mkAt('r2', 'right', 5, 28, 9, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1, 2, 2]);
+    expect(ordered.map((s) => s.side)).toEqual(['left', 'right', 'left', 'right']);
+  });
+
+  it('unilatéral : une paire neuve ajoutée après des séries chargées garde la paire collée', () => {
+    // l1/r1 chargés (sourceOrder 1), puis l3/r3 ajoutés (pas de sourceOrder).
+    const ordered = reorderSets([
+      mkAt('l1', 'left', 1, 30, 10, 2),
+      mkAt('r1', 'right', 1, 28, 10, 2),
+      mkSide('l3', 'left', 30, 8, 1),
+      mkSide('r3', 'right', 28, 8, 1),
+    ]);
+    expect(ordered.map((s) => s.order)).toEqual([1, 1, 2, 2]);
+    expect(ordered.map((s) => s.id)).toEqual(['l1', 'r1', 'l3', 'r3']);
   });
 });
 
@@ -318,7 +390,9 @@ describe('groupSetsForEdit', () => {
     const bench = exercises.find((e) => e.exerciseId === 'bench')!;
     expect(bench.name).toBe('Développé couché');
     expect(bench.sets.map((s) => s.id)).toEqual(['b1', 'b2']);
-    expect(bench.sets[0]).toEqual({ id: 'b1', weightKg: 80, reps: 8, rir: 2 });
+    // `sourceOrder` reporte le set_order d'origine (ancre du groupage en série
+    // logique) ; `side` reste absent en bilatéral.
+    expect(bench.sets[0]).toEqual({ id: 'b1', weightKg: 80, reps: 8, rir: 2, sourceOrder: 1 });
   });
 
   it('trie les exos par nom (locale fr)', () => {
@@ -427,6 +501,32 @@ describe('diffSetsToOps (unilatéral)', () => {
     expect(l3.side).toBe('left');
     expect(r3.side).toBe('right');
   });
+
+  // Bug H3 dans le diff : une exécution chargée avec une série incomplète (D
+  // orphelin @1) puis une série complète (@2). Éditer le côté orphelin ne doit
+  // ré-affirmer QUE lui, sans dé-apparier ni ré-affirmer la paire suivante.
+  const incompleteUni = (): EditableSet[] =>
+    groupSetsForEdit([
+      { id: 'r1', exerciseId: 'db', exerciseName: 'Curl', order: 1, weightKg: 28, reps: 10, rir: 2, side: 'right' },
+      { id: 'l2', exerciseId: 'db', exerciseName: 'Curl', order: 2, weightKg: 30, reps: 9, rir: 1, side: 'left' },
+      { id: 'r2', exerciseId: 'db', exerciseName: 'Curl', order: 2, weightKg: 28, reps: 9, rir: 1, side: 'right' },
+    ])[0].sets;
+
+  it('série incomplète chargée -> aucune édition ne produit aucune op (appariement stable)', () => {
+    const sets = incompleteUni();
+    expect(diffSetsToOps(sets, sets, ctx)).toEqual([]);
+  });
+
+  it('modifier le côté orphelin -> ré-affirme ce côté seul, à son order 1, sans toucher la paire @2', () => {
+    const sets = incompleteUni();
+    const edited = updateSet(sets, 'r1', { weightKg: 30, reps: 10, rir: 2 });
+    const ops = diffSetsToOps(sets, edited, ctx);
+    const r1 = ops.find((op) => op.type === 'insertSet' && op.id === 'r1') as InsertSetOp;
+    expect(r1.setOrder).toBe(1);
+    expect(r1.side).toBe('right');
+    // La paire complète @2 (recompactée order 2) n'a pas bougé -> pas d'op.
+    expect(ops.some((op) => op.type === 'insertSet' && (op.id === 'l2' || op.id === 'r2'))).toBe(false);
+  });
 });
 
 describe('groupIntoLogicalSets', () => {
@@ -458,5 +558,25 @@ describe('groupIntoLogicalSets', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].left?.id).toBe('l1');
     expect(groups[0].right).toBeNull();
+  });
+
+  // Bug H3 par le VRAI chemin de chargement : une série incomplète (D seul) en
+  // base, suivie d'une série complète. Le groupage doit garder D@1 SEUL dans sa
+  // série logique et apparier correctement G@2/D@2 — sans le fix, D@1 se
+  // retrouvait dans la même série logique que G@2 (paire fausse, côté faible faux).
+  it('unilatéral incomplet en base : le côté orphelin garde sa propre série logique', () => {
+    const [exercise] = groupSetsForEdit([
+      { id: 'r1', exerciseId: 'db', exerciseName: 'Curl haltère', order: 1, weightKg: 28, reps: 10, rir: 2, side: 'right' },
+      { id: 'l2', exerciseId: 'db', exerciseName: 'Curl haltère', order: 2, weightKg: 30, reps: 9, rir: 1, side: 'left' },
+      { id: 'r2', exerciseId: 'db', exerciseName: 'Curl haltère', order: 2, weightKg: 28, reps: 9, rir: 1, side: 'right' },
+    ]);
+    const groups = groupIntoLogicalSets(exercise.sets);
+    expect(groups).toHaveLength(2);
+    // Série 1 : seulement le côté droit (orphelin), jamais apparié à un gauche.
+    expect(groups[0].right?.id).toBe('r1');
+    expect(groups[0].left).toBeNull();
+    // Série 2 : la VRAIE paire G/D au même set_order d'origine.
+    expect(groups[1].left?.id).toBe('l2');
+    expect(groups[1].right?.id).toBe('r2');
   });
 });

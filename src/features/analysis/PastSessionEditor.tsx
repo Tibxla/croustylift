@@ -49,6 +49,14 @@ interface ExerciseEditState {
   original: EditableSet[];
   /** Séries après éditions de l'user. */
   edited: EditableSet[];
+  /**
+   * L'exo est-il UNILATÉRAL ? Figé AU CHARGEMENT depuis l'ORIGINAL (un côté loggé
+   * suffit, ADR 0005), jamais réinféré de la liste éditée. Sinon, après avoir
+   * supprimé toutes les séries d'un exo unilatéral, « Ajouter une série »
+   * retomberait sur une ligne bilatérale (side null) faute de côté restant à
+   * inspecter — la nouvelle paire G/D serait perdue.
+   */
+  unilateral: boolean;
 }
 
 type LoadPhase =
@@ -246,7 +254,9 @@ export function PastSessionEditor({
             onAddSet={() =>
               patchExercise(ex.exerciseId, (sets) =>
                 // Reprend la même paire G/D pour un exo unilatéral, une ligne sinon.
-                seedNewSets(sets).reduce((acc, s) => addSet(acc, s), sets),
+                // L'unilatéralité vient de l'état (figé au chargement), pas de la
+                // liste courante : ajouter reste correct même après tout supprimer.
+                seedNewSets(sets, ex.unilateral).reduce((acc, s) => addSet(acc, s), sets),
               )
             }
           />
@@ -657,6 +667,9 @@ function toEditStates(exec: EditableExecution): ExerciseEditState[] {
     original: ex.sets,
     // Copie distincte : l'édition ne doit jamais muter la référence du diff.
     edited: ex.sets.map((s) => ({ ...s })),
+    // Unilatéralité figée depuis l'ORIGINAL : un côté loggé suffit (ADR 0005).
+    // Reste vrai même si l'user supprime ensuite toutes les séries.
+    unilateral: ex.sets.some((s) => s.side !== undefined),
   }));
 }
 
@@ -668,22 +681,23 @@ function buildOps(ex: ExerciseEditState, executionId: string): OutboxOp[] {
   });
 }
 
-/** Vrai si l'exo est unilatéral : au moins une de ses lignes porte un `side`. */
-function isUnilateral(sets: EditableSet[]): boolean {
-  return sets.some((s) => s.side !== undefined);
-}
-
 /**
  * Les lignes d'une série AJOUTÉE : report des valeurs de la dernière série (le
  * plus probable en muscu, on reprend la même charge), sinon un point de départ
  * neutre. Chaque ligne reçoit un UUID client neuf (cf. ADR 0003) pour que
  * l'insert ne collisionne pas.
  *
+ * `unilateral` vient de l'état d'édition (figé au chargement depuis l'original),
+ * PAS de la liste `sets` courante : sinon, après avoir supprimé toutes les séries
+ * d'un exo unilatéral, la liste vide ferait conclure « bilatéral » et l'ajout
+ * créerait une ligne `side: null` (upsert bilatéral) au lieu d'une paire G/D.
+ *
  * Pour un exo UNILATÉRAL, on ajoute une PAIRE complète (gauche + droite) : jamais
  * une série à un seul côté (ADR 0005), avec les valeurs du côté correspondant en
- * base. Pour un exo bilatéral, une seule ligne sans `side`.
+ * base. Pour un exo bilatéral, une seule ligne sans `side`. Les `sets` ne servent
+ * qu'au REPORT des valeurs (dernière série du côté visé), jamais à décider du côté.
  */
-function seedNewSets(sets: EditableSet[]): EditableSet[] {
+function seedNewSets(sets: EditableSet[], unilateral: boolean): EditableSet[] {
   const seedValues = (side?: Side): EditableSet => {
     const ref =
       [...sets].reverse().find((s) => s.side === side) ?? sets[sets.length - 1];
@@ -692,7 +706,7 @@ function seedNewSets(sets: EditableSet[]): EditableSet[] {
       : { weightKg: 20, reps: 10, rir: 1 };
     return { id: newId(), ...base, side };
   };
-  if (isUnilateral(sets)) {
+  if (unilateral) {
     return [seedValues('left'), seedValues('right')];
   }
   return [seedValues(undefined)];

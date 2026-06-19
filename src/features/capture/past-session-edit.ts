@@ -21,6 +21,19 @@
 // donc par SÉRIE LOGIQUE, pas par ligne : la paire G/D garde un `order` commun,
 // le rang n'avance qu'au passage à la série logique suivante. Sans ce groupage,
 // recompacter en 1..N par ligne dé-apparierait G/D et corromprait le côté faible.
+//
+// L'appartenance d'une ligne à sa série logique s'ancre sur le `sourceOrder`
+// (le `set_order` D'ORIGINE en base) quand il est connu, PAS sur la seule
+// contiguïté de côtés. Une série unilatérale peut être INCOMPLÈTE (un seul côté
+// loggé — autorisé, on peut commencer par la droite et laisser un côté) : si on
+// regroupait par « nouveau côté = même série », un côté orphelin (ex. `right@1`)
+// serait fusionné avec le côté d'une AUTRE série (`left@2`), produisant une paire
+// fausse (D de S1 + G de S2) — côté faible / décompte / courbe e1RM faux
+// durablement. Les deux côtés d'une vraie série partagent déjà le même
+// `set_order` (invariant ADR 0005) : c'est lui qui définit la série logique. Les
+// séries AJOUTÉES pendant l'édition n'ont pas de `sourceOrder` (lignes neuves) ;
+// elles retombent sur le groupage par contiguïté + côté (la paire G/D que l'UI
+// insère reste collée).
 import type { InsertSetOp, DeleteSetOp, OutboxOp } from './outbox';
 import type { Side } from '../../domain/types';
 
@@ -43,6 +56,17 @@ export interface EditableSet {
    * bout en bout (chargement → diff → outbox) pour ne jamais dé-apparier G/D.
    */
   side?: Side;
+  /**
+   * Le `set_order` D'ORIGINE en base de cette ligne (issue #38, ADR 0005), porté
+   * depuis le chargement. Sert UNIQUEMENT à regrouper les côtés d'une série
+   * logique sans se fier à la contiguïté : les deux côtés d'une même série
+   * partagent ce `sourceOrder` (invariant ADR 0005), donc un côté ORPHELIN
+   * (série incomplète) n'est jamais fusionné avec le côté d'une autre série. Ce
+   * n'est PAS le rang écrit : `reorderSets` recompacte en 1..N à part. Absent
+   * (`undefined`) pour une série AJOUTÉE pendant l'édition (pas encore en base) ;
+   * ces lignes neuves retombent sur le groupage par contiguïté + côté.
+   */
+  sourceOrder?: number;
 }
 
 /** Une série recompactée, avec son rang d'ordre (1..N) figé pour l'écriture. */
@@ -87,11 +111,14 @@ function sideRank(side: Side | undefined): number {
  * Regroupe des lignes plates `(série, exo)` d'une exécution passée en exos
  * éditables : un exo par exerciseId, ses séries triées par order croissant puis
  * par côté (gauche avant droite, ADR 0005) pour que les deux lignes d'une série
- * unilatérale restent CONTIGUËS — le recompactage en dépend. L'order n'est plus
- * porté ensuite (il est recompacté à l'écriture), mais le `side` l'est, de bout
- * en bout. Exos triés par nom (locale fr) comme dans le journal. Pure (pas de
- * réseau) : la couche data ne fait que l'alimenter. Garde l'id RÉEL de chaque
- * série pour que l'édition vise la bonne ligne.
+ * unilatérale restent CONTIGUËS. Le rang écrit n'est plus porté ensuite (il est
+ * recompacté à l'écriture), mais on GARDE l'order d'origine dans `sourceOrder`
+ * (et le `side`) : c'est lui qui ancre le regroupement des côtés d'une série
+ * logique, sans dépendre de la seule contiguïté (sinon un côté orphelin d'une
+ * série incomplète serait fusionné avec une autre série). Exos triés par nom
+ * (locale fr) comme dans le journal. Pure (pas de réseau) : la couche data ne
+ * fait que l'alimenter. Garde l'id RÉEL de chaque série pour que l'édition vise
+ * la bonne ligne.
  */
 export function groupSetsForEdit(rows: EditableSetRow[]): EditableExercise[] {
   const byExercise = new Map<string, { name: string; rows: EditableSetRow[] }>();
@@ -109,7 +136,15 @@ export function groupSetsForEdit(rows: EditableSetRow[]): EditableExercise[] {
     const sets = group.rows
       .slice()
       .sort((a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side))
-      .map((r) => ({ id: r.id, weightKg: r.weightKg, reps: r.reps, rir: r.rir, side: r.side }));
+      .map((r) => ({
+        id: r.id,
+        weightKg: r.weightKg,
+        reps: r.reps,
+        rir: r.rir,
+        side: r.side,
+        // Order d'origine en base : ancre du regroupement des côtés en série logique.
+        sourceOrder: r.order,
+      }));
     exercises.push({ exerciseId, name: group.name, sets });
   }
 
@@ -150,29 +185,48 @@ export function removeSet(sets: EditableSet[], id: string): EditableSet[] {
  *
  *   - BILATÉRAL (ligne sans `side`) : une ligne = une série, le rang avance à
  *     chaque ligne — comportement strictement inchangé (1, 2, 3…).
- *   - UNILATÉRAL : les deux côtés (G/D) d'une même série sont CONTIGUS (le
- *     chargement les trie ainsi) et GARDENT un `order` commun. Le rang n'avance
- *     qu'au passage à la série logique SUIVANTE, détectée quand on rencontre un
- *     côté DÉJÀ vu dans la série courante (ou une ligne bilatérale).
+ *   - UNILATÉRAL : les deux côtés (G/D) d'une même série partagent leur
+ *     `sourceOrder` (le `set_order` d'origine, invariant ADR 0005) et GARDENT un
+ *     `order` recompacté commun. Le rang n'avance qu'au passage à la série
+ *     logique SUIVANTE, détectée par CHANGEMENT de `sourceOrder` — pas par la
+ *     seule contiguïté de côtés. C'est ce qui protège un côté ORPHELIN (série
+ *     incomplète, un seul côté loggé) : `right@1` suivi de `left@2`,`right@2`
+ *     reste trois lignes sur DEUX séries logiques (le `right@1` orphelin n'est
+ *     jamais fusionné avec le `left@2`), au lieu d'apparier à tort D de S1 + G
+ *     de S2 — ce qui fausserait côté faible / décompte / courbe e1RM durablement.
  *
- * Le regroupement s'appuie sur la contiguïté G/D et sur `side` (le seul indice
- * porté ici), pas sur l'order d'origine : c'est l'invariant que `groupSetsForEdit`
- * et l'UI d'édition maintiennent (toujours une PAIRE complète, jamais réordonnée
- * côté par côté). Immutable.
+ * Les séries AJOUTÉES pendant l'édition n'ont pas de `sourceOrder` (pas encore en
+ * base) : pour elles, le groupage retombe sur la contiguïté + côté (nouvelle
+ * série au côté DÉJÀ vu dans la série neuve courante). L'UI insère toujours une
+ * PAIRE G/D contiguë, donc ce fallback reste sûr. Immutable.
  */
 export function reorderSets(sets: EditableSet[]): OrderedEditableSet[] {
   const ordered: OrderedEditableSet[] = [];
   let order = 0;
+  // L'ancre de la série logique en cours : son `sourceOrder` si elle vient de la
+  // base, `undefined` si elle est composée de lignes neuves (pas de sourceOrder).
+  // `order === 0` distingue « aucune série en cours » de « série en cours neuve ».
+  let currentSourceOrder: number | undefined;
   let sidesInCurrent: Side[] = [];
 
   for (const s of sets) {
-    // Nouvelle série logique si : ligne bilatérale, première ligne, ou côté déjà
-    // présent dans la série courante (les deux côtés d'une paire sont distincts).
     const startsNewSet =
-      s.side === undefined || order === 0 || sidesInCurrent.includes(s.side);
+      // Une ligne bilatérale est toujours sa propre série (un set = une ligne).
+      s.side === undefined ||
+      // Première ligne rencontrée : ouvre la première série.
+      order === 0 ||
+      // Ligne unilatérale issue de la base : nouvelle série dès que son
+      // `sourceOrder` diffère de l'ancre courante (changement de set_order
+      // d'origine) — y compris quand la série courante était neuve (sans ancre).
+      (s.sourceOrder !== undefined && s.sourceOrder !== currentSourceOrder) ||
+      // Ligne unilatérale neuve (pas de `sourceOrder`) : nouvelle série si la
+      // série courante était ancrée sur la base, ou si ce côté y est déjà vu.
+      (s.sourceOrder === undefined &&
+        (currentSourceOrder !== undefined || sidesInCurrent.includes(s.side)));
     if (startsNewSet) {
       order += 1;
       sidesInCurrent = [];
+      currentSourceOrder = s.sourceOrder;
     }
     if (s.side !== undefined) sidesInCurrent.push(s.side);
     ordered.push({ ...s, order });
