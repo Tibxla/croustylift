@@ -2,14 +2,19 @@
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
 import { useEffect, useMemo, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
-import { weakSideE1rm } from '../../domain/unilateral';
+import {
+  currentSetOrder,
+  defaultSide,
+  sidesDoneAt,
+  weakSideE1rm,
+} from '../../domain/unilateral';
 import { deriveDeviations } from '../../domain/deviation';
 import { isBlankNote } from '../../domain/notes';
 import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../domain/pr';
 import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
-import { pendingSide, resolveExerciseNoteSave } from './state';
+import { resolveExerciseNoteSave } from './state';
 import { Stepper } from './Stepper';
 import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
@@ -24,8 +29,16 @@ interface ExerciseCaptureProps {
   onUndoLast: () => void;
   onSkip: () => void;
   onBack: () => void;
-  /** Remonte le brouillon de la série courante vers la barre d'action fixe (qui commit). */
-  onDraftChange: (draft: { weightKg: number; reps: number; rir: number }) => void;
+  /**
+   * Remonte le brouillon de la série courante vers la barre d'action fixe (qui
+   * commit). Pour un exo unilatéral, `side` porte le côté choisi (issue #63).
+   */
+  onDraftChange: (draft: {
+    weightKg: number;
+    reps: number;
+    rir: number;
+    side?: Side;
+  }) => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
   /**
@@ -53,16 +66,29 @@ export function ExerciseCapture({
   const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
 
-  // Logging unilatéral (issue #46) : une série = côté gauche PUIS droite. Le côté
-  // de la PROCHAINE saisie (gauche par défaut, droite si un gauche attend), et le
-  // nombre de SÉRIES complètes (= saisies droites loggées) pour le compteur, la
-  // cible « à battre » et le statut de fin. Bilatéral : currentSide null, une
-  // saisie = une série.
+  // Logging unilatéral (issue #46, sélecteur #63) : une série se complète quand
+  // ses DEUX côtés sont loggés au même set_order, dans l'ordre qu'on veut.
+  // L'utilisateur CHOISIT le côté (sélecteur G/D plus bas) ; `currentSide` porte
+  // ce choix. Le compteur de SÉRIES complètes (= saisies droites loggées : toute
+  // série complète a un droit, peu importe l'ordre) sert au compteur, à la cible
+  // « à battre » et au statut de fin. Bilatéral : currentSide null, une saisie =
+  // une série.
   const unilateral = exercise.unilateral ?? false;
-  const currentSide: Side | null = unilateral ? pendingSide(progress) ?? 'left' : null;
   const completedSets = unilateral
     ? progress.sets.filter((s) => s.side === 'right').length
     : loggedCount;
+
+  // Côté CHOISI pour la prochaine saisie (issue #63). Amorcé sur le côté MANQUANT
+  // de la série en cours (`defaultSide`) ; ré-amorcé au changement d'exo ou après
+  // un log/annulation (même déclencheur que le brouillon : exerciseId + loggedCount),
+  // pour reproposer le côté qui reste à faire sans jamais le FORCER (l'utilisateur
+  // peut basculer). Bilatéral : pas de côté, l'état n'est pas affiché.
+  const [selectedSide, setSelectedSide] = useState<Side>(() => defaultSide(progress.sets));
+  useEffect(() => {
+    if (unilateral) setSelectedSide(defaultSide(progress.sets));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exercise.exerciseId, loggedCount, unilateral]);
+  const currentSide: Side | null = unilateral ? selectedSide : null;
 
   // Records personnels (issue #34), dérivés de l'historique. Une série loggée
   // AUJOURD'HUI qui dépasse le record est marquée « Record ». On compare au
@@ -97,9 +123,11 @@ export function ExerciseCapture({
   }, [seed]);
 
   // Remonte le brouillon courant vers la barre d'action fixe (qui commit le log).
+  // Pour un exo unilatéral, on y joint le côté CHOISI (issue #63) : c'est ce côté
+  // que la barre écrira, au bon set_order. Bilatéral : pas de côté.
   useEffect(() => {
-    onDraftChange?.({ weightKg, reps, rir });
-  }, [weightKg, reps, rir, onDraftChange]);
+    onDraftChange?.({ weightKg, reps, rir, side: currentSide ?? undefined });
+  }, [weightKg, reps, rir, currentSide, onDraftChange]);
 
   // La série « à battre » à la position courante (co-roi). Masquée pour un exo
   // unilatéral (issue #46) : la comparaison par côté (G vs D) sort du périmètre
@@ -274,23 +302,28 @@ export function ExerciseCapture({
       )}
 
       {/* Compteur de série courante. En unilatéral, le numéro de série en cours
-          est completedSets + 1 (une série = G + D) et on annonce le côté à saisir
-          par un libellé texte (issue #46) ; la couleur ne porte jamais l'info. */}
+          est completedSets + 1 (une série = G + D) ; le côté à saisir est porté
+          par le sélecteur ci-dessous, pas répété ici. */}
       <p className="mt-6 mb-3" aria-live="polite">
         <span className="text-sm font-medium text-ink-muted">
           Série{' '}
           <span className="readout text-ink">{completedSets + 1}</span> /{' '}
           <span className="readout text-ink">{formatRange(prescription.sets)}</span>
-          {currentSide && (
-            <>
-              {' · '}
-              <span className="font-semibold text-ink">
-                Côté {currentSide === 'left' ? 'gauche' : 'droite'}
-              </span>
-            </>
-          )}
         </span>
       </p>
+
+      {/* Sélecteur de côté (issue #63) : pour un exo unilatéral, l'utilisateur
+          CHOISIT le côté à logger avant la saisie (il ne commence pas forcément
+          à gauche). Au-dessus des steppers. Défaut = côté manquant de la série en
+          cours. L'état sélectionné tient au texte + à la coche + à aria-pressed,
+          jamais à la seule couleur (DESIGN.md). */}
+      {currentSide && (
+        <SideSelector
+          value={currentSide}
+          done={sidesDoneAt(progress.sets, currentSetOrder(progress.sets))}
+          onChange={setSelectedSide}
+        />
+      )}
 
       {/* Saisie par steppers */}
       <div className="grid grid-cols-1 gap-4">
@@ -383,6 +416,81 @@ export function ExerciseCapture({
         value={datedNote}
         onSave={onSaveDatedNote}
       />
+    </div>
+  );
+}
+
+/**
+ * Sélecteur de côté Gauche / Droite pour un exo unilatéral (issue #63). Deux
+ * options en segmented control. Le côté actif est porté par PLUSIEURS signaux,
+ * jamais la couleur seule (DESIGN.md) : poids de police, anneau de contour, coche
+ * et `aria-pressed`. Le violet d'accent est laissé à l'action de log (One Voice
+ * Rule), donc l'option active reste en palier tonal (surface-2), pas en accent.
+ * Un côté DÉJÀ loggé pour la série en cours est signalé « fait » (libellé texte)
+ * pour orienter vers le côté qui reste, sans empêcher de le re-sélectionner.
+ * Tap-targets ≥44px (h-12).
+ */
+function SideSelector({
+  value,
+  done,
+  onChange,
+}: {
+  value: Side;
+  /** Côtés déjà loggés pour la série EN COURS (pour signaler « fait »). */
+  done: Side[];
+  onChange: (side: Side) => void;
+}) {
+  const options: { side: Side; label: string }[] = [
+    { side: 'left', label: 'Gauche' },
+    { side: 'right', label: 'Droite' },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Côté à logger"
+      className="mb-4 grid grid-cols-2 gap-2"
+    >
+      {options.map(({ side, label }) => {
+        const active = value === side;
+        const isDone = done.includes(side);
+        return (
+          <button
+            key={side}
+            type="button"
+            aria-pressed={active}
+            aria-label={isDone ? `${label}, déjà saisi` : label}
+            onClick={() => onChange(side)}
+            className={`flex h-12 items-center justify-center gap-1.5 rounded-xl text-base transition active:scale-[0.99] ${
+              active
+                ? 'bg-surface-2 font-semibold text-ink ring-2 ring-ink/70'
+                : 'bg-surface font-medium text-ink-muted active:text-ink'
+            }`}
+          >
+            {/* Coche : la FORME signale la sélection, pas la seule couleur. */}
+            {active && (
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="shrink-0"
+              >
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            )}
+            {label}
+            {/* Côté déjà saisi pour cette série : libellé texte, jamais couleur seule. */}
+            {isDone && (
+              <span className="ml-0.5 text-xs font-normal text-ink-muted">fait</span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

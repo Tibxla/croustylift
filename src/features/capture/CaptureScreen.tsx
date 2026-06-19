@@ -474,21 +474,19 @@ function CaptureBoard({
   const handleLog = useCallback(
     (
       exerciseId: string,
-      set: { weightKg: number; reps: number; rir: number },
-      unilateral: boolean,
+      set: { weightKg: number; reps: number; rir: number; side?: Side },
     ) => {
       const progress = getProgress(state, exerciseId);
-      // Côté de cette saisie (issue #46) : pour un exo unilatéral, la prochaine
-      // série attend gauche (rien en attente) ou droite (un gauche entamé) ; pour
-      // un bilatéral, pas de côté. Source unique : l'état d'appariement courant.
-      const side: Side | undefined = unilateral
-        ? pendingSide(progress) ?? 'left'
-        : undefined;
-      // Order DÉRIVÉ comme dans le reducer (même fonction pure) : G/D d'une série
-      // unilatérale partagent un order ; simple incrément pour le bilatéral.
+      // Côté de cette saisie : pour un exo unilatéral, c'est le côté CHOISI par
+      // l'utilisateur via le sélecteur (issue #63), remonté dans le brouillon ;
+      // bilatéral = pas de côté. On ne dérive plus « gauche d'abord ».
+      const side: Side | undefined = set.side;
+      // Order DÉRIVÉ comme dans le reducer (même fonction pure, agnostique de
+      // l'ordre de saisie) : les deux côtés d'une série unilatérale partagent un
+      // order ; simple incrément pour le bilatéral.
       const order = nextSetOrder(progress, side);
       const setId = newId();
-      const loggedSet = { ...set, side };
+      const loggedSet = { weightKg: set.weightKg, reps: set.reps, rir: set.rir, side };
       // 1. UI immédiate. 2. Durabilité : exécution (1×) puis la série, dans l'ordre.
       dispatch({ type: 'log-set', exerciseId, setId, set: loggedSet });
       enqueueExecutionOnce();
@@ -691,9 +689,7 @@ function CaptureBoard({
           progress={getProgress(state, activeExercise.exerciseId)}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           dispatch={dispatch}
-          onLog={(set) =>
-            handleLog(activeExercise.exerciseId, set, activeExercise.unilateral ?? false)
-          }
+          onLog={(set) => handleLog(activeExercise.exerciseId, set)}
           onUndo={() => handleUndo(activeExercise.exerciseId)}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
           onSaveExerciseNote={(body) =>
@@ -835,22 +831,31 @@ function CapturePanel({
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
   dispatch: Dispatch<CaptureAction>;
-  onLog: (set: { weightKg: number; reps: number; rir: number }) => void;
+  onLog: (set: { weightKg: number; reps: number; rir: number; side?: Side }) => void;
   onUndo: () => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
 }) {
-  // Brouillon de la série courante remonté ici pour que la barre fixe puisse logger.
-  const [draft, setDraft] = useState<{ weightKg: number; reps: number; rir: number } | null>(
-    null,
-  );
+  // Brouillon de la série courante remonté ici pour que la barre fixe puisse
+  // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI au sélecteur
+  // (issue #63) : c'est ce côté que la barre commit, jamais un côté dérivé.
+  const [draft, setDraft] = useState<{
+    weightKg: number;
+    reps: number;
+    rir: number;
+    side?: Side;
+  } | null>(null);
 
   const unilateral = exercise.unilateral ?? false;
-  // Côté de la PROCHAINE saisie pour un exo unilatéral (issue #46) : gauche si
-  // aucune série entamée, droite si un gauche attend son côté. Null = bilatéral.
-  const currentSide: Side | null = unilateral ? pendingSide(progress) ?? 'left' : null;
+  // Côté que la barre va logger : pour un exo unilatéral, le côté CHOISI remonté
+  // dans le brouillon (issue #63). Tant que le brouillon n'a pas encore remonté
+  // de côté (1er rendu), on retombe sur le côté manquant de la série en cours
+  // (`pendingSide`/`defaultSide`). Null = bilatéral.
+  const currentSide: Side | null = unilateral
+    ? draft?.side ?? pendingSide(progress) ?? 'left'
+    : null;
   // Nombre de SÉRIES complètes : pour l'unilatéral, une série = gauche + droite,
   // donc on compte les saisies droites déjà loggées. Bilatéral = une saisie/série.
   const completedSets = unilateral

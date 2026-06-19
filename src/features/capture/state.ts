@@ -2,6 +2,7 @@
 // Pas de Supabase cette passe — l'état vit en mémoire et survit au background via localStorage.
 import type { PerformedSet, Side } from '../../domain/types';
 import { normalizeNoteBody } from '../../domain/notes';
+import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -136,43 +137,31 @@ function maxOrder(progress: ExerciseProgress): number {
 }
 
 /**
- * Un côté gauche est-il loggé en attente de son droit ? (logging unilatéral,
- * issue #46). Vrai quand la dernière série loggée est un `left` SANS `right`
- * apparié au même `order` : la série est entamée mais pas complète.
- */
-function hasPendingLeft(progress: ExerciseProgress): boolean {
-  const last = progress.sets[progress.sets.length - 1];
-  if (!last || last.side !== 'left') return false;
-  return !progress.sets.some((s) => s.order === last.order && s.side === 'right');
-}
-
-/**
- * Ordre (set_order) de la PROCHAINE série pour ce côté (issue #46). Pur, partagé
- * par le reducer ET la couche outbox pour que l'état local et l'op d'écriture
- * portent EXACTEMENT le même order :
+ * Ordre (set_order) de la PROCHAINE série pour ce côté. Pur, partagé par le
+ * reducer ET la couche outbox pour que l'état local et l'op d'écriture portent
+ * EXACTEMENT le même order :
  *   - BILATÉRAL (`side` absent) : incrémentation simple (max order + 1) ;
- *   - GAUCHE : ouvre une nouvelle série (max order + 1) ;
- *   - DROITE : complète la série gauche en attente (réutilise son order) ; sans
- *     gauche en attente (cas dégénéré), ouvre une nouvelle série (max order + 1).
+ *   - UNILATÉRAL : délègue à `nextOrderForSide` (domaine), AGNOSTIQUE de l'ordre
+ *     de saisie (issue #63) — le côté complète la série en cours entamée par
+ *     l'autre côté (même order, qu'on ait commencé par G ou par D), sinon ouvre
+ *     une nouvelle série. Remplace l'ancienne hypothèse « gauche d'abord » (#46).
  */
 export function nextSetOrder(progress: ExerciseProgress, side: Side | undefined): number {
-  if (side === 'right' && hasPendingLeft(progress)) {
-    return maxOrder(progress);
-  }
-  return maxOrder(progress) + 1;
+  if (side === undefined) return maxOrder(progress) + 1;
+  return nextOrderForSide(progress.sets, side);
 }
 
 /**
- * Quel côté saisir pour la prochaine série d'un exo unilatéral (issue #46) :
- *   - `null` : aucune série entamée -> la prochaine ouvre une série (côté gauche
- *     d'office côté UI), mais on ne force rien tant que rien n'est loggé ;
- *   - `'right'` : un côté gauche est loggé, on attend son droit ;
- *   - `'left'` : la dernière série est complète, le prochain log ouvre une série.
- * Sert à l'UI pour libeller la saisie (« Côté gauche » / « Côté droit »).
+ * Côté PROPOSÉ par défaut au sélecteur pour la prochaine saisie d'un exo
+ * unilatéral (issue #63) : le côté MANQUANT de la série en cours (l'autre que
+ * celui déjà loggé), `'left'` quand aucune série n'est entamée ou que la série
+ * en cours est complète. `null` s'il n'y a encore rien (le sélecteur reste libre
+ * tant que rien n'est loggé). Délègue au domaine (`defaultSide`) ; remplace
+ * l'ancienne logique « gauche d'abord » (#46). Sert à l'UI à amorcer le sélecteur.
  */
 export function pendingSide(progress: ExerciseProgress): Side | null {
   if (progress.sets.length === 0) return null;
-  return hasPendingLeft(progress) ? 'right' : 'left';
+  return defaultSide(progress.sets);
 }
 
 /**
