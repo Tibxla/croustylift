@@ -16,6 +16,7 @@
 //     "data": {                           // une clé par table, lignes BRUTES
 //       "exercises":           [ ... ],   // exos PERSO uniquement (owner_id non null)
 //       "exercise_notes":      [ ... ],
+//       "exercise_overrides":  [ ... ],   // overrides perso des exos de base (user_id)
 //       "routines":            [ ... ],
 //       "routine_activations": [ ... ],
 //       "seances":             [ ... ],
@@ -42,6 +43,7 @@ export const EXPORT_FORMAT_VERSION = 1 as const;
 export const EXPORT_TABLES = [
   'exercises',
   'exercise_notes',
+  'exercise_overrides',   // overrides perso des exos de base (FK → exercises + auth.users)
   'routines',
   'routine_activations',
   'seances',
