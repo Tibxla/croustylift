@@ -7,16 +7,21 @@
 // base + perso), mute via create/update/deletePersonalExercise, et recharge.
 //
 // Périmètre (cf. CONTEXT.md) :
-//   - exo de BASE (owner_id null) : lecture seule + badge « Base », jamais
-//     éditable ici (l'édition par-user des exos de base = issue #50, séparée) ;
+//   - exo de BASE (owner_id null) : la LIGNE de base reste lecture seule pour
+//     tous, mais l'user peut la PERSONNALISER via un override per-user (nom,
+//     unilatéral, muscles principaux ; issue #50) et la réinitialiser. La ligne
+//     partagée n'est jamais modifiée ; l'override est invisible des autres users.
 //   - exo PERSO (owner_id = auth.uid()) : créer, modifier (nom + muscles +
 //     unilatéral, « renommer » = changer le champ nom) et supprimer.
+//   - NOTE par exo (exercise_notes #26, déjà per-user) : éditable ICI pour TOUS
+//     les exos (base ET perso), via le champ de note réutilisable (NoteField).
 //
 // Conventions DESIGN.md tenues ici :
 //   - accent violet parcimonieux : action primaire + chips actives du formulaire ;
-//   - statut « Base » et « Unilatéral » = couleur + MOT, jamais la couleur seule ;
+//   - statut « Base », « Unilatéral », « Personnalisé » = couleur + MOT (+ icône),
+//     jamais la couleur seule ;
 //   - aucun tiret long affiché ; tap-targets >= 44px ;
-//   - confirmations de suppression INLINE (pas de window.confirm) ;
+//   - confirmations de suppression / réinitialisation INLINE (pas de window.confirm) ;
 //   - <input> texte pour la recherche (le ban du clavier OS vise les chiffres).
 //
 // Suppression SÛRE : la couche data (deletePersonalExercise) compte d'abord les
@@ -29,6 +34,14 @@ import {
   updatePersonalExercise,
   deletePersonalExercise,
 } from '../authoring/data';
+import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { NoteField } from '../notes/NoteField';
+import {
+  loadExerciseOverrides,
+  upsertExerciseOverride,
+  resetExerciseOverride,
+} from './overrides';
+import { isOverridden } from '../../domain/exercise-override';
 import { ExerciseForm, type ExerciseFormValue } from './ExerciseForm';
 import {
   filterExercises,
@@ -43,7 +56,7 @@ import {
 type Load =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; exercises: ListExercise[] };
+  | { phase: 'ready'; exercises: ListExercise[]; overridden: Set<string> };
 
 export function ExercisesScreen() {
   const [load, setLoad] = useState<Load>({ phase: 'loading' });
@@ -56,9 +69,20 @@ export function ExercisesScreen() {
 
     void (async () => {
       try {
-        const rows = await listExercises();
+        // `listExercises` renvoie déjà les champs FUSIONNÉS (override per-user) ;
+        // les overrides bruts servent juste à savoir QUELS exos sont personnalisés
+        // (badge + pré-remplissage du formulaire / réinitialisation).
+        const [rows, overrides] = await Promise.all([
+          listExercises(),
+          loadExerciseOverrides(),
+        ]);
         if (!active) return;
-        setLoad({ phase: 'ready', exercises: rows.map(toListExercise) });
+        const overridden = new Set(
+          [...overrides.entries()]
+            .filter(([, values]) => isOverridden(values))
+            .map(([id]) => id),
+        );
+        setLoad({ phase: 'ready', exercises: rows.map(toListExercise), overridden });
       } catch (err) {
         if (!active) return;
         setLoad({ phase: 'error', message: errMessage(err) });
@@ -87,6 +111,7 @@ export function ExercisesScreen() {
   return (
     <ExercisesView
       exercises={load.exercises}
+      overridden={load.overridden}
       onCreate={async (value) => {
         await createPersonalExercise(value);
         reload();
@@ -99,6 +124,16 @@ export function ExercisesScreen() {
         await deletePersonalExercise(id);
         reload();
       }}
+      onSaveOverride={async (id, value) => {
+        await upsertExerciseOverride(id, value);
+        reload();
+      }}
+      onResetOverride={async (id) => {
+        await resetExerciseOverride(id);
+        reload();
+      }}
+      onLoadNote={loadExerciseNote}
+      onSaveNote={saveExerciseNote}
     />
   );
 }
@@ -109,19 +144,34 @@ export function ExercisesScreen() {
 
 export interface ExercisesViewProps {
   exercises: ListExercise[];
+  /** Ids des exos de base PERSONNALISÉS par l'user (override effectif, issue #50). */
+  overridden: Set<string>;
   /** Crée un exo perso. Résolu = créé (le conteneur recharge). */
   onCreate: (value: ExerciseFormValue) => Promise<void>;
   /** Édite un exo perso (renommer + muscles + unilatéral). */
   onUpdate: (id: string, value: ExerciseFormValue) => Promise<void>;
   /** Supprime un exo perso. Rejette avec un message si l'exo est référencé. */
   onDelete: (id: string) => Promise<void>;
+  /** Crée/maj l'override d'un exo de BASE (jamais la ligne de base). */
+  onSaveOverride: (id: string, value: ExerciseFormValue) => Promise<void>;
+  /** Réinitialise un exo de base (supprime l'override per-user). */
+  onResetOverride: (id: string) => Promise<void>;
+  /** Charge la note (exercise_notes #26) d'un exo, '' si aucune. */
+  onLoadNote: (exerciseId: string) => Promise<string>;
+  /** Enregistre la note d'un exo (corps vide = suppression). */
+  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
 }
 
 export function ExercisesView({
   exercises,
+  overridden,
   onCreate,
   onUpdate,
   onDelete,
+  onSaveOverride,
+  onResetOverride,
+  onLoadNote,
+  onSaveNote,
 }: ExercisesViewProps) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
@@ -197,7 +247,13 @@ export function ExercisesView({
               <ul className="flex flex-col gap-2">
                 {personal.map((exo) => (
                   <li key={exo.id}>
-                    <PersonalRow exo={exo} onUpdate={onUpdate} onDelete={onDelete} />
+                    <PersonalRow
+                      exo={exo}
+                      onUpdate={onUpdate}
+                      onDelete={onDelete}
+                      onLoadNote={onLoadNote}
+                      onSaveNote={onSaveNote}
+                    />
                   </li>
                 ))}
               </ul>
@@ -211,7 +267,14 @@ export function ExercisesView({
               <ul className="flex flex-col gap-2">
                 {base.map((exo) => (
                   <li key={exo.id}>
-                    <BaseRow exo={exo} />
+                    <BaseRow
+                      exo={exo}
+                      overridden={overridden.has(exo.id)}
+                      onSaveOverride={onSaveOverride}
+                      onResetOverride={onResetOverride}
+                      onLoadNote={onLoadNote}
+                      onSaveNote={onSaveNote}
+                    />
                   </li>
                 ))}
               </ul>
@@ -257,8 +320,70 @@ function EmptySection({ text }: { text: string }) {
 
 // --- Lignes -----------------------------------------------------------------
 
-/** Ligne d'un exo de BASE : lecture seule, badge « Base », muscles + unilatéral. */
-function BaseRow({ exo }: { exo: ListExercise }) {
+/**
+ * Ligne d'un exo de BASE : la ligne partagée reste lecture seule, mais l'user
+ * peut la PERSONNALISER (override per-user, issue #50) et la réinitialiser, plus
+ * éditer sa note. Le nom / les muscles affichés sont DÉJÀ fusionnés (override
+ * gagnant) ; « Personnaliser » ouvre le même formulaire que les exos perso, dont
+ * la soumission crée/maj l'override (jamais la ligne de base).
+ */
+function BaseRow({
+  exo,
+  overridden,
+  onSaveOverride,
+  onResetOverride,
+  onLoadNote,
+  onSaveNote,
+}: {
+  exo: ListExercise;
+  overridden: boolean;
+  onSaveOverride: (id: string, value: ExerciseFormValue) => Promise<void>;
+  onResetOverride: (id: string) => Promise<void>;
+  onLoadNote: (exerciseId: string) => Promise<string>;
+  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<'idle' | 'edit' | 'confirmReset'>('idle');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (mode === 'edit') {
+    return (
+      <RowCard>
+        <p className="mb-2 text-sm font-semibold text-ink">Personnaliser l'exercice</p>
+        <p className="mb-2 text-xs text-ink-muted">
+          Ta version reste privée. L'exercice de base n'est pas modifié pour les autres.
+        </p>
+        <ExerciseForm
+          initial={{
+            name: exo.name,
+            primaryMuscles: exo.primaryMuscles,
+            unilateral: exo.unilateral,
+          }}
+          autoFocusName={false}
+          submitLabel="Enregistrer"
+          submitBusyLabel="Enregistrement…"
+          onCancel={() => setMode('idle')}
+          onSubmit={async (value) => {
+            await onSaveOverride(exo.id, value);
+            setMode('idle');
+          }}
+        />
+      </RowCard>
+    );
+  }
+
+  async function confirmReset() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onResetOverride(exo.id);
+      // Succès : le conteneur recharge, la ligne revient à sa version de base.
+    } catch (err) {
+      setError(errMessage(err));
+      setBusy(false);
+    }
+  }
+
   return (
     <RowCard>
       <div className="flex items-start gap-3">
@@ -266,21 +391,52 @@ function BaseRow({ exo }: { exo: ListExercise }) {
           <p className="truncate text-base font-medium text-ink">{exo.name}</p>
           <MuscleLine exo={exo} />
         </div>
-        <BaseBadge />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <BaseBadge />
+          {overridden && <CustomizedBadge />}
+        </div>
       </div>
+
+      {mode === 'confirmReset' ? (
+        <ConfirmReset
+          busy={busy}
+          error={error}
+          onConfirm={() => void confirmReset()}
+          onCancel={() => {
+            setError(null);
+            setMode('idle');
+          }}
+        />
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <RowAction
+            label={overridden ? 'Modifier' : 'Personnaliser'}
+            onClick={() => setMode('edit')}
+          />
+          {overridden && (
+            <RowAction label="Réinitialiser" onClick={() => setMode('confirmReset')} />
+          )}
+        </div>
+      )}
+
+      <NoteSection exerciseId={exo.id} onLoadNote={onLoadNote} onSaveNote={onSaveNote} />
     </RowCard>
   );
 }
 
-/** Ligne d'un exo PERSO : modifier (form pré-rempli) ou supprimer (inline). */
+/** Ligne d'un exo PERSO : modifier (form pré-rempli), note, ou supprimer (inline). */
 function PersonalRow({
   exo,
   onUpdate,
   onDelete,
+  onLoadNote,
+  onSaveNote,
 }: {
   exo: ListExercise;
   onUpdate: (id: string, value: ExerciseFormValue) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onLoadNote: (exerciseId: string) => Promise<string>;
+  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'idle' | 'edit' | 'confirmDelete'>('idle');
   const [busy, setBusy] = useState(false);
@@ -355,7 +511,108 @@ function PersonalRow({
           />
         </div>
       )}
+
+      <NoteSection exerciseId={exo.id} onLoadNote={onLoadNote} onSaveNote={onSaveNote} />
     </RowCard>
+  );
+}
+
+// --- Note par exo (exercise_notes #26) --------------------------------------
+//
+// Édition de la note d'instructions, partagée par les exos de BASE et PERSO. La
+// note est chargée À LA DEMANDE (à l'ouverture) plutôt qu'au montage de la liste :
+// inutile de tirer N notes pour les afficher repliées. Réutilise NoteField (le
+// même champ que l'authoring / la Capture) ; le corps vide supprime la note.
+
+function NoteSection({
+  exerciseId,
+  onLoadNote,
+  onSaveNote,
+}: {
+  exerciseId: string;
+  onLoadNote: (exerciseId: string) => Promise<string>;
+  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
+}) {
+  // 'closed' : repliée ; 'loading' : on tire la note ; 'open' : éditable.
+  const [phase, setPhase] = useState<'closed' | 'loading' | 'open'>('closed');
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function open() {
+    setPhase('loading');
+    setError(null);
+    try {
+      setBody(await onLoadNote(exerciseId));
+      setPhase('open');
+    } catch (err) {
+      setError(errMessage(err));
+      setPhase('closed');
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSaveNote(exerciseId, body);
+      setBusy(false);
+      setPhase('closed');
+    } catch (err) {
+      setError(errMessage(err));
+      setBusy(false);
+    }
+  }
+
+  if (phase === 'closed') {
+    return (
+      <div className="mt-3 border-t border-line/60 pt-3">
+        <RowAction label="Note de l'exercice" onClick={() => void open()} />
+        {error && <RowError message={error} />}
+      </div>
+    );
+  }
+
+  if (phase === 'loading') {
+    return (
+      <div className="mt-3 border-t border-line/60 pt-3">
+        <p className="text-sm text-ink-muted" role="status">
+          Chargement de la note…
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-line/60 pt-3">
+      <NoteField
+        id={`exercise-note-${exerciseId}`}
+        label="Note de l'exercice"
+        hint="Tes repères techniques. Visibles en référence pendant la séance."
+        placeholder="Prise serrée, coudes rentrés…"
+        value={body}
+        onChange={setBody}
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void save()}
+          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50"
+        >
+          {busy ? 'Enregistrement…' : 'Enregistrer'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setPhase('closed')}
+          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+        >
+          Annuler
+        </button>
+      </div>
+      {error && <RowError message={error} />}
+    </div>
   );
 }
 
@@ -382,6 +639,28 @@ function BaseBadge() {
   return (
     <span className="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-xs font-medium text-ink-muted">
       Base
+    </span>
+  );
+}
+
+/** Badge « Personnalisé » : icône (crayon) ET mot, jamais la couleur seule (issue #50). */
+function CustomizedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-accent/40 px-1.5 py-0.5 text-xs font-medium text-accent-ink">
+      <svg
+        viewBox="0 0 24 24"
+        width="12"
+        height="12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+      Personnalisé
     </span>
   );
 }
@@ -474,6 +753,52 @@ function ConfirmDelete({
           className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-warn px-4 text-sm font-semibold text-bg transition active:scale-[0.98] disabled:opacity-50"
         >
           {busy ? 'Suppression…' : 'Supprimer'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+        >
+          Annuler
+        </button>
+      </div>
+      {error && <RowError message={error} />}
+    </div>
+  );
+}
+
+/**
+ * Confirmation de RÉINITIALISATION d'un exo de base INLINE (issue #50) : on
+ * supprime l'override per-user, l'exo revient à sa version partagée. Action
+ * NEUTRE (pas danger) : aucun historique n'est touché, seule ta personnalisation
+ * disparaît.
+ */
+function ConfirmReset({
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-3 rounded-xl bg-surface-2/60 p-3">
+      <p className="text-sm text-ink">Revenir à l'exercice de base ?</p>
+      <p className="mt-0.5 text-xs text-ink-muted">
+        Ta personnalisation est retirée. Ton historique de séries reste intact.
+      </p>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50"
+        >
+          {busy ? 'Réinitialisation…' : 'Réinitialiser'}
         </button>
         <button
           type="button"
