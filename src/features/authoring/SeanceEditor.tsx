@@ -21,7 +21,7 @@
 // même mouvement avec des prescriptions différentes (ex. lourd en début, léger en
 // finition). On n'empêche donc pas l'ajout en double ; chaque ligne a sa propre
 // identité (rowId) pour rester éditable indépendamment.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Stepper } from '../capture/Stepper';
 import { listExercises } from '../capture/data';
 import { NoteField } from '../notes/NoteField';
@@ -83,10 +83,15 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
   const [load, setLoad] = useState<Load>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
+  // Dernière séance réellement chargée : on n'affiche le loader que pour un
+  // NOUVEAU contexte (1er chargement / changement de séance). Un rafraîchissement
+  // de la MÊME séance (reload() après un save) garde le contenu monté → pas de
+  // saut de scroll en haut.
+  const loadedSeanceRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoad({ phase: 'loading' });
+    if (loadedSeanceRef.current !== seanceId) setLoad({ phase: 'loading' });
 
     void (async () => {
       try {
@@ -114,6 +119,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
         );
         if (!active) return;
         const notes = Object.fromEntries(noteEntries);
+        loadedSeanceRef.current = seanceId;
         setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
