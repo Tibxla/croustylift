@@ -19,6 +19,8 @@ Thumbs.db
 
 # Claude local config
 .claude/settings.local.json
+# Worktrees git éphémères des agents (checkouts isolés, jamais versionnés)
+.claude/worktrees/
 
 # Screenshots de revue design (local, non versionnés)
 .screenshots/
