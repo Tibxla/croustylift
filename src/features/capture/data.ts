@@ -17,6 +17,12 @@ import { todayIso } from './state';
 import type { DatedNoteDraft } from './state';
 import type { Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
+import {
+  loadExerciseOverrides,
+  loadMergedExerciseRow,
+  mergeRowWithOverride,
+} from '../exercises/overrides';
+import { mergeExerciseOverride } from '../../domain/exercise-override';
 
 export type { Session, SessionExercise } from './fixtures';
 
@@ -143,11 +149,22 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
 
 // --- Lecture du catalogue -----------------------------------------------------
 
-/** Catalogue visible par l'user : exos de base (owner_id null) + perso (RLS). */
+/**
+ * Catalogue visible par l'user : exos de base (owner_id null) + perso (RLS),
+ * DÉJÀ FUSIONNÉS avec les overrides per-user (issue #50). C'est le point d'entrée
+ * UNIQUE du catalogue : tout consommateur (onglet Exercices, picker d'ajout en
+ * Capture, donc indirectement le compteur de séries #37 via les muscles/unilatéral)
+ * voit ainsi les champs personnalisés sans réimplémenter la fusion. Un exo perso
+ * n'a jamais d'override (l'UI n'en crée que pour les exos de base) : sa row reste
+ * inchangée.
+ */
 export async function listExercises(): Promise<ExerciseRow[]> {
-  const { data, error } = await supabase.from('exercises').select('*');
+  const [{ data, error }, overrides] = await Promise.all([
+    supabase.from('exercises').select('*'),
+    loadExerciseOverrides(),
+  ]);
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map((row) => mergeRowWithOverride(row, overrides.get(row.id) ?? null));
 }
 
 // --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------
@@ -193,8 +210,14 @@ export function catalogExerciseToSession(
 
 /**
  * Charge un exo du catalogue prêt à entrer dans la séance courante : sa forme
- * `SessionExercise` (cible par défaut) enrichie de sa référence (dernière fois),
- * de sa note d'instructions et de ses records, dérivés de l'historique.
+ * `SessionExercise` (cible par défaut) enrichie de sa référence (dernière fois)
+ * et de ses records, dérivés de l'historique.
+ *
+ * Fusion override per-user (issue #50) : si l'appelant ne fournit PAS les champs
+ * partagés (cas du picker d'ajout à la volée, qui ne passe que id + name), on
+ * relit la row DÉJÀ FUSIONNÉE par son id pour que l'exo ajouté porte ses champs
+ * personnalisés (unilatéral #46, muscles #37). Si les champs sont déjà fournis
+ * (row issue de `listExercises`, donc déjà fusionnée), on les garde tels quels.
  */
 export async function loadCatalogExercise(
   row: Pick<ExerciseRow, 'id' | 'name'> & {
@@ -202,7 +225,9 @@ export async function loadCatalogExercise(
     primary_muscles?: string[];
   },
 ): Promise<SessionExercise> {
-  const base = catalogExerciseToSession(row);
+  const needsMerge = row.unilateral === undefined || row.primary_muscles === undefined;
+  const merged = needsMerge ? await loadMergedExerciseRow(row.id) : null;
+  const base = catalogExerciseToSession(merged ?? row);
   const [reference, personalRecord] = await Promise.all([
     loadReference(row.id),
     loadPersonalRecord(row.id),
@@ -234,30 +259,46 @@ export async function loadSeanceForCapture(
   seance: { id: string; name: string },
   seanceVersionId: string,
 ): Promise<Session> {
-  const { data, error } = await supabase
-    .from('prescriptions')
-    .select(
-      'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral, primary_muscles )',
-    )
-    .eq('seance_version_id', seanceVersionId)
-    .order('position', { ascending: true });
+  const [{ data, error }, overrides] = await Promise.all([
+    supabase
+      .from('prescriptions')
+      .select(
+        'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral, primary_muscles )',
+      )
+      .eq('seance_version_id', seanceVersionId)
+      .order('position', { ascending: true }),
+    // Fusion override per-user (issue #50) : la Capture du jour doit logger avec
+    // les champs personnalisés (unilatéral pour le côté #46, muscles pour #37).
+    loadExerciseOverrides(),
+  ]);
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as PrescriptionWithExercise[];
 
-  const exercises: SessionExercise[] = rows.map((row) => ({
-    exerciseId: row.exercise_id,
-    name: row.exercises?.name ?? '(exercice inconnu)',
-    unilateral: row.exercises?.unilateral ?? false,
-    primaryMuscles: row.exercises?.primary_muscles ?? [],
-    prescription: {
-      sets: { min: row.sets_min, max: row.sets_max },
-      reps: { min: row.reps_min, max: row.reps_max },
-      rir: { min: row.rir_min, max: row.rir_max },
-    },
-    reference: null,
-    perExerciseNote: '',
-  }));
+  const exercises: SessionExercise[] = rows.map((row) => {
+    // L'exo joint peut manquer (FK orpheline) : on garde le repli « inconnu ».
+    const merged = mergeExerciseOverride(
+      {
+        name: row.exercises?.name ?? '(exercice inconnu)',
+        unilateral: row.exercises?.unilateral ?? false,
+        primaryMuscles: row.exercises?.primary_muscles ?? [],
+      },
+      overrides.get(row.exercise_id) ?? null,
+    );
+    return {
+      exerciseId: row.exercise_id,
+      name: merged.name,
+      unilateral: merged.unilateral,
+      primaryMuscles: merged.primaryMuscles,
+      prescription: {
+        sets: { min: row.sets_min, max: row.sets_max },
+        reps: { min: row.reps_min, max: row.reps_max },
+        rir: { min: row.rir_min, max: row.rir_max },
+      },
+      reference: null,
+      perExerciseNote: '',
+    };
+  });
 
   return { id: seance.id, name: seance.name, exercises };
 }

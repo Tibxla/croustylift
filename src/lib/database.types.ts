@@ -135,6 +135,47 @@ export type Database = {
           },
         ]
       }
+      exercise_overrides: {
+        Row: {
+          created_at: string
+          exercise_id: string
+          id: string
+          name: string | null
+          primary_muscles: string[] | null
+          unilateral: boolean | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          exercise_id: string
+          id?: string
+          name?: string | null
+          primary_muscles?: string[] | null
+          unilateral?: boolean | null
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          exercise_id?: string
+          id?: string
+          name?: string | null
+          primary_muscles?: string[] | null
+          unilateral?: boolean | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exercise_overrides_exercise_id_fkey"
+            columns: ["exercise_id"]
+            isOneToOne: false
+            referencedRelation: "exercises"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       exercises: {
         Row: {
           created_at: string
