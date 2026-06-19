@@ -11,7 +11,7 @@ Un mouvement de musculation identifiable et réutilisable (ex. développé couch
 _Avoid_: Mouvement, lift (« lift » est réservé à l'exécution réelle)
 
 **Exercice de base**:
-Exercice du catalogue commun, partagé en lecture seule entre tous les utilisateurs, jamais modifié. Livré déjà tagué groupe musculaire.
+Exercice du catalogue commun, partagé en lecture seule entre tous les utilisateurs, jamais modifié. Livré déjà tagué de ses muscles principaux. Un utilisateur le personnalise sans toucher au partagé via un **Override d'exercice**.
 _Avoid_: Exercice standard, exercice public
 
 **Exercice perso**:
@@ -22,9 +22,17 @@ _Avoid_: Exercice custom, exercice privé
 Consigne personnelle et persistante qu'un utilisateur attache à un exercice (de base ou perso). Distincte de l'exercice lui-même, et propre à chaque utilisateur.
 _Avoid_: Description, commentaire
 
-**Groupe musculaire principal**:
-L'unique muscle qu'un exercice cible en priorité. Sert à regrouper et filtrer les exercices dans l'analyse (jamais à calculer un volume). Vocabulaire canonique (15) : pectoraux · avant épaule · milieu épaule · arrière épaule · trapèzes · dorsaux · biceps · triceps · brachioradial · abdominaux · quadriceps · ischio-jambiers · adducteurs · fessiers · mollets.
+**Muscles principaux**:
+La liste des muscles qu'un exercice cible en priorité (au moins un, champ `primary_muscles`). Jamais de muscle secondaire : un muscle est principal ou n'est pas compté. Sert à regrouper et filtrer les exercices dans l'analyse, et à rattacher le décompte de séries (jamais à calculer un volume). Vocabulaire canonique (15) : pectoraux · avant épaule · milieu épaule · arrière épaule · trapèzes · dorsaux · biceps · triceps · brachioradial · abdominaux · quadriceps · ischio-jambiers · adducteurs · fessiers · mollets.
 _Avoid_: Volume musculaire, muscle secondaire
+
+**Unilatéral**:
+Exercice travaillé un côté à la fois (ex. développé haltère unilatéral), marqué par le flag `unilateral`. Une série se complète quand les deux côtés (gauche et droite) sont saisis, chacun avec ses propres valeurs. Le côté est choisi à la saisie (sélecteur, sans ordre imposé). La courbe e1RM suit le côté faible.
+_Avoid_: Bilatéral implicite ; ne pas confondre côté et série
+
+**Override d'exercice**:
+Personnalisation d'un exercice de base propre à un seul utilisateur (nom, unilatéral, muscles principaux), sans modifier l'exercice partagé. Fusionnée champ par champ à la lecture : un champ surchargé gagne, les autres gardent la base.
+_Avoid_: Fork, copie, exercice perso (l'exercice de base reste partagé)
 
 ### Séances & routines
 
@@ -63,9 +71,13 @@ Le déroulé réel d'une séance un jour donné : les séries réellement faites
 _Avoid_: Session, séance réalisée (« séance » désigne le template)
 
 **Série**:
-Une série de travail réellement effectuée dans une exécution : poids, reps, RIR et son rang d'ordre. Aucun échauffement n'est loggé.
+Une série de travail réellement effectuée dans une exécution : poids, reps, RIR et son rang d'ordre. Aucun échauffement n'est loggé. Sur un exercice unilatéral, une série tient sur deux lignes au même rang (un côté gauche, un côté droite, valeurs par côté) ; son e1RM est celui du côté faible.
 _Avoid_: Set ; ne pas confondre avec « rep » (les répétitions à l'intérieur d'une série)
 
 **Note datée**:
 Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante).
 _Avoid_: Commentaire, log
+
+**Décompte de séries**:
+Nombre de séries d'une séance, au total et par muscle principal, pondéré par les reps : une série compte `min(reps, 5) / 5` (pleine à 5 reps ou plus, partielle en deçà). Calculé sur le prévu (prescriptions) comme sur le réel (séries loggées). Une série unilatérale compte 2 au total (les deux côtés) et le côté faible par muscle. Sert à comparer des configurations (« triceps 2 séries vs 4 »), jamais à mesurer un volume.
+_Avoid_: Volume, tonnage, charge totale
