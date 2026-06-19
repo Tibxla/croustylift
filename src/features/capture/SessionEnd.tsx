@@ -11,6 +11,7 @@
 // seule tache de couleur de l'écran) enregistre puis bascule en confirmation.
 import { useState } from 'react';
 import { Stepper } from './Stepper';
+import { MetricRow } from './MetricRow';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
@@ -283,72 +284,10 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
   );
 }
 
-/** Une métrique optionnelle : repliée (« + Ajouter… ») ou ouverte (Stepper + retrait). */
-function MetricRow({
-  title,
-  addLabel,
-  hint,
-  on,
-  onAdd,
-  onRemove,
-  children,
-}: {
-  title: string;
-  /** Libellé de l'action « ajouter » (grammaire FR explicite, pas de bricolage le/la). */
-  addLabel: string;
-  hint: string;
-  on: boolean;
-  onAdd: () => void;
-  onRemove: () => void;
-  children: React.ReactNode;
-}) {
-  if (!on) {
-    return (
-      <button
-        type="button"
-        onClick={onAdd}
-        className="flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          className="shrink-0 text-ink-muted"
-        >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span className="min-w-0 flex-1">
-          <span className="block text-base font-semibold text-ink">{addLabel}</span>
-          <span className="mt-0.5 block text-xs text-ink-muted">{hint}</span>
-        </span>
-      </button>
-    );
-  }
-
-  return (
-    <div className="rounded-2xl bg-surface px-4 py-3.5">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <span className="text-base font-semibold text-ink">{title}</span>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="inline-flex h-9 items-center rounded-lg px-2.5 text-xs font-medium text-ink-muted transition active:text-ink"
-        >
-          Retirer
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 // --- Confirmation -----------------------------------------------------------
+
+/* `MetricRow` est désormais une primitive partagée (`./MetricRow`), réutilisée
+   par l'édition d'une séance passée (PastSessionEditor). */
 
 /** Écran de confirmation : séance close, récap + durée auto + BPM saisi (si présent). */
 function SessionDone({

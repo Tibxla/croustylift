@@ -34,7 +34,7 @@
 // séries AJOUTÉES pendant l'édition n'ont pas de `sourceOrder` (lignes neuves) ;
 // elles retombent sur le groupage par contiguïté + côté (la paire G/D que l'UI
 // insère reste collée).
-import type { InsertSetOp, DeleteSetOp, OutboxOp } from './outbox';
+import type { InsertSetOp, DeleteSetOp, OutboxOp, UpdateExecutionOp } from './outbox';
 import type { Side } from '../../domain/types';
 
 /** Une série en cours d'édition : son id (réel si en base, client si neuve) + ses valeurs. */
@@ -340,4 +340,42 @@ export function diffSetsToOps(
 
   // Deletes d'abord (libère les rangs), puis inserts (occupe les rangs).
   return [...deletes, ...inserts];
+}
+
+// --- Diff des MÉTRIQUES de fin (durée + BPM) d'une séance finie ---------------
+//
+// Éditer la durée et le BPM moyen d'une séance CLÔTURÉE (PastSessionEditor) :
+// on dérive l'op `updateExecution` MINIMALE, ne posant QUE les champs réellement
+// changés. Un champ omis laisse la colonne intacte côté DB (`updateExecution`
+// dans data.ts) ; `bpmAvg: null` EXPLICITE retire le BPM. La durée est toujours
+// non-null côté éditeur (décision produit), le BPM est nullable (retirable).
+// L'op réutilise EXACTEMENT le chemin d'écriture de la clôture (idempotent par id,
+// ADR 0003/0009) — aucun second chemin. `null` renvoyé si rien n'a bougé (pas d'op).
+
+/**
+ * Dérive l'op `updateExecution` minimale pour passer des métriques `original`
+ * (telles qu'en base) aux métriques `edited` (après édition). Ne pose QUE les
+ * champs changés : la durée si elle diffère, le BPM si il diffère (y compris
+ * `null` explicite quand il est retiré). `null` si durée ET BPM sont inchangés.
+ * Pure, sans réseau ni mutation. On NE touche jamais `closedAt` : la séance reste
+ * clôturée, on ne corrige que ses métriques.
+ */
+export function buildExecutionMetricsOp(
+  executionId: string,
+  original: { bpmAvg: number | null; durationMin: number | null },
+  edited: { bpmAvg: number | null; durationMin: number },
+): UpdateExecutionOp | null {
+  const op: UpdateExecutionOp = { type: 'updateExecution', id: executionId };
+  let changed = false;
+  if (edited.durationMin !== original.durationMin) {
+    op.durationMin = edited.durationMin;
+    changed = true;
+  }
+  if (edited.bpmAvg !== original.bpmAvg) {
+    // `null` EXPLICITE quand le BPM est retiré : la couche data n'efface la
+    // colonne que sur un `null` posé (un champ `undefined` la laisserait intacte).
+    op.bpmAvg = edited.bpmAvg;
+    changed = true;
+  }
+  return changed ? op : null;
 }

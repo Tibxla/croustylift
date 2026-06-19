@@ -10,6 +10,7 @@
 // exécution.
 import { useEffect, useMemo, useState } from 'react';
 import { Stepper } from '../capture/Stepper';
+import { MetricRow } from '../capture/MetricRow';
 import { formatWeight } from '../capture/format';
 import { newId } from '../capture/state';
 import { loadExecutionForEdit, type EditableExecution } from '../capture/data';
@@ -19,6 +20,7 @@ import {
   removeSet,
   diffSetsToOps,
   groupIntoLogicalSets,
+  buildExecutionMetricsOp,
   type EditableSet,
   type LogicalSet,
 } from '../capture/past-session-edit';
@@ -28,6 +30,19 @@ import type { Side } from '../../domain/types';
 
 const WEIGHT_STEP = 2.5;
 const WEIGHT_FINE = 1.25;
+
+// Édition des métriques de fin (durée + BPM) d'une séance CLÔTURÉE. Pas au pouce
+// avec un palier fin (DESIGN.md, comme la clôture). Durée non-null (CHECK DB
+// `> 0`) ; BPM optionnel et nullable.
+const DURATION_STEP = 5;
+const DURATION_FINE = 1;
+const DURATION_MIN = 1;
+const DURATION_MAX = 600;
+/** Durée proposée si la séance close n'avait pas de chrono (`duration_min` null, cas dégénéré). */
+const DURATION_DEFAULT = 60;
+const BPM_STEP = 5;
+const BPM_FINE = 1;
+const BPM_DEFAULT = 130;
 
 /** 'YYYY-MM-DD' -> 'mer. 8 janv. 2026' (date longue lisible, locale fr). */
 function formatDateLong(iso: string): string {
@@ -59,10 +74,35 @@ interface ExerciseEditState {
   unilateral: boolean;
 }
 
+/**
+ * État d'édition des MÉTRIQUES de fin (durée + BPM) d'une séance CLÔTURÉE. Vit
+ * dans la phase 'ready' (comme les exos) pour éviter toute init asynchrone. `null`
+ * quand la séance n'est PAS clôturée : on n'édite alors pas les métriques (poser
+ * une durée la ferait passer pour close côté `loadTodayExecution`). La durée est
+ * toujours un nombre (non-null, décision produit) ; le BPM suit le motif optionnel
+ * (replié = non saisi), comme à la clôture.
+ */
+interface MetricsEditState {
+  /** Métriques telles qu'en base : référence stable du diff. */
+  original: { bpmAvg: number | null; durationMin: number | null };
+  /** Durée éditée (min), toujours un nombre. */
+  durationMin: number;
+  /** BPM activé (saisi) ? Replié (`false`) = « non saisi » → BPM retiré au save. */
+  bpmOn: boolean;
+  /** Valeur du Stepper BPM (n'a d'effet que si `bpmOn`). */
+  bpm: number;
+}
+
 type LoadPhase =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; date: string; exercises: ExerciseEditState[] };
+  | {
+      phase: 'ready';
+      date: string;
+      exercises: ExerciseEditState[];
+      /** Édition durée/BPM : `null` si la séance n'est pas clôturée (cf. MetricsEditState). */
+      metrics: MetricsEditState | null;
+    };
 
 type SavePhase =
   | { phase: 'idle' }
@@ -107,7 +147,12 @@ export function PastSessionEditor({
       try {
         const exec = await loadExecutionForEdit(executionId);
         if (!active) return;
-        setLoad({ phase: 'ready', date: exec.date, exercises: toEditStates(exec) });
+        setLoad({
+          phase: 'ready',
+          date: exec.date,
+          exercises: toEditStates(exec),
+          metrics: toMetricsState(exec),
+        });
       } catch (err) {
         if (!active) return;
         setLoad({
@@ -122,10 +167,16 @@ export function PastSessionEditor({
     };
   }, [executionId]);
 
-  // Une édition est en cours dès qu'un exo diffère de son original.
+  // Une édition est en cours dès qu'un exo diffère de son original, OU que les
+  // métriques (durée/BPM) diffèrent des leurs.
   const dirty = useMemo(() => {
     if (load.phase !== 'ready') return false;
-    return load.exercises.some((ex) => buildOps(ex, executionId).length > 0);
+    const setsDirty = load.exercises.some((ex) => buildOps(ex, executionId).length > 0);
+    const metricsDirty =
+      load.metrics !== null &&
+      buildExecutionMetricsOp(executionId, load.metrics.original, editedMetrics(load.metrics)) !==
+        null;
+    return setsDirty || metricsDirty;
   }, [load, executionId]);
 
   function patchExercise(
@@ -145,9 +196,29 @@ export function PastSessionEditor({
     setSave((s) => (s.phase === 'error' ? { phase: 'idle' } : s));
   }
 
+  /** Patche les MÉTRIQUES éditées (durée/BPM). Sans effet si la séance n'est pas close. */
+  function patchMetrics(fn: (m: MetricsEditState) => MetricsEditState) {
+    setLoad((prev) => {
+      if (prev.phase !== 'ready' || prev.metrics === null) return prev;
+      return { ...prev, metrics: fn(prev.metrics) };
+    });
+    setSave((s) => (s.phase === 'error' ? { phase: 'idle' } : s));
+  }
+
   async function handleSave() {
     if (load.phase !== 'ready') return;
     const ops: OutboxOp[] = load.exercises.flatMap((ex) => buildOps(ex, executionId));
+    // Métriques de fin (durée/BPM) : une op `updateExecution` minimale, seulement
+    // si elles ont changé. Indépendante des séries (ligne `executions`), l'ordre
+    // FIFO vis-à-vis des ops de séries est sans incidence.
+    if (load.metrics !== null) {
+      const metricsOp = buildExecutionMetricsOp(
+        executionId,
+        load.metrics.original,
+        editedMetrics(load.metrics),
+      );
+      if (metricsOp) ops.push(metricsOp);
+    }
     if (ops.length === 0) {
       onClose();
       return;
@@ -237,6 +308,19 @@ export function PastSessionEditor({
   return (
     <EditorShell onClose={onClose} date={load.date}>
       <div className="flex flex-col gap-5 pb-56">
+        {/* Métriques de fin (durée + BPM), seulement pour une séance CLÔTURÉE
+            (cf. MetricsEditState). Au-dessus des exos : c'est une donnée de la
+            séance entière, pas d'un exo. */}
+        {load.metrics !== null && (
+          <MetricsEditor
+            metrics={load.metrics}
+            onDuration={(durationMin) => patchMetrics((m) => ({ ...m, durationMin }))}
+            onBpmAdd={() => patchMetrics((m) => ({ ...m, bpmOn: true }))}
+            onBpmRemove={() => patchMetrics((m) => ({ ...m, bpmOn: false }))}
+            onBpm={(bpm) => patchMetrics((m) => ({ ...m, bpm }))}
+          />
+        )}
+
         {load.exercises.map((ex) => (
           <ExerciseEditor
             key={ex.exerciseId}
@@ -406,6 +490,66 @@ function DeleteConfirmSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+// --- Édition des métriques de fin (durée + BPM) ------------------------------
+//
+// Durée et BPM d'une séance CLÔTURÉE, au pouce (DESIGN.md, jamais d'<input>). La
+// durée est un Stepper toujours visible (non-null) ; le BPM suit le motif optionnel
+// partagé `MetricRow` (replié = non saisi → retiré au save), comme à la clôture.
+// Bloc « niveau séance », posé au-dessus des cartes d'exos. Steppers sur `bg-surface`
+// (contraste sur le fond `bg-bg` de l'éditeur), comme à la clôture.
+function MetricsEditor({
+  metrics,
+  onDuration,
+  onBpmAdd,
+  onBpmRemove,
+  onBpm,
+}: {
+  metrics: MetricsEditState;
+  onDuration: (durationMin: number) => void;
+  onBpmAdd: () => void;
+  onBpmRemove: () => void;
+  onBpm: (bpm: number) => void;
+}) {
+  return (
+    <section aria-label="Durée et BPM de la séance">
+      <h3 className="mb-3 text-base font-semibold leading-tight text-ink">Durée et BPM</h3>
+      <div className="flex flex-col gap-3">
+        <div className="rounded-2xl bg-surface px-4 py-3.5">
+          <Stepper
+            label="Durée"
+            unit="min"
+            value={metrics.durationMin}
+            step={DURATION_STEP}
+            fineStep={DURATION_FINE}
+            min={DURATION_MIN}
+            max={DURATION_MAX}
+            onChange={onDuration}
+          />
+        </div>
+        <MetricRow
+          title="BPM moyen"
+          addLabel="Ajouter le BPM moyen"
+          hint="Fréquence cardiaque moyenne de la séance."
+          on={metrics.bpmOn}
+          onAdd={onBpmAdd}
+          onRemove={onBpmRemove}
+        >
+          <Stepper
+            label="BPM moyen"
+            unit="bpm"
+            value={metrics.bpm}
+            step={BPM_STEP}
+            fineStep={BPM_FINE}
+            min={30}
+            max={240}
+            onChange={onBpm}
+          />
+        </MetricRow>
+      </div>
+    </section>
   );
 }
 
@@ -658,6 +802,27 @@ function EditorSkeleton() {
 }
 
 // --- Helpers (pas de logique métier ici : tout le diff vit dans le module pur) ---
+
+/**
+ * État d'édition des métriques depuis l'exécution chargée, ou `null` si la séance
+ * n'est PAS clôturée (on n'édite alors pas durée/BPM, cf. MetricsEditState). Durée
+ * pré-remplie avec la valeur en base, ou un défaut sobre si la séance close n'avait
+ * pas de chrono (`duration_min` null). BPM « saisi » ssi une valeur est en base.
+ */
+function toMetricsState(exec: EditableExecution): MetricsEditState | null {
+  if (exec.closedAt === null) return null;
+  return {
+    original: { bpmAvg: exec.bpmAvg, durationMin: exec.durationMin },
+    durationMin: exec.durationMin ?? DURATION_DEFAULT,
+    bpmOn: exec.bpmAvg !== null,
+    bpm: exec.bpmAvg ?? BPM_DEFAULT,
+  };
+}
+
+/** Les métriques éditées sous la forme attendue par `buildExecutionMetricsOp` (BPM replié = retiré). */
+function editedMetrics(m: MetricsEditState): { bpmAvg: number | null; durationMin: number } {
+  return { bpmAvg: m.bpmOn ? m.bpm : null, durationMin: m.durationMin };
+}
 
 /** Transforme l'exécution chargée en états d'édition (original figé = édité au départ). */
 function toEditStates(exec: EditableExecution): ExerciseEditState[] {
