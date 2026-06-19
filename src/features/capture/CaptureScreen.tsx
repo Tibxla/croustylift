@@ -14,6 +14,7 @@ import {
   type Dispatch,
 } from 'react';
 import {
+  deleteExecutionById,
   deleteSetById,
   listExercises,
   loadCaptureSource,
@@ -342,6 +343,10 @@ const syncFns: SyncFns = {
       body: op.body,
     }),
   deleteDatedNote: (op) => deleteDatedNoteById(op.id),
+  // La capture du jour n'enfile jamais cette op (la suppression d'exécution vient
+  // du journal, cf. ADR 0008), mais l'objet doit satisfaire `SyncFns` ; on câble
+  // le même chemin idempotent par id.
+  deleteExecution: (op) => deleteExecutionById(op.id),
 };
 
 // --- Indicateur de sync réactif --------------------------------------------
@@ -435,10 +440,16 @@ function CaptureBoard({
     return mergeProgress(fromSupabase, fromLocal);
   });
 
-  // Persiste à chaque changement d'état (localStorage).
+  // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
+  // clôturée : la clôture est transitoire (ADR 0009). On nettoie alors le cache
+  // pour qu'au remontage (onglet, reload, réouverture le même jour) `loadPersisted`
+  // renvoie null → capture vierge, jamais l'écran « Séance terminée ». L'état reste
+  // en mémoire pour le récap immédiat (phase 'finishing'). Une séance EN COURS
+  // (non clôturée) continue d'être persistée : offline, on ne perd aucune série.
   useEffect(() => {
-    persist(state);
-  }, [state]);
+    if (state.closedAt !== null) clearPersisted(session, date);
+    else persist(state);
+  }, [state, session, date]);
 
   // --- Synchro via outbox ---------------------------------------------------
   const { status, pending } = useSyncStatus();
@@ -634,8 +645,10 @@ function CaptureBoard({
         bpmAvg: values.bpmAvg,
         durationMin: durationMin ?? undefined,
       });
-      // Persiste la CLÔTURE : au remontage (changement d'onglet/reload), la séance
-      // réaffiche « Séance terminée » au lieu de repasser « en cours ».
+      // Pose la CLÔTURE en mémoire : SessionEnd montre le récap dans la foulée
+      // (son état `saved`). Le câblage de persistance nettoie alors le cache
+      // (ADR 0009 : clôture transitoire) → au remontage on repart vierge, on ne
+      // réaffiche PLUS « Séance terminée ».
       dispatch({ type: 'close', closedAt: Date.now() });
     },
     [enqueueExecutionOnce, state.executionId, durationMin],
@@ -656,28 +669,11 @@ function CaptureBoard({
     );
   }
 
-  // Séance restaurée CLÔTURÉE (revenue via changement d'onglet / reload) : on
-  // réaffiche la confirmation « Séance terminée » plutôt que de la repasser « en
-  // cours ». La durée vient de l'écart lancement -> clôture persisté.
-  if (state.closedAt !== null) {
-    const closedDurationMin =
-      state.closedAt > state.startedAt
-        ? Math.round((state.closedAt - state.startedAt) / 60000)
-        : null;
-    return (
-      <div className="min-h-[calc(100vh-3.5rem)]">
-        <SyncBanner status={status} pending={pending} />
-        <SessionEnd
-          summary={summary}
-          durationMin={closedDurationMin}
-          onSave={() => {}}
-          onBack={handleNewSession}
-          onNewSession={handleNewSession}
-          alreadyClosed
-        />
-      </div>
-    );
-  }
+  // Plus de réaffichage de l'écran de fin au remontage : la clôture est un geste
+  // transitoire (ADR 0009). Le récap juste après clôture reste assuré par la phase
+  // locale 'finishing' (état `saved` de SessionEnd) ; au remontage le cache est
+  // nettoyé et l'état restauré est forcément « en cours » (closedAt null), donc on
+  // retombe directement sur le picker / la capture vierge ci-dessous.
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
@@ -744,16 +740,17 @@ function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   // la base (a) pour un exo que le local ne porte pas. Les ids alignés sur
   // b.executionId restent cohérents avec les ops déjà en outbox.
   const datedNotes: CaptureState['datedNotes'] = { ...a.datedNotes, ...b.datedNotes };
-  // `closedAt` vient du LOCAL (b) : la clôture est une notion locale, la base
-  // n'en sait rien (a.closedAt est toujours null). Sinon une séance clôturée
-  // puis quittée repasserait « en cours » au remontage.
+  // `closedAt` reste `null` : on ne fusionne QUE des états « en cours ». La clôture
+  // est transitoire (ADR 0009) et n'est jamais restaurée — `loadPersisted` (b) la
+  // force à null et la base (a) ne la connaît pas. Une séance close a vu son cache
+  // nettoyé, donc `mergeProgress` ne s'exécute même pas dessus (fromLocal == null).
   return {
     ...a,
     executionId: b.executionId,
     startedAt: b.startedAt,
     progress,
     datedNotes,
-    closedAt: b.closedAt,
+    closedAt: null,
   };
 }
 

@@ -8,6 +8,7 @@
 // produit des `OutboxOp` (via past-session-edit) et les passe à `flushOps`,
 // exactement comme la capture du jour passe ses ops à l'outbox.
 import {
+  deleteExecutionById,
   deleteSetById,
   updateExecution,
   upsertExecution,
@@ -52,6 +53,7 @@ export const syncFns: SyncFns = {
       body: op.body,
     }),
   deleteDatedNote: (op) => deleteDatedNoteById(op.id),
+  deleteExecution: (op) => deleteExecutionById(op.id),
 };
 
 /**

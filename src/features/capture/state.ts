@@ -68,9 +68,13 @@ export interface CaptureState {
    */
   datedNotes: Record<string, DatedNoteDraft>;
   /**
-   * Horodatage de CLÔTURE (epoch ms) si la séance a été clôturée, sinon `null`.
-   * Persisté : au remontage (changement d'onglet, reload), une séance clôturée
-   * réaffiche l'écran « Séance terminée » au lieu de repasser « en cours ».
+   * Horodatage de CLÔTURE (epoch ms) si la séance vient d'être clôturée, sinon
+   * `null`. Vit en MÉMOIRE le temps du récap immédiat ; PAS restauré (ADR 0009 :
+   * clôture = geste transitoire). Le câblage de persistance NETTOIE le cache
+   * quand `closedAt !== null`, donc `loadPersisted` le force toujours à `null` :
+   * au remontage (onglet, reload, réouverture) on repart sur une capture vierge,
+   * jamais sur l'écran « Séance terminée ». La restauration d'une séance EN COURS
+   * (non clôturée) reste, elle, indispensable à l'offline.
    */
   closedAt: number | null;
 }
@@ -92,7 +96,9 @@ export type CaptureAction =
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
   | { type: 'reset'; executionId: string }
   // Clôture de la séance : fige `closedAt` (epoch ms fourni par le caller, pour
-  // garder le reducer testable). Persisté → la clôture survit au remontage.
+  // garder le reducer testable). En MÉMOIRE seulement → sert au récap immédiat ;
+  // le câblage de persistance nettoie alors le cache (ADR 0009 : clôture
+  // transitoire), donc rien n'est restauré au remontage.
   | { type: 'close'; closedAt: number };
 
 function emptyProgress(): ExerciseProgress {
@@ -315,8 +321,9 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
     }
 
     case 'close':
-      // Fige la clôture. Tout le reste (réalisé, ids) est conservé : la séance
-      // close reste consultable et la confirmation se réaffiche au remontage.
+      // Fige la clôture EN MÉMOIRE. Tout le reste (réalisé, ids) est conservé : le
+      // récap de fin se lit dans la foulée immédiate. Au remontage, rien ne
+      // revient (le cache a été nettoyé) — la clôture est transitoire (ADR 0009).
       return { ...state, closedAt: action.closedAt };
 
     case 'reset':
@@ -411,12 +418,13 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: normalizeProgress(parsed.progress),
       datedNotes: normalizeDatedNotes(parsed.datedNotes),
-      // CONSERVE la clôture : une séance clôturée puis quittée (changement
-      // d'onglet) doit rester close au retour, pas repasser « en cours ».
-      closedAt:
-        typeof parsed.closedAt === 'number' && Number.isFinite(parsed.closedAt)
-          ? parsed.closedAt
-          : null,
+      // NE RESTAURE JAMAIS la clôture (ADR 0009 : clôture transitoire). On ne
+      // restaure que l'état d'une séance EN COURS (offline : ne pas perdre les
+      // séries loggées sur un reload). Le câblage de persistance nettoie d'ailleurs
+      // le cache dès qu'une séance est close, donc `closedAt` y vaut toujours null
+      // en pratique ; on le force ici pour que repartir vierge ne tienne pas au
+      // hasard d'un vieux cache. Un cache pré-ADR portant un `closedAt` est ignoré.
+      closedAt: null,
     };
   } catch {
     return null;

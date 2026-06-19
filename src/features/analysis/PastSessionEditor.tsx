@@ -58,19 +58,35 @@ type SavePhase =
   | { phase: 'saving' }
   | { phase: 'error'; message: string };
 
+// Suppression de l'exécution entière (issue #44, ADR 0008 : hard delete). Un état
+// dédié, parallèle à `SavePhase` : `confirming` ouvre la feuille de confirmation
+// in-app (jamais window.confirm), `deleting` désarme les boutons pendant l'enqueue.
+type DeletePhase =
+  | { phase: 'idle' }
+  | { phase: 'confirming' }
+  | { phase: 'deleting' }
+  | { phase: 'error'; message: string };
+
 export function PastSessionEditor({
   executionId,
   onClose,
   onSaved,
+  onDeleted,
 }: {
   executionId: string;
   /** Fermer l'éditeur sans rien changer (retour au journal). */
   onClose: () => void;
   /** Appelé après une sauvegarde réussie : le parent recharge le journal/l'analyse. */
   onSaved: () => void;
+  /**
+   * Appelé après la suppression de l'exécution entière (ADR 0008) : le parent
+   * ferme l'éditeur et recharge le journal/l'analyse, MÊME voie que `onSaved`.
+   */
+  onDeleted: () => void;
 }) {
   const [load, setLoad] = useState<LoadPhase>({ phase: 'loading' });
   const [save, setSave] = useState<SavePhase>({ phase: 'idle' });
+  const [del, setDel] = useState<DeletePhase>({ phase: 'idle' });
 
   useEffect(() => {
     let active = true;
@@ -150,6 +166,27 @@ export function PastSessionEditor({
     }
   }
 
+  async function handleDelete() {
+    setDel({ phase: 'deleting' });
+    try {
+      // Hard delete (ADR 0008) : une seule op `deleteExecution`, la cascade DB
+      // efface séries + notes datées. L'op est DURABLE dès l'enqueue (localStorage),
+      // donc on ferme et on recharge de façon OPTIMISTE sans attendre le réseau :
+      // même offline, elle remontera au prochain flush comme la capture du jour.
+      // On n'inspecte pas `remaining` (contrairement à `save`) : il n'y a plus
+      // rien à rouvrir, l'éditeur se ferme sur cette exécution dans tous les cas.
+      await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      onDeleted();
+    } catch (err) {
+      // Erreur inattendue (pas une simple coupure) : l'op reste durable et
+      // remontera au prochain flush. On garde la feuille pour signaler l'échec.
+      setDel({
+        phase: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (load.phase === 'loading') {
     return <EditorShell onClose={onClose}>{<EditorSkeleton />}</EditorShell>;
   }
@@ -167,9 +204,15 @@ export function PastSessionEditor({
     );
   }
 
+  // Ce que la suppression effacera, chiffré pour la confirmation (ADR 0008) :
+  //   M = nombre d'exos chargés ; N = total des séries RÉELLES en base (`original`,
+  // jamais `edited` qui refléterait des corrections non encore sauvegardées).
+  const exerciseCount = load.exercises.length;
+  const setCount = load.exercises.reduce((sum, ex) => sum + ex.original.length, 0);
+
   return (
     <EditorShell onClose={onClose} date={load.date}>
-      <div className="flex flex-col gap-5 pb-40">
+      <div className="flex flex-col gap-5 pb-56">
         {load.exercises.map((ex) => (
           <ExerciseEditor
             key={ex.exerciseId}
@@ -191,6 +234,32 @@ export function PastSessionEditor({
             Aucune série loggée ce jour. Rien à corriger.
           </p>
         )}
+
+        {/* Suppression de l'exécution entière (ADR 0008). Discret, séparé du flux
+            d'édition : pas l'accent violet (réservé à l'action primaire / la
+            sélection), un simple lien en ton `warn` qui ouvre la confirmation. */}
+        <div className="mt-2 border-t border-line pt-5">
+          <button
+            type="button"
+            onClick={() => setDel({ phase: 'confirming' })}
+            className="inline-flex h-11 items-center gap-2 rounded-lg px-1 text-sm font-medium text-warn transition active:opacity-70"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </svg>
+            Supprimer cette séance
+          </button>
+        </div>
       </div>
 
       {/* Barre d'action fixe : enregistrer les corrections. L'éditeur couvre la
@@ -218,7 +287,92 @@ export function PastSessionEditor({
           </button>
         </div>
       </div>
+
+      {del.phase !== 'idle' && (
+        <DeleteConfirmSheet
+          date={load.date}
+          setCount={setCount}
+          exerciseCount={exerciseCount}
+          phase={del}
+          onCancel={() => setDel({ phase: 'idle' })}
+          onConfirm={handleDelete}
+        />
+      )}
     </EditorShell>
+  );
+}
+
+// --- Feuille de confirmation de suppression (ADR 0008) ----------------------
+//
+// Surface in-app (jamais window.confirm, jamais d'input OS) montée AU-DESSUS de
+// l'éditeur. Elle CHIFFRE la conséquence concrète (date, N séries, M exos) avant
+// un hard delete irréversible : la confirmation est la seule barrière, donc elle
+// doit nommer ce qui part. [Annuler] [Supprimer], Supprimer en ton `warn`.
+function DeleteConfirmSheet({
+  date,
+  setCount,
+  exerciseCount,
+  phase,
+  onCancel,
+  onConfirm,
+}: {
+  date: string;
+  setCount: number;
+  exerciseCount: number;
+  phase: DeletePhase;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const busy = phase.phase === 'deleting';
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-bg/70 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-exec-title"
+    >
+      <div className="w-full max-w-md rounded-t-2xl border-t border-line bg-surface p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] shadow-2xl">
+        <h2 id="delete-exec-title" className="text-lg font-bold leading-tight text-ink">
+          Supprimer cette séance ?
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          La séance du{' '}
+          <span className="readout tabular-nums text-ink">{formatDateLong(date)}</span> et
+          ses{' '}
+          <span className="readout tabular-nums text-ink">{setCount}</span>{' '}
+          {setCount > 1 ? 'séries' : 'série'} sur{' '}
+          <span className="readout tabular-nums text-ink">{exerciseCount}</span>{' '}
+          {exerciseCount > 1 ? 'exercices' : 'exercice'} seront définitivement
+          effacées. Action irréversible.
+        </p>
+
+        {phase.phase === 'error' && (
+          <p className="readout mt-3 break-words text-xs text-warn">
+            La suppression n'a pas pu remonter. Elle est enregistrée en local et
+            partira au retour du réseau. {phase.message}
+          </p>
+        )}
+
+        <div className="mt-5 flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl bg-surface-2 text-base font-semibold text-ink transition active:scale-[0.99] active:bg-surface disabled:opacity-60"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl bg-warn text-base font-semibold text-bg transition active:scale-[0.99] active:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? 'Suppression...' : 'Supprimer'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -634,3 +634,15 @@ export async function updateExecution(params: {
   const { error } = await supabase.from('executions').update(patch).eq('id', params.id);
   if (error) throw error;
 }
+
+/**
+ * Supprime une EXÉCUTION entière par son id (issue #44, ADR 0008) : hard delete,
+ * pas de soft delete. Un unique `DELETE FROM executions WHERE id` ; la CASCADE DB
+ * (`performed_sets`/`dated_notes` en on delete cascade, cf. migration 0001)
+ * efface les séries et notes datées filles. Idempotent : supprimer une exécution
+ * déjà absente ne fait rien et ne lève pas (delete par id ciblé, RLS scopé).
+ */
+export async function deleteExecutionById(id: string): Promise<void> {
+  const { error } = await supabase.from('executions').delete().eq('id', id);
+  if (error) throw error;
+}
