@@ -21,7 +21,8 @@ import { loadBlockComparisonData } from './data';
 import { blockLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
-import { TrendArrow, trendColor, trendOf } from './TrendArrow';
+import { TrendArrow } from './TrendArrow';
+import { trendColor, trendOf } from './trend';
 
 /** Sous ce nombre de points, un bloc n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -195,10 +196,12 @@ function BlockSelect({
   onChange: (index: number) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[11px] text-ink-muted">{label}</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="readout text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
+        {label}
+      </span>
       <select
-        className="h-11 rounded-lg border border-line bg-surface-2 px-2 text-sm text-ink"
+        className="field h-11 rounded-xl px-2.5 text-sm text-ink"
         value={value ?? ''}
         onChange={(e) => onChange(Number(e.target.value))}
       >
@@ -292,11 +295,11 @@ function BlockRateCard({
 
   return (
     <div
-      className={`rounded-xl border bg-surface-2 px-3 py-2 ${
-        isWinner ? 'border-accent' : 'border-line'
-      }`}
+      className={`panel rounded-xl px-3 py-2 ${isWinner ? 'border-accent' : ''}`}
     >
-      <p className="readout text-[11px] text-ink-muted">{label}</p>
+      <p className="readout text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
+        {label}
+      </p>
       {rate === null || trend === null ? (
         <p className="mt-1 text-xs text-ink-muted">
           {pointCount < MIN_POINTS

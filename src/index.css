@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
-/* Fonts self-hosted (cf. DESIGN.md — Readout Rule : mono tabulaire pour les chiffres mesurés). */
+/* Fonts self-hosted (cf. DESIGN.md — Readout Rule : mono tabulaire pour les chiffres mesurés).
+   Refonte « premium » : Geist (Variable) en titres/corps, Geist Mono pour TOUT chiffre
+   mesuré. Inter / JetBrains Mono restent importés comme repli robuste (PWA offline). */
+@import "@fontsource-variable/geist/index.css";
+@import "@fontsource-variable/geist-mono/index.css";
 @import "@fontsource-variable/inter/index.css";
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
@@ -13,26 +17,43 @@
     ink/surface 16.3:1 · inkMuted/surface 7.1:1 · white/accent-strong 5.3:1.
 */
 @theme {
-  --color-bg: oklch(0.16 0.008 286);          /* fond quasi-noir teinté violet */
-  --color-surface: oklch(0.21 0.01 286);      /* panneaux, lignes de série (palier +1) */
-  --color-surface-2: oklch(0.26 0.012 286);   /* palier +2 (ligne sélectionnée, hover) */
-  --color-line: oklch(0.30 0.012 286);        /* séparateurs 1px discrets */
+  /* Refonte « premium » — fond plus profond, paliers tonals resserrés (OKLCH).
+     Contrastes vérifiés WCAG AA : ink/surface ≥16:1 · ink-muted/surface ≥7:1. */
+  --color-bg: oklch(0.145 0.012 286);         /* near-black violet-tinté, plus profond */
+  --color-surface: oklch(0.192 0.014 286);    /* panneaux, lignes de série (palier +1) */
+  --color-surface-2: oklch(0.238 0.016 286);  /* palier +2 (ligne sélectionnée, hover) */
+  --color-line: oklch(0.30 0.012 286);        /* séparateurs 1px legacy */
 
-  --color-ink: oklch(0.97 0.005 286);         /* texte principal, quasi-blanc (≥14:1) */
-  --color-ink-muted: oklch(0.72 0.02 286);    /* labels secondaires (≥6:1, jamais délavé) */
+  /* Finitions « machinées » — hairlines + highlight spéculaire, exposés aussi en
+     tokens de couleur Tailwind (border-hair, border-hair-strong). `--color-hairline`
+     reste un alias de `--hair` pour les usages legacy (App.tsx, Stepper). */
+  --color-hair: rgba(255, 255, 255, 0.075);        /* bordure 1px discrète des cartes */
+  --color-hair-strong: rgba(255, 255, 255, 0.14);  /* bordure 1px des cartes clés */
+  --color-hairline: rgba(255, 255, 255, 0.075);    /* alias legacy de --hair */
 
-  /* The One Voice Rule : violet sur ≤10 % de l'écran. */
-  --color-accent: oklch(0.62 0.22 286);       /* sélection, indicateur (bordure/forme) */
+  --color-ink: oklch(0.975 0.004 286);        /* texte principal, quasi-blanc */
+  --color-ink-muted: oklch(0.715 0.018 286);  /* labels secondaires (jamais délavé) */
+  --color-ink-faint: oklch(0.545 0.016 286);  /* méta discrète, kickers mono (NOUVEAU) */
+
+  /* The One Voice Rule : violet sur ≤10 % de l'écran. Teinte affinée (moins néon). */
+  --color-accent: oklch(0.62 0.19 286);       /* sélection, indicateur (bordure/forme) */
   --color-accent-strong: oklch(0.55 0.20 286);/* fond d'action primaire (blanc lisible dessus) */
-  --color-accent-ink: oklch(0.70 0.20 286);   /* texte accent sur surface sombre (≥6:1) */
+  --color-accent-ink: oklch(0.74 0.16 288);   /* texte/icône accent sur fond sombre (≥6:1) */
+  --color-accent-soft: color-mix(in oklab, var(--color-accent), transparent 86%); /* fond accent voilé */
   --color-on-accent: oklch(0.99 0.01 286);    /* texte sur fond accent */
 
   /* Statut déviation — couleur + signe/forme, jamais couleur seule (No Fitness-Red Rule). */
-  --color-good: oklch(0.78 0.14 150);         /* cible atteinte / battue (vert froid) */
-  --color-warn: oklch(0.80 0.13 75);          /* sous-objectif / skippé (ambre, pas rouge) */
+  --color-good: oklch(0.80 0.13 158);         /* cible atteinte / battue (vert froid) + ▲ */
+  --color-warn: oklch(0.82 0.115 80);         /* sous-objectif / skippé (ambre, pas rouge) + ▼ */
 
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-sans: "Geist Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Courbes de motion — ease-out exponentielles, JAMAIS de bounce/élastique
+     (DESIGN.md, register product). Exposées comme `ease-*` aux utilitaires Tailwind. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /*
@@ -45,6 +66,48 @@
 :root {
   --nav-height: 3.5rem; /* = h-14, hauteur d'un onglet */
   --nav-offset: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+
+  /* --- Système de motion (durées) --------------------------------------------
+     150–250 ms sur l'essentiel (register product) ; le « slow » reste pour les
+     reveals d'entrée, pas pour une interaction en flow. */
+  --dur-fast: 130ms;
+  --dur: 200ms;
+  --dur-slow: 360ms;
+
+  /* --- Finitions « machinées » (raw) -----------------------------------------
+     Hairlines + liseré spéculaire en valeurs brutes, pour les box-shadow inset
+     (les variantes `--color-*` servent aux bordures via les utilitaires Tailwind). */
+  --hair: rgba(255, 255, 255, 0.075);             /* bordure 1px discrète */
+  --hair-strong: rgba(255, 255, 255, 0.14);       /* bordure 1px accentuée (cartes clés) */
+  --spec: rgba(255, 255, 255, 0.055);             /* liseré clair haut (inset 0 1px 0) */
+
+  /* --- Élévation « lumière du haut » -----------------------------------------
+     La profondeur du dark premium ne vient pas d'ombres lourdes mais d'un liseré
+     clair en haut (la lumière vient d'au-dessus) + d'ombres chuchotées. */
+  --edge-light: var(--spec);                       /* highlight neutre haut de surface */
+  --edge-light-strong: rgba(255, 255, 255, 0.18);  /* highlight haut du bouton accent */
+
+  /* Matière du bouton primaire : dégradé d'accent (vertical), liseré interne, halo
+     accent. Accent affiné (chroma 0.19) : le bas reste ≥ contraste AA pour le blanc. */
+  --accent-top: var(--color-accent);
+  --accent-bottom: var(--color-accent-strong);
+  --accent-border: oklch(0.74 0.16 288 / 0.5);
+  --accent-glow: oklch(0.62 0.19 286 / 0.5);
+  --accent-ring: oklch(0.62 0.19 286 / 0.3);      /* halo de focus des champs/boutons */
+
+  /* Hovers (desktop/PC, surface Analyse au calme) — un cran plus clair. */
+  --surface-hover: oklch(0.218 0.015 286);
+  --surface-2-hover: oklch(0.268 0.017 286);
+
+  /* Ombres composées, réutilisées par les primitives. La bordure 1px est portée
+     par un vrai `border` (plus net) ; l'ombre ne fait que le liseré + la profondeur. */
+  --shadow-card:
+    inset 0 1px 0 0 var(--spec),
+    0 1px 2px 0 rgb(0 0 0 / 0.45);
+  --shadow-raised:
+    inset 0 1px 0 0 var(--spec),
+    0 2px 4px 0 rgb(0 0 0 / 0.3),
+    0 14px 32px -14px rgb(0 0 0 / 0.6);
 }
 
 html,
@@ -59,6 +122,10 @@ body {
   color: var(--color-ink);
   /* Évite le surlignage bleu natif au tap sur mobile (feedback géré nous-mêmes). */
   -webkit-tap-highlight-color: transparent;
+  /* Lissage des polices, cohérent avec une UI dense et lisible. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   /* Safe-area haute : avec viewport-fit=cover (index.html) et la status bar iOS
      black-translucent, le contenu remonterait sous l'encoche. Ce padding décale
      UNIFORMÉMENT tous les écrans (header, login, capture) sous la zone sûre. Nul
@@ -67,17 +134,299 @@ body {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
-/* Readout Rule : chiffres mesurés en mono à chasse tabulaire, alignés en colonne. */
-.readout {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+/* Sélection de texte teintée vers l'accent (détail premium, sobre). */
+::selection {
+  background-color: oklch(0.62 0.19 286 / 0.28);
+  color: var(--color-ink);
 }
 
-/* Focus visible au clavier, jamais perdu (DoD). */
+/* Readout Rule : chiffres mesurés en mono à chasse tabulaire, alignés en colonne.
+   `slashed-zero` (zero slashed) : signature instrument, zéro jamais confondu. */
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Focus visible au clavier, jamais perdu (DoD). Halo doux plutôt qu'un trait sec. */
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/*
+  Fix autofill : Chrome/Safari repeignent les champs auto-remplis en blanc/jaune,
+  ce qui cassait le thème sombre (champ Email blanc, illisible). On force le fond
+  surface + l'encre, et on neutralise l'animation de fond de l'agent.
+*/
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--color-ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset;
+  caret-color: var(--color-ink);
+  transition: background-color 9999s ease-out 0s;
+}
+
+/*
+  ============================================================================
+  Primitives premium (boutons, surfaces, champs).
+  Centralisent la « matière » (élévation, edge-light, motion) pour que toute
+  l'app monte en gamme par un seul endroit. Composables avec les utilitaires
+  Tailwind (taille/largeur/typo restent en classes inline).
+  ============================================================================
+*/
+@layer components {
+  /* --- Boutons -------------------------------------------------------------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.875rem;
+    font-weight: 600;
+    line-height: 1.1;
+    user-select: none;
+    -webkit-user-select: none;
+    transition:
+      transform var(--dur-fast) var(--ease-out-quint),
+      box-shadow var(--dur) var(--ease-out-quart),
+      background-color var(--dur) var(--ease-out-quart),
+      color var(--dur) var(--ease-out-quart),
+      filter var(--dur) var(--ease-out-quart);
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Primaire — « contour accent » lumineux (maquette canonique claude.ai/design) :
+     violet voilé (accent-soft) + bordure accent + texte accent-ink, rehaussé d'un
+     HALO accent doux — glow externe + ombre portée diffuse + glow interne. Pas de
+     dégradé plein ni d'ombre dure noire : la matière vient de la LUMIÈRE accent,
+     pas d'une élévation lourde. C'est la seule surface pleinement violette : l'action
+     primaire porte la voix (One Voice Rule). */
+  .btn-primary {
+    color: var(--color-accent-ink);
+    background-color: var(--color-accent-soft);
+    border: 1px solid var(--color-accent);
+    box-shadow:
+      0 0 14px -3px color-mix(in oklab, var(--color-accent), transparent 40%),
+      0 6px 20px -8px color-mix(in oklab, var(--color-accent), transparent 35%),
+      inset 0 0 12px -6px color-mix(in oklab, var(--color-accent), transparent 50%);
+  }
+  @media (hover: hover) {
+    .btn-primary:hover {
+      background-color: color-mix(in oklab, var(--color-accent), transparent 80%);
+    }
+  }
+  .btn-primary:active {
+    /* Press : voile un cran plus dense + halo resserré (le scale est sur .btn). */
+    background-color: color-mix(in oklab, var(--color-accent), transparent 74%);
+    box-shadow:
+      0 0 10px -4px color-mix(in oklab, var(--color-accent), transparent 45%),
+      inset 0 0 12px -6px color-mix(in oklab, var(--color-accent), transparent 50%);
+  }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    box-shadow: none;
+  }
+  .btn-primary:disabled:active {
+    transform: none;
+  }
+
+  /* Secondaire — bouton-fantôme cerclé (charte §270) : fond transparent + hairline
+     marquée, wash tonal au hover/press. Le TON (couleur du texte, et bordure accent
+     pour les actions accent) est porté en classe selon l'action (ink-muted neutre,
+     accent-ink accent, warn destructif). */
+  .btn-secondary {
+    color: var(--color-ink);
+    background-color: transparent;
+    border: 1px solid var(--hair-strong);
+  }
+  @media (hover: hover) {
+    .btn-secondary:hover {
+      background-color: var(--color-surface);
+    }
+  }
+  .btn-secondary:active {
+    background-color: var(--color-surface-2);
+  }
+  .btn-secondary:disabled {
+    opacity: 0.4;
+  }
+  .btn-secondary:disabled:active {
+    transform: none;
+  }
+
+  /* Ghost — texte seul, wash discret au hover/press. */
+  .btn-ghost {
+    color: var(--color-ink-muted);
+    background-color: transparent;
+  }
+  @media (hover: hover) {
+    .btn-ghost:hover {
+      color: var(--color-ink);
+      background-color: var(--color-surface);
+    }
+  }
+  .btn-ghost:active {
+    color: var(--color-ink);
+  }
+
+  /* --- Surfaces ------------------------------------------------------------- */
+  /* Carte « machinée » : bordure hairline nette (1px), liseré spéculaire en haut,
+     ombre chuchotée. `.panel` est le nom canonique de la refonte ; `.surface-card`
+     en est l'alias historique (usages existants), strictement identique. */
+  .panel,
+  .surface-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--hair);
+    box-shadow: var(--shadow-card);
+  }
+  /* Carte clé : bordure 1px plus marquée (séance dépliée, carte « prochaine »…). */
+  .panel-key {
+    border-color: var(--hair-strong);
+  }
+  /* Carte interactive (ligne tappable) : ajoute press + hover. */
+  .surface-interactive {
+    background-color: var(--color-surface);
+    border: 1px solid var(--hair);
+    box-shadow: var(--shadow-card);
+    transition:
+      transform var(--dur-fast) var(--ease-out-quint),
+      background-color var(--dur) var(--ease-out-quart),
+      box-shadow var(--dur) var(--ease-out-quart);
+  }
+  @media (hover: hover) {
+    .surface-interactive:hover {
+      background-color: var(--surface-hover);
+    }
+  }
+  .surface-interactive:active {
+    transform: scale(0.99);
+    background-color: var(--color-surface-2);
+  }
+
+  /* Panneau flottant (feuille modale, barre d'action) : élévation un cran au-dessus. */
+  .surface-raised {
+    background-color: var(--color-surface);
+    border: 1px solid var(--hair);
+    box-shadow: var(--shadow-raised);
+  }
+
+  /* --- Champs --------------------------------------------------------------- */
+  /* Champ de saisie : bordure hairline au repos, liseré spéculaire, halo accent au
+     focus (bordure accent + anneau 3px). Le fix autofill garde le fond sombre. */
+  .field {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--hair);
+    box-shadow: inset 0 1px 0 0 var(--spec);
+    transition:
+      border-color var(--dur) var(--ease-out-quart),
+      box-shadow var(--dur) var(--ease-out-quart),
+      background-color var(--dur) var(--ease-out-quart);
+  }
+  .field::placeholder {
+    color: var(--color-ink-faint);
+  }
+  .field:focus,
+  .field:focus-visible {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow:
+      inset 0 1px 0 0 var(--spec),
+      0 0 0 3px var(--accent-ring);
+  }
+}
+
+/*
+  ============================================================================
+  Animations d'entrée et micro-feedback.
+  Principe (DESIGN.md + guidance) : ce sont des ANIMATIONS (jouées au montage),
+  pas des transitions « gated » par une classe — si elles ne jouent pas (tab
+  caché, rendu headless, reduced-motion), l'élément reste à son état VISIBLE par
+  défaut. Aucune ne masque du contenu de façon durable.
+  ============================================================================
+*/
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(1.16);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(6%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reveal d'entrée, avec décalage en cascade via `--reveal-i` (index de l'item).
+   `both` : avant le délai, l'item est à l'état `from` ; sous reduced-motion la
+   durée tombe à ~0 et il apparaît instantanément (jamais bloqué invisible). */
+.reveal {
+  animation: reveal-up 0.5s var(--ease-out-expo) both;
+  animation-delay: calc(var(--reveal-i, 0) * 0.045s);
+}
+
+/* Une série fraîchement loggée se pose dans la liste (feedback de log satisfaisant). */
+.reveal-set {
+  animation: reveal-up 0.34s var(--ease-out-expo);
+}
+
+/* Petit « tick » sur un chiffre qui change (compteur de séries, e1RM) : remonté
+   par `key={valeur}` côté React, l'élément se remonte et rejoue l'animation. */
+.anim-pop {
+  animation: pop 0.26s var(--ease-out-quart);
+}
+
+/* Feuille modale qui monte. */
+.anim-sheet {
+  animation: sheet-up 0.32s var(--ease-out-expo);
+}
+
+.anim-fade {
+  animation: fade-in 0.24s var(--ease-out-quart);
+}
+
+/* View Transitions (changements d'onglet / d'écran) : crossfade natif, court et
+   premium, 0 ko. Désactivé en JS sous reduced-motion (feature-gate). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.24s;
+  animation-timing-function: var(--ease-out-quart);
 }
 
 /* Motion 150–250 ms ease-out ; instantané si l'utilisateur le demande. */
@@ -88,5 +437,12 @@ body {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* `*` ne matche pas les pseudo-éléments de View Transition : on les neutralise
+     explicitement (en plus du feature-gate JS). */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.001ms !important;
   }
 }

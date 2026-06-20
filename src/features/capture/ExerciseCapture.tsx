@@ -12,15 +12,16 @@ import {
 } from '../../domain/unilateral';
 import { deriveDeviations } from '../../domain/deviation';
 import { isBlankNote } from '../../domain/notes';
-import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../domain/pr';
 import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { resolveExerciseNoteSave } from './state';
-import { Stepper } from './Stepper';
+import { ClusterStepper } from './ClusterStepper';
 import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
-import { DeviationBadge, deviationVisual } from './DeviationBadge';
+import { DeviationBadge } from './DeviationBadge';
+import { deviationVisual } from './deviation-visual';
+import { computeRecordFlags, type RecordKind } from './record-flags';
 import {
   formatE1rm,
   formatPrescription,
@@ -33,6 +34,9 @@ import {
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
   progress: ExerciseProgress;
+  /** Position de l'exo dans la séance (1-indexé) et total, pour le repère « EXO N / M ». */
+  position?: number;
+  total?: number;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
   onUndoLast: () => void;
@@ -64,6 +68,8 @@ const WEIGHT_FINE = 1.25;
 export function ExerciseCapture({
   exercise,
   progress,
+  position,
+  total,
   datedNote,
   onUndoLast,
   onSkip,
@@ -166,152 +172,275 @@ export function ExerciseCapture({
   // point de la courbe primaire (cf. weakSideE1rm). Bilatéral : e1RM simple.
   const firstE1rm = weakSideE1rm(progress.sets);
 
+  // Muscles principaux (issue #33) affichés sous le nom, repli sur la cible prescrite
+  // pour un exo legacy sans muscles renseignés (jamais de sous-ligne vide).
+  const muscles = (exercise.primaryMuscles ?? []).filter(Boolean);
+
+  // Index de la MEILLEURE série loggée (e1RM max) : sa ligne est mise en accent dans
+  // la liste, façon « série du jour à battre » (cohérent avec le repère Analyse).
+  const bestIndex = useMemo(() => {
+    if (progress.sets.length === 0) return -1;
+    let bi = 0;
+    let bv = -Infinity;
+    progress.sets.forEach((s, i) => {
+      const e = estimateE1rm(s.weightKg, s.reps, s.rir);
+      if (e > bv) {
+        bv = e;
+        bi = i;
+      }
+    });
+    return bi;
+  }, [progress.sets]);
+
+  // Segments de progression des séries : autant que la borne haute prescrite (jamais
+  // moins que le nombre déjà fait). Faits = accent ; courant = palier + anneau accent.
+  const plannedSegments = Math.max(prescription.sets.max, Math.ceil(completedSets));
+
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
-      {/* Retour au sélecteur */}
-      <button
-        type="button"
-        onClick={onBack}
-        className="-ml-1 mb-2 inline-flex items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      {/* Top bar : retour (carré) · repère « EXO N / M » · spacer symétrique. */}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Tous les exercices"
+          className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink"
         >
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
-        Tous les exercices
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
+        {position != null && total != null && (
+          <span className="readout text-[13px] uppercase tracking-[0.08em] text-ink-muted">
+            Exo {String(position).padStart(2, '0')} / {String(total).padStart(2, '0')}
+          </span>
+        )}
+        <span aria-hidden="true" className="h-[38px] w-[38px]" />
+      </div>
 
-      {/* Nom = roi */}
-      <h2 className="text-3xl font-bold leading-tight tracking-tight text-ink">
-        {exercise.name}
-      </h2>
-
-      {/* Cible prescrite */}
-      <p className="readout mt-1.5 text-sm text-ink-muted">
-        Cible{' '}
-        {formatPrescription(prescription.sets, prescription.reps, prescription.rir)}
-      </p>
-
-      {/* Co-roi : « dernière fois » à battre. Deux cas seulement portent un
-          contenu : une série de réf à battre à la position courante, ou le tout
-          premier passage (aucune réf). Quand on DÉPASSE le nombre de séries de la
-          dernière fois (réf existe mais aucune à cette position), on ne rend rien :
-          pas de carte orpheline ni de message « N séries seulement ». */}
+      {/* Référence « dernière fois » à battre (pill + readout). Rien à la position
+          dépassée (réf existe mais aucune série) ; texte sobre au premier passage. */}
       {(refToBeat || !reference) && (
-        <div className="mt-3 rounded-2xl bg-surface px-4 py-3">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
           {refToBeat ? (
-            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-sm text-ink-muted">À battre · dernière fois</span>
-              <span className="readout text-base font-medium text-ink">
-                {formatSet(refToBeat)}
+            <>
+              <span className="readout rounded-md border border-hair bg-surface px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint shadow-[inset_0_1px_0_var(--spec)]">
+                Dernière fois
               </span>
-            </p>
+              <span className="readout text-[13.5px] text-ink-muted">{formatSet(refToBeat)}</span>
+            </>
           ) : (
-            <p className="text-sm text-ink-muted">
-              Premier passage sur cet exercice. Aucune référence à battre.
-            </p>
+            <span className="text-[13px] text-ink-faint">
+              Premier passage. Aucune référence à battre.
+            </span>
           )}
         </div>
       )}
 
-      {/* Note d'INSTRUCTIONS de l'exo (issue #52, ex-#26) : référence persistante,
-          désormais repliable ET éditable sur place. key=exerciseId pour ré-amorcer
-          le pli/brouillon au changement d'exo. L'info (en-tête, états) tient au
-          texte + au glyphe, jamais à la couleur seule. */}
-      <ExerciseNoteSection
-        key={exercise.exerciseId}
-        value={perExerciseNote}
-        onSave={onSaveExerciseNote}
-      />
+      {/* Nom = roi + muscles principaux (issue #33), repli sur la cible prescrite. */}
+      <h2 className="mt-3 text-3xl font-semibold leading-[1.05] tracking-[-0.025em] text-ink">
+        {exercise.name}
+      </h2>
+      <p className="readout mt-1.5 text-[13px] text-ink-faint">
+        {muscles.length
+          ? muscles.join(' · ')
+          : `Cible ${formatPrescription(prescription.sets, prescription.reps, prescription.rir)}`}
+      </p>
 
+      {/* Progression des séries : segments (faits = accent, courant = anneau accent)
+          + compteur en ÉQUIVALENT-SÉRIE (a11y, aria-live ; 0,5 pour un côté loggé). */}
+      <div className="mt-4 flex items-center gap-1.5" aria-live="polite">
+        {Array.from({ length: plannedSegments }).map((_, i) => {
+          const done = i < Math.floor(completedSets);
+          const current = i === Math.floor(completedSets);
+          return (
+            <span
+              key={i}
+              aria-hidden="true"
+              className={`h-1.5 flex-1 rounded-full ${
+                done
+                  ? 'bg-accent'
+                  : current
+                    ? 'bg-surface-2 shadow-[inset_0_0_0_1.5px_var(--color-accent)]'
+                    : 'bg-surface-2'
+              }`}
+            />
+          );
+        })}
+        <span className="readout ml-1.5 shrink-0 text-xs text-ink-muted">
+          <span
+            key={formatSetCount(loggedSetEquivalents(progress.sets))}
+            className="anim-pop inline-block text-ink"
+          >
+            {formatSetCount(loggedSetEquivalents(progress.sets))}
+          </span>{' '}
+          / {formatRange(prescription.sets)}
+        </span>
+      </div>
 
-      {/* Séries déjà loggées (mono, alignées) */}
-      {loggedCount > 0 && (
-        <ol className="mt-4 flex flex-col gap-1.5">
-          {progress.sets.map((s, i) => {
-            // Badges « battu »/record désactivés en unilatéral (issue #46) : la
-            // comparaison par côté (et le record historique mêlant les côtés)
-            // sort du périmètre. Le côté est porté par un libellé texte explicite.
-            const beats =
-              !unilateral &&
-              refToBeatAt(reference, s.order) &&
-              estimateE1rm(s.weightKg, s.reps, s.rir) >=
-                estimateE1rm(
-                  refToBeatAt(reference, s.order)!.weightKg,
-                  refToBeatAt(reference, s.order)!.reps,
-                  refToBeatAt(reference, s.order)!.rir,
-                );
-            const record = unilateral ? null : recordFlags[i];
-            return (
-              <li
-                key={`${s.order}-${s.side ?? 'bi'}`}
-                className="flex items-center gap-3 rounded-xl bg-surface px-4 py-2.5"
-              >
-                <span className="readout w-6 shrink-0 text-sm text-ink-muted tabular-nums">
-                  {s.order}
-                </span>
-                {/* Côté (issue #46) : libellé texte, jamais la couleur seule. */}
-                {s.side && (
-                  <span className="w-6 shrink-0 text-xs font-semibold uppercase text-ink-muted">
-                    {s.side === 'left' ? 'G' : 'D'}
-                  </span>
-                )}
-                <span className="readout flex-1 text-base text-ink tabular-nums">
-                  {formatSet(s)}
-                </span>
-                {/* Record (issue #34) : prime sur « battu » (un record bat déjà
-                    la dernière fois). Accent violet — rare, mérité — + glyphe +
-                    label : l'info ne tient jamais à la couleur seule. */}
-                {record ? (
-                  <RecordBadge kind={record} />
-                ) : (
-                  beats && (
-                    <span
-                      className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
-                      title="Référence battue"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="14"
-                        height="14"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                        className="text-accent-ink"
-                      >
-                        <path d="M12 19V5M6 11l6-6 6 6" />
-                      </svg>
-                      battu
-                    </span>
-                  )
-                )}
-              </li>
-            );
-          })}
-        </ol>
+      {/* Sélecteur de côté (issue #63) : pour un exo unilatéral, l'utilisateur
+          CHOISIT le côté à logger avant la saisie. Au-dessus du cluster. L'état
+          sélectionné tient au texte + à la coche + à aria-pressed, jamais à la
+          seule couleur (DESIGN.md). */}
+      {currentSide && (
+        <div className="mt-4">
+          <SideSelector
+            value={currentSide}
+            done={sidesDoneAt(progress.sets, currentSetOrder(progress.sets))}
+            onChange={setSelectedSide}
+          />
+        </div>
       )}
 
-      {/* e1RM de la 1ʳᵉ série + badge de fin. Le badge de déviation est cantonné
-          au BILATÉRAL (issue #46) : en unilatéral, `progress.sets` porte 2 lignes
-          par série (G+D), donc le diff prescription/réel par côté sort du périmètre
-          (et un compte brut doublé fausserait le badge). On garde l'e1RM côté faible. */}
-      {(firstE1rm != null || (reachedMin && !unilateral)) && (
+      {/* Cluster instrument : POIDS (hero) + REPS / RIR (deux colonnes), steppers
+          ronds au pouce. La saisie tapée (pavé numérique, issue #58) est conservée. */}
+      <div className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]">
+        <ClusterStepper
+          label="Poids"
+          variant="hero"
+          unit="kg"
+          value={weightKg}
+          step={WEIGHT_STEP}
+          fineStep={WEIGHT_FINE}
+          min={0}
+          format={formatWeight}
+          onChange={setWeightKg}
+        />
+        <div className="my-4 h-px bg-hair" />
+        <div className="flex items-stretch gap-3">
+          <ClusterStepper label="Reps" variant="compact" value={reps} step={1} min={1} onChange={setReps} />
+          <div className="w-px shrink-0 bg-hair" />
+          <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} onChange={setRir} />
+        </div>
+      </div>
+
+      {/* Séries déjà loggées : readout mono + e1RM par ligne, MEILLEURE série
+          (e1RM max) en accent (coche + e1RM accent-ink). Records / « battu »
+          conservés (issue #34/#46), portés par forme + texte, jamais couleur seule. */}
+      {loggedCount > 0 && (
+        <div className="mt-5">
+          <div className="mb-2.5 flex items-center justify-between px-1">
+            <span className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+              Séries loggées
+            </span>
+            <span className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+              e1RM
+            </span>
+          </div>
+          <ol className="flex flex-col gap-[7px]">
+            {progress.sets.map((s, i) => {
+              // Badges « battu »/record désactivés en unilatéral (issue #46) : la
+              // comparaison par côté sort du périmètre. Côté = libellé texte.
+              const beats =
+                !unilateral &&
+                refToBeatAt(reference, s.order) &&
+                estimateE1rm(s.weightKg, s.reps, s.rir) >=
+                  estimateE1rm(
+                    refToBeatAt(reference, s.order)!.weightKg,
+                    refToBeatAt(reference, s.order)!.reps,
+                    refToBeatAt(reference, s.order)!.rir,
+                  );
+              const record = unilateral ? null : recordFlags[i];
+              const isBest = i === bestIndex;
+              return (
+                <li
+                  key={`${s.order}-${s.side ?? 'bi'}`}
+                  className={`reveal-set flex items-center gap-3 rounded-[13px] px-3.5 py-2.5 ${
+                    isBest ? 'border border-accent bg-accent-soft' : 'panel'
+                  }`}
+                >
+                  <span
+                    className={`readout w-5 shrink-0 text-[13px] tabular-nums ${
+                      isBest ? 'text-accent-ink' : 'text-ink-faint'
+                    }`}
+                  >
+                    {s.order}
+                  </span>
+                  {s.side && (
+                    <span className="w-5 shrink-0 text-xs font-semibold uppercase text-ink-muted">
+                      {s.side === 'left' ? 'G' : 'D'}
+                    </span>
+                  )}
+                  <span
+                    className={`readout flex-1 text-[15px] tabular-nums ${
+                      isBest ? 'font-medium text-ink' : 'text-ink'
+                    }`}
+                  >
+                    {formatSet(s)}
+                  </span>
+                  {record ? (
+                    <RecordBadge kind={record} />
+                  ) : (
+                    beats && (
+                      <span
+                        className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
+                        title="Référence battue"
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="14"
+                          height="14"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                          className="text-accent-ink"
+                        >
+                          <path d="M12 19V5M6 11l6-6 6 6" />
+                        </svg>
+                        battu
+                      </span>
+                    )
+                  )}
+                  {isBest && (
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className="shrink-0 text-accent-ink"
+                    >
+                      <path d="M5 12l5 5L20 6" />
+                    </svg>
+                  )}
+                  <span
+                    className={`readout shrink-0 text-[15px] tabular-nums ${
+                      isBest ? 'font-semibold text-accent-ink' : 'text-ink-muted'
+                    }`}
+                  >
+                    {formatE1rm(estimateE1rm(s.weightKg, s.reps, s.rir))}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+
+      {/* Statut de fin : e1RM côté faible (unilatéral) + badge de déviation
+          (bilatéral, issue #46). N'apparaît que s'il y a du contenu à montrer. */}
+      {((firstE1rm != null && unilateral) || (reachedMin && !unilateral)) && (
         <div className="mt-3 flex items-center justify-between gap-3">
-          {firstE1rm != null ? (
+          {firstE1rm != null && unilateral ? (
             <span className="text-sm text-ink-muted">
-              {unilateral ? 'e1RM côté faible' : 'e1RM'}{' '}
+              e1RM côté faible{' '}
               <span className="readout font-medium text-ink">{formatE1rm(firstE1rm)} kg</span>
             </span>
           ) : (
@@ -321,60 +450,13 @@ export function ExerciseCapture({
         </div>
       )}
 
-      {/* Compteur de progression « faites / prévu ». Le numérateur est le décompte
-          en ÉQUIVALENT-SÉRIE (loggedSetEquivalents) : une série bilatérale = 1, une
-          série unilatérale COMPLÈTE (G + D) = 1, un seul côté loggé = 0,5. D'où
-          « 1 / 1 » quand les deux côtés sont faits (et non « 2 / 1 ») et « 0,5 / 1 »
-          pour un seul côté. Le côté à saisir est porté par le sélecteur ci-dessous. */}
-      <p className="mt-6 mb-3" aria-live="polite">
-        <span className="text-sm font-medium text-ink-muted">
-          Série{' '}
-          <span className="readout text-ink">
-            {formatSetCount(loggedSetEquivalents(progress.sets))}
-          </span>{' '}
-          /{' '}
-          <span className="readout text-ink">{formatRange(prescription.sets)}</span>
-        </span>
-      </p>
-
-      {/* Sélecteur de côté (issue #63) : pour un exo unilatéral, l'utilisateur
-          CHOISIT le côté à logger avant la saisie (il ne commence pas forcément
-          à gauche). Au-dessus des steppers. Défaut = côté manquant de la série en
-          cours. L'état sélectionné tient au texte + à la coche + à aria-pressed,
-          jamais à la seule couleur (DESIGN.md). */}
-      {currentSide && (
-        <SideSelector
-          value={currentSide}
-          done={sidesDoneAt(progress.sets, currentSetOrder(progress.sets))}
-          onChange={setSelectedSide}
-        />
-      )}
-
-      {/* Saisie par steppers */}
-      <div className="grid grid-cols-1 gap-4">
-        <Stepper
-          label="Poids"
-          unit="kg"
-          value={weightKg}
-          step={WEIGHT_STEP}
-          fineStep={WEIGHT_FINE}
-          min={0}
-          format={formatWeight}
-          onChange={setWeightKg}
-        />
-        <div className="grid grid-cols-2 gap-4">
-          <Stepper label="Reps" value={reps} step={1} min={1} onChange={setReps} />
-          <Stepper label="RIR" value={rir} step={1} min={0} onChange={setRir} />
-        </div>
-      </div>
-
       {/* Actions secondaires */}
       <div className="mt-5 flex flex-wrap items-center gap-2">
         {loggedCount > 0 && (
           <button
             type="button"
             onClick={onUndoLast}
-            className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+            className="btn btn-secondary text-ink-muted h-11 rounded-xl px-4 text-sm font-medium"
           >
             <svg
               viewBox="0 0 24 24"
@@ -399,7 +481,7 @@ export function ExerciseCapture({
         <button
           type="button"
           onClick={onSkip}
-          className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+          className="btn btn-secondary text-ink-muted h-11 rounded-xl px-4 text-sm font-medium"
         >
           Passer l&apos;exercice
         </button>
@@ -415,7 +497,7 @@ export function ExerciseCapture({
         <button
           type="button"
           onClick={onBack}
-          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-surface-2 text-base font-semibold text-ink transition active:scale-[0.99] active:bg-surface"
+          className="btn btn-secondary mt-4 h-14 w-full rounded-2xl text-base"
         >
           <svg
             viewBox="0 0 24 24"
@@ -435,12 +517,21 @@ export function ExerciseCapture({
         </button>
       )}
 
+      {/* Note d'INSTRUCTIONS de l'exo (issue #52) : référence persistante, repliable
+          et éditable sur place. key=exerciseId pour ré-amorcer le pli au changement
+          d'exo. L'info (en-tête, états) tient au texte + au glyphe, pas à la couleur. */}
+      <ExerciseNoteSection
+        key={`note-${exercise.exerciseId}`}
+        value={perExerciseNote}
+        onSave={onSaveExerciseNote}
+      />
+
       {/* Note DATÉE du jour (issue #26) : contexte de la perf d'aujourd'hui sur cet
           exo. Saisissable et consultable ici. Repliée par défaut (zéro-friction),
           on l'ouvre pour saisir. key=exerciseId : le brouillon se ré-amorce quand
           on change d'exo. */}
       <DatedNoteSection
-        key={exercise.exerciseId}
+        key={`dated-${exercise.exerciseId}`}
         value={datedNote}
         onSave={onSaveDatedNote}
       />
@@ -602,14 +693,14 @@ function ExerciseNoteSection({
           <button
             type="button"
             onClick={handleCancel}
-            className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+            className="btn btn-secondary text-ink-muted h-11 rounded-xl px-4 text-sm font-medium"
           >
             Annuler
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+            className="btn btn-primary h-11 rounded-xl px-5 text-sm"
           >
             Enregistrer la note
           </button>
@@ -624,7 +715,7 @@ function ExerciseNoteSection({
       <button
         type="button"
         onClick={startEditing}
-        className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-line bg-surface px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+        className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-line px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
       >
         <svg
           viewBox="0 0 24 24"
@@ -665,7 +756,7 @@ function ExerciseNoteSection({
 
   // Note existante : carte avec en-tête TAPPABLE (déplier/replier) + corps + Modifier.
   return (
-    <div className="mt-2.5 rounded-2xl border border-line bg-surface">
+    <div className="surface-card mt-2.5 rounded-2xl">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -727,7 +818,7 @@ function ExerciseNoteSection({
           <button
             type="button"
             onClick={startEditing}
-            className="mt-2.5 inline-flex h-11 items-center gap-1.5 rounded-xl bg-surface-2 px-4 text-sm font-medium text-ink-muted transition active:text-ink"
+            className="btn btn-secondary text-ink-muted mt-2.5 h-11 rounded-xl px-4 text-sm font-medium"
           >
             <svg
               viewBox="0 0 24 24"
@@ -794,7 +885,7 @@ function DatedNoteSection({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-5 flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
+        className="surface-interactive mt-5 flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left"
       >
         <svg
           viewBox="0 0 24 24"
@@ -856,7 +947,7 @@ function DatedNoteSection({
           type="button"
           disabled={!dirty}
           onClick={handleSave}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Enregistrer la note
         </button>
@@ -870,53 +961,6 @@ function refToBeatAt(
   order: number,
 ): PerformedSet | null {
   return reference?.find((s) => s.order === order) ?? null;
-}
-
-/** Le type de record qu'une série bat : e1RM, charge, ou les deux. */
-export type RecordKind = 'e1rm' | 'weight-reps' | 'both';
-
-/**
- * Pour chaque série loggée du jour, dit si (et comment) elle bat le record
- * personnel — `null` sinon. Le record « avance » au fil des séries du jour : on
- * part du record historique, et chaque série qui le dépasse le remplace. Ainsi
- * une SEULE série par mesure porte le marqueur (la première à dépasser), pas
- * toutes celles qui battent l'ancien record. Pur, testé séparément.
- */
-export function computeRecordFlags(
-  sets: PerformedSet[],
-  historical: PersonalRecord | null,
-): (RecordKind | null)[] {
-  // Premier passage (aucun historique) : on ne crie pas « record » sur la toute
-  // première série jamais faite. Le record se construit, sans marqueur.
-  if (historical === null) {
-    let running: PersonalRecord = { bestE1rm: null, bestWeightReps: null };
-    return sets.map((s) => {
-      running = absorb(running, s);
-      return null;
-    });
-  }
-
-  let running = historical;
-  return sets.map((s) => {
-    const e1rm = isE1rmRecord(running, s);
-    const weightReps = isWeightRepsRecord(running, s);
-    running = absorb(running, s);
-    if (e1rm && weightReps) return 'both';
-    if (e1rm) return 'e1rm';
-    if (weightReps) return 'weight-reps';
-    return null;
-  });
-}
-
-/** Intègre une série dans un record courant (pour faire avancer la comparaison). */
-function absorb(record: PersonalRecord, s: PerformedSet): PersonalRecord {
-  const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir);
-  const bestE1rm =
-    record.bestE1rm === null || e1rm > record.bestE1rm ? e1rm : record.bestE1rm;
-  const bestWeightReps = isWeightRepsRecord(record, s)
-    ? { weightKg: s.weightKg, reps: s.reps }
-    : record.bestWeightReps;
-  return { bestE1rm, bestWeightReps };
 }
 
 const RECORD_LABEL: Record<RecordKind, string> = {

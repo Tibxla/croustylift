@@ -56,15 +56,23 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-8 pt-8">
-      <h2 className="text-xl font-semibold tracking-tight text-ink">Bienvenue.</h2>
-      <p className="mt-1.5 text-sm text-ink-muted">
-        Crée ta première routine et ta première séance. Tu pourras tout renommer et
-        ajuster ensuite.
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-[30px] pb-8 pt-12">
+      {/* Progression d'entrée : on amorce le parcours (routine → séance). Le 1ᵉʳ
+          segment porte la « voix » accent (glow discret), le 2ᵉ reste en palier. */}
+      <div className="mb-[30px] flex gap-1.5" aria-hidden="true">
+        <span className="h-1 flex-1 rounded-full bg-accent shadow-[0_0_10px_var(--color-accent-soft)]" />
+        <span className="h-1 flex-1 rounded-full bg-surface-2" />
+      </div>
+
+      <h1 className="text-[33px] font-semibold leading-[1.08] tracking-[-0.025em] text-ink">
+        Crée ta première routine.
+      </h1>
+      <p className="mt-3.5 text-[15px] leading-[1.5] text-ink-muted">
+        Une routine regroupe les séances que tu tournes. Tu pourras tout ajuster après.
       </p>
 
       <form
-        className="mt-6 flex flex-1 flex-col"
+        className="mt-8 flex flex-1 flex-col"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
@@ -75,25 +83,24 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
           label="Nom de la routine"
           value={routineName}
           placeholder="Nom de la routine"
-          autoFocus
           onChange={setRoutineName}
         />
 
-        <div className="mt-4">
+        <div className="mt-5">
           <Field
             id="seance-name"
-            label="Nom de la première séance"
+            label="Première séance"
             value={seanceName}
             placeholder="Nom de la séance"
+            autoFocus
             onChange={setSeanceName}
           />
         </div>
 
-        <fieldset className="mt-6">
-          <legend className="text-sm font-medium text-ink">Point de départ</legend>
-          <p className="mt-0.5 mb-2.5 text-xs text-ink-muted">
-            Tu pourras modifier les exercices à tout moment.
-          </p>
+        <fieldset className="mt-7">
+          <legend className="mb-3 block text-xs font-medium uppercase tracking-[0.04em] text-ink-faint">
+            Point de départ
+          </legend>
           <div className="flex flex-col gap-2.5">
             <ChoiceCard
               selected={withTemplate}
@@ -104,7 +111,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
             <ChoiceCard
               selected={!withTemplate}
               title="Séance vierge"
-              subtitle="Tu ajoutes tes exercices toi-même."
+              subtitle="Tu ajoutes les exercices et leurs prescriptions juste après, dans l’onglet Séances."
               onSelect={() => setWithTemplate(false)}
             />
           </div>
@@ -116,13 +123,13 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
           </p>
         )}
 
-        <div className="mt-8">
+        <div className="mt-auto pt-8">
           <button
             type="submit"
             disabled={!canSubmit}
-            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+            className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
           >
-            {busy ? 'Création…' : 'Commencer'}
+            {busy ? 'Création…' : 'Créer ma routine'}
           </button>
         </div>
       </form>
@@ -173,7 +180,9 @@ function Field({
 }) {
   return (
     <label htmlFor={id} className="block">
-      <span className="mb-1.5 block text-sm font-medium text-ink">{label}</span>
+      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.04em] text-ink-faint">
+        {label}
+      </span>
       <input
         id={id}
         type="text"
@@ -182,7 +191,7 @@ function Field({
         autoFocus={autoFocus}
         enterKeyHint="next"
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
+        className="field h-[54px] w-full rounded-[14px] px-4 text-[17px] font-medium"
       />
     </label>
   );
@@ -208,13 +217,15 @@ function ChoiceCard({
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`flex items-center gap-3 rounded-2xl border p-3.5 text-left transition active:scale-[0.99] ${
-        selected ? 'border-accent bg-surface' : 'border-line bg-surface'
+      className={`panel flex items-center gap-3 rounded-2xl p-4 text-left transition active:scale-[0.99] ${
+        selected
+          ? 'border-accent bg-[linear-gradient(160deg,var(--color-accent-soft),transparent)]'
+          : ''
       }`}
     >
       <span className="min-w-0 flex-1">
-        <span className="block text-base font-medium text-ink">{title}</span>
-        <span className="mt-0.5 block text-xs text-ink-muted">{subtitle}</span>
+        <span className="block text-base font-semibold text-ink">{title}</span>
+        <span className="mt-1 block text-[13px] leading-[1.45] text-ink-muted">{subtitle}</span>
       </span>
       <CheckMark selected={selected} />
     </button>
@@ -226,7 +237,7 @@ function CheckMark({ selected }: { selected: boolean }) {
   return (
     <span
       className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition ${
-        selected ? 'border-accent bg-accent-strong text-on-accent' : 'border-line text-transparent'
+        selected ? 'border-accent bg-accent-strong text-on-accent' : 'border-hair-strong text-transparent'
       }`}
       aria-hidden="true"
     >

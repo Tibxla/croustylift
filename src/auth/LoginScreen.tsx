@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
+import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
 
 type Mode = 'signin' | 'signup' | 'forgot'
 
@@ -81,112 +82,97 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-6 text-ink">
-      <div className="w-full max-w-sm">
-        <header className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Croustylift</h1>
-          <p className="mt-2 text-sm text-ink-muted">
-            {isSignup ? 'Crée ton compte.' : 'Connecte-toi pour continuer.'}
+    <AuthShell
+      title={isSignup ? 'Crée ton compte.' : 'Bon retour.'}
+      subtitle="Capture en salle. Progresse au calme."
+    >
+      <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
+        <div>
+          <FieldLabel htmlFor="email">E-mail</FieldLabel>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="field h-[54px] w-full rounded-[14px] px-4 text-base"
+            placeholder="toi@exemple.com"
+          />
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
+          <PasswordField
+            id="password"
+            value={password}
+            onChange={setPassword}
+            autoComplete={isSignup ? 'new-password' : 'current-password'}
+            minLength={isSignup ? MIN_PASSWORD_LENGTH : undefined}
+          />
+        </div>
+
+        {error && (
+          <p role="alert" className="flex items-start gap-2 text-sm text-warn">
+            {/* Glyphe d'alerte : double l'info couleur par une forme (DESIGN.md). */}
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="mt-0.5 shrink-0"
+            >
+              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+            </svg>
+            {error}
           </p>
-        </header>
+        )}
+        {info && !error && <p className="text-sm text-accent-ink">{info}</p>}
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <div className="space-y-1.5">
-            <label htmlFor="email" className="block text-sm font-medium text-ink">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-line bg-surface px-4 py-3 text-base text-ink transition placeholder:text-ink-muted/70 focus:border-accent"
-              placeholder="toi@exemple.com"
-            />
-          </div>
+        <button
+          type="submit"
+          disabled={submitting}
+          className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
+        >
+          {submitting
+            ? isSignup
+              ? 'Création du compte…'
+              : 'Connexion…'
+            : isSignup
+              ? 'Créer mon compte'
+              : 'Se connecter'}
+        </button>
+      </form>
 
-          <div className="space-y-1.5">
-            <div className="flex items-baseline justify-between">
-              <label htmlFor="password" className="block text-sm font-medium text-ink">
-                Mot de passe
-              </label>
-              {!isSignup && (
-                <button
-                  type="button"
-                  onClick={() => setMode('forgot')}
-                  className="rounded text-xs text-ink-muted transition hover:text-accent-ink"
-                >
-                  Mot de passe oublie ?
-                </button>
-              )}
-            </div>
-            <input
-              id="password"
-              type="password"
-              autoComplete={isSignup ? 'new-password' : 'current-password'}
-              required
-              minLength={isSignup ? MIN_PASSWORD_LENGTH : undefined}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-line bg-surface px-4 py-3 text-base text-ink transition placeholder:text-ink-muted/70 focus:border-accent"
-              placeholder="••••••••"
-            />
-          </div>
+      {!isSignup && (
+        <button
+          type="button"
+          onClick={() => setMode('forgot')}
+          className="mt-5 block w-full rounded text-center text-sm font-medium text-accent-ink transition active:text-accent"
+        >
+          Mot de passe oublié&#8239;?
+        </button>
+      )}
 
-          {error && (
-            <p role="alert" className="flex items-start gap-2 text-sm text-warn">
-              {/* Glyphe d'alerte : double l'info couleur par une forme (DESIGN.md). */}
-              <svg
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-                className="mt-0.5 shrink-0"
-              >
-                <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-              </svg>
-              {error}
-            </p>
-          )}
-          {info && !error && <p className="text-sm text-accent-ink">{info}</p>}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-lg bg-accent-strong px-4 py-3 text-base font-medium text-on-accent transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting
-              ? isSignup
-                ? 'Création du compte…'
-                : 'Connexion…'
-              : isSignup
-                ? 'Créer mon compte'
-                : 'Se connecter'}
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-ink-muted">
-          {isSignup ? 'Déjà un compte ?' : 'Pas encore de compte ?'}{' '}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(isSignup ? 'signin' : 'signup')
-              setError(null)
-              setInfo(null)
-            }}
-            className="rounded font-medium text-accent-ink transition hover:text-accent"
-          >
-            {isSignup ? 'Se connecter' : 'Créer un compte'}
-          </button>
-        </p>
-      </div>
-    </main>
+      <p className="mt-6 text-center text-sm text-ink-muted">
+        {isSignup ? 'Déjà un compte ?' : 'Pas encore de compte ?'}{' '}
+        <button
+          type="button"
+          onClick={() => {
+            setMode(isSignup ? 'signin' : 'signup')
+            setError(null)
+            setInfo(null)
+          }}
+          className="rounded font-medium text-accent-ink transition active:text-accent"
+        >
+          {isSignup ? 'Se connecter' : 'Créer un compte'}
+        </button>
+      </p>
+    </AuthShell>
   )
 }

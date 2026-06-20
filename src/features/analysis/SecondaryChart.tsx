@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import type { E1rmPoint } from '../../domain/types';
 
-const LINE = 'var(--color-line)';
+const LINE = 'var(--color-hair)';
 const INK_MUTED = 'var(--color-ink-muted)';
 
 /** Police mono tabulaire pour les chiffres mesurés (axe, tooltip). */
@@ -41,7 +41,7 @@ function SecondaryTooltip({ active, payload }: Partial<TooltipContentProps<numbe
   if (!first) return null;
   const point = first.payload as E1rmPoint;
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
+    <div className="surface-raised rounded-lg px-3 py-2">
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
       <p className="readout text-sm font-medium text-ink-muted">
         {Math.round(point.e1rm)}

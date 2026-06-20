@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type Dispatch,
 } from 'react';
 import {
@@ -262,7 +263,7 @@ export function CaptureScreen() {
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Réessayer
         </button>
@@ -297,30 +298,42 @@ function SeancePicker({
   seances: SeanceChoice[];
   onPick: (seance: SeanceChoice) => void;
 }) {
+  // La bannière de sync est aussi pertinente ici (on revient en salle) : on réutilise
+  // le même hook que CaptureBoard, sans état nouveau.
+  const { status, pending } = useSyncStatus();
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-5">
-      <header className="mb-5">
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">Ta séance</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          Quelle séance tu attaques aujourd&apos;hui ?
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-2">
+      <SyncBanner status={status} pending={pending} />
+
+      <header className="mb-6 mt-5 px-1">
+        <p className="readout mb-2 text-[12px] font-semibold uppercase tracking-[0.1em] text-accent-ink">
+          Routine courante
         </p>
+        <h2 className="text-[32px] font-semibold leading-[1.05] tracking-[-0.025em] text-ink">
+          Ta séance
+        </h2>
+        <p className="mt-2 text-[15px] text-ink-muted">Quelle séance tu attaques&#8239;?</p>
       </header>
 
-      <ul className="flex flex-col gap-2.5">
-        {seances.map((seance) => (
-          <li key={seance.id}>
+      <ul className="flex flex-col gap-[13px]">
+        {seances.map((seance, i) => (
+          <li key={seance.id} className="reveal" style={{ '--reveal-i': i } as CSSProperties}>
             <button
               type="button"
               onClick={() => onPick(seance)}
-              className="group flex w-full items-center gap-3 rounded-2xl bg-surface px-4 py-4 text-left transition active:scale-[0.99] active:bg-surface-2"
+              className="surface-interactive flex w-full items-center gap-4 rounded-[20px] px-[18px] py-5 text-left"
             >
-              <span className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+              {/* Badge lettre (position dans la routine), readout mono — signature instrument. */}
+              <span className="readout flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] border border-hair bg-surface-2 text-[17px] font-semibold text-ink-muted">
+                {String.fromCharCode(65 + (i % 26))}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-lg font-semibold text-ink">
                 {seance.name}
               </span>
               <svg
                 viewBox="0 0 24 24"
-                width="18"
-                height="18"
+                width="20"
+                height="20"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
@@ -335,6 +348,10 @@ function SeancePicker({
           </li>
         ))}
       </ul>
+
+      <p className="mt-6 rounded-2xl border border-dashed border-hair-strong px-4 py-4 text-center text-[13px] text-ink-faint">
+        Pas la bonne routine&#8239;? Change-la dans Séances.
+      </p>
     </div>
   );
 }
@@ -754,6 +771,12 @@ function CaptureBoard({
         <CapturePanel
           key={activeExercise.exerciseId}
           exercise={activeExercise}
+          position={
+            session.exercises.findIndex(
+              (e) => e.exerciseId === activeExercise.exerciseId,
+            ) + 1
+          }
+          total={session.exercises.length}
           progress={getProgress(state, activeExercise.exerciseId)}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           dispatch={dispatch}
@@ -803,17 +826,17 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
     { dot: string; text: string; label: string }
   > = {
     synced: {
-      dot: 'bg-good',
+      dot: 'bg-good shadow-[0_0_8px_var(--color-good)]',
       text: 'text-ink-muted',
       label: 'Synchronisé. Tout est en base.',
     },
     pending: {
-      dot: 'bg-accent',
+      dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]',
       text: 'text-ink-muted',
       label: `Synchronisation… ${pending} en attente.`,
     },
     offline: {
-      dot: 'bg-warn',
+      dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]',
       text: 'text-warn',
       label: `Hors ligne. ${pending} en attente, gardé sur l’appareil.`,
     },
@@ -822,11 +845,11 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
 
   return (
     <div
-      className={`mx-auto flex w-full max-w-md items-center gap-2 px-4 pt-3 text-xs ${v.text}`}
+      className={`mx-auto flex w-full max-w-md items-center gap-2.5 px-4 pt-3 text-[12.5px] ${v.text}`}
       role="status"
       aria-live="polite"
     >
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${v.dot}`} aria-hidden="true" />
+      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${v.dot}`} aria-hidden="true" />
       {v.label}
     </div>
   );
@@ -850,6 +873,8 @@ function logButtonLabel(side: Side | null, reachedMax: boolean): string {
 
 function CapturePanel({
   exercise,
+  position,
+  total,
   progress,
   datedNote,
   dispatch,
@@ -859,6 +884,9 @@ function CapturePanel({
   onSaveExerciseNote,
 }: {
   exercise: SessionExercise;
+  /** Position de l'exo dans la séance (1-indexé) + total, pour le repère « EXO N / M ». */
+  position?: number;
+  total?: number;
   progress: ExerciseProgress;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
@@ -917,6 +945,8 @@ function CapturePanel({
     <>
       <ExerciseCapture
         exercise={exercise}
+        position={position}
+        total={total}
         progress={progress}
         datedNote={datedNote}
         onUndoLast={() => {
@@ -934,14 +964,15 @@ function CapturePanel({
         {announce}
       </p>
 
-      {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+      {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. Fond en dégradé
+          transparent→bg : le bouton « flotte » au-dessus du contenu qui défile. */}
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 bg-[linear-gradient(180deg,transparent,var(--color-bg)_30%)] px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-6">
         <div className="mx-auto w-full max-w-md">
           <button
             type="button"
             disabled={!draft}
             onClick={() => draft && logSet(draft)}
-            className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+            className="btn btn-primary h-[58px] w-full rounded-[18px] text-lg"
           >
             <svg
               viewBox="0 0 24 24"
@@ -992,7 +1023,7 @@ function ResetBar({
   if (!touched) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
       <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
         {/* « Terminer la séance » dès qu'une série est loggée. Caché sinon
             (un exo seulement passé n'ouvre pas le flux de fin). */}
@@ -1000,7 +1031,7 @@ function ResetBar({
           <button
             type="button"
             onClick={onFinish}
-            className="flex h-12 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent"
+            className="btn btn-primary h-12 w-full rounded-2xl text-base"
           >
             Terminer la séance
           </button>
@@ -1012,7 +1043,7 @@ function ResetBar({
           <button
             type="button"
             onClick={onReset}
-            className="inline-flex h-11 items-center rounded-xl bg-surface px-4 text-sm font-medium text-ink-muted transition active:bg-surface-2 active:text-ink"
+            className="btn btn-secondary h-11 rounded-xl px-4 text-sm font-medium text-ink-muted"
           >
             {allDone ? 'Nouvelle séance' : 'Réinitialiser'}
           </button>

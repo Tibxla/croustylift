@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
@@ -19,6 +20,29 @@ const AnalysisScreen = lazy(() =>
 )
 
 type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
+
+/**
+ * Joue une mise à jour d'état derrière l'API native View Transitions : le passage
+ * d'un onglet à l'autre se fait en crossfade court (0 ko, natif). `flushSync`
+ * force React à appliquer le changement DANS la transition pour que l'ancien et
+ * le nouvel écran soient capturés. Désactivé sous `prefers-reduced-motion` et là
+ * où l'API n'existe pas (fallback : mise à jour directe, instantanée).
+ */
+function withViewTransition(update: () => void): void {
+  const reduce =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  // Accès défensif : l'API n'est pas typée dans toutes les versions de lib.dom.
+  const doc =
+    typeof document === 'undefined'
+      ? undefined
+      : (document as Document & { startViewTransition?: (cb: () => void) => unknown })
+  if (!reduce && typeof doc?.startViewTransition === 'function') {
+    doc.startViewTransition(() => flushSync(update))
+  } else {
+    update()
+  }
+}
 
 // La hauteur de la tab bar vit dans une variable CSS partagée `--nav-height`
 // (`--nav-offset` = + safe-area iOS), définie une seule fois sur `:root`
@@ -123,7 +147,7 @@ function AuthenticatedApp({
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Réessayer
         </button>
@@ -148,8 +172,14 @@ function AuthenticatedApp({
 
   return (
     <main className="min-h-screen bg-bg text-ink">
-      <header className="flex h-14 items-center justify-between border-b border-line px-4">
-        <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
+      <header
+        className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-hair bg-bg/80 px-4 backdrop-blur-md"
+        style={{ viewTransitionName: 'app-header' }}
+      >
+        <div className="flex items-center gap-2.5">
+          <img src="/mark.svg" alt="" className="h-7 w-7" />
+          <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
+        </div>
         <div className="flex items-center gap-3">
           <span className="hidden max-w-[40vw] truncate text-sm text-ink-muted sm:inline">
             {email}
@@ -159,7 +189,7 @@ function AuthenticatedApp({
             onClick={() => {
               void onSignOut()
             }}
-            className="rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-muted transition active:text-ink"
+            className="btn btn-ghost rounded-lg px-2.5 py-1.5 text-sm font-medium"
           >
             Se déconnecter
           </button>
@@ -181,7 +211,10 @@ function AuthenticatedApp({
         </ErrorBoundary>
       </div>
 
-      <BottomNav surface={surface} onSelect={setSurface} />
+      <BottomNav
+        surface={surface}
+        onSelect={(s) => withViewTransition(() => setSurface(s))}
+      />
     </main>
   )
 }
@@ -209,7 +242,7 @@ function BottomNav({
 }) {
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 backdrop-blur-sm"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-hair bg-bg/80 backdrop-blur-md"
       aria-label="Navigation principale"
     >
       <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[env(safe-area-inset-bottom,0)]">
@@ -276,11 +309,21 @@ function TabButton({
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
       // Tap-target ≥ 44px (h-14 = 56px). Onglet actif en accent violet sobre :
-      // texte + icône colorés, jamais de fond plein (One Voice Rule).
-      className={`flex h-14 flex-col items-center justify-center gap-0.5 text-xs font-medium transition ${
-        active ? 'text-accent-ink' : 'text-ink-muted active:text-ink'
+      // texte + icône colorés, jamais de fond plein (One Voice Rule). Un fin
+      // indicateur en haut porte un `view-transition-name` : au changement
+      // d'onglet (derrière l'API View Transitions), il GLISSE de l'ancien vers le
+      // nouvel onglet (morph natif) au lieu d'apparaître/disparaître.
+      className={`relative flex h-14 flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors duration-200 ${
+        active ? 'text-accent-ink' : 'text-ink-faint active:text-ink'
       }`}
     >
+      {active && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 mx-auto h-[2.5px] w-7 rounded-full bg-accent shadow-[0_0_10px_0_var(--accent-glow)]"
+          style={{ viewTransitionName: 'nav-indicator' }}
+        />
+      )}
       <svg
         viewBox="0 0 24 24"
         width="20"
@@ -291,6 +334,7 @@ function TabButton({
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
+        className={`transition-transform duration-200 ${active ? 'scale-105' : ''}`}
       >
         {icon}
       </svg>

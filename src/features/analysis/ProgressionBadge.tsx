@@ -8,7 +8,8 @@
 //
 // `null` = pas assez de séances pour ajuster une pente : on l'affiche en clair
 // (« pente indispo »), pas en zéro trompeur.
-import { TrendArrow, trendColor, trendOf } from './TrendArrow';
+import { TrendArrow } from './TrendArrow';
+import { trendColor, trendOf } from './trend';
 
 export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) {
   if (weeklyRate === null) {
@@ -21,6 +22,14 @@ export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) 
 
   const trend = trendOf(weeklyRate);
   const color = trendColor(trend);
+  // Fond du badge teinté par le statut (maquette : delta sur fond good/warn voilé).
+  // Vert/ambre atténués seulement — jamais de violet ici (One Voice), jamais de rouge.
+  const bgTint =
+    trend === 'up'
+      ? 'bg-[color-mix(in_oklab,var(--color-good),transparent_86%)]'
+      : trend === 'down'
+        ? 'bg-[color-mix(in_oklab,var(--color-warn),transparent_86%)]'
+        : 'bg-surface-2';
   const sign = weeklyRate > 0 ? '+' : ''; // le '−' vient déjà du nombre négatif.
   const label =
     trend === 'up'
@@ -31,7 +40,7 @@ export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) 
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 ${color}`}
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 ${bgTint} ${color}`}
       aria-label={label}
     >
       <TrendArrow trend={trend} />

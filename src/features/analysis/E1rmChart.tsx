@@ -1,13 +1,16 @@
 // Le graphe e1RM — héros de chaque ligne d'exercice (DESIGN.md : « Courbe e1RM
 // façon Apple Fitness, sobre, accent violet pour la série de référence »).
 //
-// Direction visuelle : ligne violet accent sur fond sombre, grille discrète,
-// ticks/labels en mono (Readout Rule), axe X = dates, axe Y = e1RM (kg).
-// Responsive via le conteneur. Tooltip sobre. Aucune décoration.
+// Direction visuelle (refonte premium) : trait violet accent (2.5) + aire dégradée
+// violet 32 %→0, grille horizontale en hairline, ligne de référence pointillée
+// (e1RM de départ), points cerclés et DERNIER point plein accent (le présent).
+// Ticks/labels en mono (Readout Rule). Responsive via le conteneur.
+import { useId } from 'react';
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -19,14 +22,15 @@ import type { E1rmPoint } from '../../domain/types';
 // On lit les tokens OKLCH directement : le SVG de Recharts accepte
 // `stroke="var(--color-…)"`, donc l'accent reste la SEULE source de vérité.
 const ACCENT = 'var(--color-accent)';
-const LINE = 'var(--color-line)';
-const INK_MUTED = 'var(--color-ink-muted)';
+const BG = 'var(--color-bg)';
+const HAIR = 'var(--color-hair)';
+const INK_FAINT = 'var(--color-ink-faint)';
 
 /** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
 const READOUT_TICK = {
   fontFamily: 'var(--font-mono)',
   fontSize: 10,
-  fill: INK_MUTED,
+  fill: INK_FAINT,
   fontVariant: 'tabular-nums',
 } as const;
 
@@ -45,7 +49,7 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
   if (!first) return null;
   const point = first.payload as E1rmPoint;
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
+    <div className="surface-raised rounded-lg px-3 py-2">
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
       <p className="readout text-sm font-medium text-ink">
         {Math.round(point.e1rm)}
@@ -65,25 +69,46 @@ function describeCurve(curve: E1rmPoint[]): string {
 }
 
 export function E1rmChart({ curve }: { curve: E1rmPoint[] }) {
+  const gradientId = useId();
+  const lastIndex = curve.length - 1;
+  // e1RM de départ : ligne de référence pointillée, pour LIRE la montée d'un coup.
+  const baseline = curve.length > 0 ? curve[0]?.e1rm : undefined;
+
+  // Points cerclés sur la courbe ; le DERNIER (le présent) en disque plein accent.
+  // Recharts type le callback `dot` de façon stricte (DotItemDotProps) : on reçoit
+  // les coords en `any` et on rend un <circle> nous-mêmes.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderDot = (props: any) => {
+    const { cx, cy, index, key } = props as {
+      cx?: number;
+      cy?: number;
+      index?: number;
+      key?: string;
+    };
+    if (cx == null || cy == null) return <g key={key} />;
+    if (index === lastIndex) {
+      return <circle key={key} cx={cx} cy={cy} r={5} fill={ACCENT} stroke={BG} strokeWidth={2.5} />;
+    }
+    return <circle key={key} cx={cx} cy={cy} r={3} fill={BG} stroke={ACCENT} strokeWidth={2} />;
+  };
+
   return (
     <div className="h-40 w-full" role="img" aria-label={describeCurve(curve)}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart
-          data={curve}
-          margin={{ top: 8, right: 20, bottom: 4, left: -8 }}
-        >
-          <CartesianGrid
-            stroke={LINE}
-            strokeWidth={1}
-            vertical={false}
-            opacity={0.4}
-          />
+        <AreaChart data={curve} margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={ACCENT} stopOpacity={0.32} />
+              <stop offset="100%" stopColor={ACCENT} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
           <XAxis
             dataKey="date"
             tickFormatter={formatDateTick}
             tick={READOUT_TICK}
             tickLine={false}
-            axisLine={{ stroke: LINE }}
+            axisLine={{ stroke: HAIR }}
             minTickGap={24}
             interval="preserveStartEnd"
           />
@@ -96,20 +121,23 @@ export function E1rmChart({ curve }: { curve: E1rmPoint[] }) {
             tickFormatter={(v: number) => `${Math.round(v)}`}
             allowDecimals={false}
           />
-          <Tooltip
-            content={<E1rmTooltip />}
-            cursor={{ stroke: LINE, strokeWidth: 1 }}
-          />
-          <Line
+          {baseline != null && (
+            <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
+          )}
+          <Tooltip content={<E1rmTooltip />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
+          <Area
             type="monotone"
             dataKey="e1rm"
             stroke={ACCENT}
-            strokeWidth={2}
-            dot={{ r: 2.5, fill: ACCENT, strokeWidth: 0 }}
-            activeDot={{ r: 4, fill: ACCENT, strokeWidth: 0 }}
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill={`url(#${gradientId})`}
+            dot={renderDot}
+            activeDot={{ r: 5, fill: ACCENT, stroke: BG, strokeWidth: 2.5 }}
             isAnimationActive={false}
           />
-        </LineChart>
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

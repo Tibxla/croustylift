@@ -30,7 +30,7 @@ export function MetricRow({
       <button
         type="button"
         onClick={onAdd}
-        className="flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
+        className="surface-interactive flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl px-4 py-3 text-left"
       >
         <svg
           viewBox="0 0 24 24"
@@ -55,13 +55,13 @@ export function MetricRow({
   }
 
   return (
-    <div className="rounded-2xl bg-surface px-4 py-3.5">
+    <div className="surface-card rounded-2xl px-4 py-3.5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="text-base font-semibold text-ink">{title}</span>
         <button
           type="button"
           onClick={onRemove}
-          className="inline-flex h-9 items-center rounded-lg px-2.5 text-xs font-medium text-ink-muted transition active:text-ink"
+          className="btn btn-ghost h-9 rounded-lg px-2.5 text-xs font-medium"
         >
           Retirer
         </button>

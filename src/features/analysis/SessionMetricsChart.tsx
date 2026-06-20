@@ -22,7 +22,7 @@ import type { SessionMetricPoint } from './session-metrics';
 // On lit les tokens OKLCH directement : le SVG de Recharts accepte
 // `stroke="var(--color-…)"`, donc l'accent reste la SEULE source de vérité.
 const ACCENT = 'var(--color-accent)';
-const LINE = 'var(--color-line)';
+const LINE = 'var(--color-hair)';
 const INK_MUTED = 'var(--color-ink-muted)';
 
 /** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
@@ -51,7 +51,7 @@ function SessionMetricsTooltip({
   if (!first) return null;
   const point = first.payload as SessionMetricPoint;
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
+    <div className="surface-raised rounded-lg px-3 py-2">
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
       {point.bpmAvg !== null && (
         <p className="readout text-sm font-medium text-accent">

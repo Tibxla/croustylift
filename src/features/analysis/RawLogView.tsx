@@ -88,7 +88,7 @@ function SessionEntry({
   const summary = summarizeSession(entry);
 
   return (
-    <section className="rounded-2xl border border-line bg-surface">
+    <section className="surface-card rounded-2xl">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -169,7 +169,7 @@ function SessionEntry({
             <button
               type="button"
               onClick={() => onEdit(entry.executionId)}
-              className="mt-1 inline-flex min-h-[44px] items-center gap-2 self-start rounded-xl bg-surface-2 px-4 text-sm font-medium text-ink transition active:scale-[0.99] active:bg-surface"
+              className="btn btn-secondary mt-1 min-h-[44px] self-start rounded-xl px-4 text-sm font-medium"
             >
               <svg
                 viewBox="0 0 24 24"

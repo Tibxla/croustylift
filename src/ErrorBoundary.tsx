@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Recharger l'app
         </button>

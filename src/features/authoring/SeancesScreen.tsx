@@ -265,8 +265,8 @@ export function RoutinesView({
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
-      <h2 className="mb-1 text-2xl font-bold tracking-tight">Routines</h2>
-      <p className="mb-4 text-sm text-ink-muted">
+      <h2 className="mb-1.5 text-3xl font-semibold tracking-[-0.025em] text-ink">Routines</h2>
+      <p className="mb-5 text-[15px] text-ink-muted">
         Tes programmes. Choisis ta routine courante, ouvre une routine pour gérer ses
         séances.
       </p>
@@ -324,7 +324,7 @@ export function RoutinesView({
  */
 function DataSection() {
   return (
-    <section className="mt-8 border-t border-line pt-5">
+    <section className="mt-8 border-t border-hair pt-5">
       <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">Données</h3>
       <p className="mb-3 text-sm text-ink-muted">
         Télécharge une sauvegarde JSON de tes exos perso, routines, séances et historique.
@@ -388,7 +388,7 @@ function RoutineRowItem({
   }
 
   return (
-    <RowCard>
+    <RowCard accent={isCurrent}>
       <div className="flex items-center gap-2">
         {/* Le nom est cliquable : il ouvre les séances de la routine. */}
         <button
@@ -397,10 +397,14 @@ function RoutineRowItem({
           className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left transition active:opacity-80"
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-base font-medium text-ink">
+            {isCurrent && (
+              <span className="readout mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-accent-ink">
+                Routine courante
+              </span>
+            )}
+            <span className="block truncate text-lg font-semibold text-ink">
               {routine.name}
             </span>
-            {isCurrent && <CurrentBadge />}
           </span>
           <Chevron />
         </button>
@@ -478,8 +482,8 @@ export function SeancesView({
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-3">
       <BackButton label="Retour aux routines" onClick={onBack} />
 
-      <h2 className="mt-1 text-2xl font-bold tracking-tight">{routineName}</h2>
-      <p className="mb-4 text-sm text-ink-muted">Séances de cette routine, dans l'ordre.</p>
+      <h2 className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-ink">{routineName}</h2>
+      <p className="mb-5 text-[15px] text-ink-muted">Séances de cette routine, dans l'ordre.</p>
 
       {seances.length === 0 && !creating ? (
         <EmptyState
@@ -623,27 +627,25 @@ function SeanceRowItem({
 // Primitives partagées
 // =====================================================================
 
-/** Badge « courante » : couleur (accent) ET mot, jamais la couleur seule. */
-function CurrentBadge() {
+function RowCard({
+  children,
+  accent = false,
+}: {
+  children: React.ReactNode;
+  /** Carte « clé » accentuée (routine courante) : gradient accent-soft + bordure accent. */
+  accent?: boolean;
+}) {
   return (
-    <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-accent/40 px-1.5 py-0.5 text-xs font-medium text-accent-ink">
-      <svg
-        viewBox="0 0 24 24"
-        width="12"
-        height="12"
-        fill="currentColor"
-        stroke="none"
-        aria-hidden="true"
-      >
-        <circle cx="12" cy="12" r="6" />
-      </svg>
-      Courante
-    </span>
+    <div
+      className={`rounded-2xl p-3.5 ${
+        accent
+          ? 'panel border-accent bg-[linear-gradient(160deg,var(--color-accent-soft),transparent)]'
+          : 'surface-card'
+      }`}
+    >
+      {children}
+    </div>
   );
-}
-
-function RowCard({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-line bg-surface p-3.5">{children}</div>;
 }
 
 /** Action secondaire d'une ligne. Neutre par défaut ; accent ou danger au besoin. */
@@ -658,18 +660,20 @@ function RowAction({
   tone?: 'neutral' | 'accent' | 'danger';
   busy?: boolean;
 }) {
+  // Tonalité (maquette §270) : accent = bordure accent + texte accent-ink + 600 ;
+  // destructif = texte warn (bordure hair-strong neutre, pas d'aplat) ; neutre = ink-muted.
   const toneClass =
     tone === 'accent'
-      ? 'text-accent-ink'
+      ? 'border-accent font-semibold text-accent-ink'
       : tone === 'danger'
-        ? 'text-warn'
-        : 'text-ink-muted active:text-ink';
+        ? 'font-medium text-warn'
+        : 'font-medium text-ink-muted';
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={busy}
-      className={`inline-flex h-9 min-h-[44px] items-center rounded-lg bg-surface-2/60 px-3 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 ${toneClass}`}
+      className={`btn btn-secondary h-9 min-h-[44px] rounded-lg px-3 text-sm ${toneClass}`}
     >
       {label}
     </button>
@@ -733,7 +737,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-lg text-ink-muted transition active:bg-surface-2 active:text-ink disabled:opacity-30 disabled:active:bg-transparent"
+      className="btn btn-ghost h-11 w-11 rounded-lg disabled:opacity-30"
     >
       <svg
         viewBox="0 0 24 24"
@@ -794,7 +798,7 @@ function ConfirmDelete({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-warn px-4 text-sm font-semibold text-bg transition active:scale-[0.98] disabled:opacity-50"
+          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] px-4 text-sm font-semibold text-warn transition active:scale-[0.98] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:opacity-50"
         >
           {busy ? 'Suppression…' : 'Supprimer'}
         </button>
@@ -802,7 +806,7 @@ function ConfirmDelete({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -853,13 +857,13 @@ function InlineNameForm({
         enterKeyHint="done"
         maxLength={80}
         onChange={(e) => setValue(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
+        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
       />
       <div className="mt-2 flex items-center gap-2">
         <button
           type="submit"
           disabled={!canSubmit}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
+          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm"
         >
           {busy ? 'Enregistrement…' : submitLabel}
         </button>
@@ -867,7 +871,7 @@ function InlineNameForm({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -921,7 +925,7 @@ function PrimaryAddButton({ label, onClick }: { label: string; onClick: () => vo
     <button
       type="button"
       onClick={onClick}
-      className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+      className="btn btn-primary h-12 w-full rounded-2xl text-base"
     >
       <svg
         viewBox="0 0 24 24"
@@ -952,12 +956,12 @@ function EmptyState({
   onAction: () => void;
 }) {
   return (
-    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-line px-6 py-10 text-center">
+    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-hair-strong px-6 py-10 text-center">
       <p className="text-sm text-ink-muted">{message}</p>
       <button
         type="button"
         onClick={onAction}
-        className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
       >
         {actionLabel}
       </button>
@@ -970,7 +974,7 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
     <button
       type="button"
       onClick={onClick}
-      className="-ml-1 inline-flex min-h-[44px] items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
+      className="btn btn-ghost -ml-1 min-h-[44px] self-start rounded-lg py-2 pr-3 text-sm font-medium"
     >
       <svg
         viewBox="0 0 24 24"
@@ -1000,7 +1004,7 @@ function ScreenSpinner({ label }: { label: string }) {
       {/* Squelette : titre + 2-3 cartes simulant des lignes de liste. */}
       <div className="mb-4 h-7 w-40 rounded-lg bg-surface-2 animate-pulse" />
       {[0, 1, 2].map((i) => (
-        <div key={i} className="mb-2.5 rounded-2xl border border-line bg-surface p-3.5">
+        <div key={i} className="surface-card mb-2.5 rounded-2xl p-3.5">
           <div className="flex items-center gap-2">
             <div className="h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
             <div className="h-4 flex-1 rounded bg-surface-2 animate-pulse" />
@@ -1031,7 +1035,7 @@ function ScreenError({
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
       >
         Réessayer
       </button>

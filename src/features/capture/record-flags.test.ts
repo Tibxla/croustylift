@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
 import type { PersonalRecord } from '../../domain/pr';
-import { computeRecordFlags } from './ExerciseCapture';
+import { computeRecordFlags } from './record-flags';
 
 const set = (weightKg: number, reps: number, rir: number, order: number): PerformedSet => ({
   weightKg,

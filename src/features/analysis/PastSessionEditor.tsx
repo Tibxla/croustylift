@@ -355,7 +355,7 @@ export function PastSessionEditor({
         {/* Suppression de l'exécution entière (ADR 0008). Discret, séparé du flux
             d'édition : pas l'accent violet (réservé à l'action primaire / la
             sélection), un simple lien en ton `warn` qui ouvre la confirmation. */}
-        <div className="mt-2 border-t border-line pt-5">
+        <div className="mt-2 border-t border-hair pt-5">
           <button
             type="button"
             onClick={() => setDel({ phase: 'confirming' })}
@@ -382,7 +382,7 @@ export function PastSessionEditor({
       {/* Barre d'action fixe : enregistrer les corrections. L'éditeur couvre la
           tab bar (modal z-30) donc on s'ancre tout en bas, pas sur --nav-offset,
           en réservant la safe-area iOS comme les barres de la capture. */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-bg/95 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur">
         <div className="mx-auto w-full max-w-md px-4 py-3">
           {save.phase === 'error' && (
             <p className="readout mb-2 break-words text-xs text-warn">
@@ -394,7 +394,7 @@ export function PastSessionEditor({
             type="button"
             onClick={handleSave}
             disabled={save.phase === 'saving' || (!dirty && save.phase !== 'error')}
-            className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.99] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+            className="btn btn-primary h-12 w-full rounded-xl text-base"
           >
             {save.phase === 'saving'
               ? 'Enregistrement...'
@@ -448,7 +448,7 @@ function DeleteConfirmSheet({
       aria-modal="true"
       aria-labelledby="delete-exec-title"
     >
-      <div className="w-full max-w-md rounded-t-2xl border-t border-line bg-surface p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] shadow-2xl">
+      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
         <h2 id="delete-exec-title" className="text-lg font-bold leading-tight text-ink">
           Supprimer cette séance ?
         </h2>
@@ -475,7 +475,7 @@ function DeleteConfirmSheet({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl bg-surface-2 text-base font-semibold text-ink transition active:scale-[0.99] active:bg-surface disabled:opacity-60"
+            className="btn btn-secondary h-12 flex-1 rounded-xl text-base"
           >
             Annuler
           </button>
@@ -483,7 +483,7 @@ function DeleteConfirmSheet({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl bg-warn text-base font-semibold text-bg transition active:scale-[0.99] active:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] text-base font-semibold text-warn transition active:scale-[0.99] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? 'Suppression...' : 'Supprimer'}
           </button>
@@ -517,7 +517,7 @@ function MetricsEditor({
     <section aria-label="Durée et BPM de la séance">
       <h3 className="mb-3 text-base font-semibold leading-tight text-ink">Durée et BPM</h3>
       <div className="flex flex-col gap-3">
-        <div className="rounded-2xl bg-surface px-4 py-3.5">
+        <div className="surface-card rounded-2xl px-4 py-3.5">
           <Stepper
             label="Durée"
             unit="min"
@@ -580,7 +580,7 @@ function ExerciseEditor({
   const logicalSets = groupIntoLogicalSets(exercise.edited);
 
   return (
-    <section className="rounded-2xl border border-line bg-surface p-4">
+    <section className="surface-card rounded-2xl p-4">
       <h3 className="text-base font-semibold leading-tight text-ink">{exercise.name}</h3>
 
       <ol className="mt-3 flex flex-col gap-4">
@@ -598,7 +598,7 @@ function ExerciseEditor({
       <button
         type="button"
         onClick={onAddSet}
-        className="mt-3 inline-flex min-h-[3rem] w-full items-center justify-center gap-2 rounded-xl bg-surface-2 text-sm font-semibold text-ink transition active:scale-[0.99] active:bg-surface"
+        className="btn btn-secondary mt-3 min-h-[3rem] w-full rounded-xl text-sm font-semibold"
       >
         <svg
           viewBox="0 0 24 24"
@@ -645,7 +645,7 @@ function LogicalSetEditor({
         <button
           type="button"
           onClick={() => onRemoveSet(ids)}
-          className="inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
+          className="btn btn-ghost h-11 rounded-lg px-3 text-sm font-medium"
           aria-label={`Supprimer la série ${index + 1}`}
         >
           <svg
@@ -751,7 +751,7 @@ function EditorShell({
       <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-xl font-bold leading-tight text-ink">
+            <h2 className="text-2xl font-semibold leading-tight tracking-[-0.02em] text-ink">
               Corriger la séance
             </h2>
             {date && (
@@ -763,7 +763,7 @@ function EditorShell({
           <button
             type="button"
             onClick={onClose}
-            className="-mr-1 inline-flex h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-ink-muted transition active:text-ink"
+            className="btn btn-ghost -mr-1 h-11 rounded-lg px-3 text-sm font-medium"
             aria-label="Fermer sans enregistrer"
           >
             <svg
@@ -792,7 +792,7 @@ function EditorSkeleton() {
   return (
     <ul className="flex flex-col gap-5" role="status" aria-label="Chargement de la séance">
       {[0, 1].map((i) => (
-        <li key={i} className="rounded-2xl border border-line bg-surface p-4">
+        <li key={i} className="surface-card rounded-2xl p-4">
           <div className="mb-3 h-5 w-40 animate-pulse rounded bg-surface-2" />
           <div className="h-24 w-full animate-pulse rounded-xl bg-surface-2" />
         </li>

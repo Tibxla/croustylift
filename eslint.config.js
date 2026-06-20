@@ -15,8 +15,8 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   // Sorties de build, copies de worktrees (résidu .claude) et harnais de dev non
-  // trackés (*-harness.tsx à la racine) hors lint.
-  { ignores: ['dist', 'dev-dist', '.claude', 'coverage', '*-harness.tsx'] },
+  // trackés (*-harness.tsx, à la racine OU dans .screenshots/) hors lint.
+  { ignores: ['dist', 'dev-dist', '.claude', 'coverage', '**/*-harness.tsx'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

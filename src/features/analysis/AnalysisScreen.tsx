@@ -11,7 +11,7 @@
 // L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `AnalysisList`
 // est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
 // dans le harness de screenshot, sans réseau ni user de test.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import {
   loadAnalyses,
   loadRawLog,
@@ -82,7 +82,7 @@ export function AnalysisScreen() {
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Réessayer
         </button>
@@ -92,6 +92,7 @@ export function AnalysisScreen() {
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
+      <h1 className="mb-4 text-3xl font-semibold tracking-[-0.025em] text-ink">Analyse</h1>
       <AnalysisTabs active={tab} onChange={setTab} />
       {tab === 'curves' ? (
         <CurvesTab analyses={load.analyses} metrics={load.metrics} />
@@ -124,7 +125,7 @@ function AnalysisTabs({
     <div
       role="tablist"
       aria-label="Vue de l'analyse"
-      className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1"
+      className="panel mb-4 grid grid-cols-2 gap-1.5 rounded-xl p-1"
     >
       {tabs.map(({ id, label }) => {
         const selected = id === active;
@@ -135,10 +136,10 @@ function AnalysisTabs({
             role="tab"
             aria-selected={selected}
             onClick={() => onChange(id)}
-            className={`h-9 rounded-lg text-sm font-medium transition active:scale-[0.98] ${
+            className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
               selected
-                ? 'bg-accent-strong text-on-accent'
-                : 'text-ink-muted'
+                ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
+                : 'text-ink-muted active:text-ink'
             }`}
           >
             {label}
@@ -171,7 +172,7 @@ export function CurvesTab({
   return (
     <>
       {metrics.length > 0 && (
-        <section className="mb-3 rounded-2xl border border-line bg-surface p-4">
+        <section className="surface-card mb-3 rounded-2xl p-4">
           <h3 className="mb-3 text-base font-medium leading-tight">Cardio · séance</h3>
           <SessionMetricsChart points={metrics} />
           <div className="mt-2 flex items-center gap-4 text-xs text-ink-muted">
@@ -195,8 +196,12 @@ export function CurvesTab({
 
       {analyses.length > 0 && (
         <ul className="flex flex-col gap-3">
-          {analyses.map((analysis) => (
-            <li key={analysis.exerciseId}>
+          {analyses.map((analysis, i) => (
+            <li
+              key={analysis.exerciseId}
+              className="reveal"
+              style={{ '--reveal-i': i } as CSSProperties}
+            >
               <ExerciseAnalysisCard analysis={analysis} />
             </li>
           ))}
@@ -257,7 +262,7 @@ function JournalTab({ onMutated }: { onMutated: () => void }) {
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
         >
           Réessayer
         </button>
@@ -302,7 +307,7 @@ function JournalSkeleton() {
   return (
     <ul className="flex flex-col gap-3" role="status" aria-label="Chargement du journal">
       {[0, 1, 2].map((i) => (
-        <li key={i} className="rounded-2xl border border-line bg-surface p-4">
+        <li key={i} className="surface-card rounded-2xl p-4">
           <div className="mb-3 h-4 w-40 animate-pulse rounded bg-surface-2" />
           <div className="h-3 w-28 animate-pulse rounded bg-surface-2" />
           <div className="mt-2 h-3 w-48 animate-pulse rounded bg-surface-2" />
@@ -320,18 +325,34 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
   const slopeUnavailable = weeklyRate === null && curve.length > 0;
   // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []).
   const hasSecondary = secondaryCurve.length > 0;
+  // e1RM le plus récent (dernier point) : métrique « héros » lisible d'un coup d'œil.
+  const latest = curve.length > 0 ? Math.round(curve[curve.length - 1]!.e1rm) : null;
 
   return (
-    <section className="rounded-2xl border border-line bg-surface p-4">
+    <section className="panel rounded-2xl p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
-        <h3 className="text-base font-medium leading-tight">{name}</h3>
+        <h3 className="text-base font-semibold leading-tight">{name}</h3>
         <ProgressionBadge weeklyRate={weeklyRate} />
       </div>
+
+      {latest != null && (
+        <div className="mb-2">
+          <div className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+            e1RM estimé
+          </div>
+          <div className="mt-0.5 flex items-baseline gap-1.5">
+            <span className="readout text-[52px] font-medium leading-none tracking-[-0.03em] text-ink">
+              {latest}
+            </span>
+            <span className="text-xl text-ink-muted">kg</span>
+          </div>
+        </div>
+      )}
 
       <E1rmChart curve={curve} />
 
       <div className="mt-2 flex items-center justify-between">
-        <span className="text-xs text-ink-muted">e1RM · 1ʳᵉ série</span>
+        <span className="readout text-[11px] text-ink-faint">e1RM · 1ʳᵉ série</span>
         {slopeUnavailable && (
           <span className="text-xs text-ink-muted">
             Pas assez de séances pour la pente.
@@ -343,7 +364,7 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         // Subordonné à la primaire : séparé par un filet tonal, libellé discret,
         // graphe plus petit et en ink-muted (jamais l'accent). Le héros reste
         // au-dessus ; ceci n'est qu'un repère « résistance à la fatigue ».
-        <div className="mt-3 border-t border-line pt-3">
+        <div className="mt-3 border-t border-hair pt-3">
           <span className="text-[11px] text-ink-muted">Séries 2+ · e1RM moyen</span>
           <SecondaryChart curve={secondaryCurve} />
         </div>
@@ -361,7 +382,7 @@ function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mt-3 border-t border-line pt-3">
+    <div className="mt-3 border-t border-hair pt-3">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -409,7 +430,7 @@ function AnalysisSkeleton() {
         {[0, 1, 2].map((i) => (
           <li
             key={i}
-            className="rounded-2xl border border-line bg-surface p-4"
+            className="surface-card rounded-2xl p-4"
           >
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />

@@ -124,15 +124,16 @@ export function Stepper({
   const atMin = value <= min;
   const atMax = value >= max;
 
-  const btn =
-    'flex items-center justify-center rounded-xl bg-surface-2 text-ink ' +
-    'transition active:scale-95 active:bg-[color-mix(in_oklch,var(--color-surface-2),white_8%)] ' +
-    'disabled:opacity-35 disabled:active:scale-100';
+  const btn = 'btn btn-secondary rounded-xl disabled:opacity-35';
 
-  // Classe commune readout : tap-target ≥44px garanti par h-14 (56px)
+  // Classe commune readout : tap-target ≥44px garanti par h-14 (56px). Afficheur
+  // ENCASTRÉ (inset) — il se lit comme un cadran d'instrument, pas comme un champ
+  // plat ; halo accent au focus quand on tape la valeur (cohérent avec `.field`).
   const readoutBase =
-    'readout flex flex-1 items-center justify-center rounded-xl bg-bg/40 ' +
-    'text-2xl font-medium tabular-nums';
+    'readout flex flex-1 items-center justify-center rounded-xl bg-bg/55 ' +
+    'text-2xl font-medium tabular-nums shadow-[inset_0_1px_2px_0_rgb(0_0_0/0.45),inset_0_0_0_1px_var(--color-hairline)] ' +
+    'transition-shadow duration-200 focus:outline-none ' +
+    'focus:shadow-[inset_0_0_0_1px_var(--color-accent),0_0_0_3px_var(--accent-ring)]';
 
   return (
     <div className="flex flex-col gap-1.5">

@@ -187,10 +187,10 @@ export function ExercisesView({
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-3">
-      <h2 className="text-2xl font-bold leading-tight tracking-tight text-ink">
+      <h2 className="text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         Exercices
       </h2>
-      <p className="mb-4 mt-0.5 text-sm text-ink-muted">
+      <p className="mb-5 mt-1 text-[15px] text-ink-muted">
         Ton catalogue. Crée et gère tes exos perso ; les exos de base sont en
         lecture seule.
       </p>
@@ -212,24 +212,40 @@ export function ExercisesView({
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
+          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-hair-strong bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
         >
           <PlusIcon />
           Créer un exo perso
         </button>
       )}
 
-      {/* Recherche (texte libre : <input> légitime). */}
-      <input
-        type="text"
-        value={query}
-        placeholder="Rechercher un exercice"
-        enterKeyHint="search"
-        maxLength={80}
-        onChange={(e) => setQuery(e.target.value)}
-        aria-label="Rechercher un exercice"
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
-      />
+      {/* Recherche (texte libre : <input> légitime), loupe à gauche. */}
+      <div className="relative">
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="M21 21l-4-4" />
+        </svg>
+        <input
+          type="text"
+          value={query}
+          placeholder="Chercher un exercice"
+          enterKeyHint="search"
+          maxLength={80}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Rechercher un exercice"
+          className="field h-[46px] w-full rounded-[13px] pl-11 pr-4 text-base text-ink"
+        />
+      </div>
 
       <p className="mt-4 mb-2 text-xs text-ink-muted">
         <span className="readout tabular-nums">{total}</span>{' '}
@@ -237,7 +253,7 @@ export function ExercisesView({
       </p>
 
       {total === 0 ? (
-        <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
+        <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-8 text-center text-sm text-ink-muted">
           Aucun exercice ne correspond. Ajuste ta recherche ou crée un exo perso.
         </p>
       ) : (
@@ -314,7 +330,7 @@ function Section({
 
 function EmptySection({ text }: { text: string }) {
   return (
-    <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-ink-muted">
+    <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-6 text-center text-sm text-ink-muted">
       {text}
     </p>
   );
@@ -568,7 +584,7 @@ function NoteSection({
 
   if (phase === 'closed') {
     return (
-      <div className="mt-3 border-t border-line/60 pt-3">
+      <div className="mt-3 border-t border-hair pt-3">
         <RowAction label="Note de l'exercice" onClick={() => void open()} />
         {error && <RowError message={error} />}
       </div>
@@ -577,7 +593,7 @@ function NoteSection({
 
   if (phase === 'loading') {
     return (
-      <div className="mt-3 border-t border-line/60 pt-3">
+      <div className="mt-3 border-t border-hair pt-3">
         <p className="text-sm text-ink-muted" role="status">
           Chargement de la note…
         </p>
@@ -600,7 +616,7 @@ function NoteSection({
           type="button"
           disabled={busy}
           onClick={() => void save()}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50"
+          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
         >
           {busy ? 'Enregistrement…' : 'Enregistrer'}
         </button>
@@ -608,7 +624,7 @@ function NoteSection({
           type="button"
           disabled={busy}
           onClick={() => setPhase('closed')}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -618,15 +634,24 @@ function NoteSection({
   );
 }
 
-/** Ligne « muscles principaux + unilatéral », jamais la couleur seule. */
+/** Ligne « muscles principaux + unilatéral » en chips, jamais la couleur seule. */
 function MuscleLine({ exo }: { exo: ListExercise }) {
   const muscles =
-    exo.primaryMuscles.length > 0 ? exo.primaryMuscles.join(', ') : exo.muscleGroup;
+    exo.primaryMuscles.length > 0
+      ? exo.primaryMuscles
+      : exo.muscleGroup
+        ? [exo.muscleGroup]
+        : [];
   return (
-    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-      {muscles && (
-        <span className="truncate text-xs text-ink-muted">{muscles}</span>
-      )}
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {muscles.map((m) => (
+        <span
+          key={m}
+          className="rounded-md bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-muted"
+        >
+          {m}
+        </span>
+      ))}
       {exo.unilateral && <UnilateralBadge />}
     </div>
   );
@@ -636,10 +661,10 @@ function MuscleLine({ exo }: { exo: ListExercise }) {
 // Primitives (cohérentes avec SeancesScreen / SeanceEditor)
 // =====================================================================
 
-/** Badge « Base » : couleur (neutre) ET mot, pour le statut lecture seule. */
+/** Badge « BASE » : readout mono, pastille surface-2 — statut lecture seule. */
 function BaseBadge() {
   return (
-    <span className="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-xs font-medium text-ink-muted">
+    <span className="readout mt-0.5 inline-flex shrink-0 items-center rounded-md border border-hair bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
       Base
     </span>
   );
@@ -648,7 +673,7 @@ function BaseBadge() {
 /** Badge « Personnalisé » : icône (crayon) ET mot, jamais la couleur seule (issue #50). */
 function CustomizedBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-accent/40 px-1.5 py-0.5 text-xs font-medium text-accent-ink">
+    <span className="inline-flex items-center gap-1 rounded-md border border-accent px-1.5 py-0.5 text-xs font-medium text-accent-ink">
       <svg
         viewBox="0 0 24 24"
         width="12"
@@ -667,30 +692,17 @@ function CustomizedBadge() {
   );
 }
 
-/** Badge « Unilatéral » : couleur (accent) ET mot, jamais la couleur seule. */
+/** Chip « Unilatéral » : MOT explicite + fond accent voilé, jamais la couleur seule. */
 function UnilateralBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-accent/40 px-1.5 py-0.5 text-xs font-medium text-accent-ink">
-      <svg
-        viewBox="0 0 24 24"
-        width="12"
-        height="12"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M9 18V6M15 18V6" />
-      </svg>
+    <span className="inline-flex items-center rounded-md border border-accent bg-accent-soft px-2 py-0.5 text-[11.5px] font-medium text-accent-ink">
       Unilatéral
     </span>
   );
 }
 
 function RowCard({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-line bg-surface p-3.5">{children}</div>;
+  return <div className="surface-card rounded-2xl p-3.5">{children}</div>;
 }
 
 /** Action secondaire d'une ligne. Neutre par défaut ; danger au besoin. */
@@ -705,14 +717,13 @@ function RowAction({
   tone?: 'neutral' | 'danger';
   busy?: boolean;
 }) {
-  const toneClass =
-    tone === 'danger' ? 'text-warn' : 'text-ink-muted active:text-ink';
+  const toneClass = tone === 'danger' ? 'text-warn' : 'text-ink-muted';
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={busy}
-      className={`inline-flex min-h-[44px] items-center rounded-lg bg-surface-2/60 px-3 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 ${toneClass}`}
+      className={`btn btn-secondary min-h-[44px] rounded-lg px-3 text-sm font-medium ${toneClass}`}
     >
       {label}
     </button>
@@ -752,7 +763,7 @@ function ConfirmDelete({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-warn px-4 text-sm font-semibold text-bg transition active:scale-[0.98] disabled:opacity-50"
+          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] px-4 text-sm font-semibold text-warn transition active:scale-[0.98] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:opacity-50"
         >
           {busy ? 'Suppression…' : 'Supprimer'}
         </button>
@@ -760,7 +771,7 @@ function ConfirmDelete({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -798,7 +809,7 @@ function ConfirmReset({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50"
+          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
         >
           {busy ? 'Réinitialisation…' : 'Réinitialiser'}
         </button>
@@ -806,7 +817,7 @@ function ConfirmReset({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -840,7 +851,7 @@ function ScreenSpinner({ label }: { label: string }) {
     <div className="mx-auto w-full max-w-md px-4 pt-3" role="status" aria-label={label}>
       <div className="mb-4 h-8 w-32 rounded-lg bg-surface-2 animate-pulse" />
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="mb-3 rounded-2xl border border-line bg-surface p-3.5">
+        <div key={i} className="surface-card mb-3 rounded-2xl p-3.5">
           <div className="h-4 w-3/5 rounded bg-surface-2 animate-pulse" />
           <div className="mt-2 h-3 w-2/5 rounded bg-surface-2 animate-pulse" />
         </div>
@@ -865,7 +876,7 @@ function ScreenError({
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
       >
         Réessayer
       </button>

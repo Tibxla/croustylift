@@ -25,6 +25,7 @@ import type { WeeklyPoint } from './comparison-series';
 
 const ACCENT = 'var(--color-accent)';
 const LINE = 'var(--color-line)';
+const HAIR = 'var(--color-hair)';
 const INK_MUTED = 'var(--color-ink-muted)';
 
 /** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
@@ -75,7 +76,7 @@ function ComparisonTooltip({ active, payload, firstLabel, secondLabel }: Compari
   if (!first) return null;
   const point = first.payload as WeeklyPoint;
   return (
-    <div className="rounded-lg border border-line bg-surface-2 px-3 py-2 shadow-lg">
+    <div className="surface-raised rounded-lg px-3 py-2">
       <p className="readout text-[11px] text-ink-muted">{formatWeekTick(point.week)}</p>
       {payload.map((entry) => {
         const p = entry.payload as WeeklyPoint;
@@ -111,7 +112,7 @@ export function ComparisonChart({
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
-            <CartesianGrid stroke={LINE} strokeWidth={1} vertical={false} opacity={0.4} />
+            <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
             <XAxis
               type="number"
               dataKey="week"

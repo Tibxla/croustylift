@@ -126,7 +126,7 @@ export function SessionEnd({
       <button
         type="button"
         onClick={onBack}
-        className="-ml-1 mb-2 inline-flex items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
+        className="btn btn-ghost -ml-1 mb-2 self-start rounded-lg py-2 pr-3 text-sm font-medium"
       >
         <svg
           viewBox="0 0 24 24"
@@ -144,10 +144,10 @@ export function SessionEnd({
         Retour à la capture
       </button>
 
-      <h2 className="text-3xl font-bold leading-tight tracking-tight text-ink">
+      <h2 className="text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         Fin de séance
       </h2>
-      <p className="mt-1.5 text-sm text-ink-muted">{summary.sessionName}</p>
+      <p className="mt-1.5 text-[15px] text-ink-muted">{summary.sessionName}</p>
 
       <SummaryCard summary={summary} durationMin={durationMin} />
       <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
@@ -186,13 +186,13 @@ export function SessionEnd({
       )}
 
       {/* Actions fixes en bas (zone du pouce). Primaire = accent violet. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-line bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
           <button
             type="button"
             disabled={saving}
             onClick={handleSaveAndClose}
-            className="flex h-14 w-full items-center justify-center rounded-2xl bg-accent-strong text-lg font-semibold text-on-accent shadow-lg shadow-accent/20 transition active:scale-[0.98] active:bg-accent disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+            className="btn btn-primary h-14 w-full rounded-2xl text-lg"
           >
             {saving ? 'Enregistrement…' : 'Enregistrer et clôturer'}
           </button>
@@ -200,7 +200,7 @@ export function SessionEnd({
             type="button"
             disabled={saving}
             onClick={handleSkip}
-            className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+            className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium"
           >
             Clôturer sans noter
           </button>
@@ -224,21 +224,21 @@ function SummaryCard({
 }) {
   return (
     <div className="mt-4 grid grid-cols-2 gap-2.5">
-      <div className="rounded-2xl bg-surface px-4 py-3.5">
+      <div className="surface-card rounded-2xl px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Exercices faits</p>
         <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
           {summary.exercisesDone}
           <span className="text-base text-ink-muted">/{summary.exercisesTotal}</span>
         </p>
       </div>
-      <div className="rounded-2xl bg-surface px-4 py-3.5">
+      <div className="surface-card rounded-2xl px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Séries loggées</p>
         <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
           {fmtCount(summary.totalSets)}
         </p>
       </div>
       {durationMin != null && (
-        <div className="rounded-2xl bg-surface px-4 py-3.5">
+        <div className="surface-card rounded-2xl px-4 py-3.5">
           <p className="text-xs font-medium text-ink-muted">Durée</p>
           <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
             {durationMin}
@@ -264,21 +264,41 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
   const muscles = orderMusclesCanonical(Object.keys(setsByMuscle));
   if (muscles.length === 0) return null;
 
+  // Barre proportionnelle au max (le muscle dominant fait 100 % + un léger glow).
+  const max = Math.max(...muscles.map((m) => setsByMuscle[m] ?? 0), 1);
+
   return (
     <section
-      className="mt-2.5 rounded-2xl bg-surface px-4 py-3.5"
+      className="panel mt-2.5 rounded-2xl px-4 py-4"
       aria-label="Séries par muscle"
     >
-      <p className="text-xs font-medium text-ink-muted">Séries par muscle</p>
-      <ul className="mt-2.5 flex flex-col gap-1.5">
-        {muscles.map((muscle) => (
-          <li key={muscle} className="flex items-baseline justify-between gap-3">
-            <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
-            <span className="readout shrink-0 text-sm tabular-nums text-ink">
-              {fmtCount(setsByMuscle[muscle] ?? 0)}
-            </span>
-          </li>
-        ))}
+      <p className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+        Séries par muscle
+      </p>
+      <ul className="mt-3 flex flex-col gap-3">
+        {muscles.map((muscle) => {
+          const value = setsByMuscle[muscle] ?? 0;
+          const pct = Math.round((value / max) * 100);
+          const dominant = value === max;
+          return (
+            <li key={muscle}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
+                <span className="readout shrink-0 text-[13px] tabular-nums text-ink">
+                  {fmtCount(value)}
+                </span>
+              </div>
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2">
+                <div
+                  className={`h-full rounded-full bg-accent ${
+                    dominant ? 'shadow-[0_0_10px_var(--color-accent-soft)]' : ''
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -307,13 +327,17 @@ function SessionDone({
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-12 pt-10">
       <div className="flex flex-col items-center text-center">
         <span
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-good"
+          className="flex h-14 w-14 items-center justify-center rounded-full border text-good"
+          style={{
+            background: 'color-mix(in oklab, var(--color-good), transparent 84%)',
+            borderColor: 'color-mix(in oklab, var(--color-good), transparent 55%)',
+          }}
           aria-hidden="true"
         >
           <svg
             viewBox="0 0 24 24"
-            width="26"
-            height="26"
+            width="28"
+            height="28"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.5"
@@ -323,8 +347,8 @@ function SessionDone({
             <path d="M4 12l5 5L20 6" />
           </svg>
         </span>
-        <h2 className="mt-4 text-3xl font-bold tracking-tight text-ink">Séance terminée</h2>
-        <p className="mt-1.5 text-sm text-ink-muted">{summary.sessionName}</p>
+        <h2 className="mt-4 text-3xl font-semibold tracking-[-0.025em] text-ink">Séance terminée</h2>
+        <p className="mt-1.5 text-[15px] text-ink-muted">{summary.sessionName}</p>
       </div>
 
       <SummaryCard summary={summary} durationMin={durationMin} />
@@ -332,7 +356,7 @@ function SessionDone({
 
       {hasBpm && (
         <div className="mt-2.5">
-          <div className="rounded-2xl bg-surface px-4 py-3.5">
+          <div className="surface-card rounded-2xl px-4 py-3.5">
             <p className="text-xs font-medium text-ink-muted">BPM moyen</p>
             <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
               {values.bpmAvg}
@@ -349,7 +373,7 @@ function SessionDone({
       <button
         type="button"
         onClick={onNewSession}
-        className="mt-8 flex h-12 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary mt-8 h-12 w-full rounded-2xl text-base"
       >
         Nouvelle séance
       </button>

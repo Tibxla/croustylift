@@ -42,7 +42,7 @@ export function NoteField({
         rows={rows}
         maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full resize-y rounded-xl border border-line bg-bg px-3 py-2.5 text-base leading-relaxed text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
+        className="field w-full resize-y rounded-xl px-3 py-2.5 text-base leading-relaxed text-ink"
       />
     </label>
   );

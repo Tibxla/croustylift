@@ -52,7 +52,7 @@ export function ExportButton({
         type="button"
         onClick={() => void run()}
         disabled={busy}
-        className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-line bg-surface text-sm font-medium text-ink transition active:scale-[0.98] active:bg-surface-2 disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100"
+        className="btn h-11 w-full gap-2 rounded-xl border border-hair bg-surface text-sm font-medium text-ink transition active:bg-surface-2 disabled:opacity-40"
       >
         <svg
           viewBox="0 0 24 24"

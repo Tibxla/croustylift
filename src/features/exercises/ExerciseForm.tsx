@@ -78,7 +78,7 @@ export function ExerciseForm({
 
   return (
     <form
-      className="rounded-2xl border border-line bg-surface p-3.5"
+      className="surface-card rounded-2xl p-3.5"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
@@ -93,7 +93,7 @@ export function ExerciseForm({
         maxLength={80}
         onChange={(e) => setName(e.target.value)}
         aria-label="Nom de l'exercice"
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
+        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
       />
 
       <p className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">Type de mouvement</p>
@@ -131,10 +131,10 @@ export function ExerciseForm({
               type="button"
               aria-pressed={active}
               onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
-              className={`min-h-[36px] rounded-lg px-2.5 text-xs font-medium transition active:scale-[0.97] ${
+              className={`min-h-[36px] rounded-lg border px-2.5 text-xs font-medium transition active:scale-[0.97] ${
                 active
-                  ? 'bg-accent-strong text-on-accent'
-                  : 'bg-bg text-ink-muted active:text-ink'
+                  ? 'border-hair-strong bg-surface-2 text-ink'
+                  : 'border-hair bg-surface text-ink-muted active:text-ink'
               }`}
             >
               {active ? `✓ ${m}` : m}
@@ -147,7 +147,7 @@ export function ExerciseForm({
         <button
           type="submit"
           disabled={!canSubmit}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:opacity-50 disabled:active:scale-100"
+          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm"
         >
           {busy ? submitBusyLabel : submitLabel}
         </button>
@@ -155,7 +155,7 @@ export function ExerciseForm({
           type="button"
           disabled={busy}
           onClick={onCancel}
-          className="inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium text-ink-muted transition active:text-ink disabled:opacity-50"
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler
         </button>
@@ -185,7 +185,9 @@ function SegButton({
       aria-pressed={active}
       onClick={onClick}
       className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
-        active ? 'bg-accent-strong text-on-accent' : 'text-ink-muted active:text-ink'
+        active
+          ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
+          : 'text-ink-muted active:text-ink'
       }`}
     >
       {label}

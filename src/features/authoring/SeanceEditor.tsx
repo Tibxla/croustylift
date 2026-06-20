@@ -344,7 +344,7 @@ export function SeanceEditorView({
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-40 pt-3">
       <BackButton label="Retour aux séances" onClick={onBack} />
 
-      <h2 className="mt-1 text-2xl font-bold leading-tight tracking-tight text-ink">
+      <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         {seanceName}
       </h2>
       <p className="mb-4 mt-0.5 text-sm text-ink-muted">
@@ -379,7 +379,7 @@ export function SeanceEditorView({
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
+            className="surface-interactive mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-base font-medium text-ink"
           >
             <PlusIcon />
             Ajouter un exercice
@@ -390,11 +390,11 @@ export function SeanceEditorView({
       )}
 
       {/* Barre d'enregistrement fixée en bas (One Voice : seul accent fort de l'écran). */}
-      <div className="fixed inset-x-0 bottom-14 z-20 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-sm">
+      <div className="fixed inset-x-0 bottom-14 z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-md">
           {save.done ? (
             <p
-              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-surface text-base font-semibold text-good"
+              className="surface-card flex h-12 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
               role="status"
               aria-live="polite"
             >
@@ -406,7 +406,7 @@ export function SeanceEditorView({
               type="button"
               onClick={handleSave}
               disabled={empty || save.busy}
-              className="flex h-12 w-full items-center justify-center rounded-2xl bg-accent-strong text-base font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+              className="btn btn-primary h-12 w-full rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
             >
               {save.busy
                 ? 'Enregistrement…'
@@ -453,7 +453,7 @@ function fmtCountRange(range: CountRange): string {
 
 /** Résumé d'une prescription, même format que la cible affichée en Capture. */
 function summarizeRow(row: EditorRow): string {
-  return `${fmtField(row.sets)} × ${fmtField(row.reps)} @ RIR ${fmtField(row.rir)}`;
+  return `${fmtField(row.sets)} × ${fmtField(row.reps)} · RIR ${fmtField(row.rir)}`;
 }
 
 /**
@@ -477,7 +477,7 @@ function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
 
   return (
     <section
-      className="mb-4 rounded-2xl border border-line bg-surface p-3.5"
+      className="surface-card mb-4 rounded-2xl p-3.5"
       aria-label="Décompte des séries prévues"
     >
       <div className="flex items-baseline justify-between gap-3">
@@ -556,7 +556,7 @@ function ExerciseRowCard({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-2xl border border-line bg-surface p-3.5">
+    <div className="surface-card rounded-2xl p-3.5">
       <div className="flex items-start gap-2">
         <span
           className="readout mt-0.5 w-6 shrink-0 text-center text-sm tabular-nums text-ink-muted"
@@ -624,7 +624,7 @@ function ExerciseRowCard({
             type="button"
             onClick={() => setExpanded(false)}
             aria-expanded
-            className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-lg text-sm font-medium text-ink-muted transition active:text-ink"
+            className="btn btn-ghost mt-3 h-11 w-full rounded-lg text-sm font-medium"
           >
             Replier
             <Caret dir="up" />
@@ -742,7 +742,7 @@ function ExerciseNoteEditor({
           type="button"
           disabled={!dirty || busy}
           onClick={() => void submit()}
-          className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-4 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent disabled:cursor-not-allowed disabled:bg-surface disabled:text-ink-muted disabled:active:scale-100"
+          className="btn btn-primary h-11 rounded-xl px-4 text-sm disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
         >
           {busy ? 'Enregistrement…' : isBlankNote(draft) ? 'Effacer la note' : 'Enregistrer la note'}
         </button>
@@ -845,7 +845,7 @@ function SegButton({
       onClick={onClick}
       className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
         active
-          ? 'bg-accent-strong text-on-accent'
+          ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
           : 'text-ink-muted active:text-ink'
       }`}
     >
@@ -900,7 +900,7 @@ function AddExerciseSheet({
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-8 pt-3">
       <BackButton label="Retour à la séance" onClick={onCancel} />
 
-      <h2 className="mt-1 text-2xl font-bold leading-tight tracking-tight text-ink">
+      <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         Ajouter un exercice
       </h2>
       <p className="mb-4 mt-0.5 text-sm text-ink-muted">
@@ -920,7 +920,7 @@ function AddExerciseSheet({
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
+          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-hair-strong bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
         >
           <PlusIcon />
           Créer un exo perso
@@ -935,7 +935,7 @@ function AddExerciseSheet({
         enterKeyHint="search"
         maxLength={80}
         onChange={(e) => setQuery(e.target.value)}
-        className="h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink placeholder:text-ink-muted/85 focus:border-accent focus:outline-none"
+        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
       />
 
       {/* Filtre muscle : <select> natif (ce n'est pas un chiffre mesuré). */}
@@ -943,7 +943,7 @@ function AddExerciseSheet({
         value={muscle}
         onChange={(e) => setMuscle(e.target.value)}
         aria-label="Filtrer par groupe musculaire"
-        className="mt-2.5 h-11 w-full rounded-xl border border-line bg-bg px-3 text-base text-ink focus:border-accent focus:outline-none"
+        className="field mt-2.5 h-11 w-full rounded-xl px-3 text-base text-ink"
       >
         <option value="">Tous les muscles</option>
         {MUSCLE_GROUPS.map((m) => (
@@ -959,7 +959,7 @@ function AddExerciseSheet({
       </p>
 
       {filtered.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
+        <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-8 text-center text-sm text-ink-muted">
           Aucun exercice ne correspond. Ajuste ta recherche ou crée un exo perso.
         </p>
       ) : (
@@ -969,7 +969,7 @@ function AddExerciseSheet({
               <button
                 type="button"
                 onClick={() => onPick(exo)}
-                className="flex min-h-[44px] w-full items-center gap-3 rounded-xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
+                className="surface-interactive flex min-h-[44px] w-full items-center gap-3 rounded-xl px-4 py-3 text-left"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-base font-medium text-ink">
@@ -1014,7 +1014,7 @@ function UnilateralBadge() {
 
 function EmptyState({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-line px-6 py-12 text-center">
+    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-hair-strong px-6 py-12 text-center">
       <span
         className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-ink-muted"
         aria-hidden="true"
@@ -1038,7 +1038,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       <button
         type="button"
         onClick={onAdd}
-        className="inline-flex h-11 items-center gap-2 rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
       >
         <PlusIcon />
         Ajouter un exercice
@@ -1060,14 +1060,14 @@ function IconButton({
   icon: React.ReactNode;
   tone?: 'neutral' | 'danger';
 }) {
-  const toneClass = tone === 'danger' ? 'active:text-warn' : 'active:text-ink';
+  const toneClass = tone === 'danger' ? 'active:text-warn' : '';
   return (
     <button
       type="button"
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-11 w-11 items-center justify-center rounded-lg text-ink-muted transition active:bg-surface-2 disabled:opacity-30 disabled:active:bg-transparent ${toneClass}`}
+      className={`btn btn-ghost h-11 w-11 rounded-lg disabled:opacity-30 ${toneClass}`}
     >
       <svg
         viewBox="0 0 24 24"
@@ -1128,7 +1128,7 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
     <button
       type="button"
       onClick={onClick}
-      className="-ml-1 inline-flex min-h-[44px] items-center gap-1.5 self-start rounded-lg py-2 pr-3 text-sm font-medium text-ink-muted transition active:text-ink"
+      className="btn btn-ghost -ml-1 min-h-[44px] self-start rounded-lg py-2 pr-3 text-sm font-medium"
     >
       <svg
         viewBox="0 0 24 24"
@@ -1158,7 +1158,7 @@ function ScreenSpinner({ label }: { label: string }) {
       {/* Squelette : 3 cartes simulant des exercices prescrits. */}
       <div className="mb-4 h-8 w-32 rounded-lg bg-surface-2 animate-pulse" />
       {[0, 1, 2].map((i) => (
-        <div key={i} className="mb-3 rounded-2xl border border-line bg-surface p-3.5">
+        <div key={i} className="surface-card mb-3 rounded-2xl p-3.5">
           <div className="flex items-start gap-2">
             <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
             <div className="flex-1 space-y-2">
@@ -1189,7 +1189,7 @@ function ScreenError({
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex h-11 items-center rounded-xl bg-accent-strong px-5 text-sm font-semibold text-on-accent transition active:scale-[0.98] active:bg-accent"
+        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
       >
         Réessayer
       </button>

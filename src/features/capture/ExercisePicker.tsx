@@ -53,19 +53,60 @@ interface ExercisePickerProps {
   onSwapExercise: (targetExerciseId: string, replacement: SessionExercise) => void;
 }
 
-const STATUS_DOT: Record<string, string> = {
-  todo: 'bg-line',
-  'in-progress': 'bg-accent',
-  done: 'bg-good',
-  skipped: 'bg-warn',
-};
-
 const STATUS_LABEL: Record<string, string> = {
   todo: 'À faire',
   'in-progress': 'En cours',
   done: 'Fait',
   skipped: 'Passé',
 };
+
+/** Couleur du label de statut, calée sur la maquette : accent en cours, vert fait,
+    ambre passé, neutre à faire (l'info reste portée par le texte + l'indicateur). */
+const STATUS_LABEL_COLOR: Record<string, string> = {
+  todo: 'text-ink-muted',
+  'in-progress': 'text-accent-ink',
+  done: 'text-good',
+  skipped: 'text-warn',
+};
+
+/**
+ * Indicateur d'état d'un exo : anneau (à faire), anneau accent + cœur plein (en
+ * cours), disque vert + coche (fait), anneau ambre + tiret (passé). L'info tient
+ * à la FORME autant qu'à la couleur (DESIGN.md, jamais la couleur seule) ; plus
+ * lisible et plus « instrument » qu'un simple point.
+ */
+function StatusIndicator({ status }: { status: ExerciseStatus }) {
+  return (
+    <span className="relative mt-0.5 grid h-[18px] w-[18px] shrink-0 place-items-center" aria-hidden="true">
+      <svg viewBox="0 0 18 18" width="18" height="18" fill="none">
+        {status === 'done' ? (
+          <>
+            <circle cx="9" cy="9" r="9" fill="var(--color-good)" />
+            <path
+              d="M5.4 9.2l2.3 2.3 4.9-5"
+              stroke="var(--color-bg)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </>
+        ) : status === 'skipped' ? (
+          <>
+            <circle cx="9" cy="9" r="8" stroke="var(--color-warn)" strokeWidth="1.5" opacity="0.55" />
+            <path d="M5.5 9h7" stroke="var(--color-warn)" strokeWidth="2" strokeLinecap="round" />
+          </>
+        ) : status === 'in-progress' ? (
+          <>
+            <circle cx="9" cy="9" r="8" stroke="var(--color-accent)" strokeWidth="1.5" />
+            <circle cx="9" cy="9" r="3.2" fill="var(--color-accent)" />
+          </>
+        ) : (
+          <circle cx="9" cy="9" r="7.5" stroke="var(--color-line)" strokeWidth="1.75" />
+        )}
+      </svg>
+    </span>
+  );
+}
 
 /** Cible de l'ouverture du catalogue : ajout libre, ou remplacement d'un exo. */
 type CatalogTarget = { mode: 'add' } | { mode: 'swap'; exerciseId: string; name: string };
@@ -102,8 +143,8 @@ export function ExercisePicker({
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-5">
       <header className="mb-5">
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">{session.name}</h2>
-        <p className="mt-1 text-sm text-ink-muted">
+        <h2 className="text-[27px] font-semibold tracking-[-0.025em] text-ink">{session.name}</h2>
+        <p className="mt-1 text-[13.5px] text-ink-muted">
           Tape l&apos;exercice que tu attaques.{' '}
           <span className="readout tabular-nums">
             {doneCount}/{session.exercises.length}
@@ -114,7 +155,7 @@ export function ExercisePicker({
 
       {allDone && (
         <div
-          className="mb-4 rounded-2xl bg-surface px-4 py-3 text-sm text-good"
+          className="panel mb-4 rounded-2xl px-4 py-3 text-sm text-good"
           role="status"
           aria-live="polite"
         >
@@ -134,71 +175,90 @@ export function ExercisePicker({
             const status = statusFromLogicalSets(progress, ex.prescription.sets.min);
             const count = logicalSetsDone(progress);
             const deviation = deviationByExercise.get(ex.exerciseId) ?? null;
+            // Remplacement autorisé tant que l'exo n'est pas entamé (aucune série,
+            // pas passé) : la séance courante peut encore évoluer (issue #36).
+            const canSwap = count === 0 && !progress.skipped;
             return (
-              <li key={ex.exerciseId}>
+              <li
+                key={ex.exerciseId}
+                className="surface-interactive relative flex items-center gap-3.5 rounded-[18px] px-4 py-3.5"
+              >
+                {/* Carte entière tappable (= ouvrir l'exo). Bouton plein recouvrant,
+                    pour que le bouton « Remplacer » reste un frère (jamais imbriqué). */}
                 <button
                   type="button"
                   onClick={() => onPick(ex.exerciseId)}
-                  className="group flex w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3.5 text-left transition active:scale-[0.99] active:bg-surface-2"
-                >
-                  <span
-                    className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_DOT[status]}`}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="min-w-0 truncate text-base font-semibold text-ink">
-                        {ex.name}
-                      </span>
-                      {deviation && <ExerciseDeviationTag kind={deviation} />}
+                  aria-label={`Ouvrir ${ex.name}`}
+                  className="absolute inset-0 rounded-[18px]"
+                />
+                <StatusIndicator status={status} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="min-w-0 truncate text-base font-semibold text-ink">
+                      {ex.name}
                     </span>
-                    <span className="readout mt-0.5 block truncate text-sm text-ink-muted">
-                      {formatPrescription(
-                        ex.prescription.sets,
-                        ex.prescription.reps,
-                        ex.prescription.rir,
-                      )}
-                    </span>
+                    {deviation && <ExerciseDeviationTag kind={deviation} />}
                   </span>
-                  <span className="flex shrink-0 flex-col items-end gap-0.5">
-                    <span className="text-xs font-medium text-ink-muted">
-                      {STATUS_LABEL[status]}
-                    </span>
-                    {count > 0 && (
-                      <span className="readout text-sm font-medium text-ink tabular-nums">
-                        {count}/{formatRange(ex.prescription.sets)}
-                      </span>
+                  <span className="readout mt-0.5 block truncate text-[12.5px] text-ink-muted">
+                    {formatPrescription(
+                      ex.prescription.sets,
+                      ex.prescription.reps,
+                      ex.prescription.rir,
                     )}
                   </span>
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="18"
-                    height="18"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="shrink-0 text-ink-muted"
-                    aria-hidden="true"
+                </span>
+                <span className="flex shrink-0 flex-col items-end gap-0.5">
+                  <span className={`text-[11.5px] font-medium ${STATUS_LABEL_COLOR[status]}`}>
+                    {STATUS_LABEL[status]}
+                  </span>
+                  {count > 0 && (
+                    <span className="readout text-[13px] font-medium text-ink tabular-nums">
+                      {count}/{formatRange(ex.prescription.sets)}
+                    </span>
+                  )}
+                </span>
+                {/* Remplacer inline : carré fantôme ⇄ dans la ligne (maquette), pas un
+                    pied de carte. `z-10` pour capter son tap au-dessus du bouton plein. */}
+                {canSwap && (
+                  <button
+                    type="button"
+                    title="Remplacer l'exercice"
+                    aria-label={`Remplacer ${ex.name}`}
+                    onClick={() => setCatalog({ mode: 'swap', exerciseId: ex.exerciseId, name: ex.name })}
+                    className="relative z-10 flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] border border-hair-strong text-ink-muted transition active:bg-surface-2 active:text-ink"
                   >
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
-                </button>
-
-                {/* Remplacer cet exo : action discrète, propre à la ligne. Pas
-                    encore touché (aucune série / pas passé) → on autorise le swap. */}
-                {count === 0 && !progress.skipped && (
-                  <div className="mt-1 pl-7">
-                    <button
-                      type="button"
-                      onClick={() => setCatalog({ mode: 'swap', exerciseId: ex.exerciseId, name: ex.name })}
-                      className="inline-flex h-9 items-center rounded-lg px-2 text-xs font-medium text-ink-muted transition active:text-ink"
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
                     >
-                      Remplacer
-                    </button>
-                  </div>
+                      <path d="M16 3l4 4-4 4" />
+                      <path d="M20 7H8" />
+                      <path d="M8 21l-4-4 4-4" />
+                      <path d="M4 17h12" />
+                    </svg>
+                  </button>
                 )}
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="shrink-0 text-ink-muted"
+                  aria-hidden="true"
+                >
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
               </li>
             );
           })}
@@ -210,7 +270,7 @@ export function ExercisePicker({
       <button
         type="button"
         onClick={() => setCatalog({ mode: 'add' })}
-        className="mt-4 flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2"
+        className="mt-4 flex min-h-[3.25rem] w-full items-center gap-3 rounded-2xl border border-dashed border-hair-strong px-4 py-3 text-left text-ink-muted transition-colors duration-200 active:bg-surface active:text-ink"
       >
         <svg
           viewBox="0 0 24 24"
@@ -222,11 +282,11 @@ export function ExercisePicker({
           strokeLinecap="round"
           strokeLinejoin="round"
           aria-hidden="true"
-          className="shrink-0 text-ink-muted"
+          className="shrink-0"
         >
           <path d="M12 5v14M5 12h14" />
         </svg>
-        <span className="text-base font-semibold text-ink">Ajouter un exercice</span>
+        <span className="text-base font-medium">Ajouter un exercice</span>
       </button>
 
       {catalog && (
@@ -254,7 +314,7 @@ export function ExercisePicker({
 function ExerciseDeviationTag({ kind }: { kind: 'added' | 'swapped' }) {
   const label = kind === 'added' ? 'Ajouté' : 'Remplacé';
   return (
-    <span className="inline-flex shrink-0 items-center rounded-md border border-line px-1.5 py-0.5 text-[0.6875rem] font-medium text-ink-muted">
+    <span className="inline-flex shrink-0 items-center rounded-md border border-hair-strong px-1.5 py-0.5 text-[0.6875rem] font-medium text-ink-muted">
       {label}
     </span>
   );
@@ -339,7 +399,8 @@ function CatalogSheet({
         onClick={onClose}
         className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
       />
-      <div className="relative mt-auto flex max-h-[85vh] flex-col rounded-t-3xl border-t border-line bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
+      <div className="relative mt-auto flex max-h-[85vh] flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
+        <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />
         <div className="mx-auto flex w-full max-w-md flex-col px-4 pt-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-ink">{title}</h3>
@@ -352,13 +413,30 @@ function CatalogSheet({
             </button>
           </div>
 
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Chercher un exercice"
-            className="mb-3 h-11 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
-          />
+          <div className="relative mb-3">
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="M21 21l-4.2-4.2" />
+            </svg>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Chercher un exercice"
+              className="field h-11 w-full rounded-[13px] pl-10 pr-4 text-base"
+            />
+          </div>
         </div>
 
         <div className="mx-auto w-full max-w-md flex-1 overflow-y-auto px-4">
@@ -380,7 +458,7 @@ function CatalogSheet({
                     type="button"
                     disabled={picking !== null}
                     onClick={() => void handlePick(row)}
-                    className="flex min-h-[3rem] w-full items-center gap-3 rounded-xl bg-surface px-4 py-3 text-left transition active:scale-[0.99] active:bg-surface-2 disabled:opacity-60"
+                    className="surface-interactive flex min-h-[3rem] w-full items-center gap-3 rounded-xl px-4 py-3 text-left disabled:opacity-60"
                   >
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="truncate text-base font-medium text-ink">
