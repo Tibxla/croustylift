@@ -20,6 +20,7 @@ import {
   toggleMuscle,
   validatePersonalExercise,
 } from '../authoring/exercise-input';
+import { NoteField } from '../notes/NoteField';
 
 /** Saisie d'un exo perso : nom, muscles principaux (canoniques), unilatéral. */
 export interface ExerciseFormValue {
@@ -35,8 +36,17 @@ export interface ExerciseFormProps {
   submitLabel: string;
   /** Libellé pendant l'enregistrement (ex. « Création… », « Enregistrement… »). */
   submitBusyLabel: string;
-  /** Soumission validée. Résolu = enregistré (le parent ferme alors le form). */
-  onSubmit: (value: ExerciseFormValue) => Promise<void>;
+  /**
+   * Note d'instructions de l'exo (exercise_notes #26), éditée DANS le formulaire
+   * d'édition. `undefined` = pas de champ note (flux de création : l'exo n'existe
+   * pas encore, la note se pose ensuite par « Modifier »). `''` = note vide éditable.
+   */
+  initialNote?: string;
+  /**
+   * Soumission validée. Reçoit la note SEULEMENT quand `initialNote` est fourni
+   * (sinon `undefined`). Résolu = enregistré (le parent ferme alors le form).
+   */
+  onSubmit: (value: ExerciseFormValue, note?: string) => Promise<void>;
   /** Retour sans enregistrer. */
   onCancel: () => void;
   /** Donne le focus au champ nom au montage (création surtout). Défaut true. */
@@ -47,6 +57,7 @@ export function ExerciseForm({
   initial,
   submitLabel,
   submitBusyLabel,
+  initialNote,
   onSubmit,
   onCancel,
   autoFocusName = true,
@@ -54,8 +65,10 @@ export function ExerciseForm({
   const [name, setName] = useState(initial?.name ?? '');
   const [muscles, setMuscles] = useState<string[]>(initial?.primaryMuscles ?? []);
   const [unilateral, setUnilateral] = useState(initial?.unilateral ?? false);
+  const [note, setNote] = useState(initialNote ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasNote = initialNote !== undefined;
 
   const trimmed = name.trim();
   // validatePersonalExercise renvoie null quand la saisie est valide.
@@ -68,7 +81,10 @@ export function ExerciseForm({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({ name: trimmed, primaryMuscles: muscles, unilateral });
+      await onSubmit(
+        { name: trimmed, primaryMuscles: muscles, unilateral },
+        hasNote ? note : undefined,
+      );
       // Succès : le parent ferme le formulaire, pas de reset nécessaire ici.
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -142,6 +158,19 @@ export function ExerciseForm({
           );
         })}
       </div>
+
+      {hasNote && (
+        <div className="mt-3 border-t border-hair pt-3">
+          <NoteField
+            id="exercise-form-note"
+            label="Note de l'exercice"
+            hint="Tes repères techniques. Visibles en référence pendant la séance."
+            placeholder="Prise serrée, coudes rentrés…"
+            value={note}
+            onChange={setNote}
+          />
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2">
         <button

@@ -13,8 +13,10 @@
 //     partagée n'est jamais modifiée ; l'override est invisible des autres users.
 //   - exo PERSO (owner_id = auth.uid()) : créer, modifier (nom + muscles +
 //     unilatéral, « renommer » = changer le champ nom) et supprimer.
-//   - NOTE par exo (exercise_notes #26, déjà per-user) : éditable ICI pour TOUS
-//     les exos (base ET perso), via le champ de note réutilisable (NoteField).
+//   - NOTE par exo (exercise_notes #26, déjà per-user) : éditable pour TOUS les
+//     exos (base ET perso) DANS le formulaire « Modifier / Personnaliser » (la note
+//     vit dans ExerciseForm, plus d'action note sur la carte de liste). Chargée à
+//     l'ouverture du form ; corps vide = suppression.
 //
 // Conventions DESIGN.md tenues ici :
 //   - accent violet parcimonieux : action primaire + chips actives du formulaire ;
@@ -35,7 +37,6 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
-import { NoteField } from '../notes/NoteField';
 import {
   loadExerciseOverrides,
   upsertExerciseOverride,
@@ -43,6 +44,17 @@ import {
 } from './overrides';
 import { isOverridden } from '../../domain/exercise-override';
 import { ExerciseForm, type ExerciseFormValue } from './ExerciseForm';
+
+/** Un champ d'exercice (nom / muscles / unilatéral) diffère-t-il des valeurs courantes ?
+    Sert à n'écrire un override d'exo de base QUE si l'utilisateur a vraiment
+    personnalisé (éditer la seule note ne doit pas créer de personnalisation). */
+function exerciseFieldsChanged(exo: ListExercise, value: ExerciseFormValue): boolean {
+  if (exo.name !== value.name) return true;
+  if (exo.unilateral !== value.unilateral) return true;
+  const a = [...exo.primaryMuscles].sort().join('|');
+  const b = [...value.primaryMuscles].sort().join('|');
+  return a !== b;
+}
 import {
   filterExercises,
   toListExercise,
@@ -360,14 +372,33 @@ function BaseRow({
   onLoadNote: (exerciseId: string) => Promise<string>;
   onSaveNote: (exerciseId: string, body: string) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'edit' | 'confirmReset'>('idle');
+  const [mode, setMode] = useState<'idle' | 'editLoading' | 'edit' | 'confirmReset'>(
+    'idle',
+  );
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // « Personnaliser / Modifier » : on charge d'abord la note (éditée dans le form),
+  // puis on ouvre le formulaire. Brève étape de chargement.
+  async function openEdit() {
+    setMode('editLoading');
+    setError(null);
+    try {
+      setNote(await onLoadNote(exo.id));
+      setMode('edit');
+    } catch (err) {
+      setError(errMessage(err));
+      setMode('idle');
+    }
+  }
 
   if (mode === 'edit') {
     return (
       <RowCard>
-        <p className="mb-2 text-sm font-semibold text-ink">Personnaliser l'exercice</p>
+        <p className="mb-2 text-sm font-semibold text-ink">
+          {overridden ? "Modifier ta version" : "Personnaliser l'exercice"}
+        </p>
         <p className="mb-2 text-xs text-ink-muted">
           Ta version reste privée. L'exercice de base n'est pas modifié pour les autres.
         </p>
@@ -378,11 +409,15 @@ function BaseRow({
             unilateral: exo.unilateral,
           }}
           autoFocusName={false}
+          initialNote={note}
           submitLabel="Enregistrer"
           submitBusyLabel="Enregistrement…"
           onCancel={() => setMode('idle')}
-          onSubmit={async (value) => {
-            await onSaveOverride(exo.id, value);
+          onSubmit={async (value, noteBody) => {
+            // N'écrire l'override que si un champ a changé : éditer la seule note
+            // d'un exo de base ne doit pas créer de personnalisation.
+            if (exerciseFieldsChanged(exo, value)) await onSaveOverride(exo.id, value);
+            await onSaveNote(exo.id, noteBody ?? '');
             setMode('idle');
           }}
         />
@@ -404,18 +439,46 @@ function BaseRow({
 
   return (
     <RowCard>
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-medium text-ink">{exo.name}</p>
-          <MuscleLine exo={exo} />
+          <MuscleLine
+            exo={exo}
+            extra={
+              <>
+                <BaseBadge />
+                {overridden && <CustomizedBadge />}
+              </>
+            }
+          />
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <BaseBadge />
-          {overridden && <CustomizedBadge />}
-        </div>
+        {mode === 'idle' && (
+          <div className="flex shrink-0 items-center gap-0.5">
+            <IconButton
+              label={overridden ? 'Modifier ta version' : "Personnaliser l'exercice"}
+              onClick={() => void openEdit()}
+            >
+              <EditIcon />
+            </IconButton>
+            {overridden && (
+              <IconButton
+                label="Réinitialiser à l'exercice de base"
+                onClick={() => setMode('confirmReset')}
+              >
+                <ResetIcon />
+              </IconButton>
+            )}
+          </div>
+        )}
       </div>
 
-      {mode === 'confirmReset' ? (
+      {mode === 'editLoading' && (
+        <p className="mt-3 text-sm text-ink-muted" role="status">
+          Chargement…
+        </p>
+      )}
+
+      {mode === 'confirmReset' && (
         <ConfirmReset
           busy={busy}
           error={error}
@@ -425,19 +488,9 @@ function BaseRow({
             setMode('idle');
           }}
         />
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <RowAction
-            label={overridden ? 'Modifier' : 'Personnaliser'}
-            onClick={() => setMode('edit')}
-          />
-          {overridden && (
-            <RowAction label="Réinitialiser" onClick={() => setMode('confirmReset')} />
-          )}
-        </div>
       )}
 
-      <NoteSection exerciseId={exo.id} onLoadNote={onLoadNote} onSaveNote={onSaveNote} />
+      {mode === 'idle' && error && <RowError message={error} />}
     </RowCard>
   );
 }
@@ -456,12 +509,28 @@ function PersonalRow({
   onLoadNote: (exerciseId: string) => Promise<string>;
   onSaveNote: (exerciseId: string, body: string) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'edit' | 'confirmDelete'>('idle');
+  const [mode, setMode] = useState<'idle' | 'editLoading' | 'edit' | 'confirmDelete'>(
+    'idle',
+  );
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Édition : on réutilise ExerciseForm pré-rempli. « Renommer » = changer le
-  // seul champ nom ; « éditer » = changer aussi muscles / unilatéral. Un seul flux.
+  // « Modifier » : on charge la note (éditée dans le form) puis on ouvre le form.
+  async function openEdit() {
+    setMode('editLoading');
+    setError(null);
+    try {
+      setNote(await onLoadNote(exo.id));
+      setMode('edit');
+    } catch (err) {
+      setError(errMessage(err));
+      setMode('idle');
+    }
+  }
+
+  // Édition : ExerciseForm pré-rempli (nom + muscles + unilatéral + note). « Renommer »
+  // = changer le seul champ nom. Un seul flux, un seul « Enregistrer ».
   if (mode === 'edit') {
     return (
       <RowCard>
@@ -473,12 +542,14 @@ function PersonalRow({
             unilateral: exo.unilateral,
           }}
           autoFocusName={false}
+          initialNote={note}
           submitLabel="Enregistrer"
           submitBusyLabel="Enregistrement…"
           onCancel={() => setMode('idle')}
-          onSubmit={async (value) => {
+          onSubmit={async (value, noteBody) => {
             // ExerciseForm gère son propre état busy/erreur ; on laisse remonter.
             await onUpdate(exo.id, value);
+            await onSaveNote(exo.id, noteBody ?? '');
             setMode('idle');
           }}
         />
@@ -501,14 +572,34 @@ function PersonalRow({
 
   return (
     <RowCard>
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate text-base font-medium text-ink">{exo.name}</p>
           <MuscleLine exo={exo} />
         </div>
+        {mode === 'idle' && (
+          <div className="flex shrink-0 items-center gap-0.5">
+            <IconButton label="Modifier l'exercice" onClick={() => void openEdit()}>
+              <EditIcon />
+            </IconButton>
+            <IconButton
+              label="Supprimer l'exercice"
+              tone="danger"
+              onClick={() => setMode('confirmDelete')}
+            >
+              <TrashIcon />
+            </IconButton>
+          </div>
+        )}
       </div>
 
-      {mode === 'confirmDelete' ? (
+      {mode === 'editLoading' && (
+        <p className="mt-3 text-sm text-ink-muted" role="status">
+          Chargement…
+        </p>
+      )}
+
+      {mode === 'confirmDelete' && (
         <ConfirmDelete
           question={`Supprimer « ${exo.name} » ?`}
           busy={busy}
@@ -519,123 +610,16 @@ function PersonalRow({
             setMode('idle');
           }}
         />
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <RowAction label="Modifier" onClick={() => setMode('edit')} />
-          <RowAction
-            label="Supprimer"
-            tone="danger"
-            onClick={() => setMode('confirmDelete')}
-          />
-        </div>
       )}
 
-      <NoteSection exerciseId={exo.id} onLoadNote={onLoadNote} onSaveNote={onSaveNote} />
+      {mode === 'idle' && error && <RowError message={error} />}
     </RowCard>
   );
 }
 
-// --- Note par exo (exercise_notes #26) --------------------------------------
-//
-// Édition de la note d'instructions, partagée par les exos de BASE et PERSO. La
-// note est chargée À LA DEMANDE (à l'ouverture) plutôt qu'au montage de la liste :
-// inutile de tirer N notes pour les afficher repliées. Réutilise NoteField (le
-// même champ que l'authoring / la Capture) ; le corps vide supprime la note.
-
-function NoteSection({
-  exerciseId,
-  onLoadNote,
-  onSaveNote,
-}: {
-  exerciseId: string;
-  onLoadNote: (exerciseId: string) => Promise<string>;
-  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
-}) {
-  // 'closed' : repliée ; 'loading' : on tire la note ; 'open' : éditable.
-  const [phase, setPhase] = useState<'closed' | 'loading' | 'open'>('closed');
-  const [body, setBody] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function open() {
-    setPhase('loading');
-    setError(null);
-    try {
-      setBody(await onLoadNote(exerciseId));
-      setPhase('open');
-    } catch (err) {
-      setError(errMessage(err));
-      setPhase('closed');
-    }
-  }
-
-  async function save() {
-    setBusy(true);
-    setError(null);
-    try {
-      await onSaveNote(exerciseId, body);
-      setBusy(false);
-      setPhase('closed');
-    } catch (err) {
-      setError(errMessage(err));
-      setBusy(false);
-    }
-  }
-
-  if (phase === 'closed') {
-    return (
-      <div className="mt-3 border-t border-hair pt-3">
-        <RowAction label="Note de l'exercice" onClick={() => void open()} />
-        {error && <RowError message={error} />}
-      </div>
-    );
-  }
-
-  if (phase === 'loading') {
-    return (
-      <div className="mt-3 border-t border-hair pt-3">
-        <p className="text-sm text-ink-muted" role="status">
-          Chargement de la note…
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-3 border-t border-line/60 pt-3">
-      <NoteField
-        id={`exercise-note-${exerciseId}`}
-        label="Note de l'exercice"
-        hint="Tes repères techniques. Visibles en référence pendant la séance."
-        placeholder="Prise serrée, coudes rentrés…"
-        value={body}
-        onChange={setBody}
-      />
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void save()}
-          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
-        >
-          {busy ? 'Enregistrement…' : 'Enregistrer'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => setPhase('closed')}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </div>
-  );
-}
-
-/** Ligne « muscles principaux + unilatéral » en chips, jamais la couleur seule. */
-function MuscleLine({ exo }: { exo: ListExercise }) {
+/** Ligne « muscles principaux + unilatéral » en chips, jamais la couleur seule.
+    `extra` : badges supplémentaires posés en fin de ligne (Base, Personnalisé). */
+function MuscleLine({ exo, extra }: { exo: ListExercise; extra?: React.ReactNode }) {
   const muscles =
     exo.primaryMuscles.length > 0
       ? exo.primaryMuscles
@@ -653,6 +637,7 @@ function MuscleLine({ exo }: { exo: ListExercise }) {
         </span>
       ))}
       {exo.unilateral && <UnilateralBadge />}
+      {extra}
     </div>
   );
 }
@@ -705,28 +690,86 @@ function RowCard({ children }: { children: React.ReactNode }) {
   return <div className="surface-card rounded-2xl p-3.5">{children}</div>;
 }
 
-/** Action secondaire d'une ligne. Neutre par défaut ; danger au besoin. */
-function RowAction({
+/** Action d'une ligne en ICÔNE ghost (compacte) : crayon, corbeille, reset. Le
+    libellé est porté par `aria-label`/`title` ; tap-target 44px, sans cadre lourd. */
+function IconButton({
   label,
   onClick,
   tone = 'neutral',
-  busy = false,
+  children,
 }: {
   label: string;
   onClick: () => void;
   tone?: 'neutral' | 'danger';
-  busy?: boolean;
+  children: React.ReactNode;
 }) {
-  const toneClass = tone === 'danger' ? 'text-warn' : 'text-ink-muted';
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={busy}
-      className={`btn btn-secondary min-h-[44px] rounded-lg px-3 text-sm font-medium ${toneClass}`}
+      title={label}
+      aria-label={label}
+      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-ink-muted transition active:bg-surface-2 ${
+        tone === 'danger' ? 'active:text-warn' : 'active:text-ink'
+      }`}
     >
-      {label}
+      {children}
     </button>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V7" />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 3v6h6" />
+      <path d="M21 12A9 9 0 0 0 6 5.3L3 9" />
+    </svg>
   );
 }
 
