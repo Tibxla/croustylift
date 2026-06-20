@@ -15,6 +15,7 @@ import {
   diffSetsToOps,
   groupSetsForEdit,
   groupIntoLogicalSets,
+  buildExecutionMetricsOp,
   type EditableSet,
   type EditableSetRow,
 } from './past-session-edit';
@@ -578,5 +579,75 @@ describe('groupIntoLogicalSets', () => {
     // Série 2 : la VRAIE paire G/D au même set_order d'origine.
     expect(groups[1]!.left?.id).toBe('l2');
     expect(groups[1]!.right?.id).toBe('r2');
+  });
+});
+
+// --- Diff des MÉTRIQUES de fin (durée + BPM) d'une séance finie ---------------
+//
+// Édition durée/BPM d'une séance clôturée (PastSessionEditor). On dérive l'op
+// `updateExecution` MINIMALE : seuls les champs réellement changés sont posés
+// (un champ omis = colonne inchangée côté DB ; `bpmAvg: null` = BPM retiré).
+// Durée toujours non-null (décision produit) ; BPM nullable (retirable).
+
+describe('buildExecutionMetricsOp', () => {
+  const exec = 'exec-1';
+
+  it('renvoie null quand rien ne change', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: 130, durationMin: 60 },
+      { bpmAvg: 130, durationMin: 60 },
+    );
+    expect(op).toBeNull();
+  });
+
+  it('ne pose QUE la durée quand seule la durée change', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: 130, durationMin: 60 },
+      { bpmAvg: 130, durationMin: 72 },
+    );
+    expect(op).toEqual({ type: 'updateExecution', id: exec, durationMin: 72 });
+  });
+
+  it('pose le BPM ajouté (null -> valeur), durée inchangée omise', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: null, durationMin: 60 },
+      { bpmAvg: 138, durationMin: 60 },
+    );
+    expect(op).toEqual({ type: 'updateExecution', id: exec, bpmAvg: 138 });
+  });
+
+  it('pose bpmAvg: null EXPLICITE quand le BPM est retiré (valeur -> null)', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: 138, durationMin: 60 },
+      { bpmAvg: null, durationMin: 60 },
+    );
+    expect(op).toEqual({ type: 'updateExecution', id: exec, bpmAvg: null });
+  });
+
+  it('pose les deux champs quand durée ET BPM changent', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: 130, durationMin: 60 },
+      { bpmAvg: 145, durationMin: 75 },
+    );
+    expect(op).toEqual({
+      type: 'updateExecution',
+      id: exec,
+      durationMin: 75,
+      bpmAvg: 145,
+    });
+  });
+
+  it('pose la durée quand l’originale était null (séance close sans chrono)', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: null, durationMin: null },
+      { bpmAvg: null, durationMin: 60 },
+    );
+    expect(op).toEqual({ type: 'updateExecution', id: exec, durationMin: 60 });
   });
 });

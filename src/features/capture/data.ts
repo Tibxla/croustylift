@@ -557,6 +557,18 @@ export interface EditableExecution {
   /** Date ISO 'YYYY-MM-DD' de l'exécution (affichée, jamais modifiée). */
   date: string;
   exercises: EditableExercise[];
+  /**
+   * Horodatage de clôture (ISO) ou `null` si la séance n'est pas clôturée. L'édition
+   * des MÉTRIQUES (durée/BPM) n'est proposée que pour une séance FINIE (`closedAt`
+   * non-null) : poser une durée sur une exécution en cours la ferait passer pour
+   * close côté `loadTodayExecution` (filtre `duration_min`) → elle ne serait plus
+   * réhydratée en Capture. Les SÉRIES, elles, restent éditables dans les deux cas.
+   */
+  closedAt: string | null;
+  /** BPM moyen posé à la clôture (optionnel), ou `null`. Éditable si `closedAt` non-null. */
+  bpmAvg: number | null;
+  /** Durée chronométrée posée à la clôture (min), ou `null`. Éditable si `closedAt` non-null. */
+  durationMin: number | null;
 }
 
 /**
@@ -572,7 +584,7 @@ export async function loadExecutionForEdit(
 ): Promise<EditableExecution> {
   const { data: exec, error: execErr } = await supabase
     .from('executions')
-    .select('id, performed_on')
+    .select('id, performed_on, closed_at, bpm_avg, duration_min')
     .eq('id', executionId)
     .maybeSingle();
   if (execErr) throw execErr;
@@ -617,6 +629,9 @@ export async function loadExecutionForEdit(
     executionId,
     date: exec.performed_on,
     exercises: groupSetsForEdit(editableRows),
+    closedAt: exec.closed_at,
+    bpmAvg: exec.bpm_avg === null ? null : Number(exec.bpm_avg),
+    durationMin: exec.duration_min === null ? null : Number(exec.duration_min),
   };
 }
 

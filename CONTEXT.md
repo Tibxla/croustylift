@@ -67,8 +67,8 @@ _Avoid_: Modification, correction, erreur
 ### Exécution
 
 **Exécution**:
-Le déroulé réel d'une séance un jour donné : les séries réellement faites, rattachées à la version de séance active ce jour-là. Le diff entre les deux donne les déviations.
-_Avoid_: Session, séance réalisée (« séance » désigne le template)
+Le déroulé réel d'une séance un jour donné : les séries réellement faites, rattachées à la version de séance active ce jour-là. Le diff entre les deux donne les déviations. Une exécution n'existe que par ses séries : sans aucune série loggée, ce n'est pas une exécution — elle n'a sa place ni au journal ni dans les métriques (durée, BPM), qui décrivent toujours une séance réellement faite.
+_Avoid_: Session, séance réalisée (« séance » désigne le template) ; exécution vide (sans série)
 
 **Clôture**:
 Le geste par lequel l'utilisateur déclare sa séance finie en salle : il fige les métriques de fin (durée chronométrée, BPM moyen optionnel), voit son récap, puis l'écran de Capture redevient disponible. Un moment, pas un statut : une fois rangée, la séance vit dans le journal comme n'importe quelle Exécution.

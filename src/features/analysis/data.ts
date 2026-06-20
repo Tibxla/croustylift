@@ -336,15 +336,21 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
  * l'UI n'affiche alors pas de graphe.
  */
 export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
+  // On compte les séries par exécution (`performed_sets(count)`) : une exécution
+  // SANS série n'est pas un point (garde « exécution vide », cf. buildSessionMetrics
+  // + CONTEXT.md). Sans ce décompte, une orpheline (durée posée mais zéro série)
+  // s'afficherait sur le graphe alors qu'elle n'apparaît pas au journal.
   const { data, error } = await supabase
     .from('executions')
-    .select('performed_on, bpm_avg, duration_min');
+    .select('performed_on, bpm_avg, duration_min, performed_sets(count)');
   if (error) throw error;
 
   type Row = {
     performed_on: string;
     bpm_avg: number | null;
     duration_min: number | null;
+    // PostgREST renvoie l'agrégat `count` sous forme de tableau à un élément.
+    performed_sets: { count: number }[] | null;
   };
   const rows = (data ?? []) as unknown as Row[];
 
@@ -353,6 +359,7 @@ export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
       date: row.performed_on,
       bpmAvg: row.bpm_avg === null ? null : Number(row.bpm_avg),
       durationMin: row.duration_min === null ? null : Number(row.duration_min),
+      hasSets: (row.performed_sets?.[0]?.count ?? 0) > 0,
     })),
   );
 }
