@@ -45,8 +45,12 @@ Le plan cible d'un exercice dans une séance : séries, reps et RIR, chacun en v
 _Avoid_: Objectif, cible (ambigu avec la référence)
 
 **Référence**:
-La dernière performance réelle sur un exercice, affichée en salle comme repère à dépasser. Dérivée de l'historique, jamais saisie.
-_Avoid_: Cible, objectif, PR
+La dernière performance réelle sur un exercice, affichée en salle comme repère à dépasser, série par série (position N comparée à la position N de la dernière fois). Dérivée de l'historique, jamais saisie. Une série du jour la **bat** (strictement mieux), l'**égale** (à l'identique) ou reste en deçà — trois états distincts, jamais confondus.
+_Avoid_: Cible, objectif, PR ; ne pas confondre avec le Record personnel (all-time)
+
+**Record personnel**:
+La meilleure performance jamais réalisée sur un exercice, tous jours confondus — distinct de la **Référence** (la dernière fois). Deux mesures : le meilleur e1RM (pris sur la 1ʳᵉ série de chaque exécution) et la charge la plus lourde (poids, reps en départage). Dérivé de l'historique, jamais saisi. Sur un exo unilatéral, il se lit à **deux échelles** : par côté en salle (chaque bras tient son propre record, repère de séance), au **côté faible** en analyse (la courbe de progression, ADR 0005). Un record sur le bras fort en salle peut donc ne pas faire avancer la courbe d'analyse.
+_Avoid_: PR (sigle), record du jour ; ne pas confondre avec la Référence (dernière fois, par position de série)
 
 **Routine**:
 Collection ordonnée de séances qu'un utilisateur tourne sur une période (ex. Upper/Lower = 2 séances). Une séance appartient à une seule routine.
@@ -79,7 +83,7 @@ Une série de travail réellement effectuée dans une exécution : poids, reps, 
 _Avoid_: Set ; ne pas confondre avec « rep » (les répétitions à l'intérieur d'une série)
 
 **Note datée**:
-Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante).
+Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante). La **plus récente** ressort en **repère lecture seule** à la prochaine exécution du même exo (« Dernière fois tu notais : … »), comme la Référence pour la perf — sans changer sa nature : on en saisit toujours une fraîche chaque jour.
 _Avoid_: Commentaire, log
 
 **Décompte de séries**:

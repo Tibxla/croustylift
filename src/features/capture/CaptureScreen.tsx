@@ -20,6 +20,8 @@ import {
   loadCatalogExercise,
   loadChosenSeance,
   loadPersonalRecord,
+  loadPersonalRecordBySide,
+  loadPreviousDatedNote,
   loadReference,
   loadSeanceForCapture,
   loadTodayExecution,
@@ -43,13 +45,16 @@ import {
   getDatedNote,
   getProgress,
   hydratedState,
+  isResumable,
+  LAUNCH_EXPIRY_MS,
+  loadPersisted,
   mergeProgress,
   newId,
   nextSetOrder,
   pendingSide,
   persist,
+  previousDayIso,
   resolveCaptureDate,
-  statusOf,
   todayIso,
   type DatedNoteDraft,
   type HydratedProgress,
@@ -95,9 +100,36 @@ type LoadState =
 interface CaptureInit {
   date: string;
   executionId: string;
+  /**
+   * Lancement de la séance (epoch ms, ADR 0011) : à la REPRISE, le `started_at`
+   * lu en base (chrono qui survit au reload) ; pour une séance NEUVE, l'instant du
+   * « Démarrer » (≈ le tap dans le sélecteur). Le cache local (restored) prime à la
+   * fusion (mergeProgress) : un lancement persisté offline gagne.
+   */
+  startedAt: number;
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
   restored: CaptureState | null;
+}
+
+/**
+ * Première séance de la routine qui a une capture REPRENABLE en cache local (ADR
+ * 0011) : au moins une série loggée (séance en cours), ou un lancement de moins
+ * d'1 h (démarrage récent). `null` si aucune — on montre alors l'écran de
+ * lancement. `loadPersisted` ne lit que `session.id` pour la clé de cache, d'où la
+ * séance minimale. On regarde aujourd'hui ET la veille (frontière minuit).
+ */
+function findResumableSeance(seances: SeanceChoice[]): SeanceChoice | null {
+  const today = todayIso();
+  const dates = [today, previousDayIso(today)];
+  for (const seance of seances) {
+    const minimalSession: Session = { id: seance.id, name: seance.name, exercises: [] };
+    for (const date of dates) {
+      const restored = loadPersisted(minimalSession, date);
+      if (restored && isResumable(restored)) return seance;
+    }
+  }
+  return null;
 }
 
 export function CaptureScreen() {
@@ -129,14 +161,26 @@ export function CaptureScreen() {
       const [withRefs, today] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
-            // Référence (dernière fois), note d'instructions ET records (issue #34),
-            // tous dérivés de l'historique de l'exo, chargés en parallèle.
-            const [reference, perExerciseNote, personalRecord] = await Promise.all([
-              loadReference(ex.exerciseId),
-              loadExerciseNote(ex.exerciseId),
-              loadPersonalRecord(ex.exerciseId),
-            ]);
-            return { ...ex, reference, perExerciseNote, personalRecord };
+            // Référence (dernière fois), note d'instructions, records (issue #34),
+            // records PAR CÔTÉ pour un unilatéral (ADR 0010) et la note datée
+            // précédente (repère « tu notais »), tous dérivés de l'historique de
+            // l'exo, chargés en parallèle. `date` (adoptée) borne la note antérieure.
+            const [reference, perExerciseNote, personalRecord, personalRecordBySide, previousDatedNote] =
+              await Promise.all([
+                loadReference(ex.exerciseId),
+                loadExerciseNote(ex.exerciseId),
+                loadPersonalRecord(ex.exerciseId),
+                ex.unilateral ? loadPersonalRecordBySide(ex.exerciseId) : Promise.resolve(null),
+                loadPreviousDatedNote(ex.exerciseId, date),
+              ]);
+            return {
+              ...ex,
+              reference,
+              perExerciseNote,
+              personalRecord,
+              personalRecordBySide,
+              previousDatedNote,
+            };
           }),
         ),
         loadTodayExecution(seanceVersionId, date),
@@ -151,6 +195,10 @@ export function CaptureScreen() {
       initRef.current = {
         date,
         executionId: today?.executionId ?? newId(),
+        // Reprise d'une exécution en base → son lancement persisté (ADR 0011) ;
+        // séance neuve → maintenant (≈ l'instant du « Démarrer »). Le cache local
+        // (restored), s'il existe, prime à la fusion (mergeProgress).
+        startedAt: today?.startedAt ?? Date.now(),
         progress: today?.progress ?? {},
         datedNotes: today?.datedNotes ?? {},
         restored,
@@ -177,10 +225,16 @@ export function CaptureScreen() {
         if (!alive) return;
 
         if (source.kind === 'choose') {
-          // Choix d'une seule séance : inutile de demander, on la charge direct.
-          const only = source.seances.length === 1 ? source.seances[0] : undefined;
-          if (only) {
-            const chosen = await loadChosenSeance(only);
+          // Reprise directe (ADR 0011) : une séance déjà EN COURS sur cet appareil
+          // (cache local reprenable — au moins une série, ou lancement récent) se
+          // rouvre sans repasser par l'écran de lancement. SINON on montre TOUJOURS
+          // l'écran de lancement, même à une seule séance (« Démarrer » lance le
+          // chrono) : fini la séance « déjà mise » qu'on n'a jamais démarrée. (Une
+          // séance en cours seulement en base, sans cache local — multi-appareil —
+          // repassera par le lancement ; la re-sélection adoptera son exécution.)
+          const resumable = findResumableSeance(source.seances);
+          if (resumable) {
+            const chosen = await loadChosenSeance(resumable);
             await loadSeance(chosen, active);
             return;
           }
@@ -278,6 +332,10 @@ export function CaptureScreen() {
       seanceVersionId={load.seanceVersionId}
       // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
       init={initRef.current!}
+      // « Annuler la séance » / « Nouvelle séance » : on relance le chargement
+      // (reloadKey) → l'écran de LANCEMENT réapparaît (le cache abandonné/nettoyé
+      // n'est plus reprenable, l'exécution close est exclue), ADR 0011.
+      onExitToLaunch={() => setReloadKey((k) => k + 1)}
     />
   );
 }
@@ -422,20 +480,23 @@ function CaptureBoard({
   session: initialSession,
   seanceVersionId,
   init,
+  onExitToLaunch,
 }: {
   session: Session;
   seanceVersionId: string;
   init: CaptureInit;
+  /** Quitte la séance courante vers l'écran de lancement (annulation / après clôture). */
+  onExitToLaunch: () => void;
 }) {
   // Date de la séance ADOPTÉE au montage : aujourd'hui en temps normal, MAIS la
   // veille si une séance entamée hier n'a pas été clôturée (frontière minuit,
   // bug H1/F10 — sinon le réalisé en cours « disparaît » après minuit). Résolue
   // UNE fois AU CHARGEMENT (`loadSeance`), pour que l'exécution Supabase réhydratée
-  // et la clé de persistance visent le MÊME jour. `date` en dérive et reste figé
-  // tant que la séance reprise dure — un reset / une nouvelle séance le repassent
-  // à `todayIso()` (la séance neuve démarre aujourd'hui, jamais sous la veille).
+  // et la clé de persistance visent le MÊME jour. FIGÉE pour la vie du board : une
+  // annulation / une nouvelle séance REMONTENT l'écran (onExitToLaunch) plutôt que
+  // de muter la date en place, donc une const suffit (séance neuve = nouveau board).
   const initRef = useRef(init);
-  const [date, setDate] = useState(initRef.current.date);
+  const date = initRef.current.date;
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
   // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
@@ -451,13 +512,17 @@ function CaptureBoard({
   // en base — sinon un id client neuf (séance neuve) — pour que les nouvelles ops
   // ne créent pas une exécution orpheline décorrélée des séries (bug H1).
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const { date: adoptedDate, executionId, progress, datedNotes, restored } = initRef.current;
+    const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } =
+      initRef.current;
     const fromSupabase = hydratedState(
       initialSession,
       progress,
       datedNotes,
       adoptedDate,
       executionId,
+      // Chrono : lancement repris de la base (reprise) ou « maintenant » (séance
+      // neuve), ADR 0011. Le cache (restored) le surcharge à la fusion ci-dessous.
+      startedAt,
     );
     if (!restored) return fromSupabase;
     return mergeProgress(fromSupabase, restored);
@@ -494,13 +559,17 @@ function CaptureBoard({
   const enqueueExecutionOnce = useCallback(() => {
     if (executionEnqueuedRef.current) return;
     executionEnqueuedRef.current = true;
+    // On lit la PROJECTION (stateRef) : l'id ET le `startedAt` (réancré si le
+    // lancement a expiré, cf. handleLog) sont alors à jour. `started_at` matérialise
+    // le LANCEMENT en base (ADR 0011), recopié de la valeur mémorisée au démarrage.
     enqueueAndFlush({
       type: 'upsertExecution',
-      id: state.executionId,
+      id: stateRef.current.executionId,
       seanceVersionId,
       performedOn: date,
+      startedAt: new Date(stateRef.current.startedAt).toISOString(),
     });
-  }, [state.executionId, seanceVersionId, date]);
+  }, [seanceVersionId, date]);
 
   // Déclencheurs de flush : au MONTAGE (reprise après reload offline) et à
   // l'événement réseau 'online' (le wifi de salle revient). Le 3ᵉ déclencheur
@@ -524,7 +593,18 @@ function CaptureBoard({
       // On part de l'état PROJETÉ (stateRef), pas du `state` capturé : deux taps
       // rapprochés voient ainsi la 1ʳᵉ série déjà posée (bug M6).
       const current = stateRef.current;
-      const progress = getProgress(current, exerciseId);
+      // Expiration du lancement (ADR 0011) : si le PREMIER set de l'exécution arrive
+      // plus d'1 h après le lancement, ce dernier a expiré (chrono qui aurait tourné
+      // dans le vide) → on réancre le chrono sur CE set. Sinon `startedAt` reste
+      // l'instant du lancement. On avance la projection pour qu'enqueueExecutionOnce
+      // (plus bas) écrive la bonne valeur en base.
+      if (!executionEnqueuedRef.current && Date.now() - current.startedAt > LAUNCH_EXPIRY_MS) {
+        const reanchor = { type: 'set-started-at', startedAt: Date.now() } as const;
+        dispatch(reanchor);
+        stateRef.current = captureReducer(stateRef.current, reanchor);
+      }
+      const projected = stateRef.current;
+      const progress = getProgress(projected, exerciseId);
       // Côté de cette saisie : pour un exo unilatéral, c'est le côté CHOISI par
       // l'utilisateur via le sélecteur (issue #63), remonté dans le brouillon ;
       // bilatéral = pas de côté. On ne dérive plus « gauche d'abord ».
@@ -539,14 +619,14 @@ function CaptureBoard({
       //    (même reducer) pour que le tap suivant parte de cet état, pas du périmé.
       const action = { type: 'log-set', exerciseId, setId, set: loggedSet } as const;
       dispatch(action);
-      stateRef.current = captureReducer(current, action);
-      // 2. Durabilité : exécution (1×) puis la série, dans l'ordre. L'order dérivé
-      //    de la projection coïncide donc toujours avec celui que le reducer a posé.
+      stateRef.current = captureReducer(stateRef.current, action);
+      // 2. Durabilité : exécution (1×, avec son started_at) puis la série, dans
+      //    l'ordre. L'order dérivé de la projection coïncide toujours avec le reducer.
       enqueueExecutionOnce();
       enqueueAndFlush({
         type: 'insertSet',
         id: setId,
-        executionId: current.executionId,
+        executionId: projected.executionId,
         exerciseId,
         setOrder: order,
         weightKg: set.weightKg,
@@ -650,48 +730,34 @@ function CaptureBoard({
   const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
   const [durationMin, setDurationMin] = useState<number | null>(null);
 
-  const handleReset = useCallback(() => {
+  // « Annuler la séance » (geste unique) : ABANDONNE l'exécution courante puis
+  // REVIENT à l'écran de lancement (onExitToLaunch), ADR 0011. On ne reconstruit
+  // PAS une capture en place (l'ancien « Réinitialiser ») : on quitte la séance.
+  const handleCancelSession = useCallback(() => {
     clearPersisted(session, date);
-    // Nouvelle exécution = id client neuf (la précédente reste en base). On purge
-    // de la file UNIQUEMENT les ops de l'exécution abandonnée (purgeByExecution),
-    // PAS toute la file (clearQueue) : en offline, elle peut aussi porter les
-    // séries non synchronisées d'une AUTRE exécution ou une correction d'historique
-    // en attente — celles-ci survivent et remonteront au retour du réseau. Les
-    // deleteSet/deleteDatedNote éventuels restent (idempotents par id, sans effet
-    // si la ligne, dont l'insert vient d'être retiré, n'a jamais existé en base).
+    // Purge de la file UNIQUEMENT les ops de l'exécution abandonnée (pas toute la
+    // file : d'autres exécutions/corrections offline doivent survivre). Les
+    // deleteSet/deleteDatedNote restent (idempotents par id, inoffensifs).
     purgeByExecution(state.executionId);
-    // L'exécution abandonnée a pu être PARTIELLEMENT synchronisée (upsertExecution
-    // + séries déjà flushés en base avant le reset). purgeByExecution ne retire que
-    // les ops ENCORE en file ; elle ne défait rien côté base. Sans compensation,
-    // l'exécution survit en base (closed_at NULL, sans durée), et loadTodayExecution
-    // la RÉHYDRATE au prochain reload : la séance « réinitialisée » réapparaît avec
-    // son réalisé. On enfile donc un deleteExecution (idempotent par id, cascade DB :
-    // sans effet si rien n'a été synchronisé, supprime l'orpheline sinon).
+    // L'exécution a pu être PARTIELLEMENT synchronisée (upsert + séries déjà
+    // flushés) : purgeByExecution ne défait rien en base. On enfile un
+    // deleteExecution (idempotent, cascade DB) pour ne pas laisser d'orpheline que
+    // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
     enqueueAndFlush({ type: 'deleteExecution', id: state.executionId });
     executionEnqueuedRef.current = false;
-    // La séance repart du template d'origine : les ajouts/swaps de l'exécution
-    // close ne se reportent pas sur la suivante (un swap se redécide chaque jour).
-    setSession(initialSession);
-    // Une séance neuve démarre AUJOURD'HUI, même si on venait de reprendre une
-    // séance entamée la veille (frontière minuit) : la nouvelle exécution doit
-    // viser `today` (`performed_on` + clé de persistance), pas la veille.
-    setDate(todayIso());
-    dispatch({ type: 'reset', executionId: newId() });
-    setPhase('capture');
-  }, [session, date, initialSession, state.executionId]);
+    // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution
+    // supprimée, donc rien de reprenable → on retombe sur le choix/« Démarrer ».
+    onExitToLaunch();
+  }, [session, date, state.executionId, onExitToLaunch]);
 
-  // Après clôture : repartir sur une séance fraîche. On NE vide PAS la file —
-  // les ops de la séance close doivent encore se synchroniser (contrairement à
-  // « Réinitialiser » qui abandonne). Nouvelle exécution, progrès + chrono à zéro.
+  // Après clôture, « Nouvelle séance » : la séance close est rangée (closed_at en
+  // base, ADR 0009) et son cache déjà nettoyé. On NE vide PAS la file (ses ops
+  // doivent encore se synchroniser). On revient simplement à l'écran de lancement
+  // pour démarrer la prochaine séance — un nouveau lancement créera son exécution.
   const handleNewSession = useCallback(() => {
     clearPersisted(session, date);
-    executionEnqueuedRef.current = false;
-    setSession(initialSession);
-    // Comme le reset : une séance neuve repart sous AUJOURD'HUI (cf. handleReset).
-    setDate(todayIso());
-    dispatch({ type: 'reset', executionId: newId() });
-    setPhase('capture');
-  }, [session, date, initialSession]);
+    onExitToLaunch();
+  }, [session, date, onExitToLaunch]);
 
   // --- Flux de fin de séance ------------------------------------------------
   // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
@@ -798,14 +864,9 @@ function CaptureBoard({
             loadCatalogExercise={loadCatalogExercise}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
+            onCancelSession={handleCancelSession}
           />
-          <ResetBar
-            session={session}
-            state={state}
-            canFinish={loggedAny}
-            onReset={handleReset}
-            onFinish={openFinish}
-          />
+          <FinishBar canFinish={loggedAny} onFinish={openFinish} />
         </>
       )}
     </div>
@@ -966,7 +1027,7 @@ function CapturePanel({
 
       {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. Fond en dégradé
           transparent→bg : le bouton « flotte » au-dessus du contenu qui défile. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 bg-[linear-gradient(180deg,transparent,var(--color-bg)_30%)] px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-6">
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 bg-[linear-gradient(180deg,transparent,var(--color-bg)_30%)] px-4 pb-3 pt-6">
         <div className="mx-auto w-full max-w-md">
           <button
             type="button"
@@ -995,59 +1056,25 @@ function CapturePanel({
   );
 }
 
-function ResetBar({
-  session,
-  state,
-  canFinish,
-  onReset,
-  onFinish,
-}: {
-  session: Session;
-  state: CaptureState;
-  /** « Au moins une série loggée » : le flux de fin de séance est disponible. */
-  canFinish: boolean;
-  onReset: () => void;
-  onFinish: () => void;
-}) {
-  const touched = session.exercises.some((ex) => {
-    const p = getProgress(state, ex.exerciseId);
-    return p.sets.length > 0 || p.skipped;
-  });
-  const allDone =
-    touched &&
-    session.exercises.every((ex) => {
-      const p = getProgress(state, ex.exerciseId);
-      return statusOf(p, ex.prescription.sets.min) === 'done' || p.skipped;
-    });
-
-  if (!touched) return null;
-
+/**
+ * Barre d'action fixe du bas du sélecteur : UNIQUEMENT « Terminer la séance », dès
+ * qu'au moins une série est loggée (`canFinish`). L'annulation a quitté cette barre
+ * pour l'en-tête du sélecteur (« Annuler la séance », toujours visible, même séance
+ * vide). Collée à la nav (`pb-3`, sans `env(safe-area)` redondant). Cachée tant
+ * qu'aucune série n'est loggée (rien à terminer).
+ */
+function FinishBar({ canFinish, onFinish }: { canFinish: boolean; onFinish: () => void }) {
+  if (!canFinish) return null;
   return (
-    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
-        {/* « Terminer la séance » dès qu'une série est loggée. Caché sinon
-            (un exo seulement passé n'ouvre pas le flux de fin). */}
-        {canFinish && (
-          <button
-            type="button"
-            onClick={onFinish}
-            className="btn btn-primary h-12 w-full rounded-2xl text-base"
-          >
-            Terminer la séance
-          </button>
-        )}
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-ink-muted">
-            {allDone ? 'Séance terminée.' : 'Exécution en cours, sauvegardée.'}
-          </span>
-          <button
-            type="button"
-            onClick={onReset}
-            className="btn btn-secondary h-11 rounded-xl px-4 text-sm font-medium text-ink-muted"
-          >
-            {allDone ? 'Nouvelle séance' : 'Réinitialiser'}
-          </button>
-        </div>
+    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-3 pt-3 backdrop-blur-sm">
+      <div className="mx-auto w-full max-w-md">
+        <button
+          type="button"
+          onClick={onFinish}
+          className="btn btn-primary h-12 w-full rounded-2xl text-base"
+        >
+          Terminer la séance
+        </button>
       </div>
     </div>
   );

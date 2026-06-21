@@ -185,8 +185,10 @@ export function SessionEnd({
         </p>
       )}
 
-      {/* Actions fixes en bas (zone du pouce). Primaire = accent violet. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-[calc(env(safe-area-inset-bottom,0)+0.75rem)] pt-3 backdrop-blur-sm">
+      {/* Actions fixes en bas (zone du pouce). Primaire = accent violet. Collée à
+          la nav : `pb-3`, sans `env(safe-area)` redondant (la nav réserve déjà la
+          safe-area en dessous). */}
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-3 pt-3 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
           <button
             type="button"

@@ -99,6 +99,10 @@ export type CaptureAction =
   | { type: 'unskip-exercise'; exerciseId: string }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
   | { type: 'reset'; executionId: string }
+  // Réancre le chrono (ADR 0011) : pose `startedAt` (epoch ms fourni par le
+  // caller). Sert à l'expiration d'un lancement (1er set >1h après le lancement →
+  // on réancre sur ce set) sans toucher au réalisé ni à l'exécution.
+  | { type: 'set-started-at'; startedAt: number }
   // Clôture de la séance : fige `closedAt` (epoch ms fourni par le caller, pour
   // garder le reducer testable). En MÉMOIRE seulement → sert au récap immédiat ;
   // le câblage de persistance nettoie alors le cache (ADR 0009 : clôture
@@ -215,6 +219,26 @@ export function previousDayIso(dateIso: string): string {
   return `${prev.getFullYear()}-${z(prev.getMonth() + 1)}-${z(prev.getDate())}`;
 }
 
+/** Une heure en ms : un lancement sans aucun set expire au-delà (ADR 0011). */
+export const LAUNCH_EXPIRY_MS = 60 * 60 * 1000;
+
+/** Total des séries loggées dans un état (tous exos confondus). */
+export function totalLoggedSets(state: CaptureState): number {
+  return Object.values(state.progress).reduce((n, p) => n + p.sets.length, 0);
+}
+
+/**
+ * Un état de capture restauré est-il REPRENABLE (ADR 0011) ? Oui s'il porte au
+ * moins une série (séance réellement en cours), ou si son lancement date de moins
+ * d'1 h (on vient de démarrer, le chrono tourne légitimement). Un lancement SANS
+ * aucun set vieux de plus d'1 h a EXPIRÉ : on ne le reprend pas (le chrono aurait
+ * tourné dans le vide), on repropose le lancement. `now` injecté pour les tests.
+ */
+export function isResumable(state: CaptureState, now = Date.now()): boolean {
+  if (totalLoggedSets(state) > 0) return true;
+  return now - state.startedAt <= LAUNCH_EXPIRY_MS;
+}
+
 /**
  * Résout la séance de capture à reprendre au montage, gérant la FRONTIÈRE MINUIT
  * (bug F10) : une séance ENTAMÉE la veille et NON CLÔTURÉE doit pouvoir être
@@ -239,26 +263,35 @@ export function resolveCaptureDate(
   session: Session,
   today = todayIso(),
 ): { date: string; restored: CaptureState | null } {
+  // On n'adopte un cache que s'il est REPRENABLE (ADR 0011) : un lancement vide de
+  // plus d'1 h a expiré (chrono dans le vide) → on l'ignore et on repropose le
+  // lancement (capture vierge). Un cache avec des séries, ou un lancement récent,
+  // reste repris.
   const fromToday = loadPersisted(session, today);
-  if (fromToday) return { date: today, restored: fromToday };
+  if (fromToday && isResumable(fromToday)) return { date: today, restored: fromToday };
 
-  // Rien aujourd'hui : une séance d'hier non clôturée se reprend telle quelle.
-  // `loadPersisted` a déjà écarté toute clôture (closedAt forcé à null) ET ne
-  // renvoie un état que pour un cache d'une séance EN COURS — une veille clôturée
-  // a vu son cache nettoyé à la clôture, donc `fromYesterday` y vaut null.
+  // Rien de reprenable aujourd'hui : une séance d'hier non clôturée se reprend
+  // telle quelle (frontière minuit). `loadPersisted` a déjà écarté toute clôture.
   const yesterday = previousDayIso(today);
   const fromYesterday = loadPersisted(session, yesterday);
-  if (fromYesterday) return { date: yesterday, restored: fromYesterday };
+  if (fromYesterday && isResumable(fromYesterday)) return { date: yesterday, restored: fromYesterday };
 
   return { date: today, restored: null };
 }
 
-export function initialState(session: Session, date = todayIso()): CaptureState {
+export function initialState(
+  session: Session,
+  date = todayIso(),
+  // `startedAt` = instant du LANCEMENT de la séance (ADR 0011), fourni par le
+  // caller (le geste « Démarrer »). Défaut « maintenant » pour les tests / appels
+  // sans lancement explicite.
+  startedAt = Date.now(),
+): CaptureState {
   return {
     sessionId: session.id,
     executionId: newId(),
     date,
-    startedAt: Date.now(),
+    startedAt,
     activeExerciseId: null,
     progress: {},
     datedNotes: {},
@@ -298,6 +331,11 @@ export function hydratedState(
   datedNotesByExercise: Record<string, DatedNoteDraft> = {},
   date = todayIso(),
   executionId = newId(),
+  // `startedAt` = lancement de la séance (ADR 0011) : à la REPRISE d'une exécution
+  // en base, c'est son `started_at` lu en base (le chrono survit au reload / au
+  // multi-appareil) ; pour une séance neuve, l'instant du « Démarrer ». Défaut
+  // « maintenant » (cas dégénéré : reprise d'une exécution legacy sans started_at).
+  startedAt = Date.now(),
 ): CaptureState {
   const progress: Record<string, ExerciseProgress> = {};
   for (const [exerciseId, hydrated] of Object.entries(progressByExercise)) {
@@ -317,7 +355,7 @@ export function hydratedState(
     sessionId: session.id,
     executionId,
     date,
-    startedAt: Date.now(),
+    startedAt,
     activeExerciseId: null,
     progress,
     datedNotes: { ...datedNotesByExercise },
@@ -485,6 +523,11 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       // récap de fin se lit dans la foulée immédiate. Au remontage, rien ne
       // revient (le cache a été nettoyé) — la clôture est transitoire (ADR 0009).
       return { ...state, closedAt: action.closedAt };
+
+    case 'set-started-at':
+      // Réancre le chrono (ADR 0011, expiration d'un lancement) : on ne touche QUE
+      // `startedAt`, le réalisé et l'exécution restent intacts.
+      return { ...state, startedAt: action.startedAt };
 
     case 'reset':
       // Nouvelle séance = nouveau chrono ET nouvelle exécution (id client neuf,

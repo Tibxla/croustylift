@@ -11,7 +11,12 @@ import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
 import type { ExerciseExecution, PerformedSet, Side } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
-import { personalRecord, type PersonalRecord } from '../../domain/pr';
+import {
+  personalRecord,
+  personalRecordBySide,
+  type PersonalRecord,
+  type PersonalRecordBySide,
+} from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
 import type { Session, SessionExercise } from './fixtures';
@@ -227,11 +232,13 @@ export async function loadCatalogExercise(
   const needsMerge = row.unilateral === undefined || row.primary_muscles === undefined;
   const merged = needsMerge ? await loadMergedExerciseRow(row.id) : null;
   const base = catalogExerciseToSession(merged ?? row);
-  const [reference, personalRecord] = await Promise.all([
+  const [reference, personalRecord, personalRecordBySide] = await Promise.all([
     loadReference(row.id),
     loadPersonalRecord(row.id),
+    // Records par côté (ADR 0010) seulement pour un unilatéral : un bilatéral n'en a pas.
+    base.unilateral ? loadPersonalRecordBySide(row.id) : Promise.resolve(null),
   ]);
-  return { ...base, reference, personalRecord };
+  return { ...base, reference, personalRecord, personalRecordBySide };
 }
 
 // --- Chargement de la séance pour la capture ----------------------------------
@@ -416,6 +423,51 @@ export async function loadPersonalRecord(exerciseId: string): Promise<PersonalRe
   return personalRecord(executions, exerciseId);
 }
 
+/**
+ * Records PAR CÔTÉ d'un exo unilatéral (ADR 0010) : chaque bras tient sa propre
+ * piste en salle (badge « Record » par côté). Dérivé du même historique que
+ * `loadPersonalRecord` (qui, lui, garde le côté faible pour l'analyse). À n'appeler
+ * que pour un exo unilatéral.
+ */
+export async function loadPersonalRecordBySide(exerciseId: string): Promise<PersonalRecordBySide> {
+  const executions = await loadExerciseExecutions(exerciseId);
+  return personalRecordBySide(executions, exerciseId);
+}
+
+// --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------
+
+/**
+ * La note datée la PLUS RÉCENTE des séances ANTÉRIEURES (`performed_on < beforeDate`)
+ * sur cet exo, ressortie en repère lecture seule à la prochaine exécution (cf.
+ * CONTEXT.md « Note datée »). `beforeDate` = la date ADOPTÉE de la séance du jour :
+ * on exclut ainsi la note du jour même (on veut la précédente, pas la sienne). Tri
+ * et filtre côté client (peu de notes par exo) pour éviter les subtilités de filtre
+ * sur ressource embarquée. `''` si aucune note antérieure non vide.
+ */
+export async function loadPreviousDatedNote(
+  exerciseId: string,
+  beforeDate: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('dated_notes')
+    .select('body, executions ( performed_on, created_at )')
+    .eq('exercise_id', exerciseId);
+  if (error) throw error;
+  type Row = { body: string; executions: { performed_on: string; created_at: string } | null };
+  const rows = (data ?? []) as unknown as Row[];
+  const past = rows
+    .filter(
+      (r): r is Row & { executions: { performed_on: string; created_at: string } } =>
+        r.executions != null && r.executions.performed_on < beforeDate && r.body.trim() !== '',
+    )
+    .sort(
+      (a, b) =>
+        b.executions.performed_on.localeCompare(a.executions.performed_on) ||
+        (b.executions.created_at ?? '').localeCompare(a.executions.created_at ?? ''),
+    );
+  return past[0]?.body ?? '';
+}
+
 // --- Exécution du jour --------------------------------------------------------
 //
 // NOTE : l'id d'exécution n'est plus résolu côté serveur via un « find or
@@ -435,6 +487,8 @@ export async function loadPersonalRecord(exerciseId: string): Promise<PersonalRe
  */
 export interface TodayExecution {
   executionId: string;
+  /** Lancement (epoch ms) lu en base (ADR 0011) pour reprendre le chrono ; `null` = legacy. */
+  startedAt: number | null;
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
 }
@@ -455,7 +509,7 @@ export async function loadTodayExecution(
 ): Promise<TodayExecution | null> {
   const { data: exec, error: execErr } = await supabase
     .from('executions')
-    .select('id')
+    .select('id, started_at')
     .eq('seance_version_id', seanceVersionId)
     .eq('performed_on', date)
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
@@ -539,7 +593,13 @@ export async function loadTodayExecution(
     datedNotes[row.exercise_id] = { id: row.id, body: row.body };
   }
 
-  return { executionId: exec.id, progress, datedNotes };
+  return {
+    executionId: exec.id,
+    // Chrono repris du lancement persisté (ADR 0011) ; legacy sans started_at = null.
+    startedAt: exec.started_at ? new Date(exec.started_at).getTime() : null,
+    progress,
+    datedNotes,
+  };
 }
 
 // --- Édition d'une séance passée (issue #38) ----------------------------------
@@ -651,12 +711,17 @@ export async function upsertExecution(params: {
   id: string;
   seanceVersionId: string;
   performedOn: string;
+  /** Horodatage du lancement (ISO), ADR 0011 ; omis = pas de chrono durable (legacy). */
+  startedAt?: string;
 }): Promise<void> {
   const { error } = await supabase.from('executions').upsert(
     {
       id: params.id,
       seance_version_id: params.seanceVersionId,
       performed_on: params.performedOn,
+      // Posé seulement si fourni : un upsert sans `started_at` ne l'écrase pas à null
+      // (le `?? undefined` laisse Supabase ignorer la colonne plutôt que la vider).
+      ...(params.startedAt !== undefined ? { started_at: params.startedAt } : {}),
     },
     { onConflict: 'id' },
   );

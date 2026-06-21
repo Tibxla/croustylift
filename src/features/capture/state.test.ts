@@ -8,6 +8,8 @@ import {
   getDatedNote,
   statusOf,
   initialState,
+  isResumable,
+  LAUNCH_EXPIRY_MS,
   clearCaptureState,
   hydratedState,
   mergeProgress,
@@ -940,6 +942,26 @@ describe('previousDayIso', () => {
 // clôturée a vu son cache nettoyé → rien à reprendre, capture vierge du jour.
 // Même polyfill localStorage indexable que plus haut.
 
+describe('isResumable (ADR 0011 : expiration d’un lancement)', () => {
+  const NOW = 2_000_000_000_000;
+  it('reprenable dès qu’une série est loggée, quel que soit l’âge du lancement', () => {
+    const withSet = captureReducer(mkState({ startedAt: 1 }), {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    expect(isResumable(withSet, NOW)).toBe(true);
+  });
+
+  it('lancement vide récent (<1h) reprenable, expiré (>1h) non', () => {
+    const recent = mkState({ startedAt: NOW - (LAUNCH_EXPIRY_MS - 1) });
+    const expired = mkState({ startedAt: NOW - (LAUNCH_EXPIRY_MS + 1) });
+    expect(isResumable(recent, NOW)).toBe(true);
+    expect(isResumable(expired, NOW)).toBe(false);
+  });
+});
+
 describe('resolveCaptureDate', () => {
   const TODAY = '2026-06-19';
   const YESTERDAY = '2026-06-18';
@@ -949,15 +971,46 @@ describe('resolveCaptureDate', () => {
       new IndexableMemoryStorage() as unknown as Storage;
   });
 
-  it('cas NOMINAL : cache d’aujourd’hui présent → on adopte today (veille ignorée)', () => {
-    // Une séance en cours du jour, ET un cache de la veille : today doit primer.
-    persist(mkState({ date: TODAY }));
-    persist(mkState({ date: YESTERDAY }));
+  it('cas NOMINAL : cache d’aujourd’hui présent (en cours) → on adopte today (veille ignorée)', () => {
+    // Deux séances EN COURS (chacune une série loggée → reprenables, ADR 0011),
+    // aujourd'hui et la veille : today doit primer.
+    const todayState = captureReducer(mkState({ date: TODAY }), {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(todayState);
+    const yesterdayState = captureReducer(mkState({ date: YESTERDAY }), {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's2',
+      set: set1,
+    });
+    persist(yesterdayState);
 
     const { date, restored } = resolveCaptureDate(upperA, TODAY);
     expect(date).toBe(TODAY);
     expect(restored).not.toBeNull();
     expect((restored as CaptureState).date).toBe(TODAY);
+  });
+
+  it('lancement vide EXPIRÉ (>1h, aucune série) → pas de restauration (on repropose le lancement)', () => {
+    // Un cache « lancé mais rien loggé » dont le lancement (startedAt fixé très
+    // ancien) date de plus d'1 h : il a expiré (ADR 0011), on repart vierge.
+    persist(mkState({ date: TODAY, startedAt: 1_000_000 }));
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
+  });
+
+  it('lancement RÉCENT sans série (<1h) → reprise (le chrono vient de démarrer)', () => {
+    // Lancé il y a un instant, pas encore de série : reprenable (on continue).
+    persist(mkState({ date: TODAY, startedAt: Date.now() }));
+
+    const { restored } = resolveCaptureDate(upperA, TODAY);
+    expect(restored).not.toBeNull();
   });
 
   it('frontière minuit : rien pour today + veille NON clôturée → on reprend la veille (date = veille)', () => {

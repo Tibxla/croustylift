@@ -21,7 +21,14 @@ import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
 import { DeviationBadge } from './DeviationBadge';
 import { deviationVisual } from './deviation-visual';
-import { computeRecordFlags, type RecordKind } from './record-flags';
+import type { RecordKind } from './record-flags';
+import {
+  computeSetBadges,
+  computeSetBadgesBySide,
+  summarizeBadges,
+  type SetBadge,
+  type VerdictCounts,
+} from './set-badges';
 import {
   formatE1rm,
   formatPrescription,
@@ -106,15 +113,27 @@ export function ExerciseCapture({
   }, [exercise.exerciseId, loggedCount, unilateral]);
   const currentSide: Side | null = unilateral ? selectedSide : null;
 
-  // Records personnels (issue #34), dérivés de l'historique. Une série loggée
-  // AUJOURD'HUI qui dépasse le record est marquée « Record ». On compare au
-  // record COURANT (historique + séries du jour déjà loggées avant elle) : ainsi
-  // une seule série du jour porte le marqueur par mesure, pas toutes celles qui
-  // battent l'ancien record. Récord absent (premier passage) = aucun marqueur,
-  // pour ne pas crier « record » sur la toute première série jamais faite.
-  const recordFlags = useMemo(
-    () => computeRecordFlags(progress.sets, exercise.personalRecord ?? null),
-    [progress.sets, exercise.personalRecord],
+  // Badge UNIQUE par série loggée (ADR 0010) : deux axes distincts —
+  //   - RÉFÉRENCE (« dernière fois », par position et par CÔTÉ en unilatéral) :
+  //     e1RM strict -> « battu » / « égalisé » / rien ;
+  //   - RECORD personnel (all-time) : e1RM et/ou charge.
+  // Priorité Record > battu > égalisé, un seul badge par ligne. En unilatéral
+  // chaque bras est sa propre piste (records par côté). On compare au record
+  // COURANT (historique + séries du jour déjà loggées) pour qu'une seule série par
+  // mesure porte le marqueur, et premier passage = aucun marqueur.
+  const badges = useMemo<SetBadge[]>(
+    () =>
+      unilateral
+        ? computeSetBadgesBySide(
+            progress.sets,
+            reference ?? null,
+            exercise.personalRecordBySide ?? {
+              left: { bestE1rm: null, bestWeightReps: null },
+              right: { bestE1rm: null, bestWeightReps: null },
+            },
+          )
+        : computeSetBadges(progress.sets, reference ?? null, exercise.personalRecord ?? null),
+    [unilateral, progress.sets, reference, exercise.personalRecordBySide, exercise.personalRecord],
   );
 
   // Brouillon de la série courante (steppers), pré-rempli par `seedDraft` (issue
@@ -154,11 +173,12 @@ export function ExerciseCapture({
     onDraftChange?.({ weightKg, reps, rir, side: currentSide ?? undefined });
   }, [weightKg, reps, rir, currentSide, onDraftChange]);
 
-  // La série « à battre » à la position courante (co-roi). Masquée pour un exo
-  // unilatéral (issue #46) : la comparaison par côté (G vs D) sort du périmètre
-  // de la cible « dernière fois » par position.
-  const refToBeat =
-    unilateral ? null : reference?.find((s) => s.order === loggedCount + 1) ?? null;
+  // La série « à battre » à la position courante (co-roi). En unilatéral (ADR
+  // 0010), on l'apparie par (position, CÔTÉ CHOISI) : le repère suit le bras que
+  // tu t'apprêtes à logger — sa dernière fois à lui. Bilatéral : par position.
+  const refToBeat = unilateral
+    ? reference?.find((s) => s.order === completedSets + 1 && s.side === currentSide) ?? null
+    : reference?.find((s) => s.order === loggedCount + 1) ?? null;
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
   // complètes (une série unilatérale = gauche + droite). Le badge de déviation
@@ -196,6 +216,22 @@ export function ExerciseCapture({
   // moins que le nombre déjà fait). Faits = accent ; courant = palier + anneau accent.
   const plannedSegments = Math.max(prescription.sets.max, Math.ceil(completedSets));
 
+  // Feuille de fin d'exo (ADR « popup de fin d'exo ») : remonte AUTOMATIQUEMENT,
+  // UNE fois, à l'instant où l'on FRANCHIT le minimum prescrit (transition false→
+  // true), pas au montage d'un exo déjà terminé (reload). Non bloquante : on peut
+  // « Continuer l'exo » (série de plus) ou « Revenir à la liste ». Réamorcée par
+  // exo (le composant est `key`-é sur l'exerciseId → refs neuves au changement).
+  const [recapOpen, setRecapOpen] = useState(false);
+  const recapAutoShownRef = useRef(false);
+  const prevReachedMinRef = useRef(reachedMin);
+  useEffect(() => {
+    if (reachedMin && !prevReachedMinRef.current && !recapAutoShownRef.current) {
+      recapAutoShownRef.current = true;
+      setRecapOpen(true);
+    }
+    prevReachedMinRef.current = reachedMin;
+  }, [reachedMin]);
+
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
       {/* Top bar : retour (carré) · repère « EXO N / M » · spacer symétrique. */}
@@ -228,34 +264,52 @@ export function ExerciseCapture({
         <span aria-hidden="true" className="h-[38px] w-[38px]" />
       </div>
 
-      {/* Référence « dernière fois » à battre (pill + readout). Rien à la position
-          dépassée (réf existe mais aucune série) ; texte sobre au premier passage. */}
-      {(refToBeat || !reference) && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+      {/* Repères du haut (ADR 0010) : OBJECTIF (prescription, FIXE — ce qu'on vise)
+          et DERNIÈRE FOIS (référence, par position et par CÔTÉ en unilatéral — ce
+          qu'on dépasse). Deux lectures distinctes, labels de largeur égale pour
+          aligner les valeurs. L'objectif chiffré vivait avant en repli « Cible »
+          sous le nom (caché dès qu'il y avait des muscles) — il est maintenant
+          toujours visible ici. */}
+      <div className="mt-4 flex flex-col gap-1.5">
+        <div className="flex items-center gap-2.5">
+          <RepereLabel>Objectif</RepereLabel>
+          <span className="readout text-[13.5px] text-ink-muted">
+            {formatPrescription(prescription.sets, prescription.reps, prescription.rir)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <RepereLabel>Dernière fois</RepereLabel>
           {refToBeat ? (
-            <>
-              <span className="readout rounded-md border border-hair bg-surface px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint shadow-[inset_0_1px_0_var(--spec)]">
-                Dernière fois
-              </span>
-              <span className="readout text-[13.5px] text-ink-muted">{formatSet(refToBeat)}</span>
-            </>
+            <span className="readout text-[13.5px] text-ink-muted">{formatSet(refToBeat)}</span>
           ) : (
             <span className="text-[13px] text-ink-faint">
-              Premier passage. Aucune référence à battre.
+              {reference ? '—' : 'Premier passage.'}
             </span>
           )}
         </div>
-      )}
+      </div>
 
-      {/* Nom = roi + muscles principaux (issue #33), repli sur la cible prescrite. */}
+      {/* Nom = roi + muscles principaux (issue #33). */}
       <h2 className="mt-3 text-3xl font-semibold leading-[1.05] tracking-[-0.025em] text-ink">
         {exercise.name}
       </h2>
-      <p className="readout mt-1.5 text-[13px] text-ink-faint">
-        {muscles.length
-          ? muscles.join(' · ')
-          : `Cible ${formatPrescription(prescription.sets, prescription.reps, prescription.rir)}`}
-      </p>
+      {muscles.length > 0 && (
+        <p className="readout mt-1.5 text-[13px] text-ink-faint">{muscles.join(' · ')}</p>
+      )}
+
+      {/* Repère « Dernière fois tu notais : … » (note datée la plus récente d'une
+          séance passée, lecture seule, cf. CONTEXT.md « Note datée »). Visible
+          pendant l'exo ; on saisit une note FRAÎCHE du jour plus bas. */}
+      {exercise.previousDatedNote && exercise.previousDatedNote.trim() !== '' && (
+        <div className="mt-3 rounded-xl border border-hair bg-surface px-3.5 py-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
+            Dernière fois tu notais
+          </p>
+          <p className="mt-1 whitespace-pre-line text-[13.5px] leading-relaxed text-ink-muted">
+            {exercise.previousDatedNote}
+          </p>
+        </div>
+      )}
 
       {/* Progression des séries : segments (faits = accent, courant = anneau accent)
           + compteur en ÉQUIVALENT-SÉRIE (a11y, aria-live ; 0,5 pour un côté loggé). */}
@@ -339,18 +393,10 @@ export function ExerciseCapture({
           </div>
           <ol className="flex flex-col gap-[7px]">
             {progress.sets.map((s, i) => {
-              // Badges « battu »/record désactivés en unilatéral (issue #46) : la
-              // comparaison par côté sort du périmètre. Côté = libellé texte.
-              const beats =
-                !unilateral &&
-                refToBeatAt(reference, s.order) &&
-                estimateE1rm(s.weightKg, s.reps, s.rir) >=
-                  estimateE1rm(
-                    refToBeatAt(reference, s.order)!.weightKg,
-                    refToBeatAt(reference, s.order)!.reps,
-                    refToBeatAt(reference, s.order)!.rir,
-                  );
-              const record = unilateral ? null : recordFlags[i];
+              // Badge unique de la série (ADR 0010) : record (all-time) > battu >
+              // égalisé (dernière fois), par CÔTÉ en unilatéral. Calculé en amont
+              // (`badges`), aligné par index avec `progress.sets`. Côté = libellé texte.
+              const badge = badges[i] ?? null;
               const isBest = i === bestIndex;
               return (
                 <li
@@ -378,32 +424,7 @@ export function ExerciseCapture({
                   >
                     {formatSet(s)}
                   </span>
-                  {record ? (
-                    <RecordBadge kind={record} />
-                  ) : (
-                    beats && (
-                      <span
-                        className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
-                        title="Référence battue"
-                      >
-                        <svg
-                          viewBox="0 0 24 24"
-                          width="14"
-                          height="14"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                          className="text-accent-ink"
-                        >
-                          <path d="M12 19V5M6 11l6-6 6 6" />
-                        </svg>
-                        battu
-                      </span>
-                    )
-                  )}
+                  <SetBadgeView badge={badge} />
                   {isBest && (
                     <svg
                       viewBox="0 0 24 24"
@@ -487,33 +508,17 @@ export function ExerciseCapture({
         </button>
       </div>
 
-      {/* Retour à la liste des exos (issue #58). Affordance pleine largeur qui
-          apparaît dès que le minimum prescrit est atteint (exo « terminé ») :
-          c'est le moment d'enchaîner sur l'exo suivant sans friction. Surface-2
-          (pas l'accent violet, réservé à « Logger la série » — One Voice Rule).
-          Le retour amont (« Tous les exercices ») reste en haut pour quitter à
-          tout moment ; celui-ci est l'enchaînement naturel de fin d'exo. */}
+      {/* Fin d'exo : plus de gros bouton inline (remplacé par la feuille de récap
+          AUTO au franchissement du min, ADR « popup de fin d'exo »). Reste un
+          RAPPEL discret pour rouvrir le récap si on l'a fermé — le retour réel à la
+          liste se fait depuis la feuille (et le « Tous les exercices » reste en haut). */}
       {reachedMin && (
         <button
           type="button"
-          onClick={onBack}
-          className="btn btn-secondary mt-4 h-14 w-full rounded-2xl text-base"
+          onClick={() => setRecapOpen(true)}
+          className="btn btn-secondary text-ink-muted mt-4 h-11 w-full rounded-xl text-sm font-medium"
         >
-          <svg
-            viewBox="0 0 24 24"
-            width="20"
-            height="20"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-            className="shrink-0 text-ink-muted"
-          >
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-          Retour aux exercices
+          Exo terminé — voir le récap
         </button>
       )}
 
@@ -535,8 +540,154 @@ export function ExerciseCapture({
         value={datedNote}
         onSave={onSaveDatedNote}
       />
+
+      {/* Feuille de récap de fin d'exo (ADR « popup de fin d'exo ») : auto au
+          franchissement du min, rouvrable via le rappel discret. Mini-récap
+          (séries vs cible · battu/égalisé/record, par côté en unilatéral · meilleure
+          série) + retour à la liste / continuer. */}
+      {recapOpen && (
+        <ExerciseRecapSheet
+          name={exercise.name}
+          unilateral={unilateral}
+          hasReference={reference != null}
+          sets={progress.sets}
+          badges={badges}
+          completedSets={completedSets}
+          setsTarget={prescription.sets}
+          bestIndex={bestIndex}
+          onBackToList={onBack}
+          onClose={() => setRecapOpen(false)}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Feuille (slide-up) de récap de fin d'exo (ADR « popup de fin d'exo »). Constat
+ * sobre, pas de ton coach (DESIGN.md) : séries faites vs cible, verdicts vs la
+ * dernière fois (battu/égalisé) et record(s) all-time — résumés PAR CÔTÉ en
+ * unilatéral —, meilleure série du jour. Non bloquante : « Revenir à la liste »
+ * (primaire) ou « Continuer l'exo » (ferme la feuille pour une série de plus).
+ */
+function ExerciseRecapSheet({
+  name,
+  unilateral,
+  hasReference,
+  sets,
+  badges,
+  completedSets,
+  setsTarget,
+  bestIndex,
+  onBackToList,
+  onClose,
+}: {
+  name: string;
+  unilateral: boolean;
+  hasReference: boolean;
+  sets: PerformedSet[];
+  badges: SetBadge[];
+  completedSets: number;
+  setsTarget: { min: number; max: number };
+  bestIndex: number;
+  onBackToList: () => void;
+  onClose: () => void;
+}) {
+  const summary = summarizeBadges(sets, badges);
+  const best = bestIndex >= 0 ? sets[bestIndex] ?? null : null;
+
+  return (
+    <div className="fixed inset-0 z-30 flex flex-col">
+      {/* Fond cliquable = « Continuer l'exo » (fermer sans quitter l'exo). */}
+      <button
+        type="button"
+        aria-label="Continuer l’exercice"
+        onClick={onClose}
+        className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
+      />
+      <div className="relative mt-auto flex flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
+        <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />
+        <div className="mx-auto flex w-full max-w-md flex-col px-5 pt-4">
+          {/* En-tête : nom + coche « terminé ». */}
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-good" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--color-bg)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            </span>
+            <h3 className="min-w-0 flex-1 truncate text-xl font-semibold text-ink">{name}</h3>
+            <span className="text-sm font-medium text-good">Terminé</span>
+          </div>
+
+          {/* Séries faites vs cible. */}
+          <p className="readout mt-4 text-[15px] text-ink">
+            <span className="font-semibold tabular-nums">{formatSetCount(completedSets)}</span>{' '}
+            série{completedSets > 1 ? 's' : ''}{' '}
+            <span className="text-ink-muted">· cible {formatRange(setsTarget)}</span>
+          </p>
+
+          {/* Verdicts vs la dernière fois + record(s). Premier passage = pas de
+              comparaison. Par côté en unilatéral. */}
+          {!hasReference ? (
+            <p className="mt-2 text-[13.5px] text-ink-faint">Premier passage, pas de comparaison.</p>
+          ) : unilateral ? (
+            <div className="mt-2 flex flex-col gap-1">
+              <RecapVerdictLine label="Gauche" counts={summary.left} />
+              <RecapVerdictLine label="Droite" counts={summary.right} />
+            </div>
+          ) : (
+            <p className="mt-2 text-[13.5px] text-ink-muted">{verdictPhrase(summary.total)}</p>
+          )}
+
+          {/* Meilleure série du jour (trophée). */}
+          {best && (
+            <p className="readout mt-2 text-[13px] text-ink-faint">
+              Meilleure : <span className="text-ink-muted">{formatSet(best)}</span> · e1RM{' '}
+              <span className="text-ink-muted">
+                {formatE1rm(estimateE1rm(best.weightKg, best.reps, best.rir))}
+              </span>
+            </p>
+          )}
+
+          {/* Actions : retour à la liste (primaire) / continuer l'exo (secondaire). */}
+          <button
+            type="button"
+            onClick={onBackToList}
+            className="btn btn-primary mt-5 h-12 w-full rounded-2xl text-base"
+          >
+            Revenir à la liste
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn btn-secondary text-ink-muted mt-2.5 h-11 w-full rounded-xl text-sm font-medium"
+          >
+            Continuer l’exo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Une ligne « Gauche : 2 battues · 1 record » du récap (par côté en unilatéral). */
+function RecapVerdictLine({ label, counts }: { label: string; counts: VerdictCounts }) {
+  const phrase = verdictPhrase(counts);
+  return (
+    <p className="text-[13.5px] text-ink-muted">
+      <span className="font-medium text-ink">{label} :</span>{' '}
+      {phrase || <span className="text-ink-faint">rien battu</span>}
+    </p>
+  );
+}
+
+/** Phrase « 1 record · 2 battues · 1 égalisée » (parties à zéro omises). */
+function verdictPhrase(c: VerdictCounts): string {
+  const parts: string[] = [];
+  if (c.record) parts.push(`${c.record} record${c.record > 1 ? 's' : ''}`);
+  if (c.battu) parts.push(`${c.battu} battue${c.battu > 1 ? 's' : ''}`);
+  if (c.egalise) parts.push(`${c.egalise} égalisée${c.egalise > 1 ? 's' : ''}`);
+  return parts.join(' · ');
 }
 
 /**
@@ -956,11 +1107,76 @@ function DatedNoteSection({
   );
 }
 
-function refToBeatAt(
-  reference: SessionExercise['reference'],
-  order: number,
-): PerformedSet | null {
-  return reference?.find((s) => s.order === order) ?? null;
+/** Pastille de repère (Objectif / Dernière fois), largeur fixe pour aligner les valeurs. */
+function RepereLabel({ children }: { children: string }) {
+  return (
+    <span className="readout w-[94px] shrink-0 rounded-md border border-hair bg-surface px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-faint shadow-[inset_0_1px_0_var(--spec)]">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Badge UNIQUE d'une série loggée (ADR 0010), dérivé en amont (`set-badges`) :
+ *   - axe RECORD (all-time) -> étoile « Record … » (accent violet, rare/mérité) ;
+ *   - axe RÉFÉRENCE (dernière fois) -> « battu » (flèche ↑) ou « égalisé » (=).
+ * L'info tient toujours à la FORME + au TEXTE, jamais à la couleur seule (DESIGN.md).
+ */
+function SetBadgeView({ badge }: { badge: SetBadge }) {
+  if (!badge) return null;
+  if (badge.axis === 'record') return <RecordBadge kind={badge.record} />;
+  return badge.verdict === 'battu' ? <BattuBadge /> : <EgaliseBadge />;
+}
+
+/** Série strictement meilleure que la dernière fois à cette position (et ce côté). */
+function BattuBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs font-medium text-ink-muted"
+      title="Mieux que la dernière fois"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="text-accent-ink"
+      >
+        <path d="M12 19V5M6 11l6-6 6 6" />
+      </svg>
+      battu
+    </span>
+  );
+}
+
+/** Série exactement à la hauteur de la dernière fois (e1RM identique). */
+function EgaliseBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs font-medium text-ink-faint"
+      title="À égalité avec la dernière fois"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M5 9h14M5 15h14" />
+      </svg>
+      égalisé
+    </span>
+  );
 }
 
 const RECORD_LABEL: Record<RecordKind, string> = {
