@@ -33,6 +33,7 @@ export const syncFns: SyncFns = {
       id: op.id,
       seanceVersionId: op.seanceVersionId,
       performedOn: op.performedOn,
+      startedAt: op.startedAt,
     }),
   insertSet: (op) =>
     upsertSet({

@@ -71,6 +71,63 @@ export function personalRecord(
   return { bestE1rm, bestWeightReps }
 }
 
+/** Les records d'un exo unilatéral, tenus SÉPARÉMENT par côté (ADR 0010). */
+export interface PersonalRecordBySide {
+  left: PersonalRecord
+  right: PersonalRecord
+}
+
+/**
+ * Records d'un exo unilatéral dérivés PAR CÔTÉ (ADR 0010) : en salle, chaque bras
+ * est sa propre piste — son meilleur e1RM (1ʳᵉ série du côté à chaque exécution)
+ * et sa charge la plus lourde. Distinct du record côté faible que l'analyse
+ * conserve (`personalRecord` + `weakSideE1rm`). Côté sans aucune série réelle ->
+ * records nuls. Un exo bilatéral n'a pas à l'appeler (ses séries n'ont pas de côté).
+ */
+export function personalRecordBySide(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+): PersonalRecordBySide {
+  return {
+    left: sideRecord(executions, exerciseId, 'left'),
+    right: sideRecord(executions, exerciseId, 'right'),
+  }
+}
+
+/** Record d'UN côté : best e1RM (1ʳᵉ série du côté) + best charge (toutes séries du côté). */
+function sideRecord(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+  side: 'left' | 'right',
+): PersonalRecord {
+  let bestE1rm: number | null = null
+  let bestWeightReps: WeightReps | null = null
+
+  for (const exec of executions) {
+    if (exec.exerciseId !== exerciseId || exec.sets.length === 0) continue
+    const sideSets = exec.sets.filter((s) => s.side === side)
+    if (sideSets.length === 0) continue
+
+    // e1RM : la 1ʳᵉ série de CE côté (plus petit `order`), la plus représentative.
+    const firstOrder = Math.min(...sideSets.map((s) => s.order))
+    const first = sideSets.find((s) => s.order === firstOrder)
+    if (first) {
+      const e1rm = estimateE1rm(first.weightKg, first.reps, first.rir)
+      if (bestE1rm === null || e1rm > bestE1rm) bestE1rm = e1rm
+    }
+
+    // charge : la plus lourde de CE côté, toutes séries du côté confondues.
+    for (const s of sideSets) {
+      const candidate = { weightKg: s.weightKg, reps: s.reps }
+      if (bestWeightReps === null || heavier(bestWeightReps, candidate)) {
+        bestWeightReps = candidate
+      }
+    }
+  }
+
+  return { bestE1rm, bestWeightReps }
+}
+
 /**
  * La série `set` bat-elle le record d'e1RM ? Strict : un record égalé n'est pas
  * un nouveau record. Un record vierge (null) est toujours battu par une série réelle.

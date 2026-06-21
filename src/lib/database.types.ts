@@ -69,6 +69,7 @@ export type Database = {
           owner_id: string
           performed_on: string
           seance_version_id: string | null
+          started_at: string | null
           updated_at: string
         }
         Insert: {
@@ -80,6 +81,7 @@ export type Database = {
           owner_id?: string
           performed_on: string
           seance_version_id?: string | null
+          started_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -91,6 +93,7 @@ export type Database = {
           owner_id?: string
           performed_on?: string
           seance_version_id?: string | null
+          started_at?: string | null
           updated_at?: string
         }
         Relationships: [

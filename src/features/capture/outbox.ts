@@ -32,6 +32,12 @@ export interface UpsertExecutionOp {
   seanceVersionId: string;
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   performedOn: string;
+  /**
+   * Horodatage du LANCEMENT (ISO), ADR 0011 : la valeur du chrono « lancement →
+   * clôture », posée au 1er set (la ligne naît alors). Absent = legacy (pas de
+   * chrono durable). Idempotent : ré-affirmer repose le même started_at.
+   */
+  startedAt?: string;
 }
 
 /** Insère une série loggée. Idempotent via upsert par id (rejouer = no-op). */

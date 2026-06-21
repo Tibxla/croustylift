@@ -2,7 +2,7 @@
 // Chaque ligne : nom, cible prescrite, état (à faire / en cours / fait + compteur).
 // On peut aussi AJOUTER un exo hors template ou en REMPLACER un à la volée
 // (issue #36) : la séance courante évolue, le template versionné reste intact.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ExerciseRow } from './data';
 import type { Session, SessionExercise } from './fixtures';
 import type { CaptureState, ExerciseProgress, ExerciseStatus } from './state';
@@ -51,6 +51,8 @@ interface ExercisePickerProps {
   onAddExercise: (exercise: SessionExercise) => void;
   /** Remplace `targetExerciseId` par l'exo choisi. */
   onSwapExercise: (targetExerciseId: string, replacement: SessionExercise) => void;
+  /** Annule la séance : abandonne l'exécution et revient à l'écran de lancement (ADR 0011). */
+  onCancelSession: () => void;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -120,12 +122,18 @@ export function ExercisePicker({
   loadCatalogExercise,
   onAddExercise,
   onSwapExercise,
+  onCancelSession,
 }: ExercisePickerProps) {
   const doneCount = session.exercises.filter((ex) => {
     const p = getProgress(state, ex.exerciseId);
     return p.skipped || logicalSetsDone(p) >= ex.prescription.sets.min;
   }).length;
   const allDone = doneCount === session.exercises.length;
+  // Au moins une série loggée → l'annulation demande une CONFIRMATION (du réel à
+  // perdre). Séance vide → annulation immédiate (rien à perdre).
+  const hasLoggedSets = session.exercises.some(
+    (ex) => getProgress(state, ex.exerciseId).sets.length > 0,
+  );
 
   // Déviations d'exo (ajout / swap) dérivées par diff : par exerciseId, pour
   // étiqueter sobrement les lignes concernées.
@@ -143,7 +151,15 @@ export function ExercisePicker({
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-5">
       <header className="mb-5">
-        <h2 className="text-[27px] font-semibold tracking-[-0.025em] text-ink">{session.name}</h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="min-w-0 text-[27px] font-semibold tracking-[-0.025em] text-ink">
+            {session.name}
+          </h2>
+          {/* Annuler la séance (ADR 0011) : TOUJOURS dispo, même séance vide, pour ne
+              jamais rester coincé dans une séance lancée. Confirmation si du réel à
+              perdre ; immédiat sinon. */}
+          <CancelSessionButton hasLoggedSets={hasLoggedSets} onConfirm={onCancelSession} />
+        </div>
         <p className="mt-1 text-[13.5px] text-ink-muted">
           Tape l&apos;exercice que tu attaques.{' '}
           <span className="readout tabular-nums">
@@ -307,6 +323,50 @@ export function ExercisePicker({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Bouton « Annuler la séance » avec garde-fou à DEUX TEMPS quand il y a du réel à
+ * perdre (≥ 1 série loggée) : un 1er tap arme « Confirmer ? » (retombe seul après
+ * ~4 s), le 2e confirme. Séance vide → annulation immédiate (rien à perdre). Le
+ * timer est nettoyé au démontage (pas de setState sur une instance démontée).
+ */
+function CancelSessionButton({
+  hasLoggedSets,
+  onConfirm,
+}: {
+  hasLoggedSets: boolean;
+  onConfirm: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current != null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  const handleClick = () => {
+    if (!hasLoggedSets || confirming) {
+      onConfirm();
+      return;
+    }
+    setConfirming(true);
+    if (timerRef.current != null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setConfirming(false), 4000);
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label={confirming ? 'Confirmer l’annulation de la séance' : 'Annuler la séance'}
+      className={`-mr-1 mt-1 shrink-0 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition active:scale-95 ${
+        confirming ? 'text-warn' : 'text-ink-muted active:text-ink'
+      }`}
+    >
+      {confirming ? 'Confirmer ?' : 'Annuler la séance'}
+    </button>
   );
 }
 

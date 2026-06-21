@@ -6,7 +6,7 @@
 // / `SessionExercise` ci-dessous définissent ce que l'UI consomme, que la source
 // soit la fixture ou Supabase.
 import type { Prescription, PerformedSet } from '../../domain/types';
-import type { PersonalRecord } from '../../domain/pr';
+import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 
 /**
  * Provenance d'un exo DANS l'exécution courante (issue #36) :
@@ -50,6 +50,20 @@ export interface SessionExercise {
    * (dernière fois) : le record est le meilleur de TOUT l'historique.
    */
   personalRecord?: PersonalRecord | null;
+  /**
+   * Records PAR CÔTÉ d'un exo unilatéral (ADR 0010) : en salle, chaque bras est sa
+   * propre piste (badge « Record » par côté). Dérivé de l'historique. `null`/absent
+   * = bilatéral ou pas encore chargé. Le `personalRecord` côté faible reste, lui,
+   * pour l'analyse (courbe). N'a de sens que si `unilateral`.
+   */
+  personalRecordBySide?: PersonalRecordBySide | null;
+  /**
+   * La note datée la PLUS RÉCENTE des séances passées sur cet exo (ADR « Note
+   * datée » du glossaire), ressortie en REPÈRE lecture seule (« Dernière fois tu
+   * notais : … »). Vide = aucune note antérieure. Distincte de la note du jour
+   * (saisissable) et de la note d'instructions (persistante).
+   */
+  previousDatedNote?: string;
   /**
    * Note d'INSTRUCTIONS persistante de l'exo (issue #26), chargée depuis
    * `exercise_notes`. Affichée en RÉFÉRENCE (lecture seule) pendant la série, pas

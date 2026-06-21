@@ -4,7 +4,12 @@
 // chaque série qui le dépasse le remplace, donc une SEULE série par mesure porte
 // le marqueur (la première à dépasser), pas toutes celles qui battent l'ancien.
 import { estimateE1rm } from '../../domain/e1rm';
-import { isE1rmRecord, isWeightRepsRecord, type PersonalRecord } from '../../domain/pr';
+import {
+  isE1rmRecord,
+  isWeightRepsRecord,
+  type PersonalRecord,
+  type PersonalRecordBySide,
+} from '../../domain/pr';
 import type { PerformedSet } from '../../domain/types';
 
 /** Le type de record qu'une série bat : e1RM, charge, ou les deux. */
@@ -33,6 +38,49 @@ export function computeRecordFlags(
     const e1rm = isE1rmRecord(running, s);
     const weightReps = isWeightRepsRecord(running, s);
     running = absorb(running, s);
+    if (e1rm && weightReps) return 'both';
+    if (e1rm) return 'e1rm';
+    if (weightReps) return 'weight-reps';
+    return null;
+  });
+}
+
+/**
+ * Comme `computeRecordFlags`, mais PAR CÔTÉ (ADR 0010, exo unilatéral) : chaque
+ * ligne G/D se compare au record de SON côté, qui avance indépendamment. Le record
+ * courant est tenu séparément pour gauche et droite ; un côté sans historique
+ * (`bySide.left/right` vierge) construit le sien sans crier « record » sur sa 1ʳᵉ
+ * série jamais faite. L'ordre du tableau renvoyé suit `sets` (G et D mêlés au fil
+ * de la saisie).
+ */
+export function computeRecordFlagsBySide(
+  sets: PerformedSet[],
+  bySide: PersonalRecordBySide,
+): (RecordKind | null)[] {
+  // Record courant par côté + mémoire des côtés « premier passage » (historique
+  // nul) : sur ceux-là, aucune série ne porte de marqueur (on ne bat pas un record
+  // qui n'existe pas encore), le record se construit en silence.
+  const running: Record<'left' | 'right', PersonalRecord> = {
+    left: bySide.left,
+    right: bySide.right,
+  };
+  const virgin: Record<'left' | 'right', boolean> = {
+    left: bySide.left.bestE1rm === null && bySide.left.bestWeightReps === null,
+    right: bySide.right.bestE1rm === null && bySide.right.bestWeightReps === null,
+  };
+
+  return sets.map((s) => {
+    // Une série unilatérale porte toujours un côté ; un set sans côté (donnée
+    // inattendue) retombe sur 'left' sans planter.
+    const side: 'left' | 'right' = s.side === 'right' ? 'right' : 'left';
+    const rec = running[side];
+    if (virgin[side]) {
+      running[side] = absorb(rec, s);
+      return null;
+    }
+    const e1rm = isE1rmRecord(rec, s);
+    const weightReps = isWeightRepsRecord(rec, s);
+    running[side] = absorb(rec, s);
     if (e1rm && weightReps) return 'both';
     if (e1rm) return 'e1rm';
     if (weightReps) return 'weight-reps';

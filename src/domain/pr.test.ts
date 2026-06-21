@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { ExerciseExecution, PerformedSet, Side } from './types'
 import {
   personalRecord,
+  personalRecordBySide,
   isE1rmRecord,
   isWeightRepsRecord,
   type PersonalRecord,
@@ -218,5 +219,38 @@ describe('isWeightRepsRecord', () => {
   it('vrai contre un record vierge (premier passage, bestWeightReps null)', () => {
     const blank: PersonalRecord = { bestE1rm: null, bestWeightReps: null }
     expect(isWeightRepsRecord(blank, set(40, 10, 2))).toBe(true)
+  })
+})
+
+describe('personalRecordBySide', () => {
+  it('tient un record SÉPARÉ par côté (ADR 0010)', () => {
+    // 2 jours. Gauche progresse, droite est plus lourde mais stagne.
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-10',
+        exerciseId: 'db-press',
+        sets: [sideSet('left', 20, 10, 0, 1), sideSet('right', 24, 10, 0, 1)],
+      },
+      {
+        date: '2026-01-17',
+        exerciseId: 'db-press',
+        sets: [sideSet('left', 22, 10, 0, 1), sideSet('right', 24, 8, 0, 1)],
+      },
+    ]
+    const { left, right } = personalRecordBySide(executions, 'db-press')
+    // Gauche : meilleur e1RM = 22×10 (jour 2), charge max 22×10.
+    expect(left.bestWeightReps).toEqual({ weightKg: 22, reps: 10 })
+    expect(left.bestE1rm).toBeCloseTo(22 * (1 + 10 / 30))
+    // Droite : meilleur e1RM = 24×10 (jour 1, 1ʳᵉ série), charge max 24×10.
+    expect(right.bestWeightReps).toEqual({ weightKg: 24, reps: 10 })
+    expect(right.bestE1rm).toBeCloseTo(24 * (1 + 10 / 30))
+  })
+
+  it('records nuls pour un côté jamais travaillé', () => {
+    const executions: ExerciseExecution[] = [
+      { date: '2026-01-10', exerciseId: 'db-press', sets: [sideSet('left', 20, 10, 0, 1)] },
+    ]
+    const { right } = personalRecordBySide(executions, 'db-press')
+    expect(right).toEqual({ bestE1rm: null, bestWeightReps: null })
   })
 })
