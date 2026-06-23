@@ -389,8 +389,11 @@ export function SeanceEditorView({
         </>
       )}
 
-      {/* Barre d'enregistrement fixée en bas (One Voice : seul accent fort de l'écran). */}
-      <div className="fixed inset-x-0 bottom-14 z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
+      {/* Barre d'enregistrement fixée en bas (One Voice : seul accent fort de l'écran).
+          Ancrée sur `--nav-offset` (hauteur nav + safe-area), PAS `bottom-14` (=
+          hauteur nav SANS la safe-area) : sinon, sur appareil à encoche, le bas de
+          la barre passe sous la nav. */}
+      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-md">
           {save.done ? (
             <p
