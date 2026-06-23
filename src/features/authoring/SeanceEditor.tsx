@@ -376,15 +376,9 @@ export function SeanceEditorView({
             ))}
           </ul>
 
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="surface-interactive mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-base font-medium text-ink"
-          >
-            <PlusIcon />
-            Ajouter un exercice
-          </button>
-          {/* Sentinel de scroll : on revient ici après un ajout (#57). */}
+          {/* « Ajouter un exercice » N'est PLUS ici (zone scrollable) : il vit dans
+              la barre fixe du bas pour rester TOUJOURS visible. Sentinel de scroll
+              conservé (on revient ici après un ajout, #57). */}
           <div ref={bottomRef} aria-hidden="true" />
         </>
       )}
@@ -395,29 +389,46 @@ export function SeanceEditorView({
           la barre passe sous la nav. */}
       <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-md">
-          {save.done ? (
-            <p
-              className="surface-card flex h-12 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
-              role="status"
-              aria-live="polite"
-            >
-              <CheckIcon />
-              Séance enregistrée.
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={empty || save.busy}
-              className="btn btn-primary h-12 w-full rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
-            >
-              {save.busy
-                ? 'Enregistrement…'
-                : empty
-                  ? 'Ajoute au moins un exercice'
-                  : 'Enregistrer'}
-            </button>
-          )}
+          {/* UNE seule ligne pour ne pas voler la hauteur : « Ajouter » compact
+              (pointillé, comme Capture) à gauche + « Enregistrer » qui prend le
+              reste. « Ajouter » TOUJOURS visible (hors scroll) ; caché quand la
+              séance est vide (l'EmptyState porte alors son propre CTA centré). */}
+          <div className="flex items-center gap-2.5">
+            {!empty && (
+              <button
+                type="button"
+                aria-label="Ajouter un exercice"
+                onClick={() => setAdding(true)}
+                className="flex h-12 shrink-0 items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 text-base font-medium text-ink-muted transition active:bg-surface active:text-ink"
+              >
+                <PlusIcon />
+                Ajouter
+              </button>
+            )}
+            {save.done ? (
+              <p
+                className="surface-card flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
+                role="status"
+                aria-live="polite"
+              >
+                <CheckIcon />
+                Séance enregistrée.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={empty || save.busy}
+                className="btn btn-primary h-12 flex-1 rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
+              >
+                {save.busy
+                  ? 'Enregistrement…'
+                  : empty
+                    ? 'Ajoute au moins un exercice'
+                    : 'Enregistrer'}
+              </button>
+            )}
+          </div>
           {save.error && (
             <p className="readout mt-2 break-words text-xs text-warn" role="alert">
               {save.error}
