@@ -184,6 +184,11 @@ export function ExerciseCapture({
   // complètes (une série unilatérale = gauche + droite). Le badge de déviation
   // reste cantonné au bilatéral (le diff prescription/réel par côté est hors #46).
   const reachedMin = completedSets >= prescription.sets.min;
+  // Borne HAUTE prescrite : c'est ELLE qui déclenche le popup de fin d'exo (et non
+  // le min), pour ne pas couper l'enchaînement quand on vise encore une série de
+  // plus dans la fourchette. Si la prescription est fixe (min == max), les deux
+  // coïncident.
+  const reachedMax = completedSets >= prescription.sets.max;
   const deviations = deriveDeviations(prescription, progress.sets);
   const finishVisual = deviationVisual(deviations, prescription.sets, completedSets);
 
@@ -217,20 +222,21 @@ export function ExerciseCapture({
   const plannedSegments = Math.max(prescription.sets.max, Math.ceil(completedSets));
 
   // Feuille de fin d'exo (ADR « popup de fin d'exo ») : remonte AUTOMATIQUEMENT,
-  // UNE fois, à l'instant où l'on FRANCHIT le minimum prescrit (transition false→
-  // true), pas au montage d'un exo déjà terminé (reload). Non bloquante : on peut
-  // « Continuer l'exo » (série de plus) ou « Revenir à la liste ». Réamorcée par
-  // exo (le composant est `key`-é sur l'exerciseId → refs neuves au changement).
+  // UNE fois, à l'instant où l'on FRANCHIT la BORNE HAUTE prescrite (transition
+  // false→true) — pas le min, pour ne pas couper l'enchaînement —, et pas au
+  // montage d'un exo déjà terminé (reload). Non bloquante : on peut « Continuer
+  // l'exo » (série de plus) ou « Revenir à la liste ». Réamorcée par exo (le
+  // composant est `key`-é sur l'exerciseId → refs neuves au changement).
   const [recapOpen, setRecapOpen] = useState(false);
   const recapAutoShownRef = useRef(false);
-  const prevReachedMinRef = useRef(reachedMin);
+  const prevReachedMaxRef = useRef(reachedMax);
   useEffect(() => {
-    if (reachedMin && !prevReachedMinRef.current && !recapAutoShownRef.current) {
+    if (reachedMax && !prevReachedMaxRef.current && !recapAutoShownRef.current) {
       recapAutoShownRef.current = true;
       setRecapOpen(true);
     }
-    prevReachedMinRef.current = reachedMin;
-  }, [reachedMin]);
+    prevReachedMaxRef.current = reachedMax;
+  }, [reachedMax]);
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
@@ -597,7 +603,10 @@ function ExerciseRecapSheet({
   const best = bestIndex >= 0 ? sets[bestIndex] ?? null : null;
 
   return (
-    <div className="fixed inset-0 z-30 flex flex-col">
+    // z-40 : AU-DESSUS de la nav (z-30) — sinon la nav recouvre les actions du bas
+    // de la feuille (« Revenir à la liste »). La feuille couvre la nav, c'est voulu
+    // (on est concentré sur le récap).
+    <div className="fixed inset-0 z-40 flex flex-col">
       {/* Fond cliquable = « Continuer l'exo » (fermer sans quitter l'exo). */}
       <button
         type="button"

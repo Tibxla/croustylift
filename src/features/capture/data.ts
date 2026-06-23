@@ -487,8 +487,12 @@ export async function loadPreviousDatedNote(
  */
 export interface TodayExecution {
   executionId: string;
-  /** Lancement (epoch ms) lu en base (ADR 0011) pour reprendre le chrono ; `null` = legacy. */
-  startedAt: number | null;
+  /**
+   * Lancement (epoch ms) pour reprendre le chrono (ADR 0011), borné par `created_at`
+   * (le lancement ne peut être postérieur au 1er log). Toujours défini : à défaut de
+   * `started_at` en base (legacy / valeur dérivée), retombe sur `created_at`.
+   */
+  startedAt: number;
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
 }
@@ -509,7 +513,7 @@ export async function loadTodayExecution(
 ): Promise<TodayExecution | null> {
   const { data: exec, error: execErr } = await supabase
     .from('executions')
-    .select('id, started_at')
+    .select('id, started_at, created_at')
     .eq('seance_version_id', seanceVersionId)
     .eq('performed_on', date)
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
@@ -593,10 +597,18 @@ export async function loadTodayExecution(
     datedNotes[row.exercise_id] = { id: row.id, body: row.body };
   }
 
+  // Chrono repris du lancement persisté (ADR 0011). Le lancement ne peut JAMAIS
+  // être postérieur à la création de la ligne (≈ 1er log) : on borne donc
+  // `started_at` par `created_at`. Sans ce garde-fou, un `started_at` absent
+  // (legacy) ou DÉRIVÉ EN AVANT (réécrit à `Date.now()` lors d'une reprise sans
+  // valeur en base) faisait mesurer « reprise → clôture » au lieu de « lancement →
+  // clôture » → durée tronquée (bug « séance complète = 2 min »). Retombe alors sur
+  // `created_at`, qui donne au moins « 1er set → clôture ».
+  const createdMs = new Date(exec.created_at).getTime();
+  const startedMs = exec.started_at ? new Date(exec.started_at).getTime() : null;
   return {
     executionId: exec.id,
-    // Chrono repris du lancement persisté (ADR 0011) ; legacy sans started_at = null.
-    startedAt: exec.started_at ? new Date(exec.started_at).getTime() : null,
+    startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,
   };
