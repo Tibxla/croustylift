@@ -427,12 +427,18 @@ function RoutineRowItem({
           ) : (
             <RowAction
               label="Définir courante"
+              icon={STAR_ICON}
               busy={busy}
               onClick={() => run(onSetCurrent)}
             />
           )}
-          <RowAction label="Renommer" onClick={() => setMode('rename')} />
-          <RowAction label="Supprimer" tone="danger" onClick={() => setMode('confirmDelete')} />
+          <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
+          <RowAction
+            label="Supprimer"
+            icon={DELETE_ICON}
+            tone="danger"
+            onClick={() => setMode('confirmDelete')}
+          />
         </div>
       )}
 
@@ -612,9 +618,14 @@ function SeanceRowItem({
         />
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <RowAction label="Éditer" tone="accent" onClick={onEdit} />
-          <RowAction label="Renommer" onClick={() => setMode('rename')} />
-          <RowAction label="Supprimer" tone="danger" onClick={() => setMode('confirmDelete')} />
+          <RowAction label="Éditer" icon={EDIT_ICON} tone="accent" onClick={onEdit} />
+          <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
+          <RowAction
+            label="Supprimer"
+            icon={DELETE_ICON}
+            tone="danger"
+            onClick={() => setMode('confirmDelete')}
+          />
         </div>
       )}
 
@@ -648,34 +659,83 @@ function RowCard({
   );
 }
 
-/** Action secondaire d'une ligne. Neutre par défaut ; accent ou danger au besoin. */
+/** Icônes des actions de ligne (réglages / crayon / corbeille / étoile). Knobs du
+ *  glyphe « réglages » remplis pour se lire à petite taille. */
+const EDIT_ICON = (
+  <>
+    <line x1="4" y1="7" x2="20" y2="7" />
+    <circle cx="10" cy="7" r="2.4" fill="currentColor" stroke="none" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+    <circle cx="15" cy="12" r="2.4" fill="currentColor" stroke="none" />
+    <line x1="4" y1="17" x2="20" y2="17" />
+    <circle cx="8" cy="17" r="2.4" fill="currentColor" stroke="none" />
+  </>
+);
+const RENAME_ICON = (
+  <>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+  </>
+);
+const DELETE_ICON = (
+  <>
+    <path d="M4 7h16" />
+    <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+    <path d="M10 11v6M14 11v6" />
+  </>
+);
+const STAR_ICON = (
+  <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" />
+);
+
+/**
+ * Action de ligne en BOUTON-INSTRUMENT à icône (décision UI 2026-06-23 : routine
+ * et séance, comme l'éditeur). `label` porte l'`aria-label` (icône seule). Tons :
+ * accent (action principale, Éditer) = bordure + glyphe accent ; danger
+ * (Supprimer) = glyphe qui vire au warn à la pression ; neutre = ink-muted.
+ */
 function RowAction({
   label,
+  icon,
   onClick,
   tone = 'neutral',
   busy = false,
 }: {
   label: string;
+  icon: React.ReactNode;
   onClick: () => void;
   tone?: 'neutral' | 'accent' | 'danger';
   busy?: boolean;
 }) {
-  // Tonalité (maquette §270) : accent = bordure accent + texte accent-ink + 600 ;
-  // destructif = texte warn (bordure hair-strong neutre, pas d'aplat) ; neutre = ink-muted.
   const toneClass =
     tone === 'accent'
-      ? 'border-accent font-semibold text-accent-ink'
+      ? 'border-accent text-accent-ink'
       : tone === 'danger'
-        ? 'font-medium text-warn'
-        : 'font-medium text-ink-muted';
+        ? 'text-ink-muted active:text-warn'
+        : 'text-ink-muted active:text-ink';
   return (
     <button
       type="button"
+      aria-label={label}
+      title={label}
       onClick={onClick}
       disabled={busy}
-      className={`btn btn-secondary h-9 min-h-[44px] rounded-lg px-3 text-sm ${toneClass}`}
+      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
     >
-      {label}
+      <svg
+        viewBox="0 0 24 24"
+        width="19"
+        height="19"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {icon}
+      </svg>
     </button>
   );
 }
@@ -737,7 +797,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="btn btn-ghost h-11 w-11 rounded-lg disabled:opacity-30"
+      className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink disabled:opacity-30"
     >
       <svg
         viewBox="0 0 24 24"
