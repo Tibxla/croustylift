@@ -352,7 +352,7 @@ export function SeanceEditorView({
       </p>
 
       {empty ? (
-        <EmptyState onAdd={() => setAdding(true)} />
+        <EmptyState />
       ) : (
         <>
           {/* Décompte PRÉVU des séries (issue #37) : en direct, au-dessus de la liste. */}
@@ -394,17 +394,17 @@ export function SeanceEditorView({
               reste. « Ajouter » TOUJOURS visible (hors scroll) ; caché quand la
               séance est vide (l'EmptyState porte alors son propre CTA centré). */}
           <div className="flex items-center gap-2.5">
-            {!empty && (
-              <button
-                type="button"
-                aria-label="Ajouter un exercice"
-                onClick={() => setAdding(true)}
-                className="flex h-12 shrink-0 items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 text-base font-medium text-ink-muted transition active:bg-surface active:text-ink"
-              >
-                <PlusIcon />
-                Ajouter
-              </button>
-            )}
+            {/* TOUJOURS présent (même séance vide) : c'est l'unique « Ajouter »,
+                fixe et en pointillé. L'EmptyState n'a donc plus son propre bouton. */}
+            <button
+              type="button"
+              aria-label="Ajouter un exercice"
+              onClick={() => setAdding(true)}
+              className="flex h-12 shrink-0 items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 text-base font-medium text-ink-muted transition active:bg-surface active:text-ink"
+            >
+              <PlusIcon />
+              Ajouter
+            </button>
             {save.done ? (
               <p
                 className="surface-card flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
@@ -1032,7 +1032,9 @@ function UnilateralBadge() {
 // État vide + primitives
 // =====================================================================
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
+function EmptyState() {
+  // Plus de bouton ici : « Ajouter un exercice » vit dans la barre fixe du bas
+  // (toujours visible, pointillé), y compris séance vide. On ne garde que le message.
   return (
     <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-hair-strong px-6 py-12 text-center">
       <span
@@ -1053,16 +1055,8 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
         </svg>
       </span>
       <p className="text-sm text-ink-muted">
-        Aucun exercice prescrit. Ajoute le premier exercice de cette séance.
+        Aucun exercice prescrit. Ajoute le premier avec «&#8239;Ajouter&#8239;» en bas.
       </p>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-      >
-        <PlusIcon />
-        Ajouter un exercice
-      </button>
     </div>
   );
 }
