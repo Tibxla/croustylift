@@ -22,7 +22,7 @@
 // finition). On n'empêche donc pas l'ajout en double ; chaque ligne a sa propre
 // identité (rowId) pour rester éditable indépendamment.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Stepper } from '../capture/Stepper';
+import { ClusterStepper } from '../capture/ClusterStepper';
 import { listExercises } from '../capture/data';
 import { NoteField } from '../notes/NoteField';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
@@ -782,27 +782,33 @@ function RangeField({
       </div>
 
       {value.mode === 'fixe' ? (
-        <Stepper
-          label="Valeur"
+        // Stepper « instrument » de Capture (boutons ronds, + en accent), variante
+        // compacte : même langage visuel que le log, et plus compact que l'ancien
+        // Stepper rectangulaire (qui s'écrasait en fourchette).
+        <ClusterStepper
+          label="valeur"
+          variant="compact"
           value={value.min}
           step={1}
           min={floor}
           onChange={(n) => onChange(setMin(value, n, floor))}
         />
       ) : (
-        // Fourchette : deux Steppers étiquetés « min » / « max ». PAS de tiret
-        // long ni de séparateur tiret entre eux (DESIGN.md).
+        // Fourchette : deux ClusterSteppers « min » / « max ». PAS de tiret long ni
+        // de séparateur (DESIGN.md). Boutons ronds compacts → tient sans écrasement.
         <div className="grid grid-cols-2 gap-2.5">
-          <Stepper
+          <ClusterStepper
             label="min"
+            variant="compact"
             value={value.min}
             step={1}
             min={floor}
             max={value.max}
             onChange={(n) => onChange(setMin(value, n, floor))}
           />
-          <Stepper
+          <ClusterStepper
             label="max"
+            variant="compact"
             value={value.max}
             step={1}
             min={value.min}
@@ -1063,14 +1069,17 @@ function IconButton({
   icon: React.ReactNode;
   tone?: 'neutral' | 'danger';
 }) {
-  const toneClass = tone === 'danger' ? 'active:text-warn' : '';
+  // Bouton-instrument cohérent avec le reste de l'app (retour Capture, swap picker) :
+  // bordure + surface + ombre interne, pas un ghost plat. Le ton « danger » (retirer)
+  // vire au warn à la pression.
+  const toneClass = tone === 'danger' ? 'active:text-warn' : 'active:text-ink';
   return (
     <button
       type="button"
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`btn btn-ghost h-11 w-11 rounded-lg disabled:opacity-30 ${toneClass}`}
+      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
     >
       <svg
         viewBox="0 0 24 24"
