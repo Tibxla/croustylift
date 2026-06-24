@@ -690,8 +690,11 @@ function RowCard({ children }: { children: React.ReactNode }) {
   return <div className="surface-card rounded-2xl p-3.5">{children}</div>;
 }
 
-/** Action d'une ligne en ICÔNE ghost (compacte) : crayon, corbeille, reset. Le
-    libellé est porté par `aria-label`/`title` ; tap-target 44px, sans cadre lourd. */
+/** Action d'une ligne en ICÔNE : bouton-instrument bordé (border-hair + bg-surface
+    + liseré spéculaire), affordance d'action à icône partout (cf. DESIGN §5,
+    RowAction de SeancesScreen). Le libellé est porté par `aria-label`/`title` ; le
+    ton est porté par l'action — neutre par défaut, `warn` à la pression pour le
+    destructif. */
 function IconButton({
   label,
   onClick,
@@ -709,7 +712,7 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-ink-muted transition active:bg-surface-2 ${
+      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${
         tone === 'danger' ? 'active:text-warn' : 'active:text-ink'
       }`}
     >

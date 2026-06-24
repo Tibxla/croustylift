@@ -289,7 +289,7 @@ export function ExerciseCapture({
             <span className="readout text-[13.5px] text-ink-muted">{formatSet(refToBeat)}</span>
           ) : (
             <span className="text-[13px] text-ink-faint">
-              {reference ? '—' : 'Premier passage.'}
+              {reference ? 'Aucune.' : 'Premier passage.'}
             </span>
           )}
         </div>
@@ -702,8 +702,8 @@ function verdictPhrase(c: VerdictCounts): string {
 /**
  * Sélecteur de côté Gauche / Droite pour un exo unilatéral (issue #63). Deux
  * options en segmented control. Le côté actif est porté par PLUSIEURS signaux,
- * jamais la couleur seule (DESIGN.md) : poids de police, anneau de contour, coche
- * et `aria-pressed`. Le violet d'accent est laissé à l'action de log (One Voice
+ * jamais la couleur seule (DESIGN.md) : palier tonal (surface-2), poids de police,
+ * coche et `aria-pressed`. Le violet d'accent est laissé à l'action de log (One Voice
  * Rule), donc l'option active reste en palier tonal (surface-2), pas en accent.
  * Un côté DÉJÀ loggé pour la série en cours est signalé « fait » (libellé texte)
  * pour orienter vers le côté qui reste, sans empêcher de le re-sélectionner.
@@ -741,7 +741,7 @@ function SideSelector({
             onClick={() => onChange(side)}
             className={`flex h-12 items-center justify-center gap-1.5 rounded-xl text-base transition active:scale-[0.99] ${
               active
-                ? 'bg-surface-2 font-semibold text-ink ring-2 ring-ink/70'
+                ? 'bg-surface-2 font-semibold text-ink'
                 : 'bg-surface font-medium text-ink-muted active:text-ink'
             }`}
           >
@@ -875,7 +875,7 @@ function ExerciseNoteSection({
       <button
         type="button"
         onClick={startEditing}
-        className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-line px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
+        className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
       >
         <svg
           viewBox="0 0 24 24"

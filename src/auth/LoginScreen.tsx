@@ -24,7 +24,7 @@ function frenchError(message: string): string {
     return "Si un compte peut être créé, tu recevras un email pour confirmer."
   }
   if (m.includes('password should be at least')) {
-    return 'Le mot de passe est trop court (8 caractères minimum).'
+    return `Le mot de passe est trop court (${MIN_PASSWORD_LENGTH} caractères minimum).`
   }
   if (m.includes('unable to validate email') || m.includes('invalid email')) {
     return 'Adresse email invalide.'
@@ -68,9 +68,7 @@ export function LoginScreen() {
         await signUp(email, password)
         // Si « Confirm email » est actif côté Supabase, aucune session n'est ouverte
         // immédiatement : on guide l'utilisateur. Sinon onAuthStateChange prend le relais.
-        setInfo(
-          'Compte créé. Si la confirmation par email est activée, vérifie ta boîte de réception.',
-        )
+        setInfo('Compte créé. Vérifie ta boîte de réception pour confirmer.')
       } else {
         await signIn(email, password)
       }
@@ -136,7 +134,7 @@ export function LoginScreen() {
 
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || !email || !password}
           className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
         >
           {submitting

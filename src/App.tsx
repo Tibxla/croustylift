@@ -142,8 +142,8 @@ function AuthenticatedApp({
   if (check.phase === 'error') {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center text-ink">
-        <p className="text-sm text-ink-muted">Impossible de charger ton compte.</p>
-        <p className="readout max-w-full break-words text-xs text-warn">{check.message}</p>
+        <p className="text-base font-medium text-ink">Impossible de charger ton compte.</p>
+        <p className="readout max-w-full break-words text-xs text-ink-faint">{check.message}</p>
         <button
           type="button"
           onClick={() => setReloadKey((k) => k + 1)}
