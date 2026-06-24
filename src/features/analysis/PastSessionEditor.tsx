@@ -138,6 +138,10 @@ export function PastSessionEditor({
   const [load, setLoad] = useState<LoadPhase>({ phase: 'loading' });
   const [save, setSave] = useState<SavePhase>({ phase: 'idle' });
   const [del, setDel] = useState<DeletePhase>({ phase: 'idle' });
+  // Confirmation avant de fermer sur des corrections non sauvées (cf. `dirty`).
+  // Fermer est non destructif tant que rien n'a changé : on ne demande la
+  // confirmation que si une édition est en cours, sinon on ferme directement.
+  const [confirmClose, setConfirmClose] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -178,6 +182,18 @@ export function PastSessionEditor({
         null;
     return setsDirty || metricsDirty;
   }, [load, executionId]);
+
+  // Fermeture gardée : si des corrections non sauvées sont en cours (`dirty`), on
+  // ouvre une confirmation avant d'abandonner ; sinon on ferme directement (le
+  // comportement non destructif d'origine). C'est ce handler qui est câblé sur
+  // « Fermer », jamais `onClose` brut, pour ne pas perdre les corrections en cours.
+  function requestClose() {
+    if (dirty) {
+      setConfirmClose(true);
+      return;
+    }
+    onClose();
+  }
 
   function patchExercise(
     exerciseId: string,
@@ -306,7 +322,7 @@ export function PastSessionEditor({
   );
 
   return (
-    <EditorShell onClose={onClose} date={load.date}>
+    <EditorShell onClose={requestClose} date={load.date}>
       <div className="flex flex-col gap-5 pb-56">
         {/* Métriques de fin (durée + BPM), seulement pour une séance CLÔTURÉE
             (cf. MetricsEditState). Au-dessus des exos : c'est une donnée de la
@@ -415,6 +431,16 @@ export function PastSessionEditor({
           onConfirm={handleDelete}
         />
       )}
+
+      {confirmClose && (
+        <DiscardConfirmSheet
+          onKeepEditing={() => setConfirmClose(false)}
+          onDiscard={() => {
+            setConfirmClose(false);
+            onClose();
+          }}
+        />
+      )}
     </EditorShell>
   );
 }
@@ -486,6 +512,57 @@ function DeleteConfirmSheet({
             className="inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] text-base font-semibold text-warn transition active:scale-[0.99] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? 'Suppression...' : 'Supprimer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Feuille de confirmation d'abandon des corrections -----------------------
+//
+// Garde-fou à la fermeture quand des corrections non sauvées sont en cours
+// (`dirty`). Même surface et même grammaire que `DeleteConfirmSheet` (bottom-sheet
+// `surface-raised`, action destructive en ton `warn`), pour rester cohérent : ici
+// on n'efface rien en base, on jette seulement les corrections en cours.
+// [Continuer l'édition] (sûr) · [Abandonner] (destructif, ambre).
+function DiscardConfirmSheet({
+  onKeepEditing,
+  onDiscard,
+}: {
+  onKeepEditing: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-bg/70 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="discard-edits-title"
+    >
+      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
+        <h2 id="discard-edits-title" className="text-lg font-bold leading-tight text-ink">
+          Abandonner les corrections ?
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+          Tes corrections en cours ne sont pas enregistrées. Si tu fermes
+          maintenant, elles seront perdues.
+        </p>
+
+        <div className="mt-5 flex gap-3">
+          <button
+            type="button"
+            onClick={onKeepEditing}
+            className="btn btn-secondary h-12 flex-1 rounded-xl text-base"
+          >
+            Continuer l'édition
+          </button>
+          <button
+            type="button"
+            onClick={onDiscard}
+            className="inline-flex h-12 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] text-base font-semibold text-warn transition active:scale-[0.99] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)]"
+          >
+            Abandonner
           </button>
         </div>
       </div>
@@ -598,12 +675,12 @@ function ExerciseEditor({
       <button
         type="button"
         onClick={onAddSet}
-        className="btn btn-secondary mt-3 min-h-[3rem] w-full rounded-xl text-sm font-semibold"
+        className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-hair-strong text-base font-medium text-ink-muted transition active:bg-surface active:text-ink"
       >
         <svg
           viewBox="0 0 24 24"
-          width="18"
-          height="18"
+          width="20"
+          height="20"
           fill="none"
           stroke="currentColor"
           strokeWidth="2.5"
@@ -645,7 +722,7 @@ function LogicalSetEditor({
         <button
           type="button"
           onClick={() => onRemoveSet(ids)}
-          className="btn btn-ghost h-11 rounded-lg px-3 text-sm font-medium"
+          className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-warn disabled:opacity-30"
           aria-label={`Supprimer la série ${index + 1}`}
         >
           <svg
@@ -661,7 +738,6 @@ function LogicalSetEditor({
           >
             <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
           </svg>
-          Supprimer
         </button>
       </div>
 
@@ -747,7 +823,7 @@ function EditorShell({
   date?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-30 overflow-y-auto bg-bg">
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-bg">
       <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -763,7 +839,7 @@ function EditorShell({
           <button
             type="button"
             onClick={onClose}
-            className="btn btn-ghost -mr-1 h-11 rounded-lg px-3 text-sm font-medium"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink disabled:opacity-30"
             aria-label="Fermer sans enregistrer"
           >
             <svg
@@ -779,7 +855,6 @@ function EditorShell({
             >
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
-            Fermer
           </button>
         </div>
         {children}

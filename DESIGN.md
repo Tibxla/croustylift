@@ -115,7 +115,7 @@ Ce que le système **rejette explicitement** (anti-références de PRODUCT.md) :
 - **Un seul accent** : violet/indigo électrique, sur ≤10 % de l'écran, jamais décoratif.
 - **Chiffres en mono tabulaire** (Geist Mono, chasse fixe, zéro barré) — la signature instrument.
 - Contraste WCAG AA plancher, pensé pour les néons et le bras tendu.
-- Densité au pouce : tout atteignable d'une main, tap-targets ≥ 44px.
+- Densité au pouce : tout atteignable d'une main.
 - Plat par paliers tonals + finitions machinées (hairline, liseré spéculaire) ; la seule lumière est le halo accent de l'action primaire.
 
 ## 2. Colors
@@ -190,9 +190,10 @@ Palette **Restrained** : un océan de quasi-noir teinté, traversé par un seul 
 ### Buttons
 - **Shape :** coins arrondis 14px (`.btn`, `rounded-[0.875rem]`) ; les CTA pleine largeur montent à 16–18px (`rounded-2xl` / `rounded-[18px]`). `:active` = `scale(0.97)`.
 - **Primary — « contour accent » lumineux** (`.btn-primary`) : fond `accent-soft` + **bordure `accent`** + texte `accent-ink`, rehaussé du **halo accent 3 couches** (cf. Elevation). C'est la seule surface pleinement violette. Hover : voile un cran plus dense (`accent` à transparent 80%). Disabled : opacité 0.45, halo retiré. **Pas de dégradé plein, pas de texte blanc-sur-violet.**
-- **Secondary — fantôme cerclé** (`.btn-secondary`) : fond transparent + bordure `hair-strong` ; le **ton** est porté par l'action — `ink-muted` (neutre : Renommer, Modifier, Exporter), `accent-ink` + `border-accent` + 600 (accent : Éditer, Définir courante), `warn` (destructif : Supprimer — bordure `hair-strong`, **jamais** de bordure ni d'aplat warn). Hover : wash `surface`.
-- **Ghost — texte seul** (`.btn-ghost`) : `ink-muted`, wash discret au hover (Clôturer sans noter, retour). 
-- **Petit « + » d'en-tête / icône accent** : carré 40px, `accent-soft` + bordure `accent` + `accent-ink` + liseré spéculaire — distinct du CTA plein.
+- **Secondary — fantôme cerclé** (`.btn-secondary`) : fond transparent + bordure `hair-strong`, `ink-muted`. Pour les actions **texte** (Modifier une note, Exporter, Annuler, Réessayer, Clôturer sans noter). Hover : wash `surface`.
+- **Ghost — texte seul** (`.btn-ghost`) : `ink-muted`, wash discret au hover (retour amont, Replier).
+- **Bouton-instrument à icône** : carré 38–44px, bordure `hair` + fond `surface` + liseré spéculaire (`inset 0 1px 0 var(--spec)`), `:active scale(0.95)`. C'est **l'affordance d'action à icône, partout** : retour / overflow (Capture), swap (picker), monter / descendre / renommer / supprimer / éditer (éditeurs **séance & routine**). Le **ton** est porté par l'action — neutre `ink-muted` par défaut, **accent** (`border-accent` + `accent-ink`) pour l'action principale (Éditer une séance ; le « + » d'ajout d'en-tête en `accent-soft`), `warn` **à la pression** pour le destructif (Supprimer). Icônes stroke : réglages = Éditer, étoile = Définir courante, crayon = Renommer, corbeille = Supprimer.
+- **Ajout en pointillé** : `border-dashed border-hair-strong`, `ink-muted`, rayon 16px — l'**affordance d'ajout** (« Ajouter un exercice » en barre fixe de l'éditeur de séance ; « Ajouter un exercice » du picker Capture). Distinct du CTA plein et du bouton-instrument.
 
 ### Chips / Badges
 - **Neutre** (`bg-surface-2`, `ink-muted`, 11.5px, rayon 10px) : muscles, badge « Base », « Unilatéral » sans accent.
@@ -217,8 +218,8 @@ Palette **Restrained** : un océan de quasi-noir teinté, traversé par un seul 
 - **Top bar capture** : boutons carrés 38px (`panel`) back / overflow ; centre en mono `ink-muted`.
 
 ### Signature components
-- **Cluster instrument** (écran roi) : carte rayon 20–22px, fond `linear-gradient(180deg, surface, color-mix(surface,#000 8%))`, bordure `hair-strong`, ombre interne douce. Boutons ronds `−`/`+` (54px poids, 40px reps/RIR ; le `+` poids en accent), readout poids **62px mono**. Steppers custom **jamais le clavier OS** (tap-to-type optionnel préservé).
-- **Stepper rectangulaire** (`.Stepper`, partagé par 5 surfaces) : `−` / valeur mono / `+`, pas fin configurable.
+- **Cluster instrument** (`ClusterStepper`) : boutons **ronds** `−`/`+` (le `+` en accent), readout central **transparent** en mono (largeur en `ch`, pas de boîte). Variante **hero** — poids 62px sur la carte-instrument de l'écran-salle (fond `linear-gradient(180deg, surface, color-mix(surface,#000 8%))`, bordure `hair-strong`, ombre interne douce) — et **compacte** — reps/RIR en Capture, ET séries / reps / RIR (fixe ou fourchette min-max) dans **l'éditeur de séance**. Steppers custom **jamais le clavier OS** (tap-to-type optionnel préservé).
+- **Stepper rectangulaire** (`.Stepper`) : `−` / valeur mono / `+`, pas fin configurable. Réservé aux **saisies de formulaire hors-salle** — BPM de clôture, correction d'une séance passée.
 - **Courbe e1RM** (Analyse, recharts) : trait `accent` 2.5px, aire dégradée violet 32 %→0, grille hairline, ligne de référence pointillée `ink-faint` `4 5`, points cerclés, **dernier point plein accent r=5**. Façon Apple Fitness.
 - **StatusIndicator** : pastille SVG dont la **forme** change avec l'état (anneau à faire, anneau+disque en cours, disque+coche fait, anneau+tiret passé) — couleur ET forme.
 - **ProgressionBadge / TrendArrow** : flèche ▲ ▬ ▼ + signe + couleur, sur fond teinté `good-soft` / `warn-soft` selon la tendance.
@@ -231,7 +232,7 @@ Palette **Restrained** : un océan de quasi-noir teinté, traversé par un seul 
 - **Do** afficher **tout chiffre mesuré en mono tabulaire** (`.readout`) ; les readouts s'alignent en colonne.
 - **Do** réserver la **seule lueur** de l'écran au bouton primaire (halo accent doux : `0 0 14px -3px [accent/40], 0 6px 20px -8px [accent/35], inset 0 0 12px -6px [accent/50]`).
 - **Do** tenir le **contraste WCAG AA** (lisible sous néons, à bout de bras) ; bumper le texte vers l'encre plutôt que vers le gris.
-- **Do** des **tap-targets ≥ 44px**, tout atteignable au pouce d'une main.
+- **Do** des cibles **confortables au pouce**, tout atteignable d'une main.
 - **Do** rester **plat par défaut** ; profondeur par paliers tonals + finition hairline/spéculaire, ombres portées seulement en réponse à un état.
 - **Do** une motion **150–250 ms** ease-out (quart/quint/expo) qui sert l'état ; `prefers-reduced-motion` → crossfade ou instantané.
 - **Do** coder progrès/stagnation/régression par **couleur + signe/forme** (▲ ▬ ▼), jamais par la couleur seule.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-06-20T12:45:00Z",
+  "generatedAt": "2026-06-24T09:12:54Z",
   "title": "Design System: Croustylift",
   "extensions": {
     "colorMeta": {
@@ -8,7 +8,16 @@
         "role": "primary",
         "displayName": "Violet électrique",
         "canonical": "oklch(0.62 0.19 286)",
-        "tonalRamp": ["oklch(0.20 0.10 286)", "oklch(0.30 0.14 286)", "oklch(0.40 0.17 286)", "oklch(0.50 0.19 286)", "oklch(0.62 0.19 286)", "oklch(0.72 0.16 286)", "oklch(0.82 0.11 286)", "oklch(0.92 0.05 286)"]
+        "tonalRamp": [
+          "oklch(0.20 0.10 286)",
+          "oklch(0.30 0.14 286)",
+          "oklch(0.40 0.17 286)",
+          "oklch(0.50 0.19 286)",
+          "oklch(0.62 0.19 286)",
+          "oklch(0.72 0.16 286)",
+          "oklch(0.82 0.11 286)",
+          "oklch(0.92 0.05 286)"
+        ]
       },
       "accent-ink": {
         "role": "primary",
@@ -24,54 +33,173 @@
         "role": "neutral",
         "displayName": "Noir d'instrument",
         "canonical": "oklch(0.145 0.012 286)",
-        "tonalRamp": ["oklch(0.145 0.012 286)", "oklch(0.192 0.014 286)", "oklch(0.238 0.016 286)", "oklch(0.30 0.012 286)", "oklch(0.45 0.012 286)", "oklch(0.62 0.010 286)", "oklch(0.80 0.008 286)", "oklch(0.975 0.004 286)"]
+        "tonalRamp": [
+          "oklch(0.145 0.012 286)",
+          "oklch(0.192 0.014 286)",
+          "oklch(0.238 0.016 286)",
+          "oklch(0.30 0.012 286)",
+          "oklch(0.45 0.012 286)",
+          "oklch(0.62 0.010 286)",
+          "oklch(0.80 0.008 286)",
+          "oklch(0.975 0.004 286)"
+        ]
       },
-      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "oklch(0.192 0.014 286)" },
-      "surface-2": { "role": "neutral", "displayName": "Surface +2", "canonical": "oklch(0.238 0.016 286)" },
-      "ink": { "role": "neutral", "displayName": "Encre", "canonical": "oklch(0.975 0.004 286)" },
-      "ink-muted": { "role": "neutral", "displayName": "Encre atténuée", "canonical": "oklch(0.715 0.018 286)" },
-      "ink-faint": { "role": "neutral", "displayName": "Encre discrète", "canonical": "oklch(0.545 0.016 286)" },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "oklch(0.192 0.014 286)"
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Surface +2",
+        "canonical": "oklch(0.238 0.016 286)"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Encre",
+        "canonical": "oklch(0.975 0.004 286)"
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Encre atténuée",
+        "canonical": "oklch(0.715 0.018 286)"
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Encre discrète",
+        "canonical": "oklch(0.545 0.016 286)"
+      },
       "good": {
         "role": "secondary",
         "displayName": "Vert froid",
         "canonical": "oklch(0.80 0.13 158)",
-        "tonalRamp": ["oklch(0.25 0.06 158)", "oklch(0.35 0.09 158)", "oklch(0.45 0.11 158)", "oklch(0.55 0.12 158)", "oklch(0.65 0.13 158)", "oklch(0.72 0.13 158)", "oklch(0.80 0.13 158)", "oklch(0.90 0.08 158)"]
+        "tonalRamp": [
+          "oklch(0.25 0.06 158)",
+          "oklch(0.35 0.09 158)",
+          "oklch(0.45 0.11 158)",
+          "oklch(0.55 0.12 158)",
+          "oklch(0.65 0.13 158)",
+          "oklch(0.72 0.13 158)",
+          "oklch(0.80 0.13 158)",
+          "oklch(0.90 0.08 158)"
+        ]
       },
       "warn": {
         "role": "secondary",
         "displayName": "Ambre",
         "canonical": "oklch(0.82 0.115 80)",
-        "tonalRamp": ["oklch(0.30 0.05 80)", "oklch(0.40 0.07 80)", "oklch(0.50 0.09 80)", "oklch(0.60 0.10 80)", "oklch(0.70 0.11 80)", "oklch(0.78 0.115 80)", "oklch(0.82 0.115 80)", "oklch(0.90 0.08 80)"]
+        "tonalRamp": [
+          "oklch(0.30 0.05 80)",
+          "oklch(0.40 0.07 80)",
+          "oklch(0.50 0.09 80)",
+          "oklch(0.60 0.10 80)",
+          "oklch(0.70 0.11 80)",
+          "oklch(0.78 0.115 80)",
+          "oklch(0.82 0.115 80)",
+          "oklch(0.90 0.08 80)"
+        ]
       }
     },
     "typographyMeta": {
-      "display": { "displayName": "Display", "purpose": "Nom de l'exo en cours / titre d'écran." },
-      "hero-readout": { "displayName": "Hero Readout", "purpose": "Poids de la série en cours, 62px mono, dans le cluster." },
-      "metric-readout": { "displayName": "Metric Readout", "purpose": "Métrique e1RM héros en Analyse, 52px mono." },
-      "kicker": { "displayName": "Kicker", "purpose": "Mono majuscule traquée : ROUTINE COURANTE, SÉRIES LOGGÉES." }
+      "display": {
+        "displayName": "Display",
+        "purpose": "Nom de l'exo en cours / titre d'écran."
+      },
+      "hero-readout": {
+        "displayName": "Hero Readout",
+        "purpose": "Poids de la série en cours, 62px mono, dans le cluster."
+      },
+      "metric-readout": {
+        "displayName": "Metric Readout",
+        "purpose": "Métrique e1RM héros en Analyse, 52px mono."
+      },
+      "kicker": {
+        "displayName": "Kicker",
+        "purpose": "Mono majuscule traquée : ROUTINE COURANTE, SÉRIES LOGGÉES."
+      }
     },
     "finishes": [
-      { "name": "hair", "value": "rgba(255,255,255,0.075)", "purpose": "Bordure 1px discrète des cartes." },
-      { "name": "hair-strong", "value": "rgba(255,255,255,0.14)", "purpose": "Bordure 1px des cartes clés." },
-      { "name": "spec", "value": "rgba(255,255,255,0.055)", "purpose": "Liseré spéculaire haut : box-shadow inset 0 1px 0." }
+      {
+        "name": "hair",
+        "value": "rgba(255,255,255,0.075)",
+        "purpose": "Bordure 1px discrète des cartes."
+      },
+      {
+        "name": "hair-strong",
+        "value": "rgba(255,255,255,0.14)",
+        "purpose": "Bordure 1px des cartes clés."
+      },
+      {
+        "name": "spec",
+        "value": "rgba(255,255,255,0.055)",
+        "purpose": "Liseré spéculaire haut : box-shadow inset 0 1px 0."
+      }
     ],
     "shadows": [
-      { "name": "card", "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 1px 2px rgba(0,0,0,0.45)", "purpose": "Finition machinée des surfaces au repos (.panel)." },
-      { "name": "raised", "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 2px 4px rgba(0,0,0,0.3), 0 14px 32px -14px rgba(0,0,0,0.6)", "purpose": "Feuilles modales et barres d'action flottantes." },
-      { "name": "cluster", "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 14px 30px -18px rgba(0,0,0,0.7)", "purpose": "Carte cluster instrument (écran roi)." },
-      { "name": "accent-glow", "value": "0 0 14px -3px color-mix(in oklab, oklch(0.62 0.19 286), transparent 40%), 0 6px 20px -8px color-mix(in oklab, oklch(0.62 0.19 286), transparent 35%), inset 0 0 12px -6px color-mix(in oklab, oklch(0.62 0.19 286), transparent 50%)", "purpose": "La seule lumière du système : halo du bouton primaire. Pas de dégradé, pas d'ombre noire dure." },
-      { "name": "focus-ring", "value": "0 0 0 3px oklch(0.62 0.19 286 / 0.3)", "purpose": "Anneau de focus clavier des champs (avec bordure accent)." }
+      {
+        "name": "card",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 1px 2px rgba(0,0,0,0.45)",
+        "purpose": "Finition machinée des surfaces au repos (.panel)."
+      },
+      {
+        "name": "raised",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 2px 4px rgba(0,0,0,0.3), 0 14px 32px -14px rgba(0,0,0,0.6)",
+        "purpose": "Feuilles modales et barres d'action flottantes."
+      },
+      {
+        "name": "cluster",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 14px 30px -18px rgba(0,0,0,0.7)",
+        "purpose": "Carte cluster instrument (écran roi)."
+      },
+      {
+        "name": "accent-glow",
+        "value": "0 0 14px -3px color-mix(in oklab, oklch(0.62 0.19 286), transparent 40%), 0 6px 20px -8px color-mix(in oklab, oklch(0.62 0.19 286), transparent 35%), inset 0 0 12px -6px color-mix(in oklab, oklch(0.62 0.19 286), transparent 50%)",
+        "purpose": "La seule lumière du système : halo du bouton primaire. Pas de dégradé, pas d'ombre noire dure."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px oklch(0.62 0.19 286 / 0.3)",
+        "purpose": "Anneau de focus clavier des champs (avec bordure accent)."
+      }
     ],
     "motion": [
-      { "name": "ease-out-quart", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Easing par défaut des transitions d'état." },
-      { "name": "ease-out-quint", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Press / transform." },
-      { "name": "ease-out-expo", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Reveals d'entrée, feuilles." },
-      { "name": "dur-fast", "value": "130ms", "purpose": "Press, micro-feedback." },
-      { "name": "dur", "value": "200ms", "purpose": "Transitions d'état standard." },
-      { "name": "dur-slow", "value": "360ms", "purpose": "Reveals d'entrée uniquement." }
+      {
+        "name": "ease-out-quart",
+        "value": "cubic-bezier(0.25, 1, 0.5, 1)",
+        "purpose": "Easing par défaut des transitions d'état."
+      },
+      {
+        "name": "ease-out-quint",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Press / transform."
+      },
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Reveals d'entrée, feuilles."
+      },
+      {
+        "name": "dur-fast",
+        "value": "130ms",
+        "purpose": "Press, micro-feedback."
+      },
+      {
+        "name": "dur",
+        "value": "200ms",
+        "purpose": "Transitions d'état standard."
+      },
+      {
+        "name": "dur-slow",
+        "value": "360ms",
+        "purpose": "Reveals d'entrée uniquement."
+      }
     ],
     "breakpoints": [
-      { "name": "content", "value": "28rem", "purpose": "Largeur max de colonne (max-w-md) — l'app est mobile-first." }
+      {
+        "name": "content",
+        "value": "28rem",
+        "purpose": "Largeur max de colonne (max-w-md) — l'app est mobile-first."
+      }
     ]
   },
   "components": [
@@ -87,9 +215,17 @@
       "name": "Secondary Button",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "Action secondaire — bouton-fantôme cerclé. Ton porté par la couleur du texte (neutre / accent / destructif).",
-      "html": "<button class=\"ds-btn-secondary\">Renommer</button>",
+      "description": "Action secondaire TEXTE — bouton-fantôme cerclé (Modifier une note, Exporter, Annuler). Les actions routine/séance sont passées en bouton-instrument à icône.",
+      "html": "<button class=\"ds-btn-secondary\">Exporter</button>",
       "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:44px;padding:0 16px;border-radius:14px;font:500 14px/1.1 'Geist Variable','Inter Variable',system-ui,sans-serif;color:var(--color-ink,oklch(0.975 0.004 286));background:transparent;border:1px solid var(--color-hair-strong,rgba(255,255,255,0.14));cursor:pointer;transition:background-color .2s cubic-bezier(.25,1,.5,1),transform .13s}.ds-btn-secondary:hover{background:var(--color-surface,oklch(0.192 0.014 286))}.ds-btn-secondary:active{transform:scale(.97);background:var(--color-surface-2,oklch(0.238 0.016 286))}.ds-btn-secondary:focus-visible{outline:2px solid oklch(0.62 0.19 286);outline-offset:2px}"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-instrument-icon",
+      "description": "Affordance d'action à icône, partout : retour/overflow (Capture), swap (picker), monter/descendre/renommer/supprimer/éditer (éditeurs séance & routine). Bordé + surface + liseré. Ton par action ; ici neutre (crayon = Renommer).",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Renommer\"><svg viewBox=\"0 0 24 24\" width=\"19\" height=\"19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 20h9\"/><path d=\"M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z\"/></svg></button>",
+      "css": ".ds-icon-btn{display:flex;align-items:center;justify-content:center;height:44px;width:44px;border-radius:14px;color:var(--color-ink-muted,oklch(0.715 0.018 286));background:var(--color-surface,oklch(0.192 0.014 286));border:1px solid var(--color-hair,rgba(255,255,255,0.075));box-shadow:inset 0 1px 0 var(--spec,rgba(255,255,255,0.055));cursor:pointer;transition:transform .15s cubic-bezier(0.22,1,0.36,1),color .15s,border-color .15s}.ds-icon-btn:hover{color:var(--color-ink,oklch(0.975 0.004 286))}.ds-icon-btn:active{transform:scale(0.95)}.ds-icon-btn:focus-visible{outline:none;border-color:var(--color-accent,oklch(0.62 0.19 286));box-shadow:inset 0 1px 0 var(--spec,rgba(255,255,255,0.055)),0 0 0 3px color-mix(in oklab,oklch(0.62 0.19 286),transparent 70%)}"
     },
     {
       "name": "Text Field",
@@ -144,12 +280,36 @@
       "Plat par paliers tonals + finition machinée ; seule lumière = halo accent de l'action primaire."
     ],
     "rules": [
-      { "name": "The One Voice Rule", "body": "L'accent violet ne couvre jamais plus de 10 % d'un écran : action primaire, sélection, progression. Sa rareté EST le message ; une seule surface pleinement violette par écran (le bouton primaire).", "section": "colors" },
-      { "name": "The No Fitness-Red Rule", "body": "Le rouge/orange « énergie » est interdit comme accent. Le violet froid premium porte l'app ; une régression reste en ambre atténué, pas en alarme.", "section": "colors" },
-      { "name": "The Readout Rule", "body": "Tout chiffre mesuré (poids, reps, RIR, e1RM, dates) est en mono à chasse tabulaire. Les chiffres s'alignent en colonne et ne dansent jamais entre deux séries.", "section": "typography" },
-      { "name": "The Fixed-Scale Rule", "body": "Échelle typographique en rem fixe, pas de clamp fluide : un outil se lit à DPI constant.", "section": "typography" },
-      { "name": "The Flat-By-Default Rule", "body": "Les surfaces sont plates au repos ; la profondeur vient des paliers tonals et de la finition hairline + spéculaire, pas d'une ombre décorative. L'ombre portée n'apparaît qu'en réponse à un état.", "section": "elevation" },
-      { "name": "The Single-Glow Rule", "body": "La seule surface qui rayonne est le bouton d'action primaire (halo accent doux). Tout autre élément reste mat ; un deuxième glow tuerait la One Voice Rule.", "section": "elevation" }
+      {
+        "name": "The One Voice Rule",
+        "body": "L'accent violet ne couvre jamais plus de 10 % d'un écran : action primaire, sélection, progression. Sa rareté EST le message ; une seule surface pleinement violette par écran (le bouton primaire).",
+        "section": "colors"
+      },
+      {
+        "name": "The No Fitness-Red Rule",
+        "body": "Le rouge/orange « énergie » est interdit comme accent. Le violet froid premium porte l'app ; une régression reste en ambre atténué, pas en alarme.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readout Rule",
+        "body": "Tout chiffre mesuré (poids, reps, RIR, e1RM, dates) est en mono à chasse tabulaire. Les chiffres s'alignent en colonne et ne dansent jamais entre deux séries.",
+        "section": "typography"
+      },
+      {
+        "name": "The Fixed-Scale Rule",
+        "body": "Échelle typographique en rem fixe, pas de clamp fluide : un outil se lit à DPI constant.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "Les surfaces sont plates au repos ; la profondeur vient des paliers tonals et de la finition hairline + spéculaire, pas d'une ombre décorative. L'ombre portée n'apparaît qu'en réponse à un état.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Single-Glow Rule",
+        "body": "La seule surface qui rayonne est le bouton d'action primaire (halo accent doux). Tout autre élément reste mat ; un deuxième glow tuerait la One Voice Rule.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do garder l'accent violet sur ≤10 % de l'écran : action primaire, sélection, progression.",
