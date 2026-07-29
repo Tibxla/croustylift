@@ -15,10 +15,10 @@ import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
-import { resolveExerciseNoteSave } from './state';
 import { ClusterStepper } from './ClusterStepper';
 import { seedDraft } from './capture-seed';
 import { NoteField } from '../notes/NoteField';
+import { useAutosavedNote } from '../notes/useAutosavedNote';
 import { DeviationBadge } from './DeviationBadge';
 import { deviationVisual } from './deviation-visual';
 import type { RecordKind } from './record-flags';
@@ -806,17 +806,19 @@ function SideSelector({
 }
 
 /**
- * Section de la note d'INSTRUCTIONS de l'exo (issue #52), repliable ET éditable
- * sur place en Capture. Trois états visuels :
- *   - AUCUNE note : affordance discrète « Ajouter une note » (tap → édition) ;
- *   - note existante, repliée/dépliée : en-tête tappable (≥44px) qui bascule le
- *     pli ; dépliée, elle montre le texte + un bouton « Modifier » ;
- *   - en ÉDITION : textarea (NoteField) + Annuler / Enregistrer.
- * Le défaut est DÉPLIÉ si une note existe (consultation immédiate), conforme au
- * critère #52. La persistance (et la MAJ optimiste) sont gérées par le parent ;
- * ici, on remonte le corps à l'enregistrement explicite. `resolveExerciseNoteSave`
- * évite un appel inutile quand le contenu réel n'a pas bougé. Vider puis
- * enregistrer efface la note (géré côté data par `saveExerciseNote`).
+ * Section de la note d'INSTRUCTIONS de l'exo (issue #52), repliable et éditée
+ * SUR PLACE, AUTO-enregistrée (décision 2026-07-29) : plus de mode édition ni de
+ * boutons « Annuler »/« Enregistrer » — incompatibles avec l'auto-save (on ne
+ * peut pas annuler ce qui est déjà parti). Deux états :
+ *   - AUCUNE note (jamais ouverte ici) : affordance discrète « Ajouter une note » ;
+ *   - sinon : carte repliable (en-tête tappable ≥44px), corps = champ ÉDITABLE
+ *     directement. Déplié par défaut si une note existe (consultation immédiate,
+ *     critère #52). Une fois montré, le champ le reste — vider = supprimer
+ *     (tranché côté ops), sans disparaître sous les doigts. Pour réviser au
+ *     calme avec un vrai annuler, l'éditeur de séance garde son bouton.
+ * La persistance (MAJ optimiste + outbox) est au parent ; `useAutosavedNote`
+ * décide QUAND pousser (debounce, blur, repli, changement d'exo) et n'écrit que
+ * si le contenu réel a bougé.
  */
 function ExerciseNoteSection({
   value,
@@ -826,86 +828,21 @@ function ExerciseNoteSection({
   onSave: (body: string) => void;
 }) {
   const hasNote = !isBlankNote(value);
+  // Champ MONTRÉ dès qu'une note existe ou que l'utilisateur a tapé « Ajouter ».
+  const [started, setStarted] = useState(hasNote);
   // Déplié par défaut si une note existe (consultation immédiate, critère #52).
   const [open, setOpen] = useState(hasNote);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [saved, setSaved] = useState(false);
-
-  // Le toast « enregistré » retombe après 1,6 s. Id gardé en ref + clear au
-  // démontage : changer d'exo dans l'intervalle ne déclenche pas le timer sur
-  // une instance démontée (même garde-fou que ExportButton).
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
-
-  const startEditing = () => {
-    setDraft(value);
-    setEditing(true);
-    setOpen(true);
-    setSaved(false);
-  };
-
-  const handleSave = () => {
-    const { changed, nextBody } = resolveExerciseNoteSave(value, draft);
-    // N'écrit que si le contenu réel a bougé (resaver à l'identique ou ne toucher
-    // que des espaces n'appelle pas le réseau).
-    if (changed) onSave(nextBody);
-    setEditing(false);
-    // Une note vidée se replie sur l'affordance « Ajouter » ; sinon on reste ouvert.
-    setOpen(!isBlankNote(nextBody));
-    setSaved(true);
-    if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-    savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
-  };
-
-  const handleCancel = () => {
-    setDraft(value);
-    setEditing(false);
-  };
-
-  // En ÉDITION : champ texte + actions. Sert aussi bien à créer qu'à modifier.
-  if (editing) {
-    return (
-      <div className="mt-2.5">
-        <NoteField
-          id="exercise-note"
-          label="Note de l’exercice"
-          hint="Consigne d’exécution persistante (prise, posture, tempo)."
-          value={draft}
-          placeholder="Omoplates rétractées, barre au sternum."
-          rows={3}
-          onChange={setDraft}
-        />
-        <div className="mt-2.5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="btn btn-secondary text-ink-muted h-11 rounded-xl px-4 text-sm font-medium"
-          >
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-          >
-            Enregistrer la note
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const { draft, saved, handleChange, flush } = useAutosavedNote(value, onSave);
 
   // AUCUNE note : affordance discrète pour en créer une (tap-target ≥44px).
-  if (!hasNote) {
+  if (!started) {
     return (
       <button
         type="button"
-        onClick={startEditing}
+        onClick={() => {
+          setStarted(true);
+          setOpen(true);
+        }}
         className="mt-2.5 flex min-h-[2.75rem] w-full items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 py-2.5 text-left text-sm font-medium text-ink-muted transition active:bg-surface active:text-ink"
       >
         <svg
@@ -923,34 +860,21 @@ function ExerciseNoteSection({
           <path d="M12 5v14M5 12h14" />
         </svg>
         Ajouter une note
-        {saved && (
-          <span className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-good">
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M20 6L9 17l-5-5" />
-            </svg>
-            Note supprimée.
-          </span>
-        )}
       </button>
     );
   }
 
-  // Note existante : carte avec en-tête TAPPABLE (déplier/replier) + corps + Modifier.
+  // Replier FLUSHE le brouillon en cours : rien ne reste en l'air sous un pli.
+  const toggleOpen = () => {
+    if (open) flush();
+    setOpen(!open);
+  };
+
   return (
     <div className="surface-card mt-2.5 rounded-2xl">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-expanded={open}
         className="flex min-h-[2.75rem] w-full items-center gap-1.5 rounded-2xl px-4 py-2.5 text-left transition active:bg-surface-2"
       >
@@ -969,6 +893,7 @@ function ExerciseNoteSection({
           <path d="M4 6h16M4 12h10M4 18h7" />
         </svg>
         <span className="text-xs font-medium text-ink-muted">Note de l’exercice</span>
+        {/* Confirmation d'auto-save : forme + texte, retombe seule (useAutosavedNote). */}
         {saved && (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-good">
             <svg
@@ -1005,28 +930,18 @@ function ExerciseNoteSection({
       </button>
       {open && (
         <div className="px-4 pb-3">
-          <p className="whitespace-pre-line text-sm leading-relaxed text-ink">{value}</p>
-          <button
-            type="button"
-            onClick={startEditing}
-            className="btn btn-secondary text-ink-muted mt-2.5 h-11 rounded-xl px-4 text-sm font-medium"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="15"
-              height="15"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-            </svg>
-            Modifier
-          </button>
+          {/* Le label visuel est porté par l'en-tête de la carte ; NoteField le
+              garde en sr-only pour l'a11y. Blur = flush immédiat. */}
+          <NoteField
+            id="exercise-note"
+            label="Note de l’exercice"
+            labelHidden
+            value={draft}
+            placeholder="Omoplates rétractées, barre au sternum."
+            rows={3}
+            onChange={handleChange}
+            onBlur={flush}
+          />
         </div>
       )}
     </div>
@@ -1034,10 +949,12 @@ function ExerciseNoteSection({
 }
 
 /**
- * Section de note datée du jour. Repliée tant qu'aucune note n'existe (bouton
- * « Ajouter une note du jour ») ; ouverte, elle montre un textarea + un bouton
- * d'enregistrement. Le brouillon est local ; on remonte au parent (outbox) à
- * l'enregistrement explicite. Vider le texte puis enregistrer efface la note.
+ * Section de note datée du jour, AUTO-enregistrée (décision 2026-07-29) : plus de
+ * bouton « Enregistrer la note » — debounce pendant la frappe, flush au blur et
+ * au changement d'exo (le panneau est key-é), via `useAutosavedNote`. Avant, le
+ * brouillon non enregistré était PERDU au changement d'exo et au reload. Vider
+ * le texte supprime la note (tranché par datedNoteOutboxOp côté parent).
+ * Repliée tant qu'aucune note n'existe (zéro-friction), on l'ouvre pour saisir.
  */
 function DatedNoteSection({
   value,
@@ -1049,27 +966,7 @@ function DatedNoteSection({
   const hasNote = !isBlankNote(value);
   // Ouverte si une note existe déjà (consultation/édition), sinon repliée.
   const [open, setOpen] = useState(hasNote);
-  const [draft, setDraft] = useState(value);
-  const [saved, setSaved] = useState(false);
-
-  // Sauvegarde différée du résultat : on confirme brièvement puis on retombe.
-  const dirty = draft !== value;
-
-  // Toast « enregistré » (1,6 s) : id en ref + clear au démontage pour ne pas
-  // tirer setSaved sur une instance démontée si on change d'exo entre-temps.
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
-
-  const handleSave = () => {
-    onSave(draft);
-    setSaved(true);
-    if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-    savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
-  };
+  const { draft, saved, handleChange, flush } = useAutosavedNote(value, onSave);
 
   if (!open) {
     return (
@@ -1109,15 +1006,17 @@ function DatedNoteSection({
       <NoteField
         id="dated-note"
         label="Note du jour"
-        hint="Contexte de la perf d&apos;aujourd&apos;hui (sommeil, douleur, sensation)."
+        hint="Contexte de la perf d&apos;aujourd&apos;hui (sommeil, douleur, sensation). S&apos;enregistre toute seule."
         value={draft}
         placeholder="Épaule un peu raide, échauffement plus long."
         rows={3}
-        onChange={setDraft}
+        onChange={handleChange}
+        onBlur={flush}
       />
-      <div className="mt-2.5 flex items-center justify-end gap-2">
-        {saved && !dirty && (
-          <span className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-good">
+      {/* Confirmation d'auto-save, hauteur réservée (pas de saut de mise en page). */}
+      <p className="mt-2 min-h-[1.25rem] text-xs font-medium text-good" aria-live="polite">
+        {saved && (
+          <span className="inline-flex items-center gap-1.5">
             <svg
               viewBox="0 0 24 24"
               width="14"
@@ -1134,15 +1033,7 @@ function DatedNoteSection({
             Note enregistrée.
           </span>
         )}
-        <button
-          type="button"
-          disabled={!dirty}
-          onClick={handleSave}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Enregistrer la note
-        </button>
-      </div>
+      </p>
     </div>
   );
 }
