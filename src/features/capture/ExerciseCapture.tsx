@@ -178,6 +178,13 @@ export function ExerciseCapture({
     onDraftChange?.({ weightKg, reps, rir, side: currentSide ?? undefined });
   }, [weightKg, reps, rir, currentSide, onDraftChange]);
 
+  // Le record AFFICHÉ en repère : le record all-time de l'exo (toutes séances,
+  // cf. CONTEXT.md « Record personnel »), lu PAR CÔTÉ pour un unilatéral (le
+  // bras visé au sélecteur, chaque bras tenant son propre record — ADR 0010).
+  const displayRecord = unilateral
+    ? exercise.personalRecordBySide?.[selectedSide] ?? null
+    : exercise.personalRecord ?? null;
+
   // La série « à battre » à la position courante (co-roi). En unilatéral (ADR
   // 0010), on l'apparie par (position, CÔTÉ CHOISI) : le repère suit le bras que
   // tu t'apprêtes à logger — sa dernière fois à lui. Bilatéral : par position.
@@ -298,6 +305,19 @@ export function ExerciseCapture({
             </span>
           )}
         </div>
+        {/* RECORD personnel (all-time, toutes séances — cf. CONTEXT.md) : la perf
+            au meilleur e1RM, à aller chercher. Par CÔTÉ en unilatéral : le record
+            du bras visé au sélecteur, comme « Dernière fois » (ADR 0010). Absent
+            si l'historique est vierge (rien à annoncer au premier passage). */}
+        {displayRecord?.bestE1rm != null && displayRecord.bestE1rmSet && (
+          <div className="flex items-center gap-2.5">
+            <RepereLabel>Record</RepereLabel>
+            <span className="readout text-[13.5px] text-ink-muted">
+              {formatWeight(displayRecord.bestE1rmSet.weightKg)} ×{' '}
+              {displayRecord.bestE1rmSet.reps} · e1RM {formatE1rm(displayRecord.bestE1rm)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Nom = roi + muscles principaux (issue #33). */}
