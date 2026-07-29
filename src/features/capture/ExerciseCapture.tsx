@@ -32,11 +32,13 @@ import {
 import {
   formatE1rm,
   formatPrescription,
+  formatRelativeDay,
   formatSet,
   formatRange,
   formatSetCount,
   formatWeight,
 } from './format';
+import { todayIso } from './state';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
@@ -148,6 +150,9 @@ export function ExerciseCapture({
       seedDraft({
         prescription,
         reference: reference ?? null,
+        // Repli cross-séances (poids seulement) quand la séance n'a pas
+        // d'historique de l'exo : un point de départ, jamais un repère.
+        fallbackReference: exercise.fallbackReference ?? null,
         loggedSets: progress.sets,
         side: currentSide ?? undefined,
       }),
@@ -303,16 +308,22 @@ export function ExerciseCapture({
         <p className="readout mt-1.5 text-[13px] text-ink-faint">{muscles.join(' · ')}</p>
       )}
 
-      {/* Repère « Dernière fois tu notais : … » (note datée la plus récente d'une
-          séance passée, lecture seule, cf. CONTEXT.md « Note datée »). Visible
-          pendant l'exo ; on saisit une note FRAÎCHE du jour plus bas. */}
-      {exercise.previousDatedNote && exercise.previousDatedNote.trim() !== '' && (
+      {/* Repère « Dernière fois tu notais : … » (lecture seule, TOUJOURS daté) :
+          la note que la DERNIÈRE exécution de cette séance porte pour cet exo —
+          rien si elle n'en porte pas, on ne repêche jamais plus ancien (cf.
+          CONTEXT.md « Note datée »). On saisit une note FRAÎCHE du jour plus bas. */}
+      {exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body) && (
         <div className="mt-3 rounded-xl border border-hair bg-surface px-3.5 py-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
-            Dernière fois tu notais
-          </p>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
+              Dernière fois tu notais
+            </p>
+            <p className="readout shrink-0 text-[11px] text-ink-faint">
+              {formatRelativeDay(exercise.previousDatedNote.performedOn, todayIso())}
+            </p>
+          </div>
           <p className="mt-1 whitespace-pre-line text-[13.5px] leading-relaxed text-ink-muted">
-            {exercise.previousDatedNote}
+            {exercise.previousDatedNote.body}
           </p>
         </div>
       )}

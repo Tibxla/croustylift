@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   decideCaptureSource,
+  deriveExerciseHistory,
   resolveCaptureRoutineId,
   reconstructExerciseExecutions,
   type SeanceChoice,
@@ -75,7 +76,11 @@ describe('resolveCaptureRoutineId', () => {
 /** Fabrique une ligne plate `performed_sets`+`executions` (jointure présente par défaut). */
 function setRow(
   overrides: Partial<PerformedSetWithExecutionRow> & { execution_id: string } & {
-    executions?: { performed_on: string; created_at: string } | null;
+    executions?: {
+      performed_on: string;
+      created_at: string;
+      seance_version_id: string;
+    } | null;
   },
 ): PerformedSetWithExecutionRow {
   return {
@@ -84,7 +89,11 @@ function setRow(
     rir: 2,
     set_order: 1,
     side: null,
-    executions: { performed_on: '2026-06-18', created_at: '2026-06-18T10:00:00.000Z' },
+    executions: {
+      performed_on: '2026-06-18',
+      created_at: '2026-06-18T10:00:00.000Z',
+      seance_version_id: 'v-upper-1',
+    },
     ...overrides,
   };
 }
@@ -113,12 +122,12 @@ describe('reconstructExerciseExecutions', () => {
       setRow({
         execution_id: 'e-matin',
         set_order: 1,
-        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T08:00:00.000Z' },
+        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T08:00:00.000Z', seance_version_id: 'v-upper-1' },
       }),
       setRow({
         execution_id: 'e-soir',
         set_order: 1,
-        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T19:00:00.000Z' },
+        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T19:00:00.000Z', seance_version_id: 'v-upper-1' },
       }),
     ];
     const execs = reconstructExerciseExecutions(rows, 'exo-1');
@@ -148,7 +157,7 @@ describe('reconstructExerciseExecutions', () => {
       setRow({ execution_id: 'e-orpheline', executions: null }),
       setRow({
         execution_id: 'e-valide',
-        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T10:00:00.000Z' },
+        executions: { performed_on: '2026-06-18', created_at: '2026-06-18T10:00:00.000Z', seance_version_id: 'v-upper-1' },
       }),
     ];
     const execs = reconstructExerciseExecutions(rows, 'exo-1');
@@ -168,5 +177,106 @@ describe('reconstructExerciseExecutions', () => {
     const weight = exec?.sets[0]?.weightKg;
     expect(weight).toBe(82.5);
     expect(typeof weight).toBe('number');
+  });
+});
+
+// Dérivées d'historique (Référence scopée séance + repli + records all-time).
+// Partie PURE de `loadExerciseHistory` : le scope de séance filtre les lignes par
+// `seance_version_id` (toutes les versions du template) ; les records ignorent le
+// scope. Décisions du 2026-07-29, cf. CONTEXT.md « Référence » / « Record personnel ».
+
+describe('deriveExerciseHistory', () => {
+  // Historique sur DEUX séances : Upper (v1 puis v2) et Full Body. L'exo est le
+  // même partout ; les perfs diffèrent pour rendre tout mauvais scope détectable.
+  const rows: PerformedSetWithExecutionRow[] = [
+    // Upper v1, 2026-06-01 : 80 kg.
+    setRow({
+      execution_id: 'e-upper-old',
+      weight_kg: 80,
+      executions: {
+        performed_on: '2026-06-01',
+        created_at: '2026-06-01T10:00:00.000Z',
+        seance_version_id: 'v-upper-1',
+      },
+    }),
+    // Full Body, 2026-06-15 : 90 kg (plus récent que Upper, AUTRE séance).
+    setRow({
+      execution_id: 'e-fullbody',
+      weight_kg: 90,
+      executions: {
+        performed_on: '2026-06-15',
+        created_at: '2026-06-15T10:00:00.000Z',
+        seance_version_id: 'v-fullbody-1',
+      },
+    }),
+    // Upper v2, 2026-06-10 : 82,5 kg (la dernière fois DANS Upper).
+    setRow({
+      execution_id: 'e-upper-recent',
+      weight_kg: 82.5,
+      executions: {
+        performed_on: '2026-06-10',
+        created_at: '2026-06-10T10:00:00.000Z',
+        seance_version_id: 'v-upper-2',
+      },
+    }),
+  ];
+  const upperVersions = ['v-upper-1', 'v-upper-2'];
+
+  it('la Référence est la dernière perf DANS la séance, pas la plus récente toutes séances', () => {
+    const h = deriveExerciseHistory(rows, 'exo-1', upperVersions, false);
+    // Dernière exécution d'Upper = 2026-06-10 (82,5), PAS le Full Body du 15 (90).
+    expect(h.reference?.map((s) => s.weightKg)).toEqual([82.5]);
+  });
+
+  it('la Référence traverse les versions du template (v1 comptée si v2 vide)', () => {
+    const onlyV1 = rows.filter((r) => r.executions?.seance_version_id !== 'v-upper-2');
+    const h = deriveExerciseHistory(onlyV1, 'exo-1', upperVersions, false);
+    expect(h.reference?.map((s) => s.weightKg)).toEqual([80]);
+  });
+
+  it('pas de repli quand la séance a une Référence (fallbackReference null)', () => {
+    const h = deriveExerciseHistory(rows, 'exo-1', upperVersions, false);
+    expect(h.fallbackReference).toBeNull();
+  });
+
+  it('séance sans historique : Référence null, repli = dernière perf toutes séances', () => {
+    const h = deriveExerciseHistory(rows, 'exo-1', ['v-lower-1'], false);
+    expect(h.reference).toBeNull();
+    // Le repli pioche la plus récente TOUTES séances : le Full Body du 15 (90).
+    expect(h.fallbackReference?.map((s) => s.weightKg)).toEqual([90]);
+  });
+
+  it('aucun historique nulle part : Référence ET repli null, records nuls', () => {
+    const h = deriveExerciseHistory([], 'exo-1', upperVersions, false);
+    expect(h.reference).toBeNull();
+    expect(h.fallbackReference).toBeNull();
+    expect(h.personalRecord).toEqual({
+      bestE1rm: null,
+      bestE1rmSet: null,
+      bestWeightReps: null,
+    });
+  });
+
+  it('le Record personnel reste ALL-TIME toutes séances (le 90 du Full Body compte)', () => {
+    const h = deriveExerciseHistory(rows, 'exo-1', upperVersions, false);
+    expect(h.personalRecord.bestWeightReps).toEqual({ weightKg: 90, reps: 8 });
+    expect(h.personalRecord.bestE1rmSet).toEqual({ weightKg: 90, reps: 8 });
+  });
+
+  it('exo bilatéral : pas de records par côté (null) ; unilatéral : dérivés', () => {
+    expect(deriveExerciseHistory(rows, 'exo-1', upperVersions, false).personalRecordBySide).toBeNull();
+    const uniRows = [
+      setRow({ execution_id: 'e-uni', side: 'left', weight_kg: 30 }),
+      setRow({ execution_id: 'e-uni', side: 'right', weight_kg: 28 }),
+    ];
+    const bySide = deriveExerciseHistory(uniRows, 'exo-1', upperVersions, true).personalRecordBySide;
+    expect(bySide?.left.bestWeightReps).toEqual({ weightKg: 30, reps: 8 });
+    expect(bySide?.right.bestWeightReps).toEqual({ weightKg: 28, reps: 8 });
+  });
+
+  it('une ligne orpheline (jointure absente) reste hors du scope de séance', () => {
+    const withOrphan = [...rows, setRow({ execution_id: 'e-orpheline', executions: null })];
+    const h = deriveExerciseHistory(withOrphan, 'exo-1', upperVersions, false);
+    expect(h.reference?.map((s) => s.weightKg)).toEqual([82.5]);
   });
 });

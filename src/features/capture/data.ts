@@ -18,8 +18,9 @@ import {
   type PersonalRecordBySide,
 } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
+import { loadExerciseNote } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import type { Session, SessionExercise } from './fixtures';
+import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
   loadExerciseOverrides,
@@ -151,6 +152,20 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
   return { seance: { id: seance.id, name: seance.name }, seanceVersionId: versionId };
 }
 
+/**
+ * TOUS les ids de version d'une séance (append-only, ADR 0001). C'est le périmètre
+ * de la Référence scopée séance (cf. CONTEXT.md « Référence ») : les versions sont
+ * des retouches du même template, l'historique de l'exo les traverse toutes.
+ */
+export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('seance_versions')
+    .select('id')
+    .eq('seance_id', seanceId);
+  if (error) throw error;
+  return (data ?? []).map((row) => row.id);
+}
+
 // --- Lecture du catalogue -----------------------------------------------------
 
 /**
@@ -186,9 +201,9 @@ export const DEFAULT_ADDED_PRESCRIPTION = {
 
 /**
  * Mappe un exo du catalogue (`ExerciseRow`) vers la forme `SessionExercise`
- * consommée par la Capture, avec la cible par défaut des ajouts. `reference` et
- * `personalRecord` sont laissés à `null` ici : `loadCatalogExercise` les remplit
- * depuis l'historique. Pur (testable sans Supabase).
+ * consommée par la Capture, avec la cible par défaut des ajouts. `reference`,
+ * `personalRecord` et les notes sont laissés vides ici : `loadCatalogExercise`
+ * les remplit depuis l'historique. Pur (testable sans Supabase).
  */
 export function catalogExerciseToSession(
   row: Pick<ExerciseRow, 'id' | 'name'> & {
@@ -213,9 +228,24 @@ export function catalogExerciseToSession(
 }
 
 /**
+ * Le contexte de séance dont les dérivées d'historique ont besoin en Capture :
+ * le périmètre de la Référence scopée (toutes les versions de la séance) et les
+ * notes datées de la dernière exécution passée (repère « tu notais »), résolus
+ * UNE fois au chargement de la séance et partagés par tous les exos — y compris
+ * ceux ajoutés à la volée.
+ */
+export interface SeanceHistoryContext {
+  seanceVersionIds: string[];
+  /** Notes datées de la DERNIÈRE exécution passée de la séance, par exerciseId. */
+  previousDatedNotes: Record<string, PreviousDatedNote>;
+}
+
+/**
  * Charge un exo du catalogue prêt à entrer dans la séance courante : sa forme
- * `SessionExercise` (cible par défaut) enrichie de sa référence (dernière fois)
- * et de ses records, dérivés de l'historique.
+ * `SessionExercise` (cible par défaut) enrichie de sa référence (dernière fois
+ * dans CETTE séance), de son repli de préremplissage, de ses records all-time,
+ * de sa note d'instructions et du repère « tu notais » — le tout dérivé de
+ * l'historique via le contexte de séance.
  *
  * Fusion override per-user (issue #50) : si l'appelant ne fournit PAS les champs
  * partagés (cas du picker d'ajout à la volée, qui ne passe que id + name), on
@@ -228,17 +258,21 @@ export async function loadCatalogExercise(
     unilateral?: boolean;
     primary_muscles?: string[];
   },
+  ctx: SeanceHistoryContext,
 ): Promise<SessionExercise> {
   const needsMerge = row.unilateral === undefined || row.primary_muscles === undefined;
   const merged = needsMerge ? await loadMergedExerciseRow(row.id) : null;
   const base = catalogExerciseToSession(merged ?? row);
-  const [reference, personalRecord, personalRecordBySide] = await Promise.all([
-    loadReference(row.id),
-    loadPersonalRecord(row.id),
-    // Records par côté (ADR 0010) seulement pour un unilatéral : un bilatéral n'en a pas.
-    base.unilateral ? loadPersonalRecordBySide(row.id) : Promise.resolve(null),
+  const [history, perExerciseNote] = await Promise.all([
+    loadExerciseHistory(row.id, ctx.seanceVersionIds, base.unilateral ?? false),
+    loadExerciseNote(row.id),
   ]);
-  return { ...base, reference, personalRecord, personalRecordBySide };
+  return {
+    ...base,
+    ...history,
+    perExerciseNote,
+    previousDatedNote: ctx.previousDatedNotes[row.id] ?? null,
+  };
 }
 
 // --- Chargement de la séance pour la capture ----------------------------------
@@ -325,7 +359,7 @@ export type PerformedSetWithExecutionRow = {
   set_order: number;
   side: string | null;
   execution_id: string;
-  executions: { performed_on: string; created_at: string } | null;
+  executions: { performed_on: string; created_at: string; seance_version_id: string } | null;
 };
 
 /**
@@ -376,17 +410,17 @@ export function reconstructExerciseExecutions(
 }
 
 /**
- * Historique réel d'un exo : ses exécutions (un jour = une `ExerciseExecution`),
- * chacune avec ses séries. Lit les performed_sets de l'user (scopés RLS) + la
- * date de leur exécution, puis délègue le regroupement à la partie PURE
- * `reconstructExerciseExecutions`. Base partagée des dérivées du domaine :
- * `lastReference` (dernière perf) ET `personalRecord` (records). User neuf
- * (aucune perf) -> liste vide.
+ * Lignes plates de l'historique réel d'un exo : ses performed_sets (scopés RLS)
+ * joints à leur exécution (date, created_at, version de séance). Base UNIQUE des
+ * dérivées (`deriveExerciseHistory`) : la Référence scopée séance se filtre sur
+ * `seance_version_id`, les records gardent tout. User neuf -> liste vide.
  */
-async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecution[]> {
+async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetWithExecutionRow[]> {
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at )')
+    .select(
+      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
+    )
     .eq('exercise_id', exerciseId)
     // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
     // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
@@ -396,76 +430,127 @@ async function loadExerciseExecutions(exerciseId: string): Promise<ExerciseExecu
     .order('created_at', { referencedTable: 'executions' });
   if (error) throw error;
 
-  const rows = (data ?? []) as unknown as PerformedSetWithExecutionRow[];
-  return reconstructExerciseExecutions(rows, exerciseId);
+  return (data ?? []) as unknown as PerformedSetWithExecutionRow[];
 }
 
-// --- Référence (dernière perf réelle) -----------------------------------------
+// --- Dérivées d'historique (Référence scopée séance + records all-time) -------
 
 /**
- * Référence d'un exo : sa dernière performance réelle, dérivée de l'historique.
- * User neuf (aucune perf) -> `null` (« première fois »).
+ * Toutes les dérivées d'historique d'un exo pour la Capture, issues d'UNE seule
+ * lecture des performed_sets :
+ *   - `reference` : la dernière perf DANS CETTE SÉANCE (cf. CONTEXT.md
+ *     « Référence » — le même exo dans une autre séance ne compte pas) ;
+ *   - `fallbackReference` : repli du PRÉREMPLISSAGE seul quand la séance n'a pas
+ *     d'historique (dernière perf toutes séances confondues) — jamais de repère
+ *     ni de badge dessus ;
+ *   - `personalRecord` / `personalRecordBySide` : les records, eux, restent
+ *     ALL-TIME toutes séances confondues (cf. CONTEXT.md « Record personnel »).
  */
-export async function loadReference(exerciseId: string): Promise<PerformedSet[] | null> {
-  const executions = await loadExerciseExecutions(exerciseId);
-  return lastReference(executions, exerciseId);
-}
-
-// --- Records personnels (issue #34) -------------------------------------------
-
-/**
- * Records personnels d'un exo (meilleur e1RM + meilleure charge poids×reps),
- * dérivés de TOUT l'historique. Sert à signaler en Capture qu'une série bat un
- * record. User neuf -> records nuls (bestE1rm/bestWeightReps à `null`).
- */
-export async function loadPersonalRecord(exerciseId: string): Promise<PersonalRecord> {
-  const executions = await loadExerciseExecutions(exerciseId);
-  return personalRecord(executions, exerciseId);
+export interface ExerciseHistory {
+  reference: PerformedSet[] | null;
+  fallbackReference: PerformedSet[] | null;
+  personalRecord: PersonalRecord;
+  personalRecordBySide: PersonalRecordBySide | null;
 }
 
 /**
- * Records PAR CÔTÉ d'un exo unilatéral (ADR 0010) : chaque bras tient sa propre
- * piste en salle (badge « Record » par côté). Dérivé du même historique que
- * `loadPersonalRecord` (qui, lui, garde le côté faible pour l'analyse). À n'appeler
- * que pour un exo unilatéral.
+ * Partie PURE de `loadExerciseHistory` (aucun accès Supabase), testée directement :
+ * dérive Référence scopée, repli et records depuis les lignes plates. Le scope de
+ * séance filtre par `seance_version_id` (toutes les versions du template, la
+ * Référence traverse les retouches). Une ligne orpheline (jointure absente) est
+ * hors scope par construction.
  */
-export async function loadPersonalRecordBySide(exerciseId: string): Promise<PersonalRecordBySide> {
-  const executions = await loadExerciseExecutions(exerciseId);
-  return personalRecordBySide(executions, exerciseId);
+export function deriveExerciseHistory(
+  rows: PerformedSetWithExecutionRow[],
+  exerciseId: string,
+  seanceVersionIds: readonly string[],
+  unilateral: boolean,
+): ExerciseHistory {
+  const versionIds = new Set(seanceVersionIds);
+  const all = reconstructExerciseExecutions(rows, exerciseId);
+  const scoped = reconstructExerciseExecutions(
+    rows.filter((r) => r.executions != null && versionIds.has(r.executions.seance_version_id)),
+    exerciseId,
+  );
+
+  const reference = lastReference(scoped, exerciseId);
+  return {
+    reference,
+    // Repli seulement quand la séance n'a AUCUN historique de l'exo : un point de
+    // départ pour le poids, pas une comparaison (pas de repère, pas de badges).
+    fallbackReference: reference === null ? lastReference(all, exerciseId) : null,
+    personalRecord: personalRecord(all, exerciseId),
+    // Records par côté (ADR 0010) seulement pour un unilatéral : un bilatéral n'en a pas.
+    personalRecordBySide: unilateral ? personalRecordBySide(all, exerciseId) : null,
+  };
+}
+
+/**
+ * Charge les dérivées d'historique d'un exo (Référence scopée à la séance, repli
+ * de préremplissage, records all-time) en UNE lecture des performed_sets. User
+ * neuf (aucune perf) -> référence/repli null et records nuls.
+ */
+export async function loadExerciseHistory(
+  exerciseId: string,
+  seanceVersionIds: readonly string[],
+  unilateral: boolean,
+): Promise<ExerciseHistory> {
+  const rows = await loadExerciseExecutions(exerciseId);
+  return deriveExerciseHistory(rows, exerciseId, seanceVersionIds, unilateral);
 }
 
 // --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------
 
 /**
- * La note datée la PLUS RÉCENTE des séances ANTÉRIEURES (`performed_on < beforeDate`)
- * sur cet exo, ressortie en repère lecture seule à la prochaine exécution (cf.
- * CONTEXT.md « Note datée »). `beforeDate` = la date ADOPTÉE de la séance du jour :
- * on exclut ainsi la note du jour même (on veut la précédente, pas la sienne). Tri
- * et filtre côté client (peu de notes par exo) pour éviter les subtilités de filtre
- * sur ressource embarquée. `''` si aucune note antérieure non vide.
+ * La DERNIÈRE exécution passée de la séance (`performed_on < beforeDate`, toutes
+ * versions confondues) : c'est ELLE seule qui peut porter le repère « Dernière
+ * fois tu notais » (cf. CONTEXT.md « Note datée » — si elle n'a pas de note pour
+ * un exo, rien ne ressort, on ne repêche jamais plus ancien). `beforeDate` = la
+ * date ADOPTÉE de la séance du jour : on exclut l'exécution en cours. `null` si
+ * la séance n'a jamais été exécutée.
  */
-export async function loadPreviousDatedNote(
-  exerciseId: string,
+export async function loadLastSeanceExecution(
+  seanceVersionIds: readonly string[],
   beforeDate: string,
-): Promise<string> {
+): Promise<{ id: string; performedOn: string } | null> {
+  if (seanceVersionIds.length === 0) return null;
+  const { data, error } = await supabase
+    .from('executions')
+    .select('id, performed_on')
+    .in('seance_version_id', [...seanceVersionIds])
+    .lt('performed_on', beforeDate)
+    .order('performed_on', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id, performedOn: data.performed_on } : null;
+}
+
+/**
+ * Les notes datées portées par la dernière exécution passée de la séance, par
+ * exerciseId — la source du repère « Dernière fois tu notais » de CHAQUE exo
+ * (une seule requête pour toute la séance, exos ajoutés à la volée compris).
+ * Corps vides écartés ; à doublon par exo (garde-fou), la plus récente gagne.
+ * `{}` si la séance n'a pas d'exécution passée.
+ */
+export async function loadPreviousDatedNotes(
+  lastExecution: { id: string; performedOn: string } | null,
+): Promise<Record<string, PreviousDatedNote>> {
+  if (!lastExecution) return {};
   const { data, error } = await supabase
     .from('dated_notes')
-    .select('body, executions ( performed_on, created_at )')
-    .eq('exercise_id', exerciseId);
+    .select('exercise_id, body, created_at')
+    .eq('execution_id', lastExecution.id)
+    .order('created_at', { ascending: true });
   if (error) throw error;
-  type Row = { body: string; executions: { performed_on: string; created_at: string } | null };
-  const rows = (data ?? []) as unknown as Row[];
-  const past = rows
-    .filter(
-      (r): r is Row & { executions: { performed_on: string; created_at: string } } =>
-        r.executions != null && r.executions.performed_on < beforeDate && r.body.trim() !== '',
-    )
-    .sort(
-      (a, b) =>
-        b.executions.performed_on.localeCompare(a.executions.performed_on) ||
-        (b.executions.created_at ?? '').localeCompare(a.executions.created_at ?? ''),
-    );
-  return past[0]?.body ?? '';
+
+  const notes: Record<string, PreviousDatedNote> = {};
+  for (const row of data ?? []) {
+    if (row.body.trim() === '') continue;
+    notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
+  }
+  return notes;
 }
 
 // --- Exécution du jour --------------------------------------------------------
