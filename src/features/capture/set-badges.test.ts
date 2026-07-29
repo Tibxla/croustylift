@@ -19,7 +19,7 @@ const set = (
   side?: Side,
 ): PerformedSet => ({ weightKg, reps, rir, order, side });
 
-const NO_RECORD: PersonalRecord = { bestE1rm: null, bestWeightReps: null };
+const NO_RECORD: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null };
 
 describe('referenceVerdict', () => {
   it('battu quand l’e1RM dépasse strictement la référence à la même position', () => {
@@ -61,7 +61,7 @@ describe('computeSetBadges (bilatéral)', () => {
 
   it('le Record prime sur le verdict de référence (un seul badge)', () => {
     // record bas : battu en e1RM ET en charge ; vs la dernière fois ce serait « égalisé »
-    const record: PersonalRecord = { bestE1rm: 60, bestWeightReps: { weightKg: 50, reps: 5 } };
+    const record: PersonalRecord = { bestE1rm: 60, bestE1rmSet: null, bestWeightReps: { weightKg: 50, reps: 5 } };
     const ref = [set(100, 5, 1, 1)]; // même série → égalisé sur l’axe référence
     expect(computeSetBadges([set(100, 5, 1, 1)], ref, record)).toEqual([
       { axis: 'record', record: 'both' },
@@ -69,7 +69,7 @@ describe('computeSetBadges (bilatéral)', () => {
   });
 
   it('aucun badge quand la série est en deçà et ne bat aucun record', () => {
-    const record: PersonalRecord = { bestE1rm: 200, bestWeightReps: { weightKg: 200, reps: 5 } };
+    const record: PersonalRecord = { bestE1rm: 200, bestE1rmSet: null, bestWeightReps: { weightKg: 200, reps: 5 } };
     const ref = [set(100, 5, 1, 1)];
     expect(computeSetBadges([set(80, 5, 1, 1)], ref, record)).toEqual([null]);
   });
@@ -89,8 +89,8 @@ describe('computeSetBadgesBySide (unilatéral)', () => {
   it('un record de côté prime, indépendamment de l’autre bras', () => {
     const ref = [set(20, 10, 0, 1, 'left'), set(20, 10, 0, 1, 'right')];
     const records: PersonalRecordBySide = {
-      left: { bestE1rm: 1000, bestWeightReps: { weightKg: 1000, reps: 1 } }, // jamais battu
-      right: { bestE1rm: 26, bestWeightReps: { weightKg: 21, reps: 1 } }, // battu par 22×10
+      left: { bestE1rm: 1000, bestE1rmSet: null, bestWeightReps: { weightKg: 1000, reps: 1 } }, // jamais battu
+      right: { bestE1rm: 26, bestE1rmSet: null, bestWeightReps: { weightKg: 21, reps: 1 } }, // battu par 22×10
     };
     const sets = [set(22, 10, 0, 1, 'left'), set(22, 10, 0, 1, 'right')];
     const out = computeSetBadgesBySide(sets, ref, records);

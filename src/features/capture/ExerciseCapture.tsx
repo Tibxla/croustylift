@@ -128,8 +128,8 @@ export function ExerciseCapture({
             progress.sets,
             reference ?? null,
             exercise.personalRecordBySide ?? {
-              left: { bestE1rm: null, bestWeightReps: null },
-              right: { bestE1rm: null, bestWeightReps: null },
+              left: { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null },
+              right: { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null },
             },
           )
         : computeSetBadges(progress.sets, reference ?? null, exercise.personalRecord ?? null),

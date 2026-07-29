@@ -1,18 +1,23 @@
-// Records personnels (PR) dérivés de l'historique d'un exo (issue #34).
+// Records personnels dérivés de l'historique d'un exo (issue #34).
 //
-// Deux records, deux mesures :
+// Deux records, deux mesures (cf. CONTEXT.md « Record personnel ») :
 //   - bestE1rm       : le meilleur 1RM estimé (RIR-ajusté Epley, cf. e1rm.ts),
-//                      pris sur la 1ʳᵉ série de chaque exécution (la série de
-//                      référence, faite à plein potentiel avant la fatigue).
+//                      pris sur TOUTES les séries — un record est une perf
+//                      démontrée, quel que soit le rang de la série. La courbe
+//                      e1RM d'analyse, elle, reste sur la 1ʳᵉ série de chaque
+//                      exécution (weakSideE1rm) pour la comparabilité jour à
+//                      jour : le record peut donc dépasser le sommet de la courbe.
 //   - bestWeightReps : le record de CHARGE — la série la plus lourde jamais
 //                      faite (toutes séries confondues), les reps départageant
 //                      à poids égal.
+// `bestE1rmSet` porte la perf (poids × reps) derrière le meilleur e1RM : c'est
+// ELLE qu'on affiche en salle (« Record : 95 × 10 · e1RM 127 »).
 //
-// Tout est DÉRIVÉ de l'historique, jamais stocké : un PR se recalcule depuis les
-// exécutions. Style aligné sur reference.ts (fonctions pures, ExerciseExecution[]).
+// Tout est DÉRIVÉ de l'historique, jamais stocké : un record se recalcule depuis
+// les exécutions. Style aligné sur reference.ts (fonctions pures, ExerciseExecution[]).
 import type { ExerciseExecution, PerformedSet } from './types'
 import { estimateE1rm } from './e1rm'
-import { weakSideE1rm } from './unilateral'
+import { pairSidesByOrder } from './unilateral'
 
 /** Une charge réalisée : poids et reps (le couple d'un record poids×reps). */
 export interface WeightReps {
@@ -22,8 +27,13 @@ export interface WeightReps {
 
 /** Les records d'un exo. `null` = aucun historique réel (premier passage). */
 export interface PersonalRecord {
-  /** Meilleur e1RM (1ʳᵉ série de chaque exécution), ou null si aucune perf. */
+  /** Meilleur e1RM (toutes séries confondues), ou null si aucune perf. */
   bestE1rm: number | null
+  /**
+   * La perf qui porte le meilleur e1RM (poids × reps de cette série ; la ligne du
+   * côté FAIBLE en unilatéral). Null exactement quand `bestE1rm` est null.
+   */
+  bestE1rmSet: WeightReps | null
   /** Série la plus lourde (reps en départage), ou null si aucune perf. */
   bestWeightReps: WeightReps | null
 }
@@ -44,20 +54,21 @@ export function personalRecord(
   exerciseId: string,
 ): PersonalRecord {
   let bestE1rm: number | null = null
+  let bestE1rmSet: WeightReps | null = null
   let bestWeightReps: WeightReps | null = null
 
   for (const exec of executions) {
     if (exec.exerciseId !== exerciseId || exec.sets.length === 0) continue
 
-    // e1RM : seule la 1ʳᵉ série compte (la plus représentative du potentiel).
-    // Pour un exo UNILATÉRAL, c'est le CÔTÉ FAIBLE de cette 1ʳᵉ série (e1RM min
-    // des deux côtés G/D appariés par order), cohérent avec la courbe primaire et
-    // l'ADR 0005 — pas le 1er élément du tableau, qui serait souvent le côté fort
-    // (G et D partageant le même order, un reduce sur l'order ne les départage pas).
-    // Pour un bilatéral (1 ligne par série), weakSideE1rm retombe sur l'e1RM simple
-    // de la 1ʳᵉ série : comportement inchangé.
-    const e1rm = weakSideE1rm(exec.sets)
-    if (e1rm !== null && (bestE1rm === null || e1rm > bestE1rm)) bestE1rm = e1rm
+    // e1RM : TOUTES les séries comptent. Pour un exo UNILATÉRAL, chaque série
+    // logique (paire G/D au même order) vaut son CÔTÉ FAIBLE, cohérent avec la
+    // courbe primaire et l'ADR 0005 ; la perf porteuse est la ligne de ce côté.
+    for (const { value, set } of seriesE1rms(exec.sets)) {
+      if (bestE1rm === null || value > bestE1rm) {
+        bestE1rm = value
+        bestE1rmSet = { weightKg: set.weightKg, reps: set.reps }
+      }
+    }
 
     // poids×reps : la charge max sur l'ensemble des séries.
     for (const s of exec.sets) {
@@ -68,7 +79,34 @@ export function personalRecord(
     }
   }
 
-  return { bestE1rm, bestWeightReps }
+  return { bestE1rm, bestE1rmSet, bestWeightReps }
+}
+
+/**
+ * L'e1RM de chaque série logique d'une exécution, avec la ligne qui le porte :
+ *   - BILATÉRAL (séries sans `side`) : une entrée par ligne, e1RM simple ;
+ *   - UNILATÉRAL : une entrée par paire G/D (appariée par order), au CÔTÉ FAIBLE
+ *     (e1RM min des deux côtés ; à égalité, la ligne gauche). Un côté manquant
+ *     (saisie incomplète) retombe sur le côté présent.
+ */
+function seriesE1rms(sets: PerformedSet[]): { value: number; set: PerformedSet }[] {
+  const withE1rm = (set: PerformedSet) => ({
+    value: estimateE1rm(set.weightKg, set.reps, set.rir),
+    set,
+  })
+
+  const isUnilateral = sets.some((s) => s.side !== undefined)
+  if (!isUnilateral) return sets.map(withE1rm)
+
+  const out: { value: number; set: PerformedSet }[] = []
+  for (const pair of pairSidesByOrder(sets)) {
+    const left = pair.left ? withE1rm(pair.left) : null
+    const right = pair.right ? withE1rm(pair.right) : null
+    if (left && right) out.push(left.value <= right.value ? left : right)
+    else if (left) out.push(left)
+    else if (right) out.push(right)
+  }
+  return out
 }
 
 /** Les records d'un exo unilatéral, tenus SÉPARÉMENT par côté (ADR 0010). */
@@ -79,10 +117,10 @@ export interface PersonalRecordBySide {
 
 /**
  * Records d'un exo unilatéral dérivés PAR CÔTÉ (ADR 0010) : en salle, chaque bras
- * est sa propre piste — son meilleur e1RM (1ʳᵉ série du côté à chaque exécution)
+ * est sa propre piste — son meilleur e1RM (toutes séries du côté confondues)
  * et sa charge la plus lourde. Distinct du record côté faible que l'analyse
- * conserve (`personalRecord` + `weakSideE1rm`). Côté sans aucune série réelle ->
- * records nuls. Un exo bilatéral n'a pas à l'appeler (ses séries n'ont pas de côté).
+ * conserve (`personalRecord`). Côté sans aucune série réelle -> records nuls.
+ * Un exo bilatéral n'a pas à l'appeler (ses séries n'ont pas de côté).
  */
 export function personalRecordBySide(
   executions: ExerciseExecution[],
@@ -94,30 +132,30 @@ export function personalRecordBySide(
   }
 }
 
-/** Record d'UN côté : best e1RM (1ʳᵉ série du côté) + best charge (toutes séries du côté). */
+/** Record d'UN côté : best e1RM + best charge, toutes séries du côté confondues. */
 function sideRecord(
   executions: ExerciseExecution[],
   exerciseId: string,
   side: 'left' | 'right',
 ): PersonalRecord {
   let bestE1rm: number | null = null
+  let bestE1rmSet: WeightReps | null = null
   let bestWeightReps: WeightReps | null = null
 
   for (const exec of executions) {
     if (exec.exerciseId !== exerciseId || exec.sets.length === 0) continue
-    const sideSets = exec.sets.filter((s) => s.side === side)
-    if (sideSets.length === 0) continue
 
-    // e1RM : la 1ʳᵉ série de CE côté (plus petit `order`), la plus représentative.
-    const firstOrder = Math.min(...sideSets.map((s) => s.order))
-    const first = sideSets.find((s) => s.order === firstOrder)
-    if (first) {
-      const e1rm = estimateE1rm(first.weightKg, first.reps, first.rir)
-      if (bestE1rm === null || e1rm > bestE1rm) bestE1rm = e1rm
-    }
+    for (const s of exec.sets) {
+      if (s.side !== side) continue
 
-    // charge : la plus lourde de CE côté, toutes séries du côté confondues.
-    for (const s of sideSets) {
+      // e1RM : toutes les séries de CE côté comptent (même règle qu'en bilatéral).
+      const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir)
+      if (bestE1rm === null || e1rm > bestE1rm) {
+        bestE1rm = e1rm
+        bestE1rmSet = { weightKg: s.weightKg, reps: s.reps }
+      }
+
+      // charge : la plus lourde de CE côté.
       const candidate = { weightKg: s.weightKg, reps: s.reps }
       if (bestWeightReps === null || heavier(bestWeightReps, candidate)) {
         bestWeightReps = candidate
@@ -125,7 +163,7 @@ function sideRecord(
     }
   }
 
-  return { bestE1rm, bestWeightReps }
+  return { bestE1rm, bestE1rmSet, bestWeightReps }
 }
 
 /**
