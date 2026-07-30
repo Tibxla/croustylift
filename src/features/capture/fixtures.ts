@@ -18,6 +18,18 @@ import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
  */
 export type ExerciseOrigin = 'template' | 'added' | 'swapped';
 
+/**
+ * Le repère « Dernière fois tu notais » : la note datée que la DERNIÈRE exécution
+ * de la séance porte pour cet exo, avec sa date (affichée en relatif). Si la
+ * dernière exécution n'a pas de note pour l'exo, il n'y a PAS de repère — on ne
+ * repêche jamais une note plus ancienne (cf. CONTEXT.md « Note datée »).
+ */
+export interface PreviousDatedNote {
+  body: string;
+  /** Date ISO 'YYYY-MM-DD' de l'exécution qui porte la note. */
+  performedOn: string;
+}
+
 /** Un exercice de la séance courante, avec son plan cible et sa référence (dernière fois). */
 export interface SessionExercise {
   exerciseId: string;
@@ -39,10 +51,21 @@ export interface SessionExercise {
   /** Le plan cible : séries / reps / RIR. */
   prescription: Prescription;
   /**
-   * La Référence : les séries réellement faites la dernière fois, par position.
-   * Dérivée de l'historique (jamais saisie). `null` = jamais fait → rien à battre.
+   * La Référence : les séries réellement faites la dernière fois DANS CETTE
+   * SÉANCE, par position (cf. CONTEXT.md « Référence » : le même exo dans une
+   * autre séance ne compte pas, le contexte de fatigue diffère). Dérivée de
+   * l'historique (jamais saisie). `null` = jamais fait dans cette séance → rien
+   * à battre ni à égaler (même si l'exo a un historique ailleurs).
    */
   reference: PerformedSet[] | null;
+  /**
+   * Repli du PRÉREMPLISSAGE seul : la dernière perf de l'exo TOUTES séances
+   * confondues, utilisée pour amorcer le poids quand `reference` est null
+   * (mieux que le neutre 20 kg). Jamais de repère « Dernière fois » ni de badge
+   * dessus — un point de départ, pas une comparaison. Null/absent si l'exo a une
+   * référence dans la séance, ou aucun historique nulle part.
+   */
+  fallbackReference?: PerformedSet[] | null;
   /**
    * Les records personnels de l'exo (issue #34), dérivés de l'historique : sert
    * à signaler en Capture qu'une série loggée bat un record. `null` = pas encore
@@ -58,12 +81,13 @@ export interface SessionExercise {
    */
   personalRecordBySide?: PersonalRecordBySide | null;
   /**
-   * La note datée la PLUS RÉCENTE des séances passées sur cet exo (ADR « Note
-   * datée » du glossaire), ressortie en REPÈRE lecture seule (« Dernière fois tu
-   * notais : … »). Vide = aucune note antérieure. Distincte de la note du jour
-   * (saisissable) et de la note d'instructions (persistante).
+   * Le repère « Dernière fois tu notais : … » (lecture seule, daté) : la note que
+   * la DERNIÈRE exécution de cette séance porte pour cet exo — null/absent si
+   * elle n'en porte pas (on ne repêche jamais une note plus ancienne, cf.
+   * CONTEXT.md « Note datée »). Distinct de la note du jour (saisissable) et de
+   * la note d'instructions (persistante).
    */
-  previousDatedNote?: string;
+  previousDatedNote?: PreviousDatedNote | null;
   /**
    * Note d'INSTRUCTIONS persistante de l'exo (issue #26), chargée depuis
    * `exercise_notes`. Affichée en RÉFÉRENCE (lecture seule) pendant la série, pas

@@ -45,11 +45,11 @@ Le plan cible d'un exercice dans une séance : séries, reps et RIR, chacun en v
 _Avoid_: Objectif, cible (ambigu avec la référence)
 
 **Référence**:
-La dernière performance réelle sur un exercice, affichée en salle comme repère à dépasser, série par série (position N comparée à la position N de la dernière fois). Dérivée de l'historique, jamais saisie. Une série du jour la **bat** (strictement mieux), l'**égale** (à l'identique) ou reste en deçà — trois états distincts, jamais confondus.
-_Avoid_: Cible, objectif, PR ; ne pas confondre avec le Record personnel (all-time)
+La dernière performance réelle sur un exercice **dans la même séance** — le même exercice exécuté dans une autre séance ne compte pas (le contexte de fatigue diffère d'une séance à l'autre). Affichée en salle comme repère à dépasser, série par série (position N comparée à la position N de la dernière fois). Dérivée de l'historique, jamais saisie. Une série du jour la **bat** (strictement mieux), l'**égale** (à l'identique) ou reste en deçà — trois états distincts, jamais confondus. Sans exécution passée de l'exercice dans cette séance, il n'y a **pas de Référence** (rien à battre ni à égaler), même si l'exercice a un historique dans d'autres séances.
+_Avoid_: Cible, objectif, PR ; ne pas confondre avec le Record personnel (all-time, toutes séances confondues)
 
 **Record personnel**:
-La meilleure performance jamais réalisée sur un exercice, tous jours confondus — distinct de la **Référence** (la dernière fois). Deux mesures : le meilleur e1RM (pris sur la 1ʳᵉ série de chaque exécution) et la charge la plus lourde (poids, reps en départage). Dérivé de l'historique, jamais saisi. Sur un exo unilatéral, il se lit à **deux échelles** : par côté en salle (chaque bras tient son propre record, repère de séance), au **côté faible** en analyse (la courbe de progression, ADR 0005). Un record sur le bras fort en salle peut donc ne pas faire avancer la courbe d'analyse.
+La meilleure performance jamais réalisée sur un exercice, tous jours et toutes séances confondus — distinct de la **Référence** (la dernière fois, dans la même séance). Deux mesures : le meilleur e1RM, pris sur **toutes les séries** (un record est une perf démontrée, quel que soit le rang de la série — la courbe e1RM d'analyse, elle, reste sur la 1ʳᵉ série de chaque exécution pour la comparabilité jour à jour), et la charge la plus lourde (poids, reps en départage). Dérivé de l'historique, jamais saisi. Sur un exo unilatéral, il se lit à **deux échelles** : par côté en salle (chaque bras tient son propre record, repère de séance), au **côté faible** en analyse (la courbe de progression, ADR 0005). Un record sur le bras fort en salle peut donc ne pas faire avancer la courbe d'analyse.
 _Avoid_: PR (sigle), record du jour ; ne pas confondre avec la Référence (dernière fois, par position de série)
 
 **Routine**:
@@ -83,7 +83,7 @@ Une série de travail réellement effectuée dans une exécution : poids, reps, 
 _Avoid_: Set ; ne pas confondre avec « rep » (les répétitions à l'intérieur d'une série)
 
 **Note datée**:
-Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante). La **plus récente** ressort en **repère lecture seule** à la prochaine exécution du même exo (« Dernière fois tu notais : … »), comme la Référence pour la perf — sans changer sa nature : on en saisit toujours une fraîche chaque jour.
+Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante). En **repère lecture seule** (« Dernière fois tu notais : … », toujours daté), ressort uniquement la note que la **dernière exécution de cette séance** porte pour cet exo ; si elle n'en porte pas, rien ne ressort — on ne repêche jamais une note plus ancienne. Sans changer sa nature : on en saisit toujours une fraîche chaque jour.
 _Avoid_: Commentaire, log
 
 **Décompte de séries**:

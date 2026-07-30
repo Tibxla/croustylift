@@ -154,3 +154,78 @@ describe('seedDraft — rir prérempli (comportement préservé)', () => {
     expect(seed.rir).toBe(1); // report de la dernière loggée (ref épuisée)
   });
 });
+
+describe('seedDraft — repli cross-séances (préremplissage seul, décision 2026-07-29)', () => {
+  // La dernière perf de l'exo TOUTES séances confondues : un point de départ
+  // quand CETTE séance n'a pas d'historique — jamais un repère ni un badge.
+  const fallback: PerformedSet[] = [
+    { weightKg: 100, reps: 8, rir: 2, order: 1 },
+    { weightKg: 97.5, reps: 8, rir: 1, order: 2 },
+  ];
+
+  it('sans référence dans la séance : le poids vient du repli, pas du neutre 20', () => {
+    const seed = seedDraft({
+      prescription,
+      reference: null,
+      fallbackReference: fallback,
+      loggedSets: [],
+    });
+    expect(seed.weightKg).toBe(100); // repli à la position 1
+  });
+
+  it('la référence de la séance PRIME : le repli ne s\'applique pas', () => {
+    const seed = seedDraft({
+      prescription,
+      reference,
+      fallbackReference: fallback,
+      loggedSets: [],
+    });
+    expect(seed.weightKg).toBe(82.5); // référence order=1, le repli est ignoré
+  });
+
+  it('dès la 2e série, la dernière loggée prime sur le repli (report à charge identique)', () => {
+    const loggedSets: PerformedSet[] = [{ weightKg: 90, reps: 8, rir: 1, order: 1 }];
+    const seed = seedDraft({
+      prescription,
+      reference: null,
+      fallbackReference: fallback,
+      loggedSets,
+    });
+    expect(seed.weightKg).toBe(90);
+  });
+
+  it('le RIR ne vient PAS du repli (point de départ, pas une comparaison) : neutre', () => {
+    const seed = seedDraft({
+      prescription,
+      reference: null,
+      fallbackReference: fallback,
+      loggedSets: [],
+    });
+    expect(seed.rir).toBe(1); // neutre, pas le rir 2 du repli
+  });
+
+  it('unilatéral : le repli suit le côté visé', () => {
+    const fallbackUni: PerformedSet[] = [
+      { weightKg: 30, reps: 8, rir: 2, order: 1, side: 'left' },
+      { weightKg: 34, reps: 8, rir: 1, order: 1, side: 'right' },
+    ];
+    const seed = seedDraft({
+      prescription,
+      reference: null,
+      fallbackReference: fallbackUni,
+      loggedSets: [],
+      side: 'right',
+    });
+    expect(seed.weightKg).toBe(34); // la ligne droite du repli, pas la gauche
+  });
+
+  it('sans référence ni repli : le neutre 20 reste le dernier recours', () => {
+    const seed = seedDraft({
+      prescription,
+      reference: null,
+      fallbackReference: null,
+      loggedSets: [],
+    });
+    expect(seed.weightKg).toBe(20);
+  });
+});

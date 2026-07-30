@@ -16,17 +16,18 @@ import {
 } from 'react';
 import {
   listExercises,
+  listSeanceVersionIds,
   loadCaptureSource,
   loadCatalogExercise,
   loadChosenSeance,
-  loadPersonalRecord,
-  loadPersonalRecordBySide,
-  loadPreviousDatedNote,
-  loadReference,
+  loadExerciseHistory,
+  loadLastSeanceExecution,
+  loadPreviousDatedNotes,
   loadSeanceForCapture,
   loadTodayExecution,
   type LoadedSeance,
   type SeanceChoice,
+  type SeanceHistoryContext,
   type Session,
 } from './data';
 import {
@@ -81,7 +82,13 @@ type LoadState =
   | { phase: 'choosing'; seances: SeanceChoice[] }
   | { phase: 'error'; message: string }
   | { phase: 'empty' }
-  | { phase: 'ready'; session: Session; seanceVersionId: string };
+  | {
+      phase: 'ready';
+      session: Session;
+      seanceVersionId: string;
+      /** Contexte d'historique de la séance (scope Référence + repère notes), partagé avec les exos ajoutés à la volée. */
+      historyCtx: SeanceHistoryContext;
+    };
 
 /**
  * Tout ce dont l'initialiseur du reducer de `CaptureBoard` a besoin, résolu au
@@ -155,39 +162,38 @@ export function CaptureScreen() {
       // l'id de séance (clé localStorage) — la séance est déjà connue ici.
       const { date, restored } = resolveCaptureDate(base);
 
-      // Par exo : référence (dernière fois) ET note d'instructions (issue #26),
-      // affichée comme référence en Capture. En parallèle : l'exécution du jour
-      // ADOPTÉ (réalisé + notes + son id réel) pour la réhydratation au montage.
-      const [withRefs, today] = await Promise.all([
+      // Le scope de la Référence (cf. CONTEXT.md) : TOUTES les versions de la
+      // séance — l'historique de l'exo traverse les retouches du template.
+      const versionIds = await listSeanceVersionIds(seance.id);
+
+      // Par exo : dérivées d'historique (Référence scopée séance, repli de
+      // préremplissage, records all-time — UNE lecture par exo) et note
+      // d'instructions (issue #26). En parallèle : l'exécution du jour ADOPTÉ
+      // (réhydratation au montage) et les notes datées de la DERNIÈRE exécution
+      // passée de la séance (repère « tu notais », une requête pour tous les exos,
+      // bornée par la date adoptée).
+      const [withRefs, today, previousDatedNotes] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
-            // Référence (dernière fois), note d'instructions, records (issue #34),
-            // records PAR CÔTÉ pour un unilatéral (ADR 0010) et la note datée
-            // précédente (repère « tu notais »), tous dérivés de l'historique de
-            // l'exo, chargés en parallèle. `date` (adoptée) borne la note antérieure.
-            const [reference, perExerciseNote, personalRecord, personalRecordBySide, previousDatedNote] =
-              await Promise.all([
-                loadReference(ex.exerciseId),
-                loadExerciseNote(ex.exerciseId),
-                loadPersonalRecord(ex.exerciseId),
-                ex.unilateral ? loadPersonalRecordBySide(ex.exerciseId) : Promise.resolve(null),
-                loadPreviousDatedNote(ex.exerciseId, date),
-              ]);
-            return {
-              ...ex,
-              reference,
-              perExerciseNote,
-              personalRecord,
-              personalRecordBySide,
-              previousDatedNote,
-            };
+            const [history, perExerciseNote] = await Promise.all([
+              loadExerciseHistory(ex.exerciseId, versionIds, ex.unilateral ?? false),
+              loadExerciseNote(ex.exerciseId),
+            ]);
+            return { ...ex, ...history, perExerciseNote };
           }),
         ),
         loadTodayExecution(seanceVersionId, date),
+        loadLastSeanceExecution(versionIds, date).then(loadPreviousDatedNotes),
       ]);
 
       if (!active()) return;
-      const session: Session = { ...base, exercises: withRefs };
+      const session: Session = {
+        ...base,
+        exercises: withRefs.map((ex) => ({
+          ...ex,
+          previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
+        })),
+      };
       // On transporte l'init vers le reducer via une ref, posée AVANT le passage
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
@@ -203,7 +209,12 @@ export function CaptureScreen() {
         datedNotes: today?.datedNotes ?? {},
         restored,
       };
-      setLoad({ phase: 'ready', session, seanceVersionId });
+      setLoad({
+        phase: 'ready',
+        session,
+        seanceVersionId,
+        historyCtx: { seanceVersionIds: versionIds, previousDatedNotes },
+      });
     },
     [],
   );
@@ -330,6 +341,7 @@ export function CaptureScreen() {
       key={load.session.id}
       session={load.session}
       seanceVersionId={load.seanceVersionId}
+      historyCtx={load.historyCtx}
       // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
       init={initRef.current!}
       // « Annuler la séance » / « Nouvelle séance » : on relance le chargement
@@ -479,11 +491,14 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 function CaptureBoard({
   session: initialSession,
   seanceVersionId,
+  historyCtx,
   init,
   onExitToLaunch,
 }: {
   session: Session;
   seanceVersionId: string;
+  /** Contexte d'historique de la séance (scope Référence + repère notes) pour les exos ajoutés à la volée. */
+  historyCtx: SeanceHistoryContext;
   init: CaptureInit;
   /** Quitte la séance courante vers l'écran de lancement (annulation / après clôture). */
   onExitToLaunch: () => void;
@@ -861,7 +876,7 @@ function CaptureBoard({
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
             loadCatalog={listExercises}
-            loadCatalogExercise={loadCatalogExercise}
+            loadCatalogExercise={(row) => loadCatalogExercise(row, historyCtx)}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
             onCancelSession={handleCancelSession}

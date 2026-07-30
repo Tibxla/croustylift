@@ -26,7 +26,7 @@ export function computeRecordFlags(
   // Premier passage (aucun historique) : on ne crie pas « record » sur la toute
   // première série jamais faite. Le record se construit, sans marqueur.
   if (historical === null) {
-    let running: PersonalRecord = { bestE1rm: null, bestWeightReps: null };
+    let running: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null };
     return sets.map((s) => {
       running = absorb(running, s);
       return null;
@@ -91,10 +91,13 @@ export function computeRecordFlagsBySide(
 /** Intègre une série dans un record courant (pour faire avancer la comparaison). */
 function absorb(record: PersonalRecord, s: PerformedSet): PersonalRecord {
   const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir);
-  const bestE1rm =
-    record.bestE1rm === null || e1rm > record.bestE1rm ? e1rm : record.bestE1rm;
+  const improvesE1rm = record.bestE1rm === null || e1rm > record.bestE1rm;
   const bestWeightReps = isWeightRepsRecord(record, s)
     ? { weightKg: s.weightKg, reps: s.reps }
     : record.bestWeightReps;
-  return { bestE1rm, bestWeightReps };
+  return {
+    bestE1rm: improvesE1rm ? e1rm : record.bestE1rm,
+    bestE1rmSet: improvesE1rm ? { weightKg: s.weightKg, reps: s.reps } : record.bestE1rmSet,
+    bestWeightReps,
+  };
 }

@@ -26,9 +26,10 @@ const sideSet = (
 ): PerformedSet => ({ weightKg, reps, rir, order, side })
 
 describe('personalRecord', () => {
-  it('renvoie un record nul (les deux à null) sans aucun historique', () => {
+  it('renvoie un record nul (tout à null) sans aucun historique', () => {
     expect(personalRecord([], 'squat')).toEqual({
       bestE1rm: null,
+      bestE1rmSet: null,
       bestWeightReps: null,
     })
   })
@@ -40,6 +41,7 @@ describe('personalRecord', () => {
     ]
     expect(personalRecord(onlyHoles, 'squat')).toEqual({
       bestE1rm: null,
+      bestE1rmSet: null,
       bestWeightReps: null,
     })
   })
@@ -52,13 +54,15 @@ describe('personalRecord', () => {
     const pr = personalRecord(executions, 'squat')
     // 100 * (1 + (5+1)/30) = 120
     expect(pr.bestE1rm).toBeCloseTo(120, 6)
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 100, reps: 5 })
     expect(pr.bestWeightReps).toEqual({ weightKg: 100, reps: 5 })
   })
 
-  it('e1RM : ne retient QUE la 1ʳᵉ série de chaque exécution, prend le meilleur', () => {
+  it('e1RM : balaie TOUTES les séries, pas seulement la 1ʳᵉ de chaque exécution', () => {
     const executions: ExerciseExecution[] = [
       {
-        // 1ʳᵉ série faible, 2ᵉ série plus forte : seule la 1ʳᵉ compte pour l'e1RM.
+        // 1ʳᵉ série faible, 2ᵉ série plus forte : la 2ᵉ compte AUSSI (un record est
+        // une perf démontrée, quel que soit le rang de la série — cf. CONTEXT.md).
         date: '2026-01-10',
         exerciseId: 'squat',
         sets: [set(100, 5, 1, 1), set(120, 5, 1, 2)],
@@ -70,14 +74,32 @@ describe('personalRecord', () => {
       },
     ]
     const pr = personalRecord(executions, 'squat')
-    // meilleur des 1ʳᵉˢ séries : 105x5@1 = 105 * (1 + 6/30) = 126
-    expect(pr.bestE1rm).toBeCloseTo(126, 6)
+    // meilleur toutes séries : 120x5@1 = 120 * (1 + 6/30) = 144 (série 2 du jour 1)
+    expect(pr.bestE1rm).toBeCloseTo(144, 6)
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 120, reps: 5 })
   })
 
-  it('e1RM unilatéral : le record suit le CÔTÉ FAIBLE de la 1ʳᵉ série (pas le côté fort)', () => {
+  it('e1RM : une série tardive all-out peut porter le record (fix du badge qui se rallumait)', () => {
     const executions: ExerciseExecution[] = [
       {
-        // 1ʳᵉ série déséquilibrée : G fort (120), D faible (96). Les deux côtés
+        // Série 1 : 100x6@1 = 123,33. Série 3 : 95x10@0 = 126,67 — c'est ELLE le
+        // record. Avant (1ʳᵉ série seule), le badge « Record e1RM » du jour se
+        // déclenchait sur la série 3 mais le record rechargé restait à 123,33 :
+        // le même « record » se rebattait indéfiniment.
+        date: '2026-01-10',
+        exerciseId: 'bench',
+        sets: [set(100, 6, 1, 1), set(97.5, 7, 0, 2), set(95, 10, 0, 3)],
+      },
+    ]
+    const pr = personalRecord(executions, 'bench')
+    expect(pr.bestE1rm).toBeCloseTo(95 * (1 + 10 / 30), 6)
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 95, reps: 10 })
+  })
+
+  it('e1RM unilatéral : chaque série vaut son CÔTÉ FAIBLE (pas le côté fort)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        // Série déséquilibrée : G fort (120), D faible (96). Les deux côtés
         // partagent l'order 1. Le record e1RM doit valoir le côté faible (96),
         // pas le 1er élément du tableau (G, le côté fort) — cf. ADR 0005.
         date: '2026-01-10',
@@ -85,8 +107,11 @@ describe('personalRecord', () => {
         sets: [sideSet('left', 100, 5, 1, 1), sideSet('right', 80, 5, 1, 1)],
       },
     ]
+    const pr = personalRecord(executions, 'curl')
     // côté faible : 80x5@1 = 80 * (1 + 6/30) = 96 (et NON 100x5@1 = 120)
-    expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(96, 6)
+    expect(pr.bestE1rm).toBeCloseTo(96, 6)
+    // La perf porteuse est la LIGNE du côté faible.
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 80, reps: 5 })
   })
 
   it('e1RM unilatéral : insensible à l’ordre de saisie (droite saisie d’abord)', () => {
@@ -102,7 +127,7 @@ describe('personalRecord', () => {
     expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(96, 6)
   })
 
-  it('e1RM unilatéral : seule la 1ʳᵉ série (order 1) compte, côté faible', () => {
+  it('e1RM unilatéral : toutes les séries logiques comptent, chacune à son côté faible', () => {
     const executions: ExerciseExecution[] = [
       {
         date: '2026-01-10',
@@ -111,14 +136,28 @@ describe('personalRecord', () => {
           // 1ʳᵉ série : faible = D à 90x5@1 = 108.
           sideSet('left', 100, 5, 1, 1),
           sideSet('right', 90, 5, 1, 1),
-          // 2ᵉ série plus lourde : ignorée pour l'e1RM (comme en bilatéral).
+          // 2ᵉ série plus lourde : faible = D à 110x5@1 = 132 → c'est le record.
           sideSet('left', 120, 5, 1, 2),
           sideSet('right', 110, 5, 1, 2),
         ],
       },
     ]
-    // côté faible de la 1ʳᵉ série : 90x5@1 = 90 * 1.2 = 108
-    expect(personalRecord(executions, 'curl').bestE1rm).toBeCloseTo(108, 6)
+    const pr = personalRecord(executions, 'curl')
+    expect(pr.bestE1rm).toBeCloseTo(132, 6)
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 110, reps: 5 })
+  })
+
+  it('e1RM unilatéral : un côté manquant (série incomplète) retombe sur le côté présent', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-10',
+        exerciseId: 'curl',
+        sets: [sideSet('left', 100, 5, 1, 1)],
+      },
+    ]
+    const pr = personalRecord(executions, 'curl')
+    expect(pr.bestE1rm).toBeCloseTo(120, 6)
+    expect(pr.bestE1rmSet).toEqual({ weightKg: 100, reps: 5 })
   })
 
   it('poids×reps : balaie TOUTES les séries (pas seulement la 1ʳᵉ)', () => {
@@ -166,6 +205,7 @@ describe('personalRecord', () => {
 describe('isE1rmRecord', () => {
   const record: PersonalRecord = {
     bestE1rm: 120, // p. ex. 100x5@1
+    bestE1rmSet: { weightKg: 100, reps: 5 },
     bestWeightReps: { weightKg: 100, reps: 5 },
   }
 
@@ -185,7 +225,7 @@ describe('isE1rmRecord', () => {
   })
 
   it('vrai contre un record vierge (premier passage, bestE1rm null)', () => {
-    const blank: PersonalRecord = { bestE1rm: null, bestWeightReps: null }
+    const blank: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null }
     expect(isE1rmRecord(blank, set(50, 5, 1))).toBe(true)
   })
 })
@@ -193,6 +233,7 @@ describe('isE1rmRecord', () => {
 describe('isWeightRepsRecord', () => {
   const record: PersonalRecord = {
     bestE1rm: 120,
+    bestE1rmSet: { weightKg: 100, reps: 5 },
     bestWeightReps: { weightKg: 100, reps: 5 },
   }
 
@@ -217,7 +258,7 @@ describe('isWeightRepsRecord', () => {
   })
 
   it('vrai contre un record vierge (premier passage, bestWeightReps null)', () => {
-    const blank: PersonalRecord = { bestE1rm: null, bestWeightReps: null }
+    const blank: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null }
     expect(isWeightRepsRecord(blank, set(40, 10, 2))).toBe(true)
   })
 })
@@ -241,9 +282,30 @@ describe('personalRecordBySide', () => {
     // Gauche : meilleur e1RM = 22×10 (jour 2), charge max 22×10.
     expect(left.bestWeightReps).toEqual({ weightKg: 22, reps: 10 })
     expect(left.bestE1rm).toBeCloseTo(22 * (1 + 10 / 30))
-    // Droite : meilleur e1RM = 24×10 (jour 1, 1ʳᵉ série), charge max 24×10.
+    expect(left.bestE1rmSet).toEqual({ weightKg: 22, reps: 10 })
+    // Droite : meilleur e1RM = 24×10 (jour 1), charge max 24×10.
     expect(right.bestWeightReps).toEqual({ weightKg: 24, reps: 10 })
     expect(right.bestE1rm).toBeCloseTo(24 * (1 + 10 / 30))
+    expect(right.bestE1rmSet).toEqual({ weightKg: 24, reps: 10 })
+  })
+
+  it('le record d’un côté balaie TOUTES les séries de ce côté (pas seulement la 1ʳᵉ)', () => {
+    const executions: ExerciseExecution[] = [
+      {
+        date: '2026-01-10',
+        exerciseId: 'db-press',
+        // Série 2 du gauche plus forte que sa série 1 : c'est elle le record du côté.
+        sets: [
+          sideSet('left', 20, 10, 0, 1),
+          sideSet('right', 24, 10, 0, 1),
+          sideSet('left', 24, 10, 0, 2),
+          sideSet('right', 22, 8, 0, 2),
+        ],
+      },
+    ]
+    const { left } = personalRecordBySide(executions, 'db-press')
+    expect(left.bestE1rm).toBeCloseTo(24 * (1 + 10 / 30))
+    expect(left.bestE1rmSet).toEqual({ weightKg: 24, reps: 10 })
   })
 
   it('records nuls pour un côté jamais travaillé', () => {
@@ -251,6 +313,6 @@ describe('personalRecordBySide', () => {
       { date: '2026-01-10', exerciseId: 'db-press', sets: [sideSet('left', 20, 10, 0, 1)] },
     ]
     const { right } = personalRecordBySide(executions, 'db-press')
-    expect(right).toEqual({ bestE1rm: null, bestWeightReps: null })
+    expect(right).toEqual({ bestE1rm: null, bestE1rmSet: null, bestWeightReps: null })
   })
 })

@@ -29,8 +29,19 @@ const NEUTRAL = { weightKg: 20, reps: 10, rir: 1 } as const;
 
 export interface SeedInput {
   prescription: Prescription;
-  /** La « dernière fois » par position (et par côté en unilatéral), ou `null` si premier passage. */
+  /**
+   * La « dernière fois » par position (et par côté en unilatéral), SCOPÉE à la
+   * séance courante (cf. CONTEXT.md « Référence »), ou `null` si l'exo n'a jamais
+   * été fait dans cette séance.
+   */
   reference: PerformedSet[] | null;
+  /**
+   * Référence de REPLI (dernière perf toutes séances confondues), pour le POIDS
+   * seulement quand `reference` est null — premier passage dans CETTE séance :
+   * un point de départ meilleur que le neutre, jamais une comparaison (aucun
+   * repère ni badge n'en dérive, et le RIR n'en vient pas). Absent = pas de repli.
+   */
+  fallbackReference?: PerformedSet[] | null;
   /**
    * Les séries déjà loggées aujourd'hui pour cet exo. En bilatéral, une ligne par
    * série (ordre = index + 1) ; en unilatéral, deux lignes G/D par série au même
@@ -104,18 +115,34 @@ function lastRefFor(reference: PerformedSet[] | null, side: Side | undefined): P
  * et le repère est filtré par `side` quand l'exo est unilatéral — sans quoi le
  * report piocherait la mauvaise ligne (mauvais order ET mauvais côté).
  */
-export function seedDraft({ prescription, reference, loggedSets, side }: SeedInput): SeedDraft {
+export function seedDraft({
+  prescription,
+  reference,
+  fallbackReference,
+  loggedSets,
+  side,
+}: SeedInput): SeedDraft {
   const last = lastLoggedFor(loggedSets, side);
   const nextOrder =
     side === undefined ? loggedSets.length + 1 : currentSetOrder(loggedSets);
   const atPosition = refAt(reference, nextOrder, side);
   const lastRef = lastRefFor(reference, side);
+  // Repli cross-séances (poids SEULEMENT) : n'entre en jeu qu'à défaut de toute
+  // référence dans la séance — la chaîne ci-dessous garantit la priorité.
+  const fallback = fallbackReference ?? null;
+  const fallbackAt = refAt(fallback, nextOrder, side);
+  const fallbackLast = lastRefFor(fallback, side);
 
   // POIDS : dès la 2ᵉ série (du même côté en unilatéral), report de la dernière
-  // loggée. Sinon référence (position courante, à défaut dernière connue), sinon neutre.
+  // loggée. Sinon référence (position courante, à défaut dernière connue), sinon
+  // repli cross-séances (même cascade), sinon neutre.
   const weightKg = last
     ? last.weightKg
-    : atPosition?.weightKg ?? lastRef?.weightKg ?? NEUTRAL.weightKg;
+    : atPosition?.weightKg ??
+      lastRef?.weightKg ??
+      fallbackAt?.weightKg ??
+      fallbackLast?.weightKg ??
+      NEUTRAL.weightKg;
 
   // REPS : toujours la borne basse prescrite (valeur fixe si min === max).
   const reps = prescription.reps.min;

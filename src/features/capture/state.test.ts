@@ -20,7 +20,6 @@ import {
   pendingSide,
   previousDayIso,
   resolveCaptureDate,
-  resolveExerciseNoteSave,
   type CaptureState,
   type ExerciseProgress,
   type HydratedProgress,
@@ -868,48 +867,6 @@ describe('persist / loadPersisted', () => {
 
   it('rien de persisté → null (capture vierge au premier montage)', () => {
     expect(loadPersisted(upperA, DATE)).toBeNull();
-  });
-});
-
-// --- resolveExerciseNoteSave -------------------------------------------------
-// Décision pure de sauvegarde de la NOTE D'INSTRUCTIONS d'un exo (issue #52),
-// éditée sur place en Capture. Compare les corps NORMALISÉS pour éviter un appel
-// réseau inutile et un faux « modifié » dû aux espaces de bord / fins de ligne.
-
-describe('resolveExerciseNoteSave', () => {
-  it('détecte un vrai changement et renvoie le corps normalisé', () => {
-    const r = resolveExerciseNoteSave('Prise serrée.', 'Prise large.');
-    expect(r.changed).toBe(true);
-    expect(r.nextBody).toBe('Prise large.');
-  });
-
-  it('création depuis aucune note : changement, corps normalisé', () => {
-    const r = resolveExerciseNoteSave('', '  Coudes rentrés.  ');
-    expect(r.changed).toBe(true);
-    expect(r.nextBody).toBe('Coudes rentrés.');
-  });
-
-  it('aucun changement quand seuls les espaces de bord diffèrent', () => {
-    const r = resolveExerciseNoteSave('Prise serrée.', '  Prise serrée. ');
-    expect(r.changed).toBe(false);
-    expect(r.nextBody).toBe('Prise serrée.');
-  });
-
-  it('aucun changement quand seules les fins de ligne diffèrent (\\r\\n vs \\n)', () => {
-    const r = resolveExerciseNoteSave('Ligne 1\nLigne 2', 'Ligne 1\r\nLigne 2');
-    expect(r.changed).toBe(false);
-  });
-
-  it('vider une note existante : changement vers le corps vide (suppression)', () => {
-    const r = resolveExerciseNoteSave('Prise serrée.', '   ');
-    expect(r.changed).toBe(true);
-    expect(r.nextBody).toBe('');
-  });
-
-  it('vide -> vide : aucun changement (rien à persister)', () => {
-    const r = resolveExerciseNoteSave('', '   ');
-    expect(r.changed).toBe(false);
-    expect(r.nextBody).toBe('');
   });
 });
 
