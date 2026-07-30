@@ -230,6 +230,14 @@ export function CaptureScreen() {
     const active = () => alive;
     setLoad({ phase: 'loading' });
 
+    // Flush de l'outbox dès l'ARRIVÉE sur l'écran, quelle que soit la phase
+    // (incident 2026-07-30) : les autres déclencheurs (montage de CaptureBoard,
+    // retour réseau, enqueue) supposent une séance OUVERTE. Séance clôturée →
+    // l'app s'ouvre sur le sélecteur, où la bannière affichait « N en attente »
+    // sans que RIEN ne retente jamais — la file dormait jusqu'à la prochaine
+    // séance. Ici, ouvrir l'app suffit à la vider. Idempotent (flush sérialisé).
+    void attemptFlush();
+
     void (async () => {
       try {
         const source = await loadCaptureSource();
