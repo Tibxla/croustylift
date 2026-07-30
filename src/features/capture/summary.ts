@@ -13,7 +13,12 @@ import { countLogicalSetsDone, countPerformedSets } from '../../domain/set-count
  */
 export function elapsedMinutesSince(startedAt: number | undefined): number | null {
   if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return null;
-  return Math.round((Date.now() - startedAt) / 60000);
+  // Clampé à 0 : un `startedAt` dans le futur (horloge qui recule, cache restauré
+  // d'un autre appareil) donnerait une durée NÉGATIVE, que la base rejette — et
+  // une op de clôture rejetée empoisonne l'outbox (incident 2026-07-30 : la
+  // contrainte refusait aussi 0, cf. migration 0012). 0 = « moins de 30 s »,
+  // mesure honnête d'un faux départ.
+  return Math.max(0, Math.round((Date.now() - startedAt) / 60000));
 }
 
 /**

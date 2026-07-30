@@ -54,6 +54,13 @@ describe('elapsedMinutesSince', () => {
     expect(elapsedMinutesSince(1_000_000)).toBe(0);
   });
 
+  it('startedAt dans le futur (horloge qui recule) -> 0, jamais négatif', () => {
+    // Une durée négative serait rejetée par la base (check >= 0, migration 0012)
+    // et l'op de clôture empoisonnerait l'outbox (incident 2026-07-30).
+    vi.setSystemTime(1_000_000);
+    expect(elapsedMinutesSince(1_000_000 + 60_000 * 10)).toBe(0);
+  });
+
   it('cas dégénéré : undefined -> null (pas de durée)', () => {
     expect(elapsedMinutesSince(undefined)).toBeNull();
   });
@@ -70,12 +77,6 @@ describe('elapsedMinutesSince', () => {
     expect(elapsedMinutesSince(-Infinity)).toBeNull();
   });
 
-  it('durée négative (startedAt dans le futur) -> valeur négative arrondie, pas null', () => {
-    // On ne bloque pas le cas dégénéré durée<0 : la valeur est transmise telle
-    // quelle (cas rarissime : horloge avancée puis corrigée). Le composant l'affiche.
-    vi.setSystemTime(1_000_000 - 60_000); // -1 min
-    expect(elapsedMinutesSince(1_000_000)).toBe(-1);
-  });
 });
 
 // --- buildSummary ------------------------------------------------------------
