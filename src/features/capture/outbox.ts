@@ -453,10 +453,19 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
     if (!op) break;
     try {
       await runOp(op, fns);
-    } catch {
+    } catch (err) {
       // Échec (réseau coupé le plus souvent) : on garde l'op et tout le reste,
       // dans l'ordre. La file persistée n'a pas bougé pour cette op → rejouée
       // telle quelle au prochain flush. Pas drainé → pas de ré-armement.
+      // LOGGÉ, pas avalé (incident 2026-07-30) : une op rejetée par la base
+      // (contrainte, RLS) échoue à l'IDENTIQUE à chaque passe et bloque la file
+      // en silence — la console doit dire QUELLE op et POURQUOI, sinon le
+      // diagnostic se fait à l'aveugle depuis les logs serveur.
+      console.error(
+        `[outbox] flush arrêté sur « ${op.type} » (id ${op.id}), ` +
+          `${queue.length} op(s) en attente :`,
+        err,
+      );
       return { flushed, drained: false };
     }
     // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
