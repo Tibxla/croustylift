@@ -1,0 +1,38 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font-size",
+        "value": "32px",
+        "createdAt": "2026-07-30T16:23:18.538Z",
+        "reason": "Gamme typo de la refonte premium, confirmée volontaire par Tibxla (2026-07-30)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "17px",
+        "createdAt": "2026-07-30T16:23:18.562Z",
+        "reason": "Gamme typo de la refonte premium, confirmée volontaire par Tibxla (2026-07-30)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "13px",
+        "createdAt": "2026-07-30T16:23:18.588Z",
+        "reason": "Gamme typo de la refonte premium, confirmée volontaire par Tibxla (2026-07-30)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "13.5px",
+        "createdAt": "2026-07-30T16:23:18.617Z",
+        "reason": "Gamme typo de la refonte premium, confirmée volontaire par Tibxla (2026-07-30)"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "11px",
+        "createdAt": "2026-07-30T16:23:18.641Z",
+        "reason": "Gamme typo de la refonte premium, confirmée volontaire par Tibxla (2026-07-30)"
+      }
+    ]
+  }
+}
