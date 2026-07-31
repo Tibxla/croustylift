@@ -36,8 +36,15 @@ type LoadState =
 
 export function BlockComparisonPanel({
   exerciseId,
+  seanceId,
 }: {
   exerciseId: string;
+  /**
+   * Scope de séance (issue #67) : la comparaison ne lit que les exécutions de la
+   * séance ACCENT de la carte — mélanger les contextes de fatigue fausserait les
+   * pentes, comme pour la courbe. `null` = groupe « Hors séance ».
+   */
+  seanceId: string | null;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
 
@@ -47,7 +54,7 @@ export function BlockComparisonPanel({
 
     void (async () => {
       try {
-        const { executions, blocks } = await loadBlockComparisonData(exerciseId);
+        const { executions, blocks } = await loadBlockComparisonData(exerciseId, seanceId);
         if (!active) return;
         setLoad({ phase: 'ready', executions, blocks });
       } catch (err) {
@@ -62,7 +69,7 @@ export function BlockComparisonPanel({
     return () => {
       active = false;
     };
-  }, [exerciseId]);
+  }, [exerciseId, seanceId]);
 
   if (load.phase === 'loading') {
     return (

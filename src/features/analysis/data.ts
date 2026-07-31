@@ -47,17 +47,34 @@ export interface TrainedExercise {
 }
 
 /**
- * Analyse complète d'un exo : la courbe e1RM (1ʳᵉ série) + la pente %/semaine,
- * plus la courbe secondaire (tendance des séries 2+, subordonnée à la primaire).
- * `weeklyRate` vaut `null` quand il n'y a pas assez de séances pour ajuster une
- * droite (cf. `weeklyProgressionRate`) — l'UI montre alors la courbe sans pente.
- * `secondaryCurve` est `[]` quand aucune exécution n'a de série 2+ : l'UI
- * n'affiche alors aucun graphe secondaire.
+ * La progression d'un exo DANS UNE séance donnée (décision 2026-07-31, issue
+ * #67) : sa courbe e1RM (1ʳᵉ série), sa pente %/semaine et sa courbe secondaire
+ * (séries 2+), dérivées des seules exécutions de cette séance — un même exo n'a
+ * pas la même perf selon le contexte de fatigue de la séance (cf. CONTEXT.md
+ * « Référence », même logique que le scope de la Capture).
+ * `weeklyRate` vaut `null` sans assez de points pour ajuster une droite ;
+ * `secondaryCurve` est `[]` sans série 2+.
  */
-export interface ExerciseAnalysis extends TrainedExercise {
+export interface SeanceCurve {
+  /** Id de la séance (toutes versions), ou `null` si la séance n'est plus résoluble. */
+  seanceId: string | null;
+  seanceName: string;
   curve: E1rmPoint[];
   secondaryCurve: E1rmPoint[];
   weeklyRate: number | null;
+  /** Date du dernier point : départage la séance mise en avant (l'accent). */
+  lastDate: string;
+}
+
+/**
+ * Analyse complète d'un exo : une courbe PAR SÉANCE où il a été exécuté. La
+ * première entrée est la séance la plus récemment exécutée — c'est ELLE qui
+ * porte l'accent, le readout héros, la pente et le graphe secondaire dans l'UI ;
+ * les autres se superposent en subordonné. Jamais vide pour un exo entraîné
+ * (au moins une série loggée → au moins un point quelque part).
+ */
+export interface ExerciseAnalysis extends TrainedExercise {
+  seanceCurves: SeanceCurve[];
 }
 
 // --- Exercices entraînés ------------------------------------------------------
@@ -99,18 +116,30 @@ export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
 
 // --- Exécutions passées d'un exo ----------------------------------------------
 
+/** Exécutions d'un exo + noms des séances rencontrées (pour libeller les courbes). */
+export interface LoadedExecutions {
+  executions: ExerciseExecution[];
+  /** seanceId -> nom, pour toutes les séances présentes dans `executions`. */
+  seanceNames: Map<string, string>;
+}
+
 /**
  * Les exécutions passées de l'user pour cet exo, dans la forme du domaine
- * (`ExerciseExecution[]`, une par jour, séries triées par order). Calque la
- * lecture de `loadReference` (capture) : on lit les performed_sets + la date de
- * leur exécution, puis on regroupe par exécution.
+ * (`ExerciseExecution[]`, une par jour, séries triées par order), chacune
+ * portant sa SÉANCE (`seanceId`, via executions → seance_versions → seance_id :
+ * les versions sont des retouches du même template) — le scope des courbes par
+ * séance (issue #67). Porte aussi `createdAt`/`id` : sans eux le tie-break de
+ * `compareCurvePoints` (deux exécutions le même jour) était inopérant côté
+ * Analyse. Les noms de séances remontent à part (le domaine reste sans nom).
  */
 export async function loadExerciseExecutions(
   exerciseId: string,
-): Promise<ExerciseExecution[]> {
+): Promise<LoadedExecutions> {
   const { data, error } = await supabase
     .from('performed_sets')
-    .select('weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on )')
+    .select(
+      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name ) ) )',
+    )
     .eq('exercise_id', exerciseId);
   if (error) throw error;
 
@@ -121,17 +150,33 @@ export async function loadExerciseExecutions(
     set_order: number;
     side: string | null;
     execution_id: string;
-    executions: { performed_on: string } | null;
+    executions: {
+      performed_on: string;
+      created_at: string;
+      seance_versions: { seance_id: string; seances: { name: string } | null } | null;
+    } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
 
   const byExecution = new Map<string, ExerciseExecution>();
+  const seanceNames = new Map<string, string>();
   for (const row of rows) {
-    const date = row.executions?.performed_on;
-    if (!date) continue; // garde-fou : exécution orpheline.
+    const execution = row.executions;
+    if (!execution) continue; // garde-fou : exécution orpheline.
+    const seanceId = execution.seance_versions?.seance_id;
+    if (seanceId && !seanceNames.has(seanceId)) {
+      seanceNames.set(seanceId, execution.seance_versions?.seances?.name ?? '(séance inconnue)');
+    }
     let exec = byExecution.get(row.execution_id);
     if (!exec) {
-      exec = { date, exerciseId, sets: [] };
+      exec = {
+        date: execution.performed_on,
+        exerciseId,
+        sets: [],
+        createdAt: execution.created_at,
+        id: row.execution_id,
+        seanceId,
+      };
       byExecution.set(row.execution_id, exec);
     }
     exec.sets.push({
@@ -145,27 +190,57 @@ export async function loadExerciseExecutions(
     });
   }
 
-  return [...byExecution.values()];
+  return { executions: [...byExecution.values()], seanceNames };
 }
 
 // --- Composition domaine ------------------------------------------------------
 
 /**
- * Dérive l'analyse (courbe primaire + pente + courbe secondaire) d'un exo à
- * partir de ses exécutions, en passant par les fonctions testées du domaine.
- * Pure : pas d'accès réseau.
+ * Dérive l'analyse d'un exo PAR SÉANCE (issue #67) : ses exécutions groupées
+ * par `seanceId`, chaque groupe passé aux fonctions testées du domaine (courbe
+ * primaire + pente + courbe secondaire). Les exécutions sans séance résoluble
+ * forment un groupe « Hors séance » (jamais de donnée écartée en silence). Tri :
+ * la séance la plus récemment exécutée d'abord (elle porte l'accent dans l'UI),
+ * nom en départage pour rester stable. Pure : pas d'accès réseau.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
   executions: ExerciseExecution[],
+  seanceNames: ReadonlyMap<string, string>,
 ): ExerciseAnalysis {
-  const curve = buildPrimaryCurve(executions, exercise.exerciseId);
-  return {
-    ...exercise,
-    curve,
-    secondaryCurve: buildSecondaryCurve(executions, exercise.exerciseId),
-    weeklyRate: weeklyProgressionRate(curve),
-  };
+  const groups = new Map<string | null, ExerciseExecution[]>();
+  for (const execution of executions) {
+    const key = execution.seanceId ?? null;
+    const group = groups.get(key);
+    if (group) group.push(execution);
+    else groups.set(key, [execution]);
+  }
+
+  const seanceCurves: SeanceCurve[] = [];
+  for (const [seanceId, group] of groups) {
+    const curve = buildPrimaryCurve(group, exercise.exerciseId);
+    // Un groupe sans point (exécutions vides / autre exo) n'est pas une courbe.
+    if (curve.length === 0) continue;
+    seanceCurves.push({
+      seanceId,
+      seanceName:
+        seanceId === null
+          ? 'Hors séance'
+          : seanceNames.get(seanceId) ?? '(séance inconnue)',
+      curve,
+      secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId),
+      weeklyRate: weeklyProgressionRate(curve),
+      lastDate: curve[curve.length - 1]?.date ?? '',
+    });
+  }
+
+  seanceCurves.sort(
+    (a, b) =>
+      b.lastDate.localeCompare(a.lastDate) ||
+      a.seanceName.localeCompare(b.seanceName, 'fr'),
+  );
+
+  return { ...exercise, seanceCurves };
 }
 
 /**
@@ -178,8 +253,8 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
 
   const analyses = await Promise.all(
     trained.map(async (exercise) => {
-      const executions = await loadExerciseExecutions(exercise.exerciseId);
-      return analyzeExecutions(exercise, executions);
+      const { executions, seanceNames } = await loadExerciseExecutions(exercise.exerciseId);
+      return analyzeExecutions(exercise, executions, seanceNames);
     }),
   );
 
@@ -238,16 +313,23 @@ export interface BlockComparisonData {
  * pentes %/semaine et le verdict sont calculés par le domaine pur
  * (`summarizeBlocks` / `compareBlocks`) à partir de ces données ; cette couche
  * ne fait que les charger. Les blocs ne dépendent pas de l'exo (ils suivent la
- * config de template, cf. ADR 0001), seules les exécutions sont filtrées par exo.
+ * config de template, cf. ADR 0001) ; les exécutions sont filtrées par exo ET
+ * par SÉANCE (`seanceId`, issue #67) : la comparaison suit la séance mise en
+ * avant par la carte, pour ne pas mélanger des contextes de fatigue différents.
+ * `null` = le groupe « Hors séance » (exécutions sans séance résoluble).
  */
 export async function loadBlockComparisonData(
   exerciseId: string,
+  seanceId: string | null,
 ): Promise<BlockComparisonData> {
-  const [executions, blocks] = await Promise.all([
+  const [{ executions }, blocks] = await Promise.all([
     loadExerciseExecutions(exerciseId),
     loadBlocks(),
   ]);
-  return { executions, blocks };
+  return {
+    executions: executions.filter((e) => (e.seanceId ?? null) === seanceId),
+    blocks,
+  };
 }
 
 // --- Log brut des lifts (cf. issue #27) ---------------------------------------

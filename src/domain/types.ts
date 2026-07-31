@@ -59,6 +59,15 @@ export interface ExerciseExecution {
    * consommateurs le portent.
    */
   id?: string;
+  /**
+   * Id de la SÉANCE (le template, à travers toutes ses versions) dont cette
+   * exécution est le déroulé. Porte le scope « même séance » des dérivées :
+   * Référence en Capture, courbes e1RM par séance en Analyse (un même exo n'a
+   * pas la même perf selon le contexte de fatigue de la séance, cf. CONTEXT.md
+   * « Référence »). Optionnel : seuls les consommateurs scopés le portent ;
+   * absent quand la séance n'est plus résoluble (jointure manquante).
+   */
+  seanceId?: string;
 }
 
 /** Un point de la courbe e1RM : un 1RM estimé à une date. */
