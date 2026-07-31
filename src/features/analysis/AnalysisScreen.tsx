@@ -8,7 +8,7 @@
 // volume fait le plus progresser. Elle reste secondaire (un dépliant discret
 // sous la carte), la courbe primaire restant le héros.
 //
-// L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `AnalysisList`
+// L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `CurvesTab`
 // est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
 // dans le harness de screenshot, sans réseau ni user de test.
 import { useEffect, useState, type CSSProperties } from 'react';
@@ -319,26 +319,43 @@ function JournalSkeleton() {
 }
 
 function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
-  const { name, curve, secondaryCurve, weeklyRate } = analysis;
-  // Une pente nulle (`null`) malgré des points = pas assez de séances : la
+  const { name, seanceCurves } = analysis;
+  // La séance ACCENT (issue #67) : la plus récemment exécutée (1ʳᵉ entrée, cf.
+  // analyzeExecutions). Elle porte le readout héros, la pente, le graphe
+  // secondaire et le scope de la comparaison de blocs ; les autres séances se
+  // superposent en subordonné dans le graphe (E1rmChart).
+  const primary = seanceCurves[0] ?? null;
+  const multi = seanceCurves.length > 1;
+  // Une pente nulle (`null`) malgré des points = pas assez d'exécutions : la
   // courbe reste le héros, on explique juste l'absence de pente sous le graphe.
-  const slopeUnavailable = weeklyRate === null && curve.length > 0;
-  // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []).
-  const hasSecondary = secondaryCurve.length > 0;
-  // e1RM le plus récent (dernier point) : métrique « héros » lisible d'un coup d'œil.
-  const latest = curve.length > 0 ? Math.round(curve[curve.length - 1]!.e1rm) : null;
+  const slopeUnavailable =
+    primary !== null && primary.weeklyRate === null && primary.curve.length > 0;
+  // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []). En
+  // multi-séances il suit la séance ACCENT seule : superposer aussi les
+  // subordonnées en h-24 gris sur gris serait illisible.
+  const hasSecondary = (primary?.secondaryCurve.length ?? 0) > 0;
+  // e1RM le plus récent de la séance accent : métrique « héros » d'un coup d'œil.
+  const latest =
+    primary && primary.curve.length > 0
+      ? Math.round(primary.curve[primary.curve.length - 1]!.e1rm)
+      : null;
 
   return (
     <section className="panel rounded-2xl p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <h3 className="text-base font-semibold leading-tight">{name}</h3>
-        <ProgressionBadge weeklyRate={weeklyRate} />
+        <ProgressionBadge weeklyRate={primary?.weeklyRate ?? null} />
       </div>
 
       {latest != null && (
         <div className="mb-2">
           <div className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
             e1RM estimé
+            {/* Multi-séances : le chiffre héros est celui de la séance accent —
+                on le dit, sinon il contredirait la courbe grise du dessus. */}
+            {multi && primary && (
+              <span className="normal-case tracking-normal text-ink-muted"> · {primary.seanceName}</span>
+            )}
           </div>
           <div className="mt-0.5 flex items-baseline gap-1.5">
             <span className="readout text-[52px] font-medium leading-none tracking-[-0.03em] text-ink">
@@ -349,7 +366,9 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         </div>
       )}
 
-      <E1rmChart curve={curve} />
+      <E1rmChart
+        series={seanceCurves.map((sc) => ({ name: sc.seanceName, curve: sc.curve }))}
+      />
 
       <div className="mt-2 flex items-center justify-between">
         <span className="readout text-[11px] text-ink-faint">e1RM · 1ʳᵉ série</span>
@@ -360,25 +379,44 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         )}
       </div>
 
-      {hasSecondary && (
+      {hasSecondary && primary && (
         // Subordonné à la primaire : séparé par un filet tonal, libellé discret,
         // graphe plus petit et en ink-muted (jamais l'accent). Le héros reste
-        // au-dessus ; ceci n'est qu'un repère « résistance à la fatigue ».
+        // au-dessus ; ceci n'est qu'un repère « résistance à la fatigue »,
+        // scopé à la séance accent (nommée quand plusieurs séances cohabitent).
         <div className="mt-3 border-t border-hair pt-3">
-          <span className="text-[11px] text-ink-muted">Séries 2+ · e1RM moyen</span>
-          <SecondaryChart curve={secondaryCurve} />
+          <span className="text-[11px] text-ink-muted">
+            Séries 2+ · e1RM moyen{multi ? ` · ${primary.seanceName}` : ''}
+          </span>
+          <SecondaryChart curve={primary.secondaryCurve} />
         </div>
       )}
 
-      <CompareBlocksDisclosure exerciseId={analysis.exerciseId} />
+      <CompareBlocksDisclosure
+        exerciseId={analysis.exerciseId}
+        seanceId={primary?.seanceId ?? null}
+        seanceName={multi ? primary?.seanceName ?? null : null}
+      />
     </section>
   );
 }
 
 // Dépliant « Comparer deux blocs » : replié par défaut (feature secondaire qui
 // demande des mois de données et un réseau), il ne charge la comparaison qu'à
-// l'ouverture. La carte reste légère tant qu'on ne le déplie pas.
-function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
+// l'ouverture. La carte reste légère tant qu'on ne le déplie pas. La comparaison
+// est SCOPÉE à la séance accent (issue #67) — nommée dans le libellé quand l'exo
+// vit dans plusieurs séances, sinon rien à préciser.
+function CompareBlocksDisclosure({
+  exerciseId,
+  seanceId,
+  seanceName,
+}: {
+  exerciseId: string;
+  /** La séance accent de la carte (scope de la comparaison) ; null = « Hors séance ». */
+  seanceId: string | null;
+  /** Nom affiché dans le libellé, seulement quand l'exo est multi-séances. */
+  seanceName: string | null;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -389,7 +427,7 @@ function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
         aria-expanded={open}
         className="flex min-h-[44px] w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
       >
-        <span>Comparer deux blocs</span>
+        <span>Comparer deux blocs{seanceName ? ` · ${seanceName}` : ''}</span>
         <svg
           viewBox="0 0 20 20"
           width="14"
@@ -408,7 +446,7 @@ function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
 
       {open && (
         <div className="mt-3">
-          <BlockComparisonPanel exerciseId={exerciseId} />
+          <BlockComparisonPanel exerciseId={exerciseId} seanceId={seanceId} />
         </div>
       )}
     </div>
