@@ -15,12 +15,13 @@ import {
   type Dispatch,
 } from 'react';
 import {
-  listExercises,
+  listExercisesForCapture,
   listSeanceVersionIds,
   loadCaptureSource,
   loadCatalogExercise,
   loadChosenSeance,
   loadExerciseHistory,
+  loadExerciseNoteCached,
   loadLastSeanceExecution,
   loadPreviousDatedNotes,
   loadSeanceForCapture,
@@ -36,7 +37,6 @@ import {
   templateExerciseIds,
 } from './session-edit';
 import {
-  loadExerciseNote,
   datedNoteOutboxOp,
   exerciseNoteOutboxOp,
 } from '../notes/data';
@@ -177,7 +177,7 @@ export function CaptureScreen() {
           base.exercises.map(async (ex) => {
             const [history, perExerciseNote] = await Promise.all([
               loadExerciseHistory(ex.exerciseId, versionIds, ex.unilateral ?? false),
-              loadExerciseNote(ex.exerciseId),
+              loadExerciseNoteCached(ex.exerciseId),
             ]);
             return { ...ex, ...history, perExerciseNote };
           }),
@@ -883,7 +883,7 @@ function CaptureBoard({
             templateExerciseIds={templateIdsRef.current}
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
-            loadCatalog={listExercises}
+            loadCatalog={listExercisesForCapture}
             loadCatalogExercise={(row) => loadCatalogExercise(row, historyCtx)}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}

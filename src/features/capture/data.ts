@@ -7,6 +7,19 @@
 // Conventions DB (cf. ADR 0003 + migration 0001) :
 //   - owner_id se remplit tout seul (default auth.uid()) — on ne l'écrit JAMAIS.
 //   - RLS scope déjà tout à l'utilisateur connecté ; pas de filtre owner_id côté client.
+//
+// HORS-LIGNE (ADR 0012) : le chemin de LECTURE de la capture passe par le cache
+// « cache d'abord » de lib/read-cache — la salle n'a pas de réseau fiable, la
+// séance doit se charger sur la copie locale. Les lectures composites sont
+// cachées APRÈS fusion des overrides (valeur sérialisable, pas de Map). Les
+// lectures datées du jour (exécution en cours, repère « tu notais ») sont
+// TOLÉRANTES : leur absence est un état valide, un échec réseau ne bloque pas
+// l'écran — le réalisé local (state.ts + outbox) reste la vérité de l'appareil.
+// Conséquence assumée : une copie servie peut être en retard d'une édition
+// faite ailleurs ; elle se revalide en arrière-plan à chaque lecture en ligne
+// (même classe d'imprécision que le last-write-wins, ADR 0003). Les surfaces
+// d'ÉDITION (authoring, journal), elles, lisent toujours le réseau en direct.
+import { cachedRead, stableKeyOf, tolerantRead } from '../../lib/read-cache';
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../lib/database.types';
 import type { ExerciseExecution, PerformedSet, Side } from '../../domain/types';
@@ -122,19 +135,22 @@ export function resolveCaptureRoutineId(
  * un choix ou afficher l'état vide.
  */
 export async function loadCaptureSource(): Promise<CaptureSource> {
-  const [currentRoutineId, routines] = await Promise.all([
-    getCurrentRoutineId(),
-    listRoutines(),
-  ]);
-  const routineId = resolveCaptureRoutineId(
-    currentRoutineId,
-    routines.map((r) => r.id),
-  );
-  if (routineId === null) return decideCaptureSource(null, []);
+  // Cache d'abord (ADR 0012) : l'arrivée en salle ne dépend pas du réseau.
+  return cachedRead('capture-source', async () => {
+    const [currentRoutineId, routines] = await Promise.all([
+      getCurrentRoutineId(),
+      listRoutines(),
+    ]);
+    const routineId = resolveCaptureRoutineId(
+      currentRoutineId,
+      routines.map((r) => r.id),
+    );
+    if (routineId === null) return decideCaptureSource(null, []);
 
-  const seances = await listSeances(routineId);
-  const choices: SeanceChoice[] = seances.map((s) => ({ id: s.id, name: s.name }));
-  return decideCaptureSource(routineId, choices);
+    const seances = await listSeances(routineId);
+    const choices: SeanceChoice[] = seances.map((s) => ({ id: s.id, name: s.name }));
+    return decideCaptureSource(routineId, choices);
+  });
 }
 
 /**
@@ -145,7 +161,9 @@ export async function loadCaptureSource(): Promise<CaptureSource> {
  * arriver : createSeance crée toujours une v1).
  */
 export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSeance> {
-  const versionId = await getCurrentVersionId(seance.id);
+  const versionId = await cachedRead(`seance-version:${seance.id}`, () =>
+    getCurrentVersionId(seance.id),
+  );
   if (!versionId) {
     throw new Error(`Séance ${seance.id} sans version : template incomplet.`);
   }
@@ -158,12 +176,14 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
  * des retouches du même template, l'historique de l'exo les traverse toutes.
  */
 export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('seance_versions')
-    .select('id')
-    .eq('seance_id', seanceId);
-  if (error) throw error;
-  return (data ?? []).map((row) => row.id);
+  return cachedRead(`seance-version-ids:${seanceId}`, async () => {
+    const { data, error } = await supabase
+      .from('seance_versions')
+      .select('id')
+      .eq('seance_id', seanceId);
+    if (error) throw error;
+    return (data ?? []).map((row) => row.id);
+  });
 }
 
 // --- Lecture du catalogue -----------------------------------------------------
@@ -184,6 +204,25 @@ export async function listExercises(): Promise<ExerciseRow[]> {
   ]);
   if (error) throw error;
   return (data ?? []).map((row) => mergeRowWithOverride(row, overrides.get(row.id) ?? null));
+}
+
+/**
+ * Variante « cache d'abord » du catalogue, pour la CAPTURE seulement (picker
+ * d'ajout/swap en salle, ADR 0012). Les éditeurs (ExercisesScreen, SeanceEditor)
+ * gardent `listExercises` en direct : ils relisent juste après une écriture
+ * (créer/renommer un exo) et une copie servie d'abord leur montrerait l'état
+ * d'AVANT leur propre modification.
+ */
+export async function listExercisesForCapture(): Promise<ExerciseRow[]> {
+  return cachedRead('exercises', listExercises);
+}
+
+/**
+ * Note d'instructions d'un exo, « cache d'abord » pour la CAPTURE (ADR 0012).
+ * Même partage des rôles que le catalogue : les éditeurs lisent en direct.
+ */
+export async function loadExerciseNoteCached(exerciseId: string): Promise<string> {
+  return cachedRead(`exo-note:${exerciseId}`, () => loadExerciseNote(exerciseId));
 }
 
 // --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------
@@ -265,7 +304,7 @@ export async function loadCatalogExercise(
   const base = catalogExerciseToSession(merged ?? row);
   const [history, perExerciseNote] = await Promise.all([
     loadExerciseHistory(row.id, ctx.seanceVersionIds, base.unilateral ?? false),
-    loadExerciseNote(row.id),
+    loadExerciseNoteCached(row.id),
   ]);
   return {
     ...base,
@@ -299,48 +338,52 @@ export async function loadSeanceForCapture(
   seance: { id: string; name: string },
   seanceVersionId: string,
 ): Promise<Session> {
-  const [{ data, error }, overrides] = await Promise.all([
-    supabase
-      .from('prescriptions')
-      .select(
-        'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral, primary_muscles )',
-      )
-      .eq('seance_version_id', seanceVersionId)
-      .order('position', { ascending: true }),
-    // Fusion override per-user (issue #50) : la Capture du jour doit logger avec
-    // les champs personnalisés (unilatéral pour le côté #46, muscles pour #37).
-    loadExerciseOverrides(),
-  ]);
-  if (error) throw error;
+  // Cache d'abord (ADR 0012), APRÈS fusion des overrides : la copie locale porte
+  // déjà les champs personnalisés, prête à servir hors-ligne telle quelle.
+  return cachedRead(`seance-template:${seanceVersionId}:${seance.id}`, async () => {
+    const [{ data, error }, overrides] = await Promise.all([
+      supabase
+        .from('prescriptions')
+        .select(
+          'exercise_id, position, sets_min, sets_max, reps_min, reps_max, rir_min, rir_max, exercises ( name, unilateral, primary_muscles )',
+        )
+        .eq('seance_version_id', seanceVersionId)
+        .order('position', { ascending: true }),
+      // Fusion override per-user (issue #50) : la Capture du jour doit logger avec
+      // les champs personnalisés (unilatéral pour le côté #46, muscles pour #37).
+      loadExerciseOverrides(),
+    ]);
+    if (error) throw error;
 
-  const rows = (data ?? []) as unknown as PrescriptionWithExercise[];
+    const rows = (data ?? []) as unknown as PrescriptionWithExercise[];
 
-  const exercises: SessionExercise[] = rows.map((row) => {
-    // L'exo joint peut manquer (FK orpheline) : on garde le repli « inconnu ».
-    const merged = mergeExerciseOverride(
-      {
-        name: row.exercises?.name ?? '(exercice inconnu)',
-        unilateral: row.exercises?.unilateral ?? false,
-        primaryMuscles: row.exercises?.primary_muscles ?? [],
-      },
-      overrides.get(row.exercise_id) ?? null,
-    );
-    return {
-      exerciseId: row.exercise_id,
-      name: merged.name,
-      unilateral: merged.unilateral,
-      primaryMuscles: merged.primaryMuscles,
-      prescription: {
-        sets: { min: row.sets_min, max: row.sets_max },
-        reps: { min: row.reps_min, max: row.reps_max },
-        rir: { min: row.rir_min, max: row.rir_max },
-      },
-      reference: null,
-      perExerciseNote: '',
-    };
+    const exercises: SessionExercise[] = rows.map((row) => {
+      // L'exo joint peut manquer (FK orpheline) : on garde le repli « inconnu ».
+      const merged = mergeExerciseOverride(
+        {
+          name: row.exercises?.name ?? '(exercice inconnu)',
+          unilateral: row.exercises?.unilateral ?? false,
+          primaryMuscles: row.exercises?.primary_muscles ?? [],
+        },
+        overrides.get(row.exercise_id) ?? null,
+      );
+      return {
+        exerciseId: row.exercise_id,
+        name: merged.name,
+        unilateral: merged.unilateral,
+        primaryMuscles: merged.primaryMuscles,
+        prescription: {
+          sets: { min: row.sets_min, max: row.sets_max },
+          reps: { min: row.reps_min, max: row.reps_max },
+          rir: { min: row.rir_min, max: row.rir_max },
+        },
+        reference: null,
+        perExerciseNote: '',
+      };
+    });
+
+    return { id: seance.id, name: seance.name, exercises };
   });
-
-  return { id: seance.id, name: seance.name, exercises };
 }
 
 // --- Historique d'un exo (base des dérivées : référence ET records) -----------
@@ -416,21 +459,27 @@ export function reconstructExerciseExecutions(
  * `seance_version_id`, les records gardent tout. User neuf -> liste vide.
  */
 async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetWithExecutionRow[]> {
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select(
-      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
-    )
-    .eq('exercise_id', exerciseId)
-    // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
-    // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
-    // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
-    // tie-break stable entre deux chargements.
-    .order('performed_on', { referencedTable: 'executions' })
-    .order('created_at', { referencedTable: 'executions' });
-  if (error) throw error;
+  // Cache d'abord (ADR 0012) : la Référence et les Records se dérivent de la
+  // copie locale hors-ligne. Elle peut être en retard d'une exécution faite
+  // ailleurs (cas résiduel ADR 0003) ; la revalidation post-flush (App) la met à
+  // jour dès que la séance du jour est remontée.
+  return cachedRead(`exo-execs:${exerciseId}`, async () => {
+    const { data, error } = await supabase
+      .from('performed_sets')
+      .select(
+        'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
+      )
+      .eq('exercise_id', exerciseId)
+      // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
+      // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
+      // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
+      // tie-break stable entre deux chargements.
+      .order('performed_on', { referencedTable: 'executions' })
+      .order('created_at', { referencedTable: 'executions' });
+    if (error) throw error;
 
-  return (data ?? []) as unknown as PerformedSetWithExecutionRow[];
+    return (data ?? []) as unknown as PerformedSetWithExecutionRow[];
+  });
 }
 
 // --- Dérivées d'historique (Référence scopée séance + records all-time) -------
@@ -514,17 +563,25 @@ export async function loadLastSeanceExecution(
   beforeDate: string,
 ): Promise<{ id: string; performedOn: string } | null> {
   if (seanceVersionIds.length === 0) return null;
-  const { data, error } = await supabase
-    .from('executions')
-    .select('id, performed_on')
-    .in('seance_version_id', [...seanceVersionIds])
-    .lt('performed_on', beforeDate)
-    .order('performed_on', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data ? { id: data.id, performedOn: data.performed_on } : null;
+  // Tolérant (ADR 0012) : le repère « tu notais » est un confort, jamais un
+  // bloqueur — sans copie ni réseau, il n'y a simplement rien à ressortir.
+  return tolerantRead(
+    `last-exec:${stableKeyOf(seanceVersionIds)}:${beforeDate}`,
+    async () => {
+      const { data, error } = await supabase
+        .from('executions')
+        .select('id, performed_on')
+        .in('seance_version_id', [...seanceVersionIds])
+        .lt('performed_on', beforeDate)
+        .order('performed_on', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? { id: data.id, performedOn: data.performed_on } : null;
+    },
+    null,
+  );
 }
 
 /**
@@ -538,19 +595,27 @@ export async function loadPreviousDatedNotes(
   lastExecution: { id: string; performedOn: string } | null,
 ): Promise<Record<string, PreviousDatedNote>> {
   if (!lastExecution) return {};
-  const { data, error } = await supabase
-    .from('dated_notes')
-    .select('exercise_id, body, created_at')
-    .eq('execution_id', lastExecution.id)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
+  // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution —
+  // sans copie ni réseau, rien ne ressort (cf. CONTEXT.md « Note datée »).
+  return tolerantRead(
+    `prev-notes:${lastExecution.id}`,
+    async () => {
+      const { data, error } = await supabase
+        .from('dated_notes')
+        .select('exercise_id, body, created_at')
+        .eq('execution_id', lastExecution.id)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
 
-  const notes: Record<string, PreviousDatedNote> = {};
-  for (const row of data ?? []) {
-    if (row.body.trim() === '') continue;
-    notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
-  }
-  return notes;
+      const notes: Record<string, PreviousDatedNote> = {};
+      for (const row of data ?? []) {
+        if (row.body.trim() === '') continue;
+        notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
+      }
+      return notes;
+    },
+    {},
+  );
 }
 
 // --- Exécution du jour --------------------------------------------------------
@@ -593,6 +658,27 @@ export interface TodayExecution {
  * base (annulation, idempotence). `null` si aucune exécution ce jour-là.
  */
 export async function loadTodayExecution(
+  seanceVersionId: string,
+  date: string,
+): Promise<TodayExecution | null> {
+  // Tolérant SANS copie locale (ADR 0012) : hors-ligne, `null` suffit — le
+  // réalisé LOCAL du jour (state.ts, fusionné par mergeProgress, qui PRIME pour
+  // l'executionId et le chrono) reste la vérité de l'appareil, donc pas
+  // d'exécution fantôme. Surtout, ne JAMAIS servir une copie d'abord ici : une
+  // copie datant d'avant la Clôture ressusciterait une séance déjà rangée
+  // (exactement ce que le filtre `closed_at` combat, ADR 0009). Le prix du
+  // repli en échec NON-réseau : une exécution du jour en base peut être ignorée
+  // et doublée — même classe résiduelle que le multi-appareil (ADR 0003), la
+  // capture ne bloque jamais.
+  try {
+    return await fetchTodayExecution(seanceVersionId, date);
+  } catch {
+    return null;
+  }
+}
+
+/** Lecture Supabase brute de l'exécution du jour (cf. loadTodayExecution). */
+async function fetchTodayExecution(
   seanceVersionId: string,
   date: string,
 ): Promise<TodayExecution | null> {
