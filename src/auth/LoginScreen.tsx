@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
+import { PendingWritesError } from './auth-context'
+import { pendingCount } from '../features/capture/outbox'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
 
@@ -36,7 +38,7 @@ function frenchError(message: string): string {
 }
 
 export function LoginScreen() {
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, localAccount, forgetLocalData } = useAuth()
   // TOUS les hooks AVANT le moindre return conditionnel (règle des Hooks). Avant,
   // le `if (mode === 'forgot') return …` précédait ces useState : passer en mode
   // « mot de passe oublié » rendait MOINS de hooks que le render précédent et
@@ -47,10 +49,18 @@ export function LoginScreen() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [info, setInfo] = useState<string | null>(null)
+  // Étape de confirmation du forçage de purge (ADR 0012) : deux gestes distincts,
+  // jamais un OK réflexe, la perte est nommée avant d'être possible.
+  const [confirmPurge, setConfirmPurge] = useState(false)
 
   if (mode === 'forgot') {
     return <ForgotPasswordScreen onBack={() => setMode('signin')} />
   }
+
+  // Des écritures locales attendent encore leur synchro (révocation, session
+  // retirée…) : on l'affiche AVANT le formulaire — se reconnecter avec le même
+  // compte les remontera, un autre compte exige le forçage (ADR 0012).
+  const pendingWrites = localAccount ? pendingCount() : 0
 
   const isSignup = mode === 'signup'
 
@@ -73,7 +83,14 @@ export function LoginScreen() {
         await signIn(email, password)
       }
     } catch (err) {
-      setError(frenchError(err instanceof Error ? err.message : String(err)))
+      if (err instanceof PendingWritesError) {
+        // Autre compte par-dessus des saisies non synchronisées : refus (ADR 0012).
+        setError(
+          `Des saisies de ${localAccount?.email ?? 'un autre compte'} attendent encore leur synchronisation. Connecte-toi avec ce compte pour les envoyer, ou purge-les d'abord ci-dessus.`,
+        )
+      } else {
+        setError(frenchError(err instanceof Error ? err.message : String(err)))
+      }
     } finally {
       setSubmitting(false)
     }
@@ -84,6 +101,52 @@ export function LoginScreen() {
       title={isSignup ? 'Crée ton compte.' : 'Bon retour.'}
       subtitle="Capture en salle. Progresse au calme."
     >
+      {pendingWrites > 0 && (
+        <div className="surface-card mb-6 rounded-[14px] px-4 py-3.5 text-left">
+          <p className="text-sm text-ink">
+            {pendingWrites} saisie{pendingWrites > 1 ? 's' : ''} de{' '}
+            <span className="font-medium">{localAccount?.email ?? 'ton compte'}</span> attend
+            {pendingWrites > 1 ? 'ent' : ''} encore la synchronisation. Connecte-toi avec ce
+            compte pour les envoyer.
+          </p>
+          {confirmPurge ? (
+            <div className="mt-3 flex flex-col gap-2">
+              <p className="text-xs text-warn">
+                Changer de compte efface définitivement ces saisies de l'appareil.
+              </p>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmPurge(false)}
+                  className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    forgetLocalData()
+                    setConfirmPurge(false)
+                    setError(null)
+                  }}
+                  className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
+                >
+                  Purger et changer de compte
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmPurge(true)}
+              className="mt-2 rounded text-xs font-medium text-ink-muted transition active:text-ink"
+            >
+              Changer de compte…
+            </button>
+          )}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
         <div>
           <FieldLabel htmlFor="email">E-mail</FieldLabel>

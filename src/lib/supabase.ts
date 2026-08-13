@@ -19,3 +19,11 @@ if (!url || !key) {
 }
 
 export const supabase = createClient<Database>(url, key)
+
+// Clé localStorage où supabase-js persiste sa session (dérivée du sous-domaine
+// du projet, cf. SupabaseClient). Utilisée UNIQUEMENT comme purge de secours à
+// la Déconnexion forcée hors-ligne (ADR 0012) : supabase-js refuse alors de
+// retirer sa session (l'appel réseau échoue avant la purge locale). La garde de
+// route, elle, ne lit JAMAIS cette clé — c'est le marqueur local-account qui
+// fait foi.
+export const supabaseAuthStorageKey = `sb-${new URL(url).hostname.split('.')[0]}-auth-token`

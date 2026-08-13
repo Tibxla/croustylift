@@ -4,6 +4,20 @@ Tracker de musculation multi-user : capture des séries en salle (zéro-friction
 
 ## Langage
 
+### Compte & appareil
+
+**Connexion**:
+L'acte de s'identifier auprès du serveur (email + mot de passe). Exige le réseau, arrive rarement (une fois par appareil, ou après déconnexion).
+_Avoid_: Login, authentification (trop large) ; « se connecter » pour désigner l'ouverture de l'app
+
+**Session locale**:
+L'état « reconnu sur cet appareil » qui suit une Connexion et persiste jusqu'à Déconnexion explicite. Fait foi hors-ligne, même si sa validation par le serveur est périmée : l'app s'ouvre et la capture fonctionne, la revalidation attend le retour du réseau.
+_Avoid_: Session (ambigu avec « séance » en salle), token
+
+**Déconnexion**:
+L'acte volontaire de retirer la Session locale de l'appareil, qui purge les données locales du compte. Seule façon de perdre la reconnaissance : une panne de réseau ou un jeton périmé n'y suffisent jamais. Refusée tant que des écritures locales attendent la synchronisation — sauf forçage explicite qui assume la perte.
+_Avoid_: Logout, expiration (une session locale n'expire pas d'elle-même)
+
 ### Exercices
 
 **Exercice**:

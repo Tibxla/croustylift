@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useAuth } from './auth/useAuth'
+import { PendingWritesError } from './auth/auth-context'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
@@ -10,6 +11,7 @@ import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
+import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
@@ -51,7 +53,8 @@ function withViewTransition(update: () => void): void {
 // sans <style> injecté ni couplage cross-feature.
 
 function App() {
-  const { session, user, loading, signOut, isPasswordRecovery } = useAuth()
+  const { session, user, loading, signOut, isPasswordRecovery, localAccount, offlineRecognized } =
+    useAuth()
 
   if (loading) {
     return <FullScreenSpinner label="Chargement" />
@@ -64,11 +67,19 @@ function App() {
     return <ResetPasswordScreen />
   }
 
-  if (!session) {
+  // Garde de route (ADR 0012) : session validée serveur, OU Session locale qui
+  // fait foi hors-ligne (marqueur + session invérifiable faute de réseau). Le
+  // login ne s'affiche que quand PERSONNE n'est reconnu sur l'appareil.
+  if (!session && !offlineRecognized) {
     return <LoginScreen />
   }
 
-  return <AuthenticatedApp email={user?.email} onSignOut={signOut} />
+  return (
+    <AuthenticatedApp
+      email={user?.email ?? localAccount?.email ?? undefined}
+      onSignOut={signOut}
+    />
+  )
 }
 
 // --- App authentifiée : aiguillage premier lancement <-> surfaces ------------
@@ -84,7 +95,7 @@ function AuthenticatedApp({
   onSignOut,
 }: {
   email: string | undefined
-  onSignOut: () => Promise<void>
+  onSignOut: (options?: { force?: boolean }) => Promise<void>
 }) {
   type RoutineCheck =
     | { phase: 'checking' }
@@ -95,6 +106,11 @@ function AuthenticatedApp({
   const [check, setCheck] = useState<RoutineCheck>({ phase: 'checking' })
   const [reloadKey, setReloadKey] = useState(0)
   const [surface, setSurface] = useState<Surface>('capture')
+  // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
+  // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
+  const [signOutIssue, setSignOutIssue] = useState<
+    { kind: 'pending'; pending: number } | { kind: 'error'; message: string } | null
+  >(null)
 
   useEffect(() => {
     let active = true
@@ -102,14 +118,26 @@ function AuthenticatedApp({
 
     void (async () => {
       try {
-        const routines = await listRoutines()
+        // Réseau d'abord BORNÉ (3 s), copie locale en secours (ADR 0012) : le
+        // check doit voir une routine créée à l'instant (premier lancement),
+        // mais hors-ligne ou sur wifi zombie il retombe sur la copie au lieu de
+        // bloquer l'app entière sur « Impossible de charger ton compte ».
+        const routines = await networkFirstRead('routines-check', listRoutines)
         if (!active) return
         setCheck({ phase: isFirstLaunch(routines.length) ? 'first-launch' : 'ready' })
       } catch (err) {
         if (!active) return
+        // Sans copie locale ET sans réseau, il n'y a rien à afficher : cet état
+        // n'existe qu'avant la première synchro réussie (ou après une purge du
+        // navigateur) — on invite à repasser en ligne plutôt qu'un message brut.
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false
         setCheck({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: offline
+            ? "Hors connexion, et aucune copie locale de ton compte sur cet appareil. Repasse en ligne une fois pour l'amorcer."
+            : err instanceof Error
+              ? err.message
+              : String(err),
         })
       }
     })()
@@ -129,10 +157,19 @@ function AuthenticatedApp({
   // attente quel que soit l'onglet monté ; le flush est sérialisé (outbox), donc
   // ce déclencheur ne double pas ceux de la Capture.
   useEffect(() => {
-    void flushOutbox()
-    const onOnline = () => void flushOutbox()
-    window.addEventListener('online', onOnline)
-    return () => window.removeEventListener('online', onOnline)
+    const flushAndRevalidate = () => {
+      void flushOutbox()
+        .then((result) => {
+          // Après une remontée réussie, on RAFRAÎCHIT les copies locales de
+          // lecture (ADR 0012) : la Référence hors-ligne de la prochaine séance
+          // intègre celle qui vient d'être synchronisée.
+          if (result.flushed > 0) revalidateReadCache()
+        })
+        .catch(() => {})
+    }
+    flushAndRevalidate()
+    window.addEventListener('online', flushAndRevalidate)
+    return () => window.removeEventListener('online', flushAndRevalidate)
   }, [])
 
   if (check.phase === 'checking') {
@@ -187,7 +224,20 @@ function AuthenticatedApp({
           <button
             type="button"
             onClick={() => {
-              void onSignOut()
+              void (async () => {
+                try {
+                  await onSignOut()
+                } catch (err) {
+                  if (err instanceof PendingWritesError) {
+                    setSignOutIssue({ kind: 'pending', pending: err.pending })
+                    return
+                  }
+                  setSignOutIssue({
+                    kind: 'error',
+                    message: err instanceof Error ? err.message : String(err),
+                  })
+                }
+              })()
             }}
             className="btn btn-ghost rounded-lg px-2.5 py-1.5 text-sm font-medium"
           >
@@ -195,6 +245,56 @@ function AuthenticatedApp({
           </button>
         </div>
       </header>
+
+      {signOutIssue && (
+        <div className="sticky top-14 z-20 border-b border-hair bg-bg/95 px-4 py-3 backdrop-blur-md">
+          <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
+            {signOutIssue.kind === 'pending' ? (
+              <>
+                <p className="text-sm text-ink">
+                  {signOutIssue.pending} saisie{signOutIssue.pending > 1 ? 's' : ''} pas encore
+                  synchronisée{signOutIssue.pending > 1 ? 's' : ''}. Reviens en ligne pour te
+                  déconnecter sans rien perdre.
+                </p>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setSignOutIssue(null)}
+                    className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
+                  >
+                    Rester connecté
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Forçage explicite (ADR 0012) : la seule porte de purge —
+                      // la perte est nommée sur le bouton, pas dans un OK réflexe.
+                      setSignOutIssue(null)
+                      void onSignOut({ force: true }).catch(() => {})
+                    }}
+                    className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
+                  >
+                    Déconnecter et perdre ces saisies
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="flex items-start justify-between gap-3 text-sm text-warn">
+                <span className="min-w-0 break-words">
+                  Déconnexion impossible&#8239;: {signOutIssue.message}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSignOutIssue(null)}
+                  className="btn btn-ghost h-8 shrink-0 rounded-lg px-2.5 text-sm"
+                >
+                  OK
+                </button>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div style={{ paddingBottom: 'var(--nav-offset)' }}>
         {/* Frontière par surface (`key={surface}` la réarme au changement
