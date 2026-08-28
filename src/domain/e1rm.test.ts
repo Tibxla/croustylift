@@ -1,14 +1,19 @@
 import { estimateE1rm } from './e1rm'
 
 describe('estimateE1rm', () => {
-  it('applies adjusted Epley at RIR 0', () => {
-    // 100 * (1 + 5/30) = 116.666...
-    expect(estimateE1rm(100, 5, 0)).toBeCloseTo(116.6667, 4)
+  it('applies shifted Epley at RIR 0', () => {
+    // 5 reps effectives -> 100 * (1 + 4/30) = 113.333...
+    expect(estimateE1rm(100, 5, 0)).toBeCloseTo(113.3333, 4)
   })
 
   it('treats RIR as failure-equivalent reps, raising the estimate', () => {
-    // 100x5 @ RIR 2 == 7 effective reps: 100 * (1 + 7/30) = 123.333...
-    expect(estimateE1rm(100, 5, 2)).toBeCloseTo(123.3333, 4)
+    // 100x5 @ RIR 2 == 7 effective reps: 100 * (1 + 6/30) = 120
+    expect(estimateE1rm(100, 5, 2)).toBeCloseTo(120, 4)
+  })
+
+  it('is identical for the same effective reps, whatever the reps/RIR split', () => {
+    // 5 reps @ RIR 2 et 7 reps @ RIR 0 valent tous deux 7 reps effectives.
+    expect(estimateE1rm(100, 5, 2)).toBeCloseTo(estimateE1rm(100, 7, 0), 10)
   })
 
   it('increases with weight, all else equal', () => {
@@ -23,9 +28,15 @@ describe('estimateE1rm', () => {
     expect(estimateE1rm(100, 5, 3)).toBeGreaterThan(estimateE1rm(100, 5, 2))
   })
 
-  it('applies the formula to a single rep at RIR 0 (no special case)', () => {
-    // 100 * (1 + 1/30) = 103.333..., slightly above the weight, not equal to it
-    expect(estimateE1rm(100, 1, 0)).toBeCloseTo(103.3333, 4)
+  it('is anchored: one rep to failure IS the 1RM, no special case needed', () => {
+    // Le cas qui a motivé l'ADR 0013 : un maximal réel doit se relire tel quel.
+    expect(estimateE1rm(140, 1, 0)).toBeCloseTo(140, 10)
+    expect(estimateE1rm(100, 1, 0)).toBeCloseTo(100, 10)
+  })
+
+  it('a single rep with reps left in reserve estimates ABOVE the weight', () => {
+    // 100x1 @ RIR 1 == 2 reps effectives : 100 * (1 + 1/30) = 103.333...
+    expect(estimateE1rm(100, 1, 1)).toBeCloseTo(103.3333, 4)
   })
 
   it('throws when reps is below 1', () => {

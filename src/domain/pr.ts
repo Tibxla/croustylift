@@ -1,7 +1,8 @@
 // Records personnels dérivés de l'historique d'un exo (issue #34).
 //
 // Deux records, deux mesures (cf. CONTEXT.md « Record personnel ») :
-//   - bestE1rm       : le meilleur 1RM estimé (RIR-ajusté Epley, cf. e1rm.ts),
+//   - bestE1rm       : le meilleur 1RM estimé (Epley décalé, RIR compté comme des
+//                      reps, cf. e1rm.ts et ADR 0013),
 //                      pris sur TOUTES les séries — un record est une perf
 //                      démontrée, quel que soit le rang de la série. La courbe
 //                      e1RM d'analyse, elle, reste sur la 1ʳᵉ série de chaque
