@@ -33,6 +33,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
+import { readQueue, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -277,6 +278,12 @@ export interface SeanceHistoryContext {
   seanceVersionIds: string[];
   /** Notes datées de la DERNIÈRE exécution passée de la séance, par exerciseId. */
   previousDatedNotes: Record<string, PreviousDatedNote>;
+  /**
+   * L'exécution du jour ADOPTÉE, écartée du repère « dernière fois » (ADR 0014) :
+   * un exo ajouté en pleine séance ne doit pas prendre pour Référence les séries
+   * qu'on vient d'y saisir. `null` avant qu'une exécution existe.
+   */
+  currentExecutionId: string | null;
 }
 
 /**
@@ -303,7 +310,12 @@ export async function loadCatalogExercise(
   const merged = needsMerge ? await loadMergedExerciseRow(row.id) : null;
   const base = catalogExerciseToSession(merged ?? row);
   const [history, perExerciseNote] = await Promise.all([
-    loadExerciseHistory(row.id, ctx.seanceVersionIds, base.unilateral ?? false),
+    loadExerciseHistory(
+      row.id,
+      ctx.seanceVersionIds,
+      base.unilateral ?? false,
+      ctx.currentExecutionId,
+    ),
     loadExerciseNoteCached(row.id),
   ]);
   return {
@@ -396,6 +408,12 @@ export async function loadSeanceForCapture(
  * (`reconstructExerciseExecutions`) soit testable sans Supabase.
  */
 export type PerformedSetWithExecutionRow = {
+  /**
+   * Id de la LIGNE (UUID client, ADR 0003) : identité stable pour fusionner les
+   * écritures encore en attente (`applyPendingSets`). Absent des copies locales
+   * écrites avant ce champ — d'où la clé de repli `execution:order:side`.
+   */
+  id?: string;
   weight_kg: number;
   reps: number;
   rir: number;
@@ -453,6 +471,97 @@ export function reconstructExerciseExecutions(
 }
 
 /**
+ * Fusionne les écritures ENCORE EN ATTENTE (outbox) par-dessus les lignes lues,
+ * pour un exo donné (ADR 0014). Sans elle, une séance capturée hors-ligne
+ * n'existe dans AUCUNE source de la Référence — ni en base (pas remontée), ni
+ * dans la copie locale (que le réseau alimente) — et le repère « dernière fois »
+ * affiche l'avant-dernière séance, de façon garantie.
+ *
+ * Applique la file DANS SON ORDRE (FIFO, cf. outbox) : `insertSet` pose ou
+ * remplace une ligne, `deleteSet` la retire, `deleteExecution` retire toutes
+ * celles de son exécution. Le contexte d'exécution (date, version de séance)
+ * vient des lignes déjà lues, complété par les `upsertExecution` encore en file
+ * — c'est ce qui rend datable une séance jamais remontée.
+ *
+ * LIMITE ASSUMÉE : une série dont l'`upsertExecution` est DÉJÀ partie alors
+ * qu'elle-même attend encore (coupure entre deux ops d'un même flush) n'a plus
+ * de contexte lisible ici et reste ignorée jusqu'au prochain chargement en
+ * ligne. Idem pour un `deleteSet` visant une ligne d'une copie locale écrite
+ * avant le champ `id`. Deux cas transitoires, résorbés par la revalidation.
+ */
+export function applyPendingSets(
+  rows: PerformedSetWithExecutionRow[],
+  ops: readonly OutboxOp[],
+  exerciseId: string,
+): PerformedSetWithExecutionRow[] {
+  const context = new Map<string, NonNullable<PerformedSetWithExecutionRow['executions']>>();
+  for (const row of rows) {
+    if (row.executions) context.set(row.execution_id, row.executions);
+  }
+  for (const op of ops) {
+    if (op.type !== 'upsertExecution') continue;
+    context.set(op.id, {
+      performed_on: op.performedOn,
+      // La ligne n'existe pas encore côté serveur, donc pas de `created_at` :
+      // `startedAt` en tient lieu pour le départage à date égale (cf.
+      // `lastReference`). Absent (legacy, ADR 0011) -> chaîne vide, qui perd le
+      // départage : sans conséquence, la date suffit à trancher hors du jour même.
+      created_at: op.startedAt ?? '',
+      seance_version_id: op.seanceVersionId,
+    });
+  }
+
+  // Identité d'une ligne : son `id` quand la copie locale le porte, sinon
+  // (execution, order, côté) — unique par exo et stable, cf. ADR 0005.
+  const keyOf = (row: PerformedSetWithExecutionRow): string =>
+    row.id ?? `${row.execution_id}:${row.set_order}:${row.side ?? ''}`;
+  const byKey = new Map(rows.map((row) => [keyOf(row), row] as const));
+
+  for (const op of ops) {
+    switch (op.type) {
+      case 'insertSet': {
+        if (op.exerciseId !== exerciseId) break;
+        const executions = context.get(op.executionId);
+        if (!executions) break; // Sans date ni scope, la ligne ne dérive rien.
+        byKey.set(op.id, {
+          id: op.id,
+          weight_kg: op.weightKg,
+          reps: op.reps,
+          rir: op.rir,
+          set_order: op.setOrder,
+          side: op.side ?? null,
+          execution_id: op.executionId,
+          executions,
+        });
+        break;
+      }
+      case 'deleteSet':
+        byKey.delete(op.id);
+        break;
+      case 'deleteExecution':
+        for (const [key, row] of byKey) {
+          if (row.execution_id === op.id) byKey.delete(key);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Même ordre que la requête (performed_on puis created_at) : `reconstructExerciseExecutions`
+  // documente que l'ordre des exécutions rendues suit celui des lignes.
+  return [...byKey.values()].sort((a, b) => {
+    const da = a.executions?.performed_on ?? '';
+    const db = b.executions?.performed_on ?? '';
+    if (da !== db) return da < db ? -1 : 1;
+    const ca = a.executions?.created_at ?? '';
+    const cb = b.executions?.created_at ?? '';
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    return 0;
+  });
+}
+
+/**
  * Lignes plates de l'historique réel d'un exo : ses performed_sets (scopés RLS)
  * joints à leur exécution (date, created_at, version de séance). Base UNIQUE des
  * dérivées (`deriveExerciseHistory`) : la Référence scopée séance se filtre sur
@@ -467,7 +576,7 @@ async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetW
     const { data, error } = await supabase
       .from('performed_sets')
       .select(
-        'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
+        'id, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
       )
       .eq('exercise_id', exerciseId)
       // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
@@ -514,11 +623,20 @@ export function deriveExerciseHistory(
   exerciseId: string,
   seanceVersionIds: readonly string[],
   unilateral: boolean,
+  currentExecutionId: string | null = null,
 ): ExerciseHistory {
   const versionIds = new Set(seanceVersionIds);
   const all = reconstructExerciseExecutions(rows, exerciseId);
+  // L'exécution EN COURS est écartée du repère, jamais des records (ADR 0014) :
+  // une Référence est « la dernière fois », on ne se compare pas à soi-même en
+  // train de se faire ; un Record, lui, reste all-time et une série du jour en
+  // fait partie dès qu'elle est loggée (sinon le badge se rallumerait à chaque
+  // remontage de l'écran, cf. pr.test.ts).
+  const past = currentExecutionId
+    ? rows.filter((r) => r.execution_id !== currentExecutionId)
+    : rows;
   const scoped = reconstructExerciseExecutions(
-    rows.filter((r) => r.executions != null && versionIds.has(r.executions.seance_version_id)),
+    past.filter((r) => r.executions != null && versionIds.has(r.executions.seance_version_id)),
     exerciseId,
   );
 
@@ -527,7 +645,10 @@ export function deriveExerciseHistory(
     reference,
     // Repli seulement quand la séance n'a AUCUN historique de l'exo : un point de
     // départ pour le poids, pas une comparaison (pas de repère, pas de badges).
-    fallbackReference: reference === null ? lastReference(all, exerciseId) : null,
+    fallbackReference:
+      reference === null
+        ? lastReference(reconstructExerciseExecutions(past, exerciseId), exerciseId)
+        : null,
     personalRecord: personalRecord(all, exerciseId),
     // Records par côté (ADR 0010) seulement pour un unilatéral : un bilatéral n'en a pas.
     personalRecordBySide: unilateral ? personalRecordBySide(all, exerciseId) : null,
@@ -543,9 +664,24 @@ export async function loadExerciseHistory(
   exerciseId: string,
   seanceVersionIds: readonly string[],
   unilateral: boolean,
+  currentExecutionId: string | null = null,
 ): Promise<ExerciseHistory> {
+  const rows = await loadExerciseRows(exerciseId);
+  return deriveExerciseHistory(rows, exerciseId, seanceVersionIds, unilateral, currentExecutionId);
+}
+
+/**
+ * Les lignes plates d'un exo, copie locale FUSIONNÉE avec les écritures encore
+ * en attente (ADR 0014) : la source unique des dérivées de Capture. Exportée
+ * telle quelle pour l'ouverture d'une séance, qui dérive APRÈS avoir résolu
+ * l'id de l'exécution du jour — les deux lectures partent en parallèle, seule
+ * la dérivation (pure) attend.
+ */
+export async function loadExerciseRows(
+  exerciseId: string,
+): Promise<PerformedSetWithExecutionRow[]> {
   const rows = await loadExerciseExecutions(exerciseId);
-  return deriveExerciseHistory(rows, exerciseId, seanceVersionIds, unilateral);
+  return applyPendingSets(rows, readQueue(), exerciseId);
 }
 
 // --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------

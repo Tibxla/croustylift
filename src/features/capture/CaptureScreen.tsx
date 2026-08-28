@@ -19,8 +19,9 @@ import {
   listSeanceVersionIds,
   loadCaptureSource,
   loadCatalogExercise,
+  deriveExerciseHistory,
+  loadExerciseRows,
   loadChosenSeance,
-  loadExerciseHistory,
   loadExerciseNoteCached,
   loadLastSeanceExecution,
   loadPreviousDatedNotes,
@@ -172,14 +173,14 @@ export function CaptureScreen() {
       // (réhydratation au montage) et les notes datées de la DERNIÈRE exécution
       // passée de la séance (repère « tu notais », une requête pour tous les exos,
       // bornée par la date adoptée).
-      const [withRefs, today, previousDatedNotes] = await Promise.all([
+      const [withRows, today, previousDatedNotes] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
-            const [history, perExerciseNote] = await Promise.all([
-              loadExerciseHistory(ex.exerciseId, versionIds, ex.unilateral ?? false),
+            const [rows, perExerciseNote] = await Promise.all([
+              loadExerciseRows(ex.exerciseId),
               loadExerciseNoteCached(ex.exerciseId),
             ]);
-            return { ...ex, ...history, perExerciseNote };
+            return { ...ex, rows, perExerciseNote };
           }),
         ),
         loadTodayExecution(seanceVersionId, date),
@@ -187,10 +188,26 @@ export function CaptureScreen() {
       ]);
 
       if (!active()) return;
+
+      // L'exécution du jour ADOPTÉE, écartée du repère « dernière fois » (ADR
+      // 0014). Elle n'est connue qu'ICI, après les lectures : d'où la dérivation
+      // en aval plutôt qu'un chargement séquentiel — mettre une lecture réseau
+      // sur le chemin d'ouverture d'une séance irait contre l'ADR 0012. Ordre de
+      // priorité identique à celui du reducer : le cache local (`restored`) prime
+      // sur la base (cf. mergeProgress), qui prime sur « aucune exécution ».
+      const currentExecutionId = restored?.executionId ?? today?.executionId ?? null;
+
       const session: Session = {
         ...base,
-        exercises: withRefs.map((ex) => ({
+        exercises: withRows.map(({ rows, ...ex }) => ({
           ...ex,
+          ...deriveExerciseHistory(
+            rows,
+            ex.exerciseId,
+            versionIds,
+            ex.unilateral ?? false,
+            currentExecutionId,
+          ),
           previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
         })),
       };
@@ -213,7 +230,13 @@ export function CaptureScreen() {
         phase: 'ready',
         session,
         seanceVersionId,
-        historyCtx: { seanceVersionIds: versionIds, previousDatedNotes },
+        historyCtx: {
+          seanceVersionIds: versionIds,
+          previousDatedNotes,
+          // L'id ADOPTÉ par le reducer : `initRef` pose `newId()` quand rien
+          // n'existe, et c'est bien lui que porteront les séries du jour.
+          currentExecutionId: currentExecutionId ?? initRef.current.executionId,
+        },
       });
     },
     [],
