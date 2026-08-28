@@ -626,15 +626,18 @@ export function deriveExerciseHistory(
   currentExecutionId: string | null = null,
 ): ExerciseHistory {
   const versionIds = new Set(seanceVersionIds);
-  const all = reconstructExerciseExecutions(rows, exerciseId);
-  // L'exécution EN COURS est écartée du repère, jamais des records (ADR 0014) :
-  // une Référence est « la dernière fois », on ne se compare pas à soi-même en
-  // train de se faire ; un Record, lui, reste all-time et une série du jour en
-  // fait partie dès qu'elle est loggée (sinon le badge se rallumerait à chaque
-  // remontage de l'écran, cf. pr.test.ts).
+  // TOUT se dérive de l'historique D'AVANT l'exécution en cours (ADR 0014).
+  //   - Référence : « la dernière fois » — on ne se compare pas à soi-même en
+  //     train de se faire.
+  //   - Records : le socle sur lequel la Capture REJOUE les séries du jour
+  //     (`computeRecordFlags` fait avancer un record « running » série après
+  //     série). Y verser déjà le jour éteindrait le badge d'une série qui vient
+  //     de battre le record, au premier remontage de l'écran. Le record affiché
+  //     reste all-time au sens du CONTEXT : le jour est rejoué par-dessus.
   const past = currentExecutionId
     ? rows.filter((r) => r.execution_id !== currentExecutionId)
     : rows;
+  const all = reconstructExerciseExecutions(past, exerciseId);
   const scoped = reconstructExerciseExecutions(
     past.filter((r) => r.executions != null && versionIds.has(r.executions.seance_version_id)),
     exerciseId,
@@ -645,10 +648,7 @@ export function deriveExerciseHistory(
     reference,
     // Repli seulement quand la séance n'a AUCUN historique de l'exo : un point de
     // départ pour le poids, pas une comparaison (pas de repère, pas de badges).
-    fallbackReference:
-      reference === null
-        ? lastReference(reconstructExerciseExecutions(past, exerciseId), exerciseId)
-        : null,
+    fallbackReference: reference === null ? lastReference(all, exerciseId) : null,
     personalRecord: personalRecord(all, exerciseId),
     // Records par côté (ADR 0010) seulement pour un unilatéral : un bilatéral n'en a pas.
     personalRecordBySide: unilateral ? personalRecordBySide(all, exerciseId) : null,

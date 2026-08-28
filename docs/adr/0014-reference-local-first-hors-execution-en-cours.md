@@ -8,6 +8,13 @@ revalidation post-flush, elle pouvait donc opposer à l'utilisateur les séries 
 de saisir. On fusionne désormais les opérations en attente de l'outbox par-dessus les
 lignes lues avant de dériver, et on écarte l'exécution en cours **par son id**.
 
+Les records chargés en Capture partent du même historique d'avant : ils sont le SOCLE sur
+lequel `computeRecordFlags` rejoue les séries du jour (un record « running » qui avance
+série après série). Y verser déjà le jour éteindrait le badge d'une série qui vient de
+battre le record, au premier remontage de l'écran — la fusion outbox aurait rendu cette
+bascule systématique en salle, là où rien n'est encore remonté. Le record reste all-time au
+sens du CONTEXT : le jour est rejoué par-dessus, pas oublié.
+
 ## Alternatives écartées
 
 - **Write-through** (l'outbox écrit aussi dans la copie de lecture) : corrige le retard,

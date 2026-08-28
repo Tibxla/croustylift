@@ -464,9 +464,16 @@ describe('deriveExerciseHistory — exclusion de l\'exécution en cours', () => 
     expect(h.fallbackReference?.map((s) => s.weightKg)).toEqual([70]);
   });
 
-  it('les RECORDS gardent les séries du jour (all-time, cf. badge qui se rallumait)', () => {
+  it('les RECORDS aussi partent d\'AVANT le jour (la Capture rejoue les séries par-dessus)', () => {
     const h = deriveExerciseHistory(rows, 'exo-1', versions, false, 'e-jour');
-    // 85x8@2 (la série du jour) bat 80x8@2 : le record ne l'ignore pas.
+    // Le socle reste 80 : sinon le badge « Record » posé sur la série du jour à
+    // 85 s'éteindrait au premier remontage de l'écran (cf. computeRecordFlags,
+    // qui fait avancer un record « running » série après série).
+    expect(h.personalRecord.bestWeightReps).toEqual({ weightKg: 80, reps: 8 });
+  });
+
+  it('sans exclusion, le socle des records absorbe le jour (le comportement d\'avant)', () => {
+    const h = deriveExerciseHistory(rows, 'exo-1', versions, false);
     expect(h.personalRecord.bestWeightReps).toEqual({ weightKg: 85, reps: 8 });
   });
 });
