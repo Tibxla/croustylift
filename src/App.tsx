@@ -209,92 +209,12 @@ function AuthenticatedApp({
 
   return (
     <main className="min-h-screen bg-bg text-ink">
-      <header
-        className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-hair bg-bg/80 px-4 backdrop-blur-md"
-        style={{ viewTransitionName: 'app-header' }}
-      >
-        <div className="flex items-center gap-2.5">
-          <img src="/mark.svg" alt="" className="h-7 w-7" />
-          <h1 className="text-base font-semibold tracking-tight">Croustylift</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="hidden max-w-[40vw] truncate text-sm text-ink-muted sm:inline">
-            {email}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              void (async () => {
-                try {
-                  await onSignOut()
-                } catch (err) {
-                  if (err instanceof PendingWritesError) {
-                    setSignOutIssue({ kind: 'pending', pending: err.pending })
-                    return
-                  }
-                  setSignOutIssue({
-                    kind: 'error',
-                    message: err instanceof Error ? err.message : String(err),
-                  })
-                }
-              })()
-            }}
-            className="btn btn-ghost rounded-lg px-2.5 py-1.5 text-sm font-medium"
-          >
-            Se déconnecter
-          </button>
-        </div>
-      </header>
-
-      {signOutIssue && (
-        <div className="sticky top-14 z-20 border-b border-hair bg-bg/95 px-4 py-3 backdrop-blur-md">
-          <div className="mx-auto flex w-full max-w-md flex-col gap-2.5">
-            {signOutIssue.kind === 'pending' ? (
-              <>
-                <p className="text-sm text-ink">
-                  {signOutIssue.pending} saisie{signOutIssue.pending > 1 ? 's' : ''} pas encore
-                  synchronisée{signOutIssue.pending > 1 ? 's' : ''}. Reviens en ligne pour te
-                  déconnecter sans rien perdre.
-                </p>
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setSignOutIssue(null)}
-                    className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
-                  >
-                    Rester connecté
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Forçage explicite (ADR 0012) : la seule porte de purge —
-                      // la perte est nommée sur le bouton, pas dans un OK réflexe.
-                      setSignOutIssue(null)
-                      void onSignOut({ force: true }).catch(() => {})
-                    }}
-                    className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
-                  >
-                    Déconnecter et perdre ces saisies
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="flex items-start justify-between gap-3 text-sm text-warn">
-                <span className="min-w-0 break-words">
-                  Déconnexion impossible&#8239;: {signOutIssue.message}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSignOutIssue(null)}
-                  className="btn btn-ghost h-8 shrink-0 rounded-lg px-2.5 text-sm"
-                >
-                  OK
-                </button>
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Scrim de status bar : en standalone iOS la webview passe SOUS l'heure
+          (viewport-fit=cover + status bar translucide, index.html). Sans cette
+          bande opaque, le contenu défilerait derrière l'heure et la batterie.
+          Elle ne coûte aucun pixel utile — la zone appartient déjà au système —
+          et garde la teinte de l'app plutôt que le noir pur d'iOS. */}
+      <div className="safe-top-scrim" aria-hidden="true" />
 
       <div style={{ paddingBottom: 'var(--nav-offset)' }}>
         {/* Frontière par surface (`key={surface}` la réarme au changement
@@ -309,6 +229,90 @@ function AuthenticatedApp({
             {surface === 'exercises' && <ExercisesScreen />}
           </Suspense>
         </ErrorBoundary>
+
+        {/* Compte : email + Déconnexion, en pied de l'Analyse — l'écran « au
+            calme », consulté assis, hors salle. La Connexion arrive une fois par
+            appareil (cf. CONTEXT.md) : cette action n'a rien à faire dans le
+            chrome permanent de l'app, où elle volait 56 px à tous les écrans, la
+            Capture comprise. App reste propriétaire de l'auth — l'Analyse n'en
+            reçoit aucune prop. */}
+        {surface === 'analysis' && (
+          <section className="mx-auto w-full max-w-md px-4 pb-8">
+            <div className="panel rounded-xl p-4">
+              <h2 className="text-sm font-medium text-ink">Compte</h2>
+              <p className="mt-1 truncate text-sm text-ink-muted">{email}</p>
+              {signOutIssue ? (
+                <div className="mt-3 flex flex-col gap-2.5">
+                  {signOutIssue.kind === 'pending' ? (
+                    <>
+                      <p className="text-sm text-ink">
+                        {signOutIssue.pending} saisie{signOutIssue.pending > 1 ? 's' : ''} pas encore
+                        synchronisée{signOutIssue.pending > 1 ? 's' : ''}. Reviens en ligne pour te
+                        déconnecter sans rien perdre.
+                      </p>
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setSignOutIssue(null)}
+                          className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
+                        >
+                          Rester connecté
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Forçage explicite (ADR 0012) : la seule porte de purge —
+                            // la perte est nommée sur le bouton, pas dans un OK réflexe.
+                            setSignOutIssue(null)
+                            void onSignOut({ force: true }).catch(() => {})
+                          }}
+                          className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
+                        >
+                          Déconnecter et perdre ces saisies
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="flex items-start justify-between gap-3 text-sm text-warn">
+                      <span className="min-w-0 break-words">
+                        Déconnexion impossible&#8239;: {signOutIssue.message}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSignOutIssue(null)}
+                        className="btn btn-ghost h-8 shrink-0 rounded-lg px-2.5 text-sm"
+                      >
+                        OK
+                      </button>
+                    </p>
+                  )}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await onSignOut()
+                    } catch (err) {
+                      if (err instanceof PendingWritesError) {
+                        setSignOutIssue({ kind: 'pending', pending: err.pending })
+                        return
+                      }
+                      setSignOutIssue({
+                        kind: 'error',
+                        message: err instanceof Error ? err.message : String(err),
+                      })
+                    }
+                  })()
+                }}
+                className="btn btn-secondary mt-3 h-9 rounded-lg px-3 text-sm font-medium"
+              >
+                Se déconnecter
+              </button>
+            </div>
+          </section>
+        )}
       </div>
 
       <BottomNav

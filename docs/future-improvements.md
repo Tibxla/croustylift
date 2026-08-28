@@ -31,13 +31,11 @@ qui a été fait et des décisions actées.
 
 - **Revalidation du cache de lecture hors-ligne (ADR 0012)** : la revalidation ne sait
   rejouer que les lectures déjà vues dans la session en cours (registre mémoire de
-  `lib/read-cache`). Cas résiduel assumé : séance capturée hors-ligne, app tuée avant le
-  retour du réseau → le flush du boot suivant remonte les séries, mais les copies de la
-  séance (jamais rechargées en ligne depuis) peuvent servir une Référence en retard d'une
-  exécution à la prochaine ouverture hors-ligne. Même classe d'imprécision que le
-  last-write-wins (ADR 0003) ; se corrige seul au premier chargement en ligne de la
-  séance. Piste si ça devenait gênant : réchauffer les copies des séances de la routine
-  courante après un flush au boot.
+  `lib/read-cache`). La Référence n'en dépend PLUS : elle fusionne les écritures en attente
+  de l'outbox avant de dériver (ADR 0014), donc une séance capturée hors-ligne sert de
+  repère dès la saisie. Le retard résiduel ne concerne que les lectures qui n'ont pas de
+  source locale équivalente. Piste si ça devenait gênant : réchauffer les copies des
+  séances de la routine courante après un flush au boot.
 
 - **Protection « mots de passe compromis » (advisor `auth_leaked_password_protection`)** :
   fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée
