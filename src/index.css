@@ -134,6 +134,23 @@ body {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* Scrim de status bar (standalone iOS). Le shell n'a plus de barre haute : sans
+   cette bande, le contenu défilerait DERRIÈRE l'heure et la batterie, puisque
+   `viewport-fit=cover` + status bar translucide font passer la webview sous
+   elles (index.html). Opaque et dans la teinte de l'app — repasser la status bar
+   en `black` laisserait iOS peindre du noir pur (#000), visiblement plus sombre
+   que `--color-bg` sur un OLED. Hauteur nulle sans encoche : env() vaut 0. */
+.safe-top-scrim {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: env(safe-area-inset-top, 0px);
+  background-color: var(--color-bg);
+  /* Au-dessus de tout, feuilles et modales comprises (z-50) : la status bar doit
+     rester lisible quel que soit l'écran ouvert. */
+  z-index: 60;
+  pointer-events: none;
+}
+
 /* Sélection de texte teintée vers l'accent (détail premium, sobre). */
 ::selection {
   background-color: oklch(0.62 0.19 286 / 0.28);

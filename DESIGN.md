@@ -214,6 +214,8 @@ Palette **Restrained** : un océan de quasi-noir teinté, traversé par un seul 
 - **Disabled / autofill** : fond `surface` forcé (l'autofill navigateur est neutralisé pour ne pas casser le thème sombre).
 
 ### Navigation
+- **Pas de barre haute globale.** Le shell n'affiche ni le nom de l'app ni le logo : l'icône de l'écran d'accueil les porte déjà, et les 56 px valaient mieux au contenu — la Capture en premier. Ce qu'elle portait (email, Déconnexion) vit en pied de l'onglet Analyse, l'écran consulté assis. Un écran peut avoir sa propre barre contextuelle (cf. Top bar capture) ; le chrome permanent, non.
+- **Scrim de status bar** (`.safe-top-scrim`) : bande `fixed` haute d'`env(safe-area-inset-top)` en `--color-bg`, `z-index: 60`. Sans barre haute opaque, elle empêche le contenu de défiler derrière l'heure en standalone iOS, dans la teinte de l'app (iOS peindrait du noir pur).
 - **Bottom tab nav** persistante (`h-14`, `--nav-height: 3.5rem`) avec `safe-area-inset-bottom` ; surfaces et barres d'action fixes s'alignent sur `--nav-offset`.
 - **Top bar capture** : boutons carrés 38px (`panel`) back / overflow ; centre en mono `ink-muted`.
 
