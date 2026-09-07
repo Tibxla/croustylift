@@ -70,8 +70,13 @@ export interface CatalogSources {
  * Id de la version COURANTE (numéro le plus élevé) de chaque séance. Miroir pur
  * de `getCurrentVersionId`, appliqué à toutes les séances d'un coup pour éviter
  * une requête par séance.
+ *
+ * Exporté parce que la couche data s'en sert AVANT de requêter les
+ * prescriptions : `seance_versions` est append-only (ADR 0001), donc filtrer sur
+ * toutes les versions ferait grossir la requête avec l'âge du compte alors que
+ * seules les versions courantes sont comptées.
  */
-function currentVersionIdBySeance(
+export function currentVersionIdBySeance(
   versions: CatalogSources['versions'],
 ): Map<string, string> {
   const best = new Map<string, { id: string; version: number }>();

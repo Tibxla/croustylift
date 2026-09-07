@@ -43,6 +43,7 @@ import {
 } from '../../domain/exercise-override';
 import {
   buildSeanceCatalog,
+  currentVersionIdBySeance,
   toDuplicatedPrescriptions,
   type SeanceCatalogEntry,
 } from './duplicate-seance';
@@ -584,18 +585,20 @@ export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
   if (versionsRes.error) throw versionsRes.error;
 
   const versions = versionsRes.data ?? [];
-  // Les prescriptions ne se chargent que pour les versions existantes, et
-  // seulement pour compter : on ne lit que la clé étrangère. Sans version, pas
-  // de requête du tout (compte neuf).
+  // Les prescriptions ne se chargent que pour les versions COURANTES, et
+  // seulement pour compter : on ne lit que la clé étrangère. Filtrer sur toutes
+  // les versions serait faux de coût, pas de résultat : `seance_versions` est
+  // append-only (ADR 0001), donc une séance éditée 50 fois traînerait 50 jeux de
+  // prescriptions dans le `in` (et dans l'URL) pour n'en compter qu'un. Ici la
+  // borne est le nombre de séances, pas l'âge du compte. Sans version, pas de
+  // requête du tout (compte neuf).
+  const currentVersionIds = [...currentVersionIdBySeance(versions).values()];
   let prescriptions: { seance_version_id: string }[] = [];
-  if (versions.length > 0) {
+  if (currentVersionIds.length > 0) {
     const { data, error } = await supabase
       .from('prescriptions')
       .select('seance_version_id')
-      .in(
-        'seance_version_id',
-        versions.map((v) => v.id),
-      );
+      .in('seance_version_id', currentVersionIds);
     if (error) throw error;
     prescriptions = data ?? [];
   }
@@ -615,9 +618,12 @@ export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
  * la copie n'hérite d'aucun historique (ni Référence, ni courbe) et aucun lien
  * de provenance n'est stocké.
  *
- * Ordre VOLONTAIRE (atomicité), repris de l'onboarding : on LIT la source
- * AVANT toute écriture. Si la lecture échoue, rien n'a été créé et l'utilisateur
- * réessaie ; l'inverse le laisserait avec une séance vide au nom déjà pris.
+ * Ordre VOLONTAIRE, repris de l'onboarding : on LIT la source AVANT toute
+ * écriture, pour que l'échec le plus probable (lecture réseau) ne laisse rien
+ * derrière lui. Ce n'est PAS de l'atomicité : si `saveSeanceVersion` échoue
+ * ensuite, la séance reste créée avec une version vide. C'est le pire cas déjà
+ * assumé de cette fonction (cf. en-tête du fichier), un état valide du système,
+ * et l'utilisateur voit sa séance vide plutôt qu'une erreur muette.
  * Une source vide donne une séance vide — exactement ce qu'une création normale
  * produit, pas un cas d'erreur.
  */
