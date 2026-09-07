@@ -74,6 +74,10 @@ _Avoid_: Programme, cycle, split
 La routine qu'un utilisateur tourne en ce moment ; c'est parmi ses séances qu'il choisit en arrivant à la salle.
 _Avoid_: Routine active, routine par défaut
 
+**Duplication de séance**:
+Création d'une nouvelle séance à partir du contenu d'une séance existante — ses exercices et leurs prescriptions tels qu'ils sont au moment du geste — dans la même routine ou dans une autre. Les deux séances sont indépendantes dès la copie : éditer l'une ne touche jamais l'autre, et une séance appartient toujours à une seule routine. La copie ne reprend **aucun historique** : la séance née d'une duplication n'a ni Référence, ni note datée en repère, ni courbe tant qu'elle n'a pas été exécutée — seuls les Records personnels, qui ignorent la séance, restent visibles.
+_Avoid_: Partage, séance commune, modèle / template (une Séance est déjà un template) ; ne jamais dire « la même séance dans deux routines »
+
 **Bloc**:
 Période continue pendant laquelle la configuration du template (routine courante et ses séances) est restée inchangée. Unité de comparaison de la progression. Dérivé automatiquement, jamais déclaré à l'avance.
 _Avoid_: Cycle, mésocycle, période
