@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   toDuplicatedPrescriptions,
   buildSeanceCatalog,
+  currentVersionIdBySeance,
   type CatalogSources,
 } from './duplicate-seance';
 import type { EditablePrescription } from './data';
@@ -159,5 +160,34 @@ describe('buildSeanceCatalog', () => {
       ],
     });
     expect(buildSeanceCatalog(same).map((e) => e.seanceId)).toEqual(['s-a', 's-b']);
+  });
+});
+
+// ---------------------------------------------------------------------
+
+describe('currentVersionIdBySeance', () => {
+  it('retient la version au numéro le plus élevé, quel que soit l\'ordre reçu', () => {
+    const map = currentVersionIdBySeance([
+      { id: 'v3', seance_id: 's1', version: 3 },
+      { id: 'v1', seance_id: 's1', version: 1 },
+      { id: 'v2', seance_id: 's1', version: 2 },
+    ]);
+    expect(map.get('s1')).toBe('v3');
+  });
+
+  it('ne garde QUE la version courante de chaque séance (borne de la requête)', () => {
+    const map = currentVersionIdBySeance([
+      { id: 'a1', seance_id: 'sa', version: 1 },
+      { id: 'a2', seance_id: 'sa', version: 2 },
+      { id: 'b1', seance_id: 'sb', version: 1 },
+    ]);
+    // Une entrée par séance, jamais par version : c'est ce qui empêche le `in`
+    // de grossir avec l'historique append-only.
+    expect(map.size).toBe(2);
+    expect([...map.values()].sort()).toEqual(['a2', 'b1']);
+  });
+
+  it('sans version, aucune entrée', () => {
+    expect(currentVersionIdBySeance([]).size).toBe(0);
   });
 });
