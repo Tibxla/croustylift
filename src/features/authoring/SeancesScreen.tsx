@@ -29,6 +29,9 @@ import {
   renameSeance,
   deleteSeance,
   reorderSeances,
+  duplicateSeance,
+  loadSeanceCatalog,
+  type SeanceCatalogEntry,
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
 import { ExportButton } from '../export/ExportButton';
@@ -49,7 +52,7 @@ type RoutinesLoad =
 type SeancesLoad =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; seances: SeanceRow[] };
+  | { phase: 'ready'; seances: SeanceRow[]; catalog: SeanceCatalogEntry[] };
 
 /** Où l'utilisateur se trouve dans l'arbre routines -> séances -> éditeur. */
 type View =
@@ -180,9 +183,14 @@ function SeancesContainer({
 
     void (async () => {
       try {
-        const seances = await listSeances(routine.id);
+        // Le catalogue (ADR 0015) se charge avec la liste : l'option « partir
+        // d'une séance existante » ne doit apparaître que s'il y a une source.
+        const [seances, catalog] = await Promise.all([
+          listSeances(routine.id),
+          loadSeanceCatalog(),
+        ]);
         if (!active) return;
-        setLoad({ phase: 'ready', seances });
+        setLoad({ phase: 'ready', seances, catalog });
       } catch (err) {
         if (!active) return;
         setLoad({ phase: 'error', message: errMessage(err) });
@@ -212,10 +220,15 @@ function SeancesContainer({
     <SeancesView
       routineName={routine.name}
       seances={load.seances}
+      catalog={load.catalog}
       onBack={onBack}
       onEdit={onEdit}
       onCreate={async (name) => {
         await createSeance(routine.id, { name });
+        reload();
+      }}
+      onDuplicate={async (sourceSeanceId, name) => {
+        await duplicateSeance(routine.id, sourceSeanceId, name);
         reload();
       }}
       onRename={async (id, name) => {
@@ -449,7 +462,19 @@ function RoutineRowItem({
 
 // --- Vue Séances d'une routine ----------------------------------------------
 
-export interface SeancesViewProps {
+export /**
+ * Où en est la création d'une séance (ADR 0015) : bouton, choix de la source,
+ * sélection de la séance à copier, puis nom. `blank` court-circuite le choix
+ * quand il n'y a rien à copier.
+ */
+type CreateStep =
+  | { step: 'idle' }
+  | { step: 'choice' }
+  | { step: 'blank' }
+  | { step: 'pick' }
+  | { step: 'name'; source: SeanceCatalogEntry };
+
+interface SeancesViewProps {
   routineName: string;
   seances: SeanceRow[];
   onBack: () => void;
@@ -458,6 +483,12 @@ export interface SeancesViewProps {
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onReorder: (orderedIds: string[]) => Promise<void>;
+  /**
+   * Séances copiables, toutes routines confondues (ADR 0015). Absent ou vide :
+   * la création reste directe, sans choix de source (compte neuf, ou harness).
+   */
+  catalog?: SeanceCatalogEntry[];
+  onDuplicate?: (sourceSeanceId: string, name: string) => Promise<void>;
 }
 
 export function SeancesView({
@@ -469,8 +500,16 @@ export function SeancesView({
   onRename,
   onDelete,
   onReorder,
+  catalog = [],
+  onDuplicate,
 }: SeancesViewProps) {
-  const [creating, setCreating] = useState(false);
+  const [create, setCreate] = useState<CreateStep>({ step: 'idle' });
+
+  // La duplication n'a de sens qu'avec une source ET un handler : sinon le
+  // bouton mène droit au formulaire vierge, comme avant.
+  const canDuplicate = catalog.length > 0 && onDuplicate !== undefined;
+  const openCreate = () => setCreate({ step: canDuplicate ? 'choice' : 'blank' });
+  const closeCreate = () => setCreate({ step: 'idle' });
 
   function moveSeance(index: number, direction: -1 | 1): Promise<void> {
     const target = index + direction;
@@ -491,11 +530,11 @@ export function SeancesView({
       <h2 className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-ink">{routineName}</h2>
       <p className="mb-5 text-[15px] text-ink-muted">Séances de cette routine, dans l'ordre.</p>
 
-      {seances.length === 0 && !creating ? (
+      {seances.length === 0 && create.step === 'idle' ? (
         <EmptyState
           message="Aucune séance. Ajoute la première séance de cette routine."
           actionLabel="Créer une séance"
-          onAction={() => setCreating(true)}
+          onAction={openCreate}
         />
       ) : (
         <>
@@ -517,19 +556,15 @@ export function SeancesView({
           </ul>
 
           <div className="mt-4">
-            {creating ? (
-              <CreateForm
-                placeholder="Nom de la séance"
-                submitLabel="Créer"
-                onSubmit={async (name) => {
-                  await onCreate(name);
-                  setCreating(false);
-                }}
-                onCancel={() => setCreating(false)}
-              />
-            ) : (
-              <PrimaryAddButton label="Créer une séance" onClick={() => setCreating(true)} />
-            )}
+            <CreateFlow
+              step={create}
+              catalog={catalog}
+              onOpen={openCreate}
+              onStep={setCreate}
+              onCancel={closeCreate}
+              onCreate={onCreate}
+              onDuplicate={onDuplicate}
+            />
           </div>
         </>
       )}
@@ -631,6 +666,199 @@ function SeanceRowItem({
 
       {error && mode === 'idle' && <RowError message={error} />}
     </RowCard>
+  );
+}
+
+// =====================================================================
+// Création d'une séance : vierge, ou copiée d'une existante (ADR 0015)
+// =====================================================================
+
+/** Aiguillage du flux de création. Chaque étape rend un seul bloc, en place. */
+function CreateFlow({
+  step,
+  catalog,
+  onOpen,
+  onStep,
+  onCancel,
+  onCreate,
+  onDuplicate,
+}: {
+  step: CreateStep;
+  catalog: SeanceCatalogEntry[];
+  onOpen: () => void;
+  onStep: (next: CreateStep) => void;
+  onCancel: () => void;
+  onCreate: (name: string) => Promise<void>;
+  onDuplicate?: (sourceSeanceId: string, name: string) => Promise<void>;
+}) {
+  if (step.step === 'idle') {
+    return <PrimaryAddButton label="Créer une séance" onClick={onOpen} />;
+  }
+
+  if (step.step === 'choice') {
+    return (
+      <CreateChoice
+        onBlank={() => onStep({ step: 'blank' })}
+        onExisting={() => onStep({ step: 'pick' })}
+        onCancel={onCancel}
+      />
+    );
+  }
+
+  if (step.step === 'pick') {
+    return (
+      <SeancePicker
+        catalog={catalog}
+        onPick={(source) => onStep({ step: 'name', source })}
+        onCancel={() => onStep({ step: 'choice' })}
+      />
+    );
+  }
+
+  if (step.step === 'name') {
+    const source = step.source;
+    return (
+      <CreateForm
+        // Le nom de la source est proposé tel quel : dans une autre routine
+        // c'est le bon nom, dans la même l'utilisateur le change ici.
+        initial={source.seanceName}
+        placeholder="Nom de la séance"
+        submitLabel="Dupliquer"
+        intro={`Copie de « ${source.seanceName} », dans ${source.routineName}.`}
+        onSubmit={async (name) => {
+          await onDuplicate?.(source.seanceId, name);
+          onCancel();
+        }}
+        onCancel={() => onStep({ step: 'pick' })}
+      />
+    );
+  }
+
+  return (
+    <CreateForm
+      placeholder="Nom de la séance"
+      submitLabel="Créer"
+      onSubmit={async (name) => {
+        await onCreate(name);
+        onCancel();
+      }}
+      onCancel={onCancel}
+    />
+  );
+}
+
+/** Choix de la source : page blanche, ou séance existante à copier. */
+function CreateChoice({
+  onBlank,
+  onExisting,
+  onCancel,
+}: {
+  onBlank: () => void;
+  onExisting: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <RowCard>
+      <p className="text-[15px] font-medium text-ink">Nouvelle séance</p>
+      <div className="mt-3 flex flex-col gap-2">
+        <ChoiceButton
+          label="Séance vierge"
+          hint="Ajouter les exos un par un."
+          onClick={onBlank}
+        />
+        <ChoiceButton
+          label="Partir d'une séance existante"
+          hint="Copier ses exos et ses prescriptions, puis ajuster."
+          onClick={onExisting}
+        />
+      </div>
+      <CancelRow onCancel={onCancel} />
+    </RowCard>
+  );
+}
+
+/** Une option du choix : libellé fort, explication en dessous. */
+function ChoiceButton({
+  label,
+  hint,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="field flex min-h-[56px] w-full flex-col items-start justify-center gap-0.5 rounded-xl px-3.5 py-2.5 text-left transition active:scale-[0.99]"
+    >
+      <span className="text-[15px] font-medium text-ink">{label}</span>
+      <span className="text-[13px] text-ink-muted">{hint}</span>
+    </button>
+  );
+}
+
+/**
+ * Sélecteur de la séance à copier : toutes les séances de l'utilisateur, la
+ * routine courante en tête (`buildSeanceCatalog`). Une séance sans exercice y
+ * figure avec « 0 exercice » plutôt que d'être masquée sans explication.
+ */
+function SeancePicker({
+  catalog,
+  onPick,
+  onCancel,
+}: {
+  catalog: SeanceCatalogEntry[];
+  onPick: (source: SeanceCatalogEntry) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <RowCard>
+      <p className="text-[15px] font-medium text-ink">Copier quelle séance ?</p>
+      <p className="mt-1 text-[13px] text-ink-muted">
+        La copie repart sans repère : ni dernière fois, ni courbe, tant qu'elle n'a pas été
+        faite une première fois. Tes records personnels, eux, restent affichés.
+      </p>
+      <ul className="mt-3 flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
+        {catalog.map((entry) => (
+          <li key={entry.seanceId}>
+            <button
+              type="button"
+              onClick={() => onPick(entry)}
+              className="field flex min-h-[56px] w-full flex-col items-start justify-center gap-0.5 rounded-xl px-3.5 py-2.5 text-left transition active:scale-[0.99]"
+            >
+              <span className="w-full truncate text-[15px] font-medium text-ink">
+                {entry.seanceName}
+              </span>
+              <span className="w-full truncate text-[13px] text-ink-muted">
+                {entry.routineName}
+                {entry.isCurrentRoutine ? ' (courante)' : ''} · {exerciseCountLabel(entry.exerciseCount)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <CancelRow onCancel={onCancel} />
+    </RowCard>
+  );
+}
+
+/** « 0 exercice » / « 1 exercice » / « 4 exercices ». */
+function exerciseCountLabel(count: number): string {
+  return count > 1 ? `${count} exercices` : `${count} exercice`;
+}
+
+/** Ligne « Annuler » seule, sous un bloc de choix. */
+function CancelRow({ onCancel }: { onCancel: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onCancel}
+      className="btn btn-ghost mt-2 h-11 w-full rounded-xl px-4 text-sm font-medium"
+    >
+      Annuler
+    </button>
   );
 }
 
@@ -943,13 +1171,19 @@ function InlineNameForm({
 
 /** Formulaire de création (encadré, dans un RowCard) avec gestion d'erreur. */
 function CreateForm({
+  initial,
   placeholder,
   submitLabel,
+  intro,
   onSubmit,
   onCancel,
 }: {
+  /** Nom pré-rempli (duplication) ; absent = champ vide (séance vierge). */
+  initial?: string;
   placeholder: string;
   submitLabel: string;
+  /** Rappel de ce qu'on est en train de créer, au-dessus du champ. */
+  intro?: string;
   onSubmit: (name: string) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -958,7 +1192,9 @@ function CreateForm({
 
   return (
     <RowCard>
+      {intro && <p className="mb-2 text-[13px] text-ink-muted">{intro}</p>}
       <InlineNameForm
+        initial={initial}
         placeholder={placeholder}
         submitLabel={submitLabel}
         busy={busy}

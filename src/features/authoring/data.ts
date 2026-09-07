@@ -41,6 +41,13 @@ import {
   mergeExerciseOverride,
   type ExerciseOverrideValues,
 } from '../../domain/exercise-override';
+import {
+  buildSeanceCatalog,
+  toDuplicatedPrescriptions,
+  type SeanceCatalogEntry,
+} from './duplicate-seance';
+
+export type { SeanceCatalogEntry } from './duplicate-seance';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
@@ -554,4 +561,77 @@ export async function saveSeanceVersion(
   }
 
   return created.id;
+}
+
+// =====================================================================
+// Duplication de séance (ADR 0015)
+// =====================================================================
+
+/**
+ * Catalogue des séances copiables : TOUTES les séances de l'utilisateur, toutes
+ * routines confondues (RLS scope déjà au compte). Quatre requêtes à volume fixe
+ * plutôt qu'une par séance : le comptage des exos et le choix de la version
+ * courante se font ensuite à froid, dans `buildSeanceCatalog` (pur, testé).
+ */
+export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
+  const [routines, seancesRes, versionsRes, currentRoutineId] = await Promise.all([
+    listRoutines(),
+    supabase.from('seances').select('id, name, routine_id, position'),
+    supabase.from('seance_versions').select('id, seance_id, version'),
+    getCurrentRoutineId(),
+  ]);
+  if (seancesRes.error) throw seancesRes.error;
+  if (versionsRes.error) throw versionsRes.error;
+
+  const versions = versionsRes.data ?? [];
+  // Les prescriptions ne se chargent que pour les versions existantes, et
+  // seulement pour compter : on ne lit que la clé étrangère. Sans version, pas
+  // de requête du tout (compte neuf).
+  let prescriptions: { seance_version_id: string }[] = [];
+  if (versions.length > 0) {
+    const { data, error } = await supabase
+      .from('prescriptions')
+      .select('seance_version_id')
+      .in(
+        'seance_version_id',
+        versions.map((v) => v.id),
+      );
+    if (error) throw error;
+    prescriptions = data ?? [];
+  }
+
+  return buildSeanceCatalog({
+    routines,
+    seances: seancesRes.data ?? [],
+    versions,
+    prescriptions,
+    currentRoutineId,
+  });
+}
+
+/**
+ * Crée une séance dans `routineId` en repartant du contenu de `sourceSeanceId`
+ * (ADR 0015). Copie franche : les deux séances sont indépendantes dès l'insert,
+ * la copie n'hérite d'aucun historique (ni Référence, ni courbe) et aucun lien
+ * de provenance n'est stocké.
+ *
+ * Ordre VOLONTAIRE (atomicité), repris de l'onboarding : on LIT la source
+ * AVANT toute écriture. Si la lecture échoue, rien n'a été créé et l'utilisateur
+ * réessaie ; l'inverse le laisserait avec une séance vide au nom déjà pris.
+ * Une source vide donne une séance vide — exactement ce qu'une création normale
+ * produit, pas un cas d'erreur.
+ */
+export async function duplicateSeance(
+  routineId: string,
+  sourceSeanceId: string,
+  name: string,
+): Promise<SeanceRow> {
+  const source = await loadSeanceEditor(sourceSeanceId);
+  const prescriptions = toDuplicatedPrescriptions(source);
+
+  const seance = await createSeance(routineId, { name });
+  if (prescriptions.length > 0) {
+    await saveSeanceVersion(seance.id, prescriptions);
+  }
+  return seance;
 }
