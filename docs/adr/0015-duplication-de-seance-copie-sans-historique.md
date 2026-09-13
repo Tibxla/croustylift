@@ -10,13 +10,15 @@ Le besoin est la page blanche : on crée une séance en repartant d'une autre po
 
 Le repère par séance existe parce que le contexte de fatigue diffère d'une séance à l'autre. Une séance dupliquée puis modifiée est précisément un autre contexte : lui prêter le repère de sa source serait malhonnête, pas serviable. Le trou dure une exécution.
 
-Dupliquer une **routine** entière servirait surtout à tester une variante du plan (« 4 séries de triceps au lieu de 2 »). C'est exactement la question à laquelle les blocs répondent, et la duplication la rendrait insoluble : de nouvelles séances repartent sans historique, donc sans comparaison possible. La bonne façon de tester une variante reste d'éditer la prescription en place — nouvelle version, bloc coupé, historique continu (ADR 0001). Offrir ce bouton, c'est offrir le piège : il ressemble à la bonne action et détruit la donnée qui répond à la question.
+Dupliquer une **routine** entière servirait surtout à tester une variante du plan (« 4 séries de triceps au lieu de 2 »). Toutes les séances copiées repartiraient sans Référence en salle, et la courbe de chaque exercice se couperait en deux sur la carte. La bonne façon de tester une variante reste d'éditer la prescription en place : nouvelle version, bloc coupé, Référence et courbe continues (ADR 0001). Offrir ce bouton, c'est offrir le piège : il ressemble à la bonne action et casse les repères qui servent à la juger.
+
+_Révisé le 2026-09-13_ : l'argument d'origine, « de nouvelles séances repartent sans historique, donc sans comparaison possible », est tombé avec l'ADR 0016, qui compare des blocs de routines différentes. L'interdiction tient pour les raisons ci-dessus.
 
 ## Alternatives écartées
 
 - **Séance partagée entre deux routines** (relation plusieurs-à-plusieurs) : casse « une séance appartient à une seule routine », et une édition depuis une routine couperait un bloc dans l'autre.
 - **Copie qui hérite de la Référence** : rétablit un lien caché entre deux séances déclarées indépendantes, et ment sur le contexte de la perf.
-- **Duplication de routine** : détruit la comparabilité des blocs, pour un raccourci de deux à quatre gestes.
+- **Duplication de routine** : efface la Référence et coupe la courbe de chaque séance copiée, pour un raccourci de deux à quatre gestes.
 - **Colonne de provenance** (`derived_from_seance_id`) : un lien qui n'autorise rien crée l'attente qu'il autorise quelque chose, et pourrit dès que les deux séances divergent.
 - **Exposer le modèle de départ livré dans le même sélecteur** : mélange deux natures de sources ; ce modèle sert à amorcer un compte vide, pas à alimenter une duplication.
 
