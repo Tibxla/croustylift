@@ -20,3 +20,15 @@ export function blockLabel(block: Block): string {
   const end = block.end === null ? 'en cours' : shortDay(block.end)
   return `${shortDay(block.start)} · ${end}`
 }
+
+/**
+ * « Push · PPL v2 » : la séance d'une option de comparaison, toujours avec sa
+ * routine, puisque le menu mêle des blocs de routines différentes (ADR 0016) et
+ * qu'un nom de séance n'est unique que dans sa routine.
+ */
+export function seanceRoutineLabel(
+  seance: { name: string; routineName: string | null } | undefined,
+): string {
+  if (!seance) return '(séance inconnue)'
+  return seance.routineName ? `${seance.name} · ${seance.routineName}` : seance.name
+}

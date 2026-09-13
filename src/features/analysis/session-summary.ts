@@ -17,6 +17,8 @@ import type { RawLogEntry } from './raw-log'
 export interface SessionSummary {
   /** Nom de la séance jouée (`null` si exécution hors-template). */
   sessionName: string | null
+  /** Nom de sa routine (`null` si hors-template). */
+  routineName: string | null
   /** Date ISO 'YYYY-MM-DD'. */
   date: string
   /** Durée en minutes (`null` si non renseignée). */
@@ -54,6 +56,7 @@ export function summarizeSession(entry: RawLogEntry): SessionSummary {
 
   return {
     sessionName: entry.sessionName,
+    routineName: entry.routineName,
     date: entry.date,
     durationMin: entry.durationMin,
     bpmAvg: entry.bpmAvg,

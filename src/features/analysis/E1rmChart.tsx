@@ -50,9 +50,32 @@ const READOUT_TICK = {
 
 /** Une courbe e1RM nommée : la série d'UNE séance. La 1ʳᵉ passée porte l'accent. */
 export interface E1rmSeries {
-  /** Nom de la séance (légende + tooltip). */
+  /**
+   * Clé stable de la courbe (id de séance). Jamais le nom : deux séances peuvent
+   * porter le même nom dans deux routines, et deux clés React identiques
+   * faisaient disparaître une ligne.
+   */
+  id: string;
+  /** Libellé de la séance (légende + tooltip). */
   name: string;
   curve: E1rmPoint[];
+}
+
+/** Une entrée de légende : une courbe de la carte, affichée ou masquée. */
+export interface E1rmLegendEntry {
+  id: string;
+  name: string;
+  hidden: boolean;
+}
+
+/**
+ * Légende-contrôle : toutes les courbes de la carte, masquées comprises, pour
+ * pouvoir les ré-afficher. `onToggle` masque ou affiche ; la dernière courbe
+ * visible ne se masque pas (cf. curve-visibility).
+ */
+export interface E1rmLegend {
+  entries: E1rmLegendEntry[];
+  onToggle: (id: string) => void;
 }
 
 /** Style d'une série selon son rang : accent (héros) puis subordonnées. */
@@ -103,7 +126,7 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
       {payload.map((entry, i) => {
         const p = entry.payload as E1rmPoint;
         return (
-          <p key={`${entry.name ?? i}`} className="readout text-sm font-medium text-ink">
+          <p key={i} className="readout text-sm font-medium text-ink">
             {named && typeof entry.name === 'string' && (
               <span className="text-xs font-normal text-ink-muted">{entry.name} </span>
             )}
@@ -134,10 +157,18 @@ function describeSeries(series: E1rmSeries[]): string {
   return `Courbes e1RM de la 1ʳᵉ série par séance : ${parts.join(' ; ')}.`;
 }
 
-export function E1rmChart({ series }: { series: E1rmSeries[] }) {
+export function E1rmChart({
+  series,
+  legend,
+}: {
+  /** Les courbes AFFICHÉES, accent en tête. */
+  series: E1rmSeries[];
+  /** Absente, ou une seule entrée : pas de légende. */
+  legend?: E1rmLegend;
+}) {
   const gradientId = useId();
   const populated = series.filter((s) => s.curve.length > 0);
-  const accentSeries = populated[0] ?? { name: '', curve: [] };
+  const accentSeries = populated[0] ?? { id: '', name: '', curve: [] };
   const accentCurve = accentSeries.curve;
   const lastIndex = accentCurve.length - 1;
   // e1RM de départ (séance accent) : ligne de référence pointillée, pour LIRE la
@@ -217,7 +248,7 @@ export function E1rmChart({ series }: { series: E1rmSeries[] }) {
                   const style = styleFor(i + 1);
                   return (
                     <Line
-                      key={s.name}
+                      key={s.id}
                       name={s.name}
                       data={toTimed(s.curve)}
                       type="monotone"
@@ -283,52 +314,102 @@ export function E1rmChart({ series }: { series: E1rmSeries[] }) {
         </ResponsiveContainer>
       </div>
 
-      {/* Légende dès 2 séries, jamais pour une seule (le libellé sous la carte la
-          nomme). Le SWATCH reproduit le STYLE du trait (plein / pointillé), pas
+      {/* Légende dès 2 courbes sur la carte, masquées comprises (jamais pour une
+          seule : le libellé sous la carte la nomme). Chaque entrée est un bouton
+          qui masque ou affiche sa courbe. Le SWATCH reproduit le STYLE du trait
+          selon son rang parmi les courbes affichées (plein / pointillé), pas
           seulement sa couleur : deux gris restent distinguables. */}
-      {multi && (
-        <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {populated.map((s, i) => (
-            <SeriesLegendItem key={s.name} label={s.name} style={styleFor(i)} accent={i === 0} />
-          ))}
+      {legend && legend.entries.length > 1 && (
+        <ul className="-mx-1 mt-1 flex flex-wrap items-center gap-x-2">
+          {legend.entries.map((entry) => {
+            const rank = populated.findIndex((s) => s.id === entry.id);
+            const lastVisible = !entry.hidden && populated.length <= 1;
+            return (
+              <SeriesLegendItem
+                key={entry.id}
+                label={entry.name}
+                style={rank >= 0 ? styleFor(rank) : null}
+                accent={rank === 0}
+                hidden={entry.hidden}
+                lastVisible={lastVisible}
+                onToggle={() => legend.onToggle(entry.id)}
+              />
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
 
-/** Puce de légende : disque plein pour l'accent, segment de trait (style réel) sinon. */
+/**
+ * Entrée de légende cliquable : disque plein pour l'accent, segment de trait
+ * (style réel) sinon, anneau vide quand la courbe est masquée. Une courbe
+ * masquée garde son nom lisible, barré et estompé : on sait ce qu'on peut
+ * ré-afficher. La dernière courbe visible ne se masque pas.
+ */
 function SeriesLegendItem({
   label,
   style,
   accent,
+  hidden,
+  lastVisible,
+  onToggle,
 }: {
   label: string;
-  style: SeriesStyle;
+  /** `null` = courbe masquée (pas de rang parmi les affichées). */
+  style: SeriesStyle | null;
   accent: boolean;
+  hidden: boolean;
+  lastVisible: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <li className="flex items-center gap-1.5">
-      {accent ? (
-        <span
-          className="inline-block h-2 w-2 shrink-0 rounded-full"
-          style={{ backgroundColor: style.stroke }}
-          aria-hidden="true"
-        />
-      ) : (
-        <svg width="14" height="4" aria-hidden="true" className="shrink-0">
-          <line
-            x1="0"
-            y1="2"
-            x2="14"
-            y2="2"
-            stroke={style.stroke}
-            strokeWidth={2}
-            strokeDasharray={style.strokeDasharray}
+    <li>
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={lastVisible}
+        aria-pressed={!hidden}
+        aria-label={
+          lastVisible
+            ? `${label}, seule courbe affichée`
+            : `${hidden ? 'Afficher' : 'Masquer'} la courbe ${label}`
+        }
+        className="flex min-h-[44px] items-center gap-1.5 rounded-lg px-1 transition active:scale-[0.97] disabled:active:scale-100"
+      >
+        {hidden || style === null ? (
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full border border-ink-faint"
+            aria-hidden="true"
           />
-        </svg>
-      )}
-      <span className="readout text-[11px] text-ink-muted">{label}</span>
+        ) : accent ? (
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: style.stroke }}
+            aria-hidden="true"
+          />
+        ) : (
+          <svg width="14" height="4" aria-hidden="true" className="shrink-0">
+            <line
+              x1="0"
+              y1="2"
+              x2="14"
+              y2="2"
+              stroke={style.stroke}
+              strokeWidth={2}
+              strokeDasharray={style.strokeDasharray}
+            />
+          </svg>
+        )}
+        <span
+          className={`readout text-[11px] ${
+            hidden ? 'text-ink-faint line-through' : 'text-ink-muted'
+          }`}
+        >
+          {label}
+        </span>
+      </button>
     </li>
   );
 }

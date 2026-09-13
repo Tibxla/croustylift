@@ -21,6 +21,7 @@ const entry = (over: Partial<RawLogEntry> = {}): RawLogEntry => ({
   executionId: 'e1',
   date: '2026-01-08',
   sessionName: 'Push A',
+  routineName: 'PPL',
   bpmAvg: 130,
   durationMin: 62,
   exercises: [
@@ -94,6 +95,7 @@ describe('summarizeSession', () => {
       entry({ sessionName: 'Push A', date: '2026-01-08', durationMin: 62, bpmAvg: 130 }),
     )
     expect(summary.sessionName).toBe('Push A')
+    expect(summary.routineName).toBe('PPL')
     expect(summary.date).toBe('2026-01-08')
     expect(summary.durationMin).toBe(62)
     expect(summary.bpmAvg).toBe(130)
