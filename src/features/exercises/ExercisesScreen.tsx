@@ -430,9 +430,12 @@ function BaseRow({
     setError(null);
     try {
       await onResetOverride(exo.id);
-      // Succès : le conteneur recharge, la ligne revient à sa version de base.
+      // Succès : le conteneur recharge SANS démonter la ligne, qui revient à sa
+      // version de base. On referme la confirmation, sinon elle restait figée.
+      setMode('idle');
     } catch (err) {
       setError(errMessage(err));
+    } finally {
       setBusy(false);
     }
   }
