@@ -458,12 +458,16 @@ function RoutineRowItem({
     setError(null);
     try {
       await action();
+      // Succès : la liste se recharge SANS démonter la ligne (pas de loader au
+      // rafraîchissement, cf. 3c7a209). On referme donc nous-mêmes le mode en
+      // cours : sans ça, un renommage restait figé sur « Enregistrement… » et
+      // les flèches de réordonnancement restaient désactivées.
+      setMode('idle');
     } catch (err) {
       setError(errMessage(err));
+    } finally {
       setBusy(false);
     }
-    // En cas de succès, la vue parente recharge et démonte ce composant : pas de
-    // setBusy(false) nécessaire (et il provoquerait un warning si déjà démonté).
   }
 
   if (mode === 'rename') {
@@ -731,8 +735,14 @@ function SeanceRowItem({
     setError(null);
     try {
       await action();
+      // Succès : la liste se recharge SANS démonter la ligne (pas de loader au
+      // rafraîchissement, cf. 3c7a209). On referme donc nous-mêmes le mode en
+      // cours : sans ça, un renommage restait figé sur « Enregistrement… » et
+      // les flèches de réordonnancement restaient désactivées.
+      setMode('idle');
     } catch (err) {
       setError(errMessage(err));
+    } finally {
       setBusy(false);
     }
   }
