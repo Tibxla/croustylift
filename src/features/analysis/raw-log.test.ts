@@ -21,6 +21,7 @@ const row = (over: Partial<RawLogRow> = {}): RawLogRow => ({
   exerciseId: 'bench',
   exerciseName: 'Développé couché',
   sessionName: 'Push A',
+  routineName: 'PPL',
   bpmAvg: 130,
   durationMin: 62,
   set: set(),
@@ -48,21 +49,23 @@ describe('buildRawLog', () => {
 
   it('reporte les métadonnées de séance (nom, BPM, durée) sur l’entrée', () => {
     const log = buildRawLog([
-      row({ sessionName: 'Pull B', bpmAvg: 128, durationMin: 55, set: set({ order: 1 }) }),
-      row({ sessionName: 'Pull B', bpmAvg: 128, durationMin: 55, set: set({ order: 2 }) }),
+      row({ sessionName: 'Pull B', routineName: 'PPL v2', bpmAvg: 128, durationMin: 55, set: set({ order: 1 }) }),
+      row({ sessionName: 'Pull B', routineName: 'PPL v2', bpmAvg: 128, durationMin: 55, set: set({ order: 2 }) }),
     ])
 
     expect(log[0]!.sessionName).toBe('Pull B')
+    expect(log[0]!.routineName).toBe('PPL v2')
     expect(log[0]!.bpmAvg).toBe(128)
     expect(log[0]!.durationMin).toBe(55)
   })
 
   it('garde null les métadonnées manquantes', () => {
     const log = buildRawLog([
-      row({ sessionName: null, bpmAvg: null, durationMin: null }),
+      row({ sessionName: null, routineName: null, bpmAvg: null, durationMin: null }),
     ])
 
     expect(log[0]!.sessionName).toBeNull()
+    expect(log[0]!.routineName).toBeNull()
     expect(log[0]!.bpmAvg).toBeNull()
     expect(log[0]!.durationMin).toBeNull()
   })

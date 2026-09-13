@@ -27,6 +27,8 @@ import { RawLogView } from './RawLogView';
 import { PastSessionEditor } from './PastSessionEditor';
 import { ProgressionBadge } from './ProgressionBadge';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
+import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
+import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 
 /** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
 type AnalysisTab = 'curves' | 'journal';
@@ -319,13 +321,30 @@ function JournalSkeleton() {
 }
 
 function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
-  const { name, seanceCurves } = analysis;
-  // La séance ACCENT (issue #67) : la plus récemment exécutée (1ʳᵉ entrée, cf.
-  // analyzeExecutions). Elle porte le readout héros, la pente, le graphe
-  // secondaire et le scope de la comparaison de blocs ; les autres séances se
-  // superposent en subordonné dans le graphe (E1rmChart).
-  const primary = seanceCurves[0] ?? null;
+  const { name, seanceCurves, exerciseId } = analysis;
+  // Courbes masquées depuis la légende, retenues sur l'appareil pour cet exo
+  // (liste des MASQUÉES : une séance neuve apparaît d'elle-même).
+  const [hidden, setHidden] = useState<Set<string>>(
+    () => new Set(loadHiddenCurves(exerciseId)),
+  );
+  const allKeys = seanceCurves.map((sc) => curveKey(sc.seanceId));
+  const shown = visibleCurves(seanceCurves, hidden);
+  // La séance ACCENT (issue #67) : la plus récemment exécutée PARMI LES COURBES
+  // AFFICHÉES (1ʳᵉ entrée, cf. analyzeExecutions). Elle porte le readout héros,
+  // la pente et le graphe secondaire : ce qui est chiffré est ce qu'on voit. Les
+  // autres courbes affichées se superposent en subordonné (E1rmChart).
+  const primary = shown[0] ?? null;
+  // Plusieurs courbes sur la carte (même masquées) : on nomme la séance accent.
   const multi = seanceCurves.length > 1;
+
+  function toggleCurve(key: string) {
+    const next = toggleHidden(hidden, key, allKeys);
+    setHidden(next);
+    saveHiddenCurves(
+      exerciseId,
+      [...next].filter((k) => allKeys.includes(k)),
+    );
+  }
   // Une pente nulle (`null`) malgré des points = pas assez d'exécutions : la
   // courbe reste le héros, on explique juste l'absence de pente sous le graphe.
   const slopeUnavailable =
@@ -354,7 +373,7 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
             {/* Multi-séances : le chiffre héros est celui de la séance accent —
                 on le dit, sinon il contredirait la courbe grise du dessus. */}
             {multi && primary && (
-              <span className="normal-case tracking-normal text-ink-muted"> · {primary.seanceName}</span>
+              <span className="normal-case tracking-normal text-ink-muted"> · {primary.label}</span>
             )}
           </div>
           <div className="mt-0.5 flex items-baseline gap-1.5">
@@ -367,7 +386,19 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
       )}
 
       <E1rmChart
-        series={seanceCurves.map((sc) => ({ name: sc.seanceName, curve: sc.curve }))}
+        series={shown.map((sc) => ({
+          id: curveKey(sc.seanceId),
+          name: sc.label,
+          curve: sc.curve,
+        }))}
+        legend={{
+          entries: seanceCurves.map((sc) => ({
+            id: curveKey(sc.seanceId),
+            name: sc.label,
+            hidden: !shown.includes(sc),
+          })),
+          onToggle: toggleCurve,
+        }}
       />
 
       <div className="mt-2 flex items-center justify-between">
@@ -386,37 +417,23 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         // scopé à la séance accent (nommée quand plusieurs séances cohabitent).
         <div className="mt-3 border-t border-hair pt-3">
           <span className="text-[11px] text-ink-muted">
-            Séries 2+ · e1RM moyen{multi ? ` · ${primary.seanceName}` : ''}
+            Séries 2+ · e1RM moyen{multi ? ` · ${primary.label}` : ''}
           </span>
           <SecondaryChart curve={primary.secondaryCurve} />
         </div>
       )}
 
-      <CompareBlocksDisclosure
-        exerciseId={analysis.exerciseId}
-        seanceId={primary?.seanceId ?? null}
-        seanceName={multi ? primary?.seanceName ?? null : null}
-      />
+      <CompareBlocksDisclosure exerciseId={exerciseId} />
     </section>
   );
 }
 
 // Dépliant « Comparer deux blocs » : replié par défaut (feature secondaire qui
 // demande des mois de données et un réseau), il ne charge la comparaison qu'à
-// l'ouverture. La carte reste légère tant qu'on ne le déplie pas. La comparaison
-// est SCOPÉE à la séance accent (issue #67) — nommée dans le libellé quand l'exo
-// vit dans plusieurs séances, sinon rien à préciser.
-function CompareBlocksDisclosure({
-  exerciseId,
-  seanceId,
-  seanceName,
-}: {
-  exerciseId: string;
-  /** La séance accent de la carte (scope de la comparaison) ; null = « Hors séance ». */
-  seanceId: string | null;
-  /** Nom affiché dans le libellé, seulement quand l'exo est multi-séances. */
-  seanceName: string | null;
-}) {
+// l'ouverture. La carte reste légère tant qu'on ne le déplie pas. Chaque option
+// du panneau choisit sa séance (ADR 0016) : la séance accent ne décide plus de
+// la comparaison.
+function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -427,7 +444,7 @@ function CompareBlocksDisclosure({
         aria-expanded={open}
         className="flex min-h-[44px] w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
       >
-        <span>Comparer deux blocs{seanceName ? ` · ${seanceName}` : ''}</span>
+        <span>Comparer deux blocs</span>
         <svg
           viewBox="0 0 20 20"
           width="14"
@@ -446,7 +463,7 @@ function CompareBlocksDisclosure({
 
       {open && (
         <div className="mt-3">
-          <BlockComparisonPanel exerciseId={exerciseId} seanceId={seanceId} />
+          <BlockComparisonPanel exerciseId={exerciseId} />
         </div>
       )}
     </div>

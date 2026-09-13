@@ -126,3 +126,112 @@ export function compareBlocks(
     winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
   }
 }
+
+// --- Couples bloc + séance (ADR 0016) -----------------------------------------
+//
+// Une option de comparaison est un bloc lu dans UNE séance. Deux routines se
+// comparent ainsi (Upper A pendant Upper/Lower contre Push pendant PPL), deux
+// séances d'un même bloc aussi. La règle de fatigue de l'issue #67 interdit de
+// mêler deux séances dans une même pente, pas de comparer deux pentes lues
+// chacune dans sa séance : on compare des vitesses, pas des niveaux.
+
+/** Une option de comparaison : un bloc lu dans une séance. */
+export interface BlockSeance {
+  block: Block
+  seanceId: string
+}
+
+/** La progression d'un couple bloc + séance, avec la date de son dernier point. */
+export interface BlockSeanceProgression extends BlockProgression {
+  seanceId: string
+  /** Date ISO du dernier point : ordonne les options d'un même bloc. */
+  lastDate: string
+}
+
+function executionsOfSeance(
+  executions: ExerciseExecution[],
+  seanceId: string,
+): ExerciseExecution[] {
+  return executions.filter((execution) => execution.seanceId === seanceId)
+}
+
+/**
+ * Tous les couples (bloc, séance) où l'exo a au moins un point, ordonnés par
+ * bloc (ordre d'entrée) puis par dernière exécution dans le bloc : la dernière
+ * option est la plus récente. Les exécutions sans séance ne forment aucune
+ * option, elles mêleraient des contextes de fatigue.
+ */
+export function summarizeBlockSeances(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+  blocks: Block[],
+): BlockSeanceProgression[] {
+  const seanceIds = [
+    ...new Set(
+      executions
+        .filter((e) => e.exerciseId === exerciseId && e.seanceId !== undefined)
+        .map((e) => e.seanceId as string),
+    ),
+  ]
+
+  return blocks.flatMap((block) =>
+    seanceIds
+      .map((seanceId): BlockSeanceProgression => {
+        const progression = progressionOf(
+          executionsOfSeance(executions, seanceId),
+          exerciseId,
+          block,
+        )
+        return {
+          ...progression,
+          seanceId,
+          lastDate: progression.curve[progression.curve.length - 1]?.date ?? '',
+        }
+      })
+      .filter((option) => option.pointCount > 0)
+      .sort((a, b) => a.lastDate.localeCompare(b.lastDate)),
+  )
+}
+
+/** Compare deux couples bloc + séance par vitesse de progression e1RM. */
+export function compareBlockSeances(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+  first: BlockSeance,
+  second: BlockSeance,
+): BlockComparison {
+  const firstProgression = progressionOf(
+    executionsOfSeance(executions, first.seanceId),
+    exerciseId,
+    first.block,
+  )
+  const secondProgression = progressionOf(
+    executionsOfSeance(executions, second.seanceId),
+    exerciseId,
+    second.block,
+  )
+
+  return {
+    first: firstProgression,
+    second: secondProgression,
+    winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
+  }
+}
+
+/**
+ * Pré-sélection du panneau, sur des options déjà ordonnées (cf.
+ * `summarizeBlockSeances`) : la plus récente, face à la plus récente d'un AUTRE
+ * bloc ; faute d'autre bloc, les deux plus récentes. `null` sous deux options.
+ * Rend les index `[premier, second]`, le plus ancien en premier.
+ */
+export function defaultComparisonPair(
+  options: readonly BlockSeance[],
+): [number, number] | null {
+  if (options.length < 2) return null
+  const second = options.length - 1
+  const latestBlock = options[second]!.block
+  for (let i = second - 1; i >= 0; i--) {
+    if (options[i]!.block.start !== latestBlock.start) return [i, second]
+  }
+  return [second - 1, second]
+}

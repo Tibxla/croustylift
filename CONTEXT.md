@@ -51,7 +51,7 @@ _Avoid_: Fork, copie, exercice perso (l'exercice de base reste partagé)
 ### Séances & routines
 
 **Séance**:
-Template d'entraînement : liste ordonnée d'exercices, chacun avec sa prescription. Choisie en arrivant à la salle (pas de calendrier). Le déroulé réel d'une séance est une **Exécution**.
+Template d'entraînement : liste ordonnée d'exercices, chacun avec sa prescription. Choisie en arrivant à la salle (pas de calendrier). Le déroulé réel d'une séance est une **Exécution**. Son nom est unique dans sa routine, séances archivées comprises (casse et espaces en trop ignorés) : c'est par lui qu'on la choisit en salle et qu'on la reconnaît dans le journal et l'analyse.
 _Avoid_: Workout, session ; ne pas confondre avec l'Exécution (le réel)
 
 **Prescription**:
@@ -67,7 +67,7 @@ La meilleure performance jamais réalisée sur un exercice, tous jours et toutes
 _Avoid_: PR (sigle), record du jour ; ne pas confondre avec la Référence (dernière fois, par position de série)
 
 **Routine**:
-Collection ordonnée de séances qu'un utilisateur tourne sur une période (ex. Upper/Lower = 2 séances). Une séance appartient à une seule routine.
+Collection ordonnée de séances qu'un utilisateur tourne sur une période (ex. Upper/Lower = 2 séances). Une séance appartient à une seule routine. Son nom est unique parmi les routines de l'utilisateur, archivées comprises (casse et espaces en trop ignorés) : le couple « séance · routine » désigne donc une séance sans ambiguïté.
 _Avoid_: Programme, cycle, split
 
 **Routine courante**:
@@ -78,8 +78,12 @@ _Avoid_: Routine active, routine par défaut
 Création d'une nouvelle séance à partir du contenu d'une séance existante — ses exercices et leurs prescriptions tels qu'ils sont au moment du geste — dans la même routine ou dans une autre. Les deux séances sont indépendantes dès la copie : éditer l'une ne touche jamais l'autre, et une séance appartient toujours à une seule routine. La copie ne reprend **aucun historique** : la séance née d'une duplication n'a ni Référence, ni note datée en repère, ni courbe tant qu'elle n'a pas été exécutée — seuls les Records personnels, qui ignorent la séance, restent visibles.
 _Avoid_: Partage, séance commune, modèle / template (une Séance est déjà un template) ; ne jamais dire « la même séance dans deux routines »
 
+**Archivage**:
+Le geste qui retire du plan une routine ou une séance déjà exécutée, sans toucher à son historique. Archivée, elle ne se choisit plus (ni comme routine courante, ni en salle), mais son nom, ses blocs, ses courbes et ses entrées de journal restent entiers : une ancienne routine reste l'un des deux termes d'une comparaison de blocs. Une routine ou une séance jamais exécutée se supprime ; dès sa première exécution, elle ne peut plus que s'archiver. La routine courante ne s'archive pas. Archiver une séance de la routine courante change la configuration du template, donc coupe un bloc. L'archivage se défait : désarchivée, une routine ou une séance revient au plan, et sa Référence comme sa courbe reprennent là où elles s'étaient arrêtées. Pendant l'archivage, son nom reste réservé.
+_Avoid_: Suppression (efface l'historique), corbeille ; ne pas confondre avec le masquage d'une courbe, qui ne touche que l'affichage de l'analyse
+
 **Bloc**:
-Période continue pendant laquelle la configuration du template (routine courante et ses séances) est restée inchangée. Unité de comparaison de la progression. Dérivé automatiquement, jamais déclaré à l'avance.
+Période continue pendant laquelle la configuration du template (routine courante et ses séances) est restée inchangée. Unité de comparaison de la progression. Dérivé automatiquement, jamais déclaré à l'avance. Un bloc tourne une seule routine, mais deux blocs comparés peuvent venir de routines différentes : c'est ainsi qu'on compare deux routines. Pour un exercice, chaque bloc se lit dans **une seule séance** ; une pente ne mêle jamais deux contextes de fatigue. On compare des pentes (vitesse de progression), jamais des niveaux : qu'une séance parte plus haut qu'une autre ne fausse rien.
 _Avoid_: Cycle, mésocycle, période
 
 **Déviation**:

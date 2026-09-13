@@ -195,7 +195,9 @@ function SessionEntry({
 }
 
 // L'en-tête de récap : nom de séance (ou date seule si hors-template) en titre,
-// puis une ligne de readouts. Une métrique absente (durée, BPM, nom) n'apparaît
+// sa routine et la date en second plan (le journal mêle toutes les routines de
+// l'historique, et un nom de séance n'est unique que dans sa routine), puis une
+// ligne de readouts. Une métrique absente (durée, BPM, nom) n'apparaît
 // pas du tout — jamais de zéro ni de tiret pour combler (pas de récap trompeur).
 function SessionHeader({ summary }: { summary: SessionSummary }) {
   const dateLabel = formatDateLong(summary.date);
@@ -207,8 +209,9 @@ function SessionHeader({ summary }: { summary: SessionSummary }) {
           {summary.sessionName ?? dateLabel}
         </h3>
         {summary.sessionName && (
-          <span className="readout text-xs tabular-nums text-ink-muted">
-            {dateLabel}
+          <span className="text-xs text-ink-muted">
+            {summary.routineName && <>{summary.routineName} · </>}
+            <span className="readout tabular-nums">{dateLabel}</span>
           </span>
         )}
       </div>

@@ -9,6 +9,7 @@ import {
   type LocalAccount,
 } from '../lib/local-account'
 import { clearReadCache } from '../lib/read-cache'
+import { clearLocalPrefs } from '../lib/local-prefs'
 import { clearQueue, pendingCount } from '../features/capture/outbox'
 import { flushOutbox } from '../features/capture/sync'
 import { clearCaptureState } from '../features/capture/state'
@@ -131,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearCaptureState()
     clearQueue()
     clearReadCache()
+    clearLocalPrefs()
     clearLocalAccount()
     setLocalAccount(null)
     setOfflineRecognized(false)

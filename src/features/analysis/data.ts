@@ -59,6 +59,15 @@ export interface SeanceCurve {
   /** Id de la séance (toutes versions), ou `null` si la séance n'est plus résoluble. */
   seanceId: string | null;
   seanceName: string;
+  /** Nom de la routine de la séance, `null` pour « Hors séance ». */
+  routineName: string | null;
+  /**
+   * Libellé de la courbe sur la carte (légende, tooltip, readout héros) : le nom
+   * de la séance, suivi de « · routine » sur TOUTES les entrées dès que la carte
+   * mêle plusieurs routines (ADR 0016). Un nom de séance n'est unique que dans
+   * sa routine : sans ce suffixe, « Push » de PPL et de PPL v2 se confondraient.
+   */
+  label: string;
   curve: E1rmPoint[];
   secondaryCurve: E1rmPoint[];
   weeklyRate: number | null;
@@ -116,11 +125,18 @@ export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
 
 // --- Exécutions passées d'un exo ----------------------------------------------
 
-/** Exécutions d'un exo + noms des séances rencontrées (pour libeller les courbes). */
+/** Ce qu'il faut savoir d'une séance pour la libeller : son nom et sa routine. */
+export interface SeanceInfo {
+  name: string;
+  routineId: string | null;
+  routineName: string | null;
+}
+
+/** Exécutions d'un exo + séances rencontrées (pour libeller les courbes). */
 export interface LoadedExecutions {
   executions: ExerciseExecution[];
-  /** seanceId -> nom, pour toutes les séances présentes dans `executions`. */
-  seanceNames: Map<string, string>;
+  /** seanceId -> nom et routine, pour toutes les séances présentes dans `executions`. */
+  seances: Map<string, SeanceInfo>;
 }
 
 /**
@@ -138,7 +154,7 @@ export async function loadExerciseExecutions(
   const { data, error } = await supabase
     .from('performed_sets')
     .select(
-      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name ) ) )',
+      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
     )
     .eq('exercise_id', exerciseId);
   if (error) throw error;
@@ -153,19 +169,31 @@ export async function loadExerciseExecutions(
     executions: {
       performed_on: string;
       created_at: string;
-      seance_versions: { seance_id: string; seances: { name: string } | null } | null;
+      seance_versions: {
+        seance_id: string;
+        seances: {
+          name: string;
+          routine_id: string;
+          routines: { name: string } | null;
+        } | null;
+      } | null;
     } | null;
   };
   const rows = (data ?? []) as unknown as SetRow[];
 
   const byExecution = new Map<string, ExerciseExecution>();
-  const seanceNames = new Map<string, string>();
+  const seances = new Map<string, SeanceInfo>();
   for (const row of rows) {
     const execution = row.executions;
     if (!execution) continue; // garde-fou : exécution orpheline.
     const seanceId = execution.seance_versions?.seance_id;
-    if (seanceId && !seanceNames.has(seanceId)) {
-      seanceNames.set(seanceId, execution.seance_versions?.seances?.name ?? '(séance inconnue)');
+    if (seanceId && !seances.has(seanceId)) {
+      const seance = execution.seance_versions?.seances;
+      seances.set(seanceId, {
+        name: seance?.name ?? '(séance inconnue)',
+        routineId: seance?.routine_id ?? null,
+        routineName: seance?.routines?.name ?? null,
+      });
     }
     let exec = byExecution.get(row.execution_id);
     if (!exec) {
@@ -190,7 +218,7 @@ export async function loadExerciseExecutions(
     });
   }
 
-  return { executions: [...byExecution.values()], seanceNames };
+  return { executions: [...byExecution.values()], seances };
 }
 
 // --- Composition domaine ------------------------------------------------------
@@ -201,12 +229,12 @@ export async function loadExerciseExecutions(
  * primaire + pente + courbe secondaire). Les exécutions sans séance résoluble
  * forment un groupe « Hors séance » (jamais de donnée écartée en silence). Tri :
  * la séance la plus récemment exécutée d'abord (elle porte l'accent dans l'UI),
- * nom en départage pour rester stable. Pure : pas d'accès réseau.
+ * libellé en départage pour rester stable. Pure : pas d'accès réseau.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
   executions: ExerciseExecution[],
-  seanceNames: ReadonlyMap<string, string>,
+  seances: ReadonlyMap<string, SeanceInfo>,
 ): ExerciseAnalysis {
   const groups = new Map<string | null, ExerciseExecution[]>();
   for (const execution of executions) {
@@ -217,16 +245,20 @@ export function analyzeExecutions(
   }
 
   const seanceCurves: SeanceCurve[] = [];
+  const routineIds = new Set<string>();
   for (const [seanceId, group] of groups) {
     const curve = buildPrimaryCurve(group, exercise.exerciseId);
     // Un groupe sans point (exécutions vides / autre exo) n'est pas une courbe.
     if (curve.length === 0) continue;
+    const info = seanceId === null ? null : seances.get(seanceId);
+    if (info?.routineId) routineIds.add(info.routineId);
+    const seanceName =
+      seanceId === null ? 'Hors séance' : info?.name ?? '(séance inconnue)';
     seanceCurves.push({
       seanceId,
-      seanceName:
-        seanceId === null
-          ? 'Hors séance'
-          : seanceNames.get(seanceId) ?? '(séance inconnue)',
+      seanceName,
+      routineName: info?.routineName ?? null,
+      label: seanceName,
       curve,
       secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId),
       weeklyRate: weeklyProgressionRate(curve),
@@ -234,10 +266,19 @@ export function analyzeExecutions(
     });
   }
 
+  // La règle porte sur la carte entière, courbes masquées comprises : un libellé
+  // ne change pas selon ce qu'on affiche.
+  if (routineIds.size > 1) {
+    for (const sc of seanceCurves) {
+      if (sc.seanceId !== null && sc.routineName) {
+        sc.label = `${sc.seanceName} · ${sc.routineName}`;
+      }
+    }
+  }
+
   seanceCurves.sort(
     (a, b) =>
-      b.lastDate.localeCompare(a.lastDate) ||
-      a.seanceName.localeCompare(b.seanceName, 'fr'),
+      b.lastDate.localeCompare(a.lastDate) || a.label.localeCompare(b.label, 'fr'),
   );
 
   return { ...exercise, seanceCurves };
@@ -253,8 +294,8 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
 
   const analyses = await Promise.all(
     trained.map(async (exercise) => {
-      const { executions, seanceNames } = await loadExerciseExecutions(exercise.exerciseId);
-      return analyzeExecutions(exercise, executions, seanceNames);
+      const { executions, seances } = await loadExerciseExecutions(exercise.exerciseId);
+      return analyzeExecutions(exercise, executions, seances);
     }),
   );
 
@@ -301,35 +342,31 @@ export async function loadBlocks(): Promise<Block[]> {
 
 // --- Comparaison de deux blocs d'un exo (cf. issue #6) ------------------------
 
-/** Les données brutes pour comparer les blocs d'un exo : ses exécutions + les blocs. */
+/** Les données brutes pour comparer les blocs d'un exo : ses exécutions, les blocs, les séances. */
 export interface BlockComparisonData {
   executions: ExerciseExecution[];
   blocks: Block[];
+  /** seanceId -> nom et routine, pour libeller chaque option « séance · routine · dates ». */
+  seances: Map<string, SeanceInfo>;
 }
 
 /**
- * Charge de quoi comparer les blocs d'un exo : ses exécutions passées et la
- * liste des blocs de l'user (lus en parallèle). Le DÉCOUPAGE par bloc, les
- * pentes %/semaine et le verdict sont calculés par le domaine pur
- * (`summarizeBlocks` / `compareBlocks`) à partir de ces données ; cette couche
- * ne fait que les charger. Les blocs ne dépendent pas de l'exo (ils suivent la
- * config de template, cf. ADR 0001) ; les exécutions sont filtrées par exo ET
- * par SÉANCE (`seanceId`, issue #67) : la comparaison suit la séance mise en
- * avant par la carte, pour ne pas mélanger des contextes de fatigue différents.
- * `null` = le groupe « Hors séance » (exécutions sans séance résoluble).
+ * Charge de quoi comparer les blocs d'un exo : ses exécutions passées (toutes
+ * séances), la liste des blocs de l'user et le nom de chaque séance avec sa
+ * routine (lus en parallèle). Les couples bloc + séance, les pentes %/semaine et
+ * le verdict sont calculés par le domaine pur (`summarizeBlockSeances` /
+ * `compareBlockSeances`) : chaque option lit UNE séance dans UN bloc, ce qui
+ * permet de comparer deux routines sans mêler deux contextes de fatigue dans une
+ * même pente (ADR 0016). Les blocs ne dépendent pas de l'exo (ADR 0001).
  */
 export async function loadBlockComparisonData(
   exerciseId: string,
-  seanceId: string | null,
 ): Promise<BlockComparisonData> {
-  const [{ executions }, blocks] = await Promise.all([
+  const [{ executions, seances }, blocks] = await Promise.all([
     loadExerciseExecutions(exerciseId),
     loadBlocks(),
   ]);
-  return {
-    executions: executions.filter((e) => (e.seanceId ?? null) === seanceId),
-    blocks,
-  };
+  return { executions, blocks, seances };
 }
 
 // --- Log brut des lifts (cf. issue #27) ---------------------------------------
@@ -351,7 +388,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     supabase
       .from('performed_sets')
       .select(
-        'weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name ) ) )',
+        'weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
       ),
     // Nom personnalisé per-user (issue #50) : le log brut affiche le nom override.
     loadExerciseOverrides(),
@@ -371,7 +408,9 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
       performed_on: string;
       bpm_avg: number | null;
       duration_min: number | null;
-      seance_versions: { seances: { name: string } | null } | null;
+      seance_versions: {
+        seances: { name: string; routines: { name: string } | null } | null;
+      } | null;
     } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
@@ -390,6 +429,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
             overrides.get(row.exercise_id),
           ),
           sessionName: execution.seance_versions?.seances?.name ?? null,
+          routineName: execution.seance_versions?.seances?.routines?.name ?? null,
           bpmAvg: execution.bpm_avg === null ? null : Number(execution.bpm_avg),
           durationMin:
             execution.duration_min === null ? null : Number(execution.duration_min),

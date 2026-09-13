@@ -5,7 +5,7 @@
 // La requête Supabase reste dans la couche d'accès ; seul le groupement/tri est
 // testé ici, les courbes elles-mêmes étant couvertes par le domaine.
 import { describe, expect, it } from 'vitest';
-import { analyzeExecutions, type TrainedExercise } from './data';
+import { analyzeExecutions, type SeanceInfo, type TrainedExercise } from './data';
 import type { ExerciseExecution } from '../../domain/types';
 
 const exercise: TrainedExercise = { exerciseId: 'bench', name: 'Développé couché' };
@@ -27,9 +27,9 @@ function execution(
   };
 }
 
-const names = new Map([
-  ['s-upper', 'Upper A'],
-  ['s-fullbody', 'Full Body'],
+const names = new Map<string, SeanceInfo>([
+  ['s-upper', { name: 'Upper A', routineId: 'r-ul', routineName: 'Upper/Lower' }],
+  ['s-fullbody', { name: 'Full Body', routineId: 'r-ul', routineName: 'Upper/Lower' }],
 ]);
 
 describe('analyzeExecutions — courbes par séance', () => {
@@ -136,5 +136,62 @@ describe('analyzeExecutions — courbes par séance', () => {
 
   it('aucune exécution -> aucune courbe (l’UI n’affiche rien)', () => {
     expect(analyzeExecutions(exercise, [], names).seanceCurves).toEqual([]);
+  });
+});
+
+describe('analyzeExecutions — libellé « séance · routine » (ADR 0016)', () => {
+  const across = new Map<string, SeanceInfo>([
+    ['s-upper', { name: 'Upper A', routineId: 'r-ul', routineName: 'Upper/Lower' }],
+    ['s-push', { name: 'Push', routineId: 'r-ppl', routineName: 'PPL' }],
+    ['s-push2', { name: 'Push', routineId: 'r-ppl2', routineName: 'PPL v2' }],
+  ]);
+
+  it('toutes les courbes dans une même routine : le nom de séance suffit', () => {
+    const { seanceCurves } = analyzeExecutions(
+      exercise,
+      [execution('2026-07-01', 80, 's-upper'), execution('2026-07-05', 70, 's-fullbody')],
+      names,
+    );
+    expect(seanceCurves.map((c) => c.label).sort()).toEqual(['Full Body', 'Upper A']);
+  });
+
+  it('dès que la carte mêle deux routines, TOUTES les entrées portent leur routine', () => {
+    const { seanceCurves } = analyzeExecutions(
+      exercise,
+      [
+        execution('2026-07-01', 80, 's-upper'),
+        execution('2026-08-01', 82.5, 's-push'),
+        execution('2026-09-01', 85, 's-push2'),
+      ],
+      across,
+    );
+    expect(seanceCurves.map((c) => c.label)).toEqual([
+      'Push · PPL v2',
+      'Push · PPL',
+      'Upper A · Upper/Lower',
+    ]);
+    expect(seanceCurves.map((c) => c.routineName)).toEqual(['PPL v2', 'PPL', 'Upper/Lower']);
+  });
+
+  it('« Hors séance » reste nu, même sur une carte qui mêle des routines', () => {
+    const { seanceCurves } = analyzeExecutions(
+      exercise,
+      [
+        execution('2026-07-01', 80, 's-upper'),
+        execution('2026-08-01', 82.5, 's-push'),
+        execution('2026-09-01', 60, undefined),
+      ],
+      across,
+    );
+    expect(seanceCurves.find((c) => c.seanceId === null)?.label).toBe('Hors séance');
+  });
+
+  it('une seule courbe : pas de routine accolée', () => {
+    const { seanceCurves } = analyzeExecutions(
+      exercise,
+      [execution('2026-08-01', 82.5, 's-push')],
+      across,
+    );
+    expect(seanceCurves[0]?.label).toBe('Push');
   });
 });

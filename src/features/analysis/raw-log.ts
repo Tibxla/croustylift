@@ -35,6 +35,12 @@ export interface RawLogSet {
 export interface RawLogExecutionMeta {
   /** Nom de la séance jouée (`null` si exécution hors-template). */
   sessionName: string | null
+  /**
+   * Nom de la routine de la séance (`null` si hors-template). Le journal mêle
+   * toutes les routines de l'historique, et un nom de séance n'est unique que
+   * dans sa routine : « Push » seul ne dit pas si c'était PPL ou PPL v2.
+   */
+  routineName: string | null
   /** BPM moyen saisi (`null` si non renseigné). */
   bpmAvg: number | null
   /** Durée en minutes (`null` si non renseignée). */
@@ -95,6 +101,7 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
         executionId: row.executionId,
         date: row.date,
         sessionName: row.sessionName,
+        routineName: row.routineName,
         bpmAvg: row.bpmAvg,
         durationMin: row.durationMin,
         exercises: [],
