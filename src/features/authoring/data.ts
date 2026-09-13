@@ -273,6 +273,31 @@ export async function deletePersonalExercise(id: string): Promise<void> {
   }
 }
 
+/**
+ * Traduit une violation d'unicité de nom (Postgres 23505, index de la migration
+ * 0013) en message lisible, affiché sous le champ. Toute autre erreur repart
+ * telle quelle. La base tient seule la règle : pas de lecture préalable, donc
+ * pas de course entre la vérification et l'écriture.
+ */
+export function nameConflictError(
+  error: unknown,
+  kind: 'routine' | 'seance',
+  name: string,
+): unknown {
+  const isUnique =
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === '23505';
+  if (!isUnique) return error;
+  const clean = name.trim().replace(/\s+/g, ' ');
+  return new Error(
+    kind === 'routine'
+      ? `Tu as déjà une routine « ${clean} ». Choisis un autre nom.`
+      : `Cette routine a déjà une séance « ${clean} ». Choisis un autre nom.`,
+  );
+}
+
 /** Vrai si l'erreur Supabase est une violation de clé étrangère (Postgres 23503). */
 function isForeignKeyViolation(error: unknown): boolean {
   return (
@@ -304,7 +329,7 @@ export async function createRoutine(input: { name: string }): Promise<RoutineRow
     .insert({ name: input.name })
     .select('*')
     .single();
-  if (error) throw error;
+  if (error) throw nameConflictError(error, 'routine', input.name);
   return data;
 }
 
@@ -316,7 +341,7 @@ export async function renameRoutine(id: string, name: string): Promise<RoutineRo
     .eq('id', id)
     .select('*')
     .single();
-  if (error) throw error;
+  if (error) throw nameConflictError(error, 'routine', name);
   return data;
 }
 
@@ -392,7 +417,7 @@ export async function createSeance(
     .insert({ routine_id: routineId, name: input.name, position })
     .select('*')
     .single();
-  if (seanceErr) throw seanceErr;
+  if (seanceErr) throw nameConflictError(seanceErr, 'seance', input.name);
 
   const { error: versionErr } = await supabase
     .from('seance_versions')
@@ -410,7 +435,7 @@ export async function renameSeance(id: string, name: string): Promise<SeanceRow>
     .eq('id', id)
     .select('*')
     .single();
-  if (error) throw error;
+  if (error) throw nameConflictError(error, 'seance', name);
   return data;
 }
 

@@ -41,3 +41,9 @@ qui a été fait et des décisions actées.
   fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée
   désactivée en connaissance de cause ; mitigation gratuite en place : `MIN_PASSWORD_LENGTH`
   relevé à 10. À ne reconsidérer que si le projet passe au plan Pro.
+
+- **Import JSON et noms uniques (migration 0013)** : l'import upserte par `id`. Restaurer
+  sa propre sauvegarde ne heurte rien (mêmes ids), mais importer dans un compte qui porte
+  déjà une routine du même nom sous un autre id lève une violation d'unicité (23505),
+  remontée brute par l'import. Cas marginal (restauration croisée entre comptes) ; piste
+  si ça arrive : traduire l'erreur dans `ImportButton` et proposer de renommer.

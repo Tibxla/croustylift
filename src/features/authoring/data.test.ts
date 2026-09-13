@@ -4,6 +4,7 @@ import {
   nextPosition,
   rowToEditablePrescription,
   prescriptionInputToRow,
+  nameConflictError,
   type PrescriptionInput,
 } from './data';
 
@@ -104,5 +105,24 @@ describe('prescriptionInputToRow', () => {
       rir_max: 1,
     });
     expect('owner_id' in row).toBe(false);
+  });
+});
+
+describe('nameConflictError (noms uniques, migration 0013)', () => {
+  const unique = { code: '23505', message: 'duplicate key value violates unique constraint' };
+
+  it('traduit une violation d’unicité de séance en message lisible', () => {
+    const err = nameConflictError(unique, 'seance', 'Push');
+    expect((err as Error).message).toBe('Cette routine a déjà une séance « Push ». Choisis un autre nom.');
+  });
+
+  it('traduit une violation d’unicité de routine en message lisible', () => {
+    const err = nameConflictError(unique, 'routine', 'PPL');
+    expect((err as Error).message).toBe('Tu as déjà une routine « PPL ». Choisis un autre nom.');
+  });
+
+  it('laisse passer toute autre erreur telle quelle', () => {
+    const other = { code: '42501', message: 'permission denied' };
+    expect(nameConflictError(other, 'routine', 'PPL')).toBe(other);
   });
 });

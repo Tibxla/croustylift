@@ -34,6 +34,7 @@ import {
   type SeanceCatalogEntry,
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
+import { nextFreeName } from '../../domain/unique-name';
 import { ExportButton } from '../export/ExportButton';
 import { ImportButton } from '../export/ImportButton';
 
@@ -559,6 +560,7 @@ export function SeancesView({
             <CreateFlow
               step={create}
               catalog={catalog}
+              takenNames={seances.map((s) => s.name)}
               onOpen={openCreate}
               onStep={setCreate}
               onCancel={closeCreate}
@@ -677,6 +679,7 @@ function SeanceRowItem({
 function CreateFlow({
   step,
   catalog,
+  takenNames,
   onOpen,
   onStep,
   onCancel,
@@ -685,6 +688,8 @@ function CreateFlow({
 }: {
   step: CreateStep;
   catalog: SeanceCatalogEntry[];
+  /** Noms des séances de la routine d'arrivée : un nom y est unique. */
+  takenNames: string[];
   onOpen: () => void;
   onStep: (next: CreateStep) => void;
   onCancel: () => void;
@@ -719,9 +724,10 @@ function CreateFlow({
     const source = step.source;
     return (
       <CreateForm
-        // Le nom de la source est proposé tel quel : dans une autre routine
-        // c'est le bon nom, dans la même l'utilisateur le change ici.
-        initial={source.seanceName}
+        // Le nom de la source est proposé tel quel s'il est libre dans cette
+        // routine (copie vers une autre routine), sinon « Push 2 » : un nom de
+        // séance est unique dans sa routine (migration 0013).
+        initial={nextFreeName(source.seanceName, takenNames)}
         placeholder="Nom de la séance"
         submitLabel="Dupliquer"
         intro={`Copie de « ${source.seanceName} », dans ${source.routineName}.`}
