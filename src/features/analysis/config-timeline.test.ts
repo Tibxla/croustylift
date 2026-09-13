@@ -1,18 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import { buildConfigTimeline } from './config-timeline'
 import { detectBlocks } from '../../domain/block'
-import type { ActivationRow, SeanceVersionRow, SeanceRow } from './config-timeline'
+import type {
+  ActivationRow,
+  SeanceArchiveEventRow,
+  SeanceVersionRow,
+  SeanceRow,
+} from './config-timeline'
 
 // Helpers : un jeu d'entrées minimal, surchargeable champ par champ.
 function input(over: {
   activations?: ActivationRow[]
   seanceVersions?: SeanceVersionRow[]
   seances?: SeanceRow[]
+  seanceArchiveEvents?: SeanceArchiveEventRow[]
 }) {
   return {
     activations: over.activations ?? [],
     seanceVersions: over.seanceVersions ?? [],
     seances: over.seances ?? [],
+    seanceArchiveEvents: over.seanceArchiveEvents ?? [],
   }
 }
 
@@ -178,5 +185,99 @@ describe('buildConfigTimeline', () => {
       ['2026-02-01', '2026-03-01'],
       ['2026-03-01', null],
     ])
+  })
+})
+
+// --- Archivage de séance (ADR 0017) ------------------------------------------
+//
+// Archiver une séance de la routine courante change la configuration du
+// template : c'est un changement de plan, il coupe un bloc. Le journal daté des
+// archivages est rejoué dans l'ordre, pour que désarchiver ne réécrive jamais
+// les blocs passés.
+
+describe('buildConfigTimeline — archivage de séance', () => {
+  const seances = [
+    { id: 'S1', routineId: 'R1' },
+    { id: 'S2', routineId: 'R1' },
+    { id: 'S3', routineId: 'R2' },
+  ]
+
+  it('archiver une séance de la routine courante coupe un bloc', () => {
+    const timeline = buildConfigTimeline(
+      input({
+        activations: [{ activatedAt: '2026-01-01T08:00:00Z', routineId: 'R1' }],
+        seances,
+        seanceArchiveEvents: [
+          { occurredAt: '2026-02-01T08:00:00Z', seanceId: 'S2', archived: true },
+        ],
+      }),
+    )
+    expect(timeline.map((c) => c.date)).toEqual(['2026-01-01', '2026-02-01'])
+    expect(timeline[0]!.configId).not.toBe(timeline[1]!.configId)
+  })
+
+  it('désarchiver revient à la configuration d’avant, sans effacer le bloc intermédiaire', () => {
+    const timeline = buildConfigTimeline(
+      input({
+        activations: [{ activatedAt: '2026-01-01T08:00:00Z', routineId: 'R1' }],
+        seances,
+        seanceArchiveEvents: [
+          { occurredAt: '2026-02-01T08:00:00Z', seanceId: 'S2', archived: true },
+          { occurredAt: '2026-03-01T08:00:00Z', seanceId: 'S2', archived: false },
+        ],
+      }),
+    )
+    expect(timeline[2]!.configId).toBe(timeline[0]!.configId)
+    expect(detectBlocks(timeline).map((b) => [b.start, b.end])).toEqual([
+      ['2026-01-01', '2026-02-01'],
+      ['2026-02-01', '2026-03-01'],
+      ['2026-03-01', null],
+    ])
+  })
+
+  it('archiver une séance d’une autre routine ne touche pas la configuration courante', () => {
+    const timeline = buildConfigTimeline(
+      input({
+        activations: [{ activatedAt: '2026-01-01T08:00:00Z', routineId: 'R1' }],
+        seances,
+        seanceArchiveEvents: [
+          { occurredAt: '2026-02-01T08:00:00Z', seanceId: 'S3', archived: true },
+        ],
+      }),
+    )
+    expect(timeline.map((c) => c.date)).toEqual(['2026-01-01'])
+  })
+
+  it('une séance archivée pendant qu’une autre routine tournait reste hors de sa routine à la réactivation', () => {
+    const timeline = buildConfigTimeline(
+      input({
+        activations: [
+          { activatedAt: '2026-01-01T08:00:00Z', routineId: 'R1' },
+          { activatedAt: '2026-02-01T08:00:00Z', routineId: 'R2' },
+          { activatedAt: '2026-04-01T08:00:00Z', routineId: 'R1' },
+        ],
+        seances,
+        seanceArchiveEvents: [
+          { occurredAt: '2026-03-01T08:00:00Z', seanceId: 'S2', archived: true },
+        ],
+      }),
+    )
+    expect(timeline.map((c) => c.date)).toEqual(['2026-01-01', '2026-02-01', '2026-04-01'])
+    expect(timeline[2]!.configId).not.toBe(timeline[0]!.configId)
+  })
+
+  it('à instant égal, une version passe avant l’archivage de la même séance', () => {
+    const timeline = buildConfigTimeline(
+      input({
+        activations: [{ activatedAt: '2026-01-01T08:00:00Z', routineId: 'R1' }],
+        seances,
+        seanceVersions: [{ createdAt: '2026-02-01T08:00:00Z', seanceId: 'S2' }],
+        seanceArchiveEvents: [
+          { occurredAt: '2026-02-01T08:00:00Z', seanceId: 'S2', archived: true },
+        ],
+      }),
+    )
+    expect(timeline).toHaveLength(3)
+    expect(timeline[2]!.configId).not.toBe(timeline[1]!.configId)
   })
 })

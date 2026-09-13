@@ -142,14 +142,17 @@ export async function loadCaptureSource(): Promise<CaptureSource> {
       getCurrentRoutineId(),
       listRoutines(),
     ]);
+    // Une routine ou une séance archivée ne se choisit plus en salle (ADR 0017).
     const routineId = resolveCaptureRoutineId(
       currentRoutineId,
-      routines.map((r) => r.id),
+      routines.filter((r) => r.archived_at === null).map((r) => r.id),
     );
     if (routineId === null) return decideCaptureSource(null, []);
 
     const seances = await listSeances(routineId);
-    const choices: SeanceChoice[] = seances.map((s) => ({ id: s.id, name: s.name }));
+    const choices: SeanceChoice[] = seances
+      .filter((s) => s.archived_at === null)
+      .map((s) => ({ id: s.id, name: s.name }));
     return decideCaptureSource(routineId, choices);
   });
 }

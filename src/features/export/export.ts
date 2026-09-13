@@ -9,9 +9,9 @@
 //      exportedAt, data } (pure).
 //   3. `serializeExport(export)` : JSON indenté, lisible et diffable (pur).
 //
-// FORMAT DE L'EXPORT (v1), en vue d'un import ultérieur :
+// FORMAT DE L'EXPORT (v2), en vue d'un import ultérieur :
 //   {
-//     "version": 1,                       // version du format, pas des données
+//     "version": 2,                       // version du format, pas des données
 //     "exportedAt": "2026-06-18T10:00:00.000Z",  // ISO 8601 UTC
 //     "data": {                           // une clé par table, lignes BRUTES
 //       "exercises":           [ ... ],   // exos PERSO uniquement (owner_id non null)
@@ -20,6 +20,7 @@
 //       "routines":            [ ... ],
 //       "routine_activations": [ ... ],
 //       "seances":             [ ... ],
+//       "seance_archive_events": [ ... ], // journal daté des archivages (v2, ADR 0017)
 //       "seance_versions":     [ ... ],
 //       "prescriptions":       [ ... ],
 //       "executions":          [ ... ],
@@ -33,8 +34,12 @@
 // owner_id null) sont VOLONTAIREMENT exclus : ils ne sont pas « les données de
 // l'utilisateur » et seront présents chez celui qui réimporte.
 
-/** Version du FORMAT d'export (à incrémenter si la structure change). */
-export const EXPORT_FORMAT_VERSION = 1 as const;
+/**
+ * Version du FORMAT d'export (à incrémenter si la structure change).
+ * v2 (2026-09-13) : ajout de `seance_archive_events` (ADR 0017). L'import lit
+ * toujours les sauvegardes v1.
+ */
+export const EXPORT_FORMAT_VERSION = 2 as const;
 
 /**
  * Tables exportées, dans l'ordre des dépendances (parents avant enfants) pour
@@ -47,6 +52,7 @@ export const EXPORT_TABLES = [
   'routines',
   'routine_activations',
   'seances',
+  'seance_archive_events', // journal daté des archivages de séance (FK → seances, ADR 0017)
   'seance_versions',
   'prescriptions',
   'executions',
