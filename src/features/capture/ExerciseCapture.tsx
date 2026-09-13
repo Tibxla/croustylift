@@ -17,6 +17,7 @@ import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
 import { seedDraft } from './capture-seed';
+import { draftE1rm } from './draft-e1rm';
 import { NoteField } from '../notes/NoteField';
 import { useAutosavedNote } from '../notes/useAutosavedNote';
 import { DeviationBadge } from './DeviationBadge';
@@ -191,6 +192,14 @@ export function ExerciseCapture({
   const refToBeat = unilateral
     ? reference?.find((s) => s.order === completedSets + 1 && s.side === currentSide) ?? null
     : reference?.find((s) => s.order === loggedCount + 1) ?? null;
+  const refE1rm = refToBeat
+    ? draftE1rm(refToBeat.weightKg, refToBeat.reps, refToBeat.rir)
+    : null;
+
+  // e1RM du BROUILLON, recalculé à chaque réglage, pour viser avant la série. Un
+  // chiffre seul, jamais un verdict « battrait » : un badge qui s'allumerait à +1
+  // de RIR pousserait à gonfler l'auto-évaluation (cf. draft-e1rm.ts).
+  const liveE1rm = draftE1rm(weightKg, reps, rir);
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
   // complètes (une série unilatérale = gauche + droite). Le badge de déviation
@@ -298,7 +307,14 @@ export function ExerciseCapture({
         <div className="flex items-center gap-2.5">
           <RepereLabel>Dernière fois</RepereLabel>
           {refToBeat ? (
-            <span className="readout text-[13.5px] text-ink-muted">{formatSet(refToBeat)}</span>
+            <span className="readout text-[13.5px] text-ink-muted">
+              <span className="whitespace-nowrap">{formatSet(refToBeat)}</span>
+              {/* Son e1RM, comme la ligne Record : le chiffre à dépasser pour
+                  battre la Référence, à lire face à l'e1RM du brouillon. */}
+              {refE1rm !== null && (
+                <span className="whitespace-nowrap"> · e1RM {formatE1rm(refE1rm)}</span>
+              )}
+            </span>
           ) : (
             <span className="text-[13px] text-ink-faint">
               {reference ? 'Aucune.' : 'Premier passage.'}
@@ -413,6 +429,20 @@ export function ExerciseCapture({
           <div className="w-px shrink-0 bg-hair" />
           <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} onChange={setRir} />
         </div>
+        {liveE1rm !== null && (
+          <div
+            className="mt-3.5 flex items-baseline justify-center gap-2 border-t border-hair pt-3"
+            aria-live="polite"
+          >
+            <span className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+              e1RM
+            </span>
+            <span className="readout text-[15px] font-medium tabular-nums text-ink">
+              {formatE1rm(liveE1rm)}
+              <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Séries déjà loggées : readout mono + e1RM par ligne, MEILLEURE série
