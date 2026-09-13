@@ -15,6 +15,10 @@ import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
 import { detectBlocks } from '../../domain/block';
 import { buildConfigTimeline } from './config-timeline';
+import { orderByPlan, planExerciseOrder } from './exercise-order';
+import { getCurrentRoutineId, listRoutines } from '../authoring/data';
+import { currentVersionIdBySeance } from '../authoring/duplicate-seance';
+import { resolveCaptureRoutineId } from '../capture/data';
 import { buildRawLog, type RawLogEntry } from './raw-log';
 import { buildSessionMetrics, type SessionMetricPoint } from './session-metrics';
 import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
@@ -285,12 +289,76 @@ export function analyzeExecutions(
 }
 
 /**
- * Charge tous les exos entraînés et calcule leur analyse en une passe.
+ * L'ordre des exos du plan de la routine courante (cf. exercise-order.ts) :
+ * séances actives par position, puis exos de leur version COURANTE par position.
+ * Même routine qu'en salle : la courante, sinon la 1ʳᵉ routine non archivée
+ * (`resolveCaptureRoutineId`). `[]` sans routine ou sans séance : l'Analyse
+ * retombe alors sur l'ordre alphabétique.
+ */
+export async function loadPlanExerciseOrder(): Promise<string[]> {
+  const [currentRoutineId, routines] = await Promise.all([
+    getCurrentRoutineId(),
+    listRoutines(),
+  ]);
+  const routineId = resolveCaptureRoutineId(
+    currentRoutineId,
+    routines.filter((r) => r.archived_at === null).map((r) => r.id),
+  );
+  if (routineId === null) return [];
+
+  const seancesRes = await supabase
+    .from('seances')
+    .select('id, position')
+    .eq('routine_id', routineId)
+    .is('archived_at', null);
+  if (seancesRes.error) throw seancesRes.error;
+  const seances = seancesRes.data ?? [];
+  if (seances.length === 0) return [];
+
+  const versionsRes = await supabase
+    .from('seance_versions')
+    .select('id, seance_id, version')
+    .in(
+      'seance_id',
+      seances.map((s) => s.id),
+    );
+  if (versionsRes.error) throw versionsRes.error;
+  // Version courante de chaque séance -> la séance qu'elle porte.
+  const seanceOfVersion = new Map(
+    [...currentVersionIdBySeance(versionsRes.data ?? [])].map(([seanceId, versionId]) => [
+      versionId,
+      seanceId,
+    ]),
+  );
+  if (seanceOfVersion.size === 0) return [];
+
+  const prescriptionsRes = await supabase
+    .from('prescriptions')
+    .select('seance_version_id, exercise_id, position')
+    .in('seance_version_id', [...seanceOfVersion.keys()]);
+  if (prescriptionsRes.error) throw prescriptionsRes.error;
+
+  return planExerciseOrder(
+    seances,
+    (prescriptionsRes.data ?? []).flatMap((p) => {
+      const seanceId = seanceOfVersion.get(p.seance_version_id);
+      return seanceId ? [{ seanceId, exerciseId: p.exercise_id, position: p.position }] : [];
+    }),
+  );
+}
+
+/**
+ * Charge tous les exos entraînés et calcule leur analyse en une passe, dans
+ * l'ordre du plan de la routine courante puis par nom (décision du 2026-09-13).
  * Une requête pour la liste, puis une par exo (les requêtes par exo tournent en
  * parallèle). L'UI consomme directement le tableau d'`ExerciseAnalysis`.
  */
 export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
-  const trained = await loadTrainedExercises();
+  const [trainedByName, planOrder] = await Promise.all([
+    loadTrainedExercises(),
+    loadPlanExerciseOrder(),
+  ]);
+  const trained = orderByPlan(trainedByName, planOrder);
 
   const analyses = await Promise.all(
     trained.map(async (exercise) => {
