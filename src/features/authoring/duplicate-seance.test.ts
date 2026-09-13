@@ -128,6 +128,27 @@ describe('buildSeanceCatalog', () => {
     expect(lower?.exerciseCount).toBe(0);
   });
 
+  it('garde les séances archivées, marquées comme telles (ADR 0017)', () => {
+    const catalog = buildSeanceCatalog(
+      sources({
+        routines: [
+          { id: 'r-old', name: 'Ancienne', archived_at: '2026-08-01T00:00:00Z' },
+          { id: 'r-cur', name: 'Courante', archived_at: null },
+        ],
+        seances: [
+          { id: 's-old', name: 'Full body', routine_id: 'r-old', position: 0 },
+          { id: 's-cur-b', name: 'Lower', routine_id: 'r-cur', position: 1, archived_at: '2026-08-02T00:00:00Z' },
+          { id: 's-cur-a', name: 'Upper', routine_id: 'r-cur', position: 0, archived_at: null },
+        ],
+      }),
+    );
+    expect(catalog.map((e) => [e.seanceId, e.isArchived])).toEqual([
+      ['s-cur-a', false],
+      ['s-cur-b', true],
+      ['s-old', true],
+    ]);
+  });
+
   it('situe chaque séance dans sa routine', () => {
     const old = buildSeanceCatalog(sources()).find((e) => e.seanceId === 's-old');
     expect(old?.routineName).toBe('Ancienne');

@@ -22,6 +22,11 @@ import {
   createRoutine,
   renameRoutine,
   deleteRoutine,
+  archiveRoutine,
+  unarchiveRoutine,
+  archiveSeance,
+  unarchiveSeance,
+  loadPlanHistory,
   setCurrentRoutine,
   getCurrentRoutineId,
   listSeances,
@@ -35,6 +40,7 @@ import {
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
 import { nextFreeName } from '../../domain/unique-name';
+import { planRowActions } from './archive';
 import { ExportButton } from '../export/ExportButton';
 import { ImportButton } from '../export/ImportButton';
 
@@ -48,12 +54,22 @@ type SeanceRow = Database['public']['Tables']['seances']['Row'];
 type RoutinesLoad =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; routines: RoutineRow[]; currentRoutineId: string | null };
+  | {
+      phase: 'ready';
+      routines: RoutineRow[];
+      currentRoutineId: string | null;
+      executedRoutineIds: Set<string>;
+    };
 
 type SeancesLoad =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; seances: SeanceRow[]; catalog: SeanceCatalogEntry[] };
+  | {
+      phase: 'ready';
+      seances: SeanceRow[];
+      catalog: SeanceCatalogEntry[];
+      executedSeanceIds: Set<string>;
+    };
 
 /** Où l'utilisateur se trouve dans l'arbre routines -> séances -> éditeur. */
 type View =
@@ -105,12 +121,19 @@ function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }
     void (async () => {
       try {
         // Les deux lectures sont indépendantes : on les parallélise.
-        const [routines, currentRoutineId] = await Promise.all([
+        const [routines, currentRoutineId, history] = await Promise.all([
           listRoutines(),
           getCurrentRoutineId(),
+          // Ce qui a déjà été exécuté s'archive au lieu de se supprimer (ADR 0017).
+          loadPlanHistory(),
         ]);
         if (!active) return;
-        setLoad({ phase: 'ready', routines, currentRoutineId });
+        setLoad({
+          phase: 'ready',
+          routines,
+          currentRoutineId,
+          executedRoutineIds: history.executedRoutineIds,
+        });
       } catch (err) {
         if (!active) return;
         setLoad({ phase: 'error', message: errMessage(err) });
@@ -140,6 +163,7 @@ function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }
     <RoutinesView
       routines={load.routines}
       currentRoutineId={load.currentRoutineId}
+      executedRoutineIds={load.executedRoutineIds}
       onOpen={onOpen}
       onCreate={async (name) => {
         await createRoutine({ name });
@@ -151,6 +175,14 @@ function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }
       }}
       onDelete={async (id) => {
         await deleteRoutine(id);
+        reload();
+      }}
+      onArchive={async (id) => {
+        await archiveRoutine(id);
+        reload();
+      }}
+      onUnarchive={async (id) => {
+        await unarchiveRoutine(id);
         reload();
       }}
       onSetCurrent={async (id) => {
@@ -186,12 +218,18 @@ function SeancesContainer({
       try {
         // Le catalogue (ADR 0015) se charge avec la liste : l'option « partir
         // d'une séance existante » ne doit apparaître que s'il y a une source.
-        const [seances, catalog] = await Promise.all([
+        const [seances, catalog, history] = await Promise.all([
           listSeances(routine.id),
           loadSeanceCatalog(),
+          loadPlanHistory(),
         ]);
         if (!active) return;
-        setLoad({ phase: 'ready', seances, catalog });
+        setLoad({
+          phase: 'ready',
+          seances,
+          catalog,
+          executedSeanceIds: history.executedSeanceIds,
+        });
       } catch (err) {
         if (!active) return;
         setLoad({ phase: 'error', message: errMessage(err) });
@@ -222,6 +260,7 @@ function SeancesContainer({
       routineName={routine.name}
       seances={load.seances}
       catalog={load.catalog}
+      executedSeanceIds={load.executedSeanceIds}
       onBack={onBack}
       onEdit={onEdit}
       onCreate={async (name) => {
@@ -238,6 +277,14 @@ function SeancesContainer({
       }}
       onDelete={async (id) => {
         await deleteSeance(id);
+        reload();
+      }}
+      onArchive={async (id) => {
+        await archiveSeance(id);
+        reload();
+      }}
+      onUnarchive={async (id) => {
+        await unarchiveSeance(id);
         reload();
       }}
       onReorder={async (orderedIds) => {
@@ -259,23 +306,33 @@ function SeancesContainer({
 export interface RoutinesViewProps {
   routines: RoutineRow[];
   currentRoutineId: string | null;
+  /** Routines dont une séance a déjà été exécutée : elles s'archivent (ADR 0017). */
+  executedRoutineIds?: ReadonlySet<string>;
   onOpen: (routine: RoutineRow) => void;
   onCreate: (name: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onArchive?: (id: string) => Promise<void>;
+  onUnarchive?: (id: string) => Promise<void>;
   onSetCurrent: (id: string) => Promise<void>;
 }
 
 export function RoutinesView({
-  routines,
+  routines: allRoutines,
   currentRoutineId,
+  executedRoutineIds = new Set(),
   onOpen,
   onCreate,
   onRename,
   onDelete,
+  onArchive = async () => {},
+  onUnarchive = async () => {},
   onSetCurrent,
 }: RoutinesViewProps) {
   const [creating, setCreating] = useState(false);
+  // Archivées à part (ADR 0017) : hors de la liste, dans une section repliée.
+  const routines = allRoutines.filter((r) => r.archived_at === null);
+  const archived = allRoutines.filter((r) => r.archived_at !== null);
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
@@ -299,9 +356,11 @@ export function RoutinesView({
                 <RoutineRowItem
                   routine={routine}
                   isCurrent={routine.id === currentRoutineId}
+                  executed={executedRoutineIds.has(routine.id)}
                   onOpen={() => onOpen(routine)}
                   onRename={(name) => onRename(routine.id, name)}
                   onDelete={() => onDelete(routine.id)}
+                  onArchive={() => onArchive(routine.id)}
                   onSetCurrent={() => onSetCurrent(routine.id)}
                 />
               </li>
@@ -324,6 +383,20 @@ export function RoutinesView({
             )}
           </div>
         </>
+      )}
+
+      {archived.length > 0 && (
+        <ArchivedSection count={archived.length}>
+          {archived.map((routine) => (
+            <li key={routine.id}>
+              <ArchivedRowItem
+                name={routine.name}
+                onOpen={() => onOpen(routine)}
+                onUnarchive={() => onUnarchive(routine.id)}
+              />
+            </li>
+          ))}
+        </ArchivedSection>
       )}
 
       <DataSection />
@@ -357,19 +430,26 @@ function DataSection() {
 function RoutineRowItem({
   routine,
   isCurrent,
+  executed,
   onOpen,
   onRename,
   onDelete,
+  onArchive,
   onSetCurrent,
 }: {
   routine: RoutineRow;
   isCurrent: boolean;
+  executed: boolean;
   onOpen: () => void;
   onRename: (name: string) => Promise<void>;
   onDelete: () => Promise<void>;
+  onArchive: () => Promise<void>;
   onSetCurrent: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete'>('idle');
+  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete' | 'confirmArchive'>(
+    'idle',
+  );
+  const actions = planRowActions({ executed, archived: false, isCurrent });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -432,6 +512,15 @@ function RoutineRowItem({
           onConfirm={() => run(onDelete)}
           onCancel={() => setMode('idle')}
         />
+      ) : mode === 'confirmArchive' ? (
+        <ConfirmArchive
+          question="Archiver cette routine ?"
+          detail="Elle quitte ta liste. Ses séances, ses courbes et ses blocs restent dans l'analyse. Tu pourras la désarchiver."
+          busy={busy}
+          error={error}
+          onConfirm={() => run(onArchive)}
+          onCancel={() => setMode('idle')}
+        />
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {isCurrent ? (
@@ -447,12 +536,21 @@ function RoutineRowItem({
             />
           )}
           <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
-          <RowAction
-            label="Supprimer"
-            icon={DELETE_ICON}
-            tone="danger"
-            onClick={() => setMode('confirmDelete')}
-          />
+          {actions.canArchive && (
+            <RowAction
+              label="Archiver"
+              icon={ARCHIVE_ICON}
+              onClick={() => setMode('confirmArchive')}
+            />
+          )}
+          {actions.canDelete && (
+            <RowAction
+              label="Supprimer"
+              icon={DELETE_ICON}
+              tone="danger"
+              onClick={() => setMode('confirmDelete')}
+            />
+          )}
         </div>
       )}
 
@@ -490,11 +588,15 @@ interface SeancesViewProps {
    */
   catalog?: SeanceCatalogEntry[];
   onDuplicate?: (sourceSeanceId: string, name: string) => Promise<void>;
+  /** Séances déjà exécutées : elles s'archivent au lieu de se supprimer (ADR 0017). */
+  executedSeanceIds?: ReadonlySet<string>;
+  onArchive?: (id: string) => Promise<void>;
+  onUnarchive?: (id: string) => Promise<void>;
 }
 
 export function SeancesView({
   routineName,
-  seances,
+  seances: allSeances,
   onBack,
   onEdit,
   onCreate,
@@ -503,8 +605,14 @@ export function SeancesView({
   onReorder,
   catalog = [],
   onDuplicate,
+  executedSeanceIds = new Set(),
+  onArchive = async () => {},
+  onUnarchive = async () => {},
 }: SeancesViewProps) {
   const [create, setCreate] = useState<CreateStep>({ step: 'idle' });
+  // Archivées à part (ADR 0017) : hors de l'ordre de la routine, section repliée.
+  const seances = allSeances.filter((s) => s.archived_at === null);
+  const archived = allSeances.filter((s) => s.archived_at !== null);
 
   // La duplication n'a de sens qu'avec une source ET un handler : sinon le
   // bouton mène droit au formulaire vierge, comme avant.
@@ -547,10 +655,12 @@ export function SeancesView({
                   index={index}
                   isFirst={index === 0}
                   isLast={index === seances.length - 1}
+                  executed={executedSeanceIds.has(seance.id)}
                   onEdit={() => onEdit(seance)}
                   onMove={(direction) => moveSeance(index, direction)}
                   onRename={(name) => onRename(seance.id, name)}
                   onDelete={() => onDelete(seance.id)}
+                  onArchive={() => onArchive(seance.id)}
                 />
               </li>
             ))}
@@ -560,7 +670,8 @@ export function SeancesView({
             <CreateFlow
               step={create}
               catalog={catalog}
-              takenNames={seances.map((s) => s.name)}
+              // Un nom reste réservé pendant l'archivage : archivées comprises.
+              takenNames={allSeances.map((s) => s.name)}
               onOpen={openCreate}
               onStep={setCreate}
               onCancel={closeCreate}
@@ -569,6 +680,16 @@ export function SeancesView({
             />
           </div>
         </>
+      )}
+
+      {archived.length > 0 && (
+        <ArchivedSection count={archived.length}>
+          {archived.map((seance) => (
+            <li key={seance.id}>
+              <ArchivedRowItem name={seance.name} onUnarchive={() => onUnarchive(seance.id)} />
+            </li>
+          ))}
+        </ArchivedSection>
       )}
     </div>
   );
@@ -580,21 +701,28 @@ function SeanceRowItem({
   index,
   isFirst,
   isLast,
+  executed,
   onEdit,
   onMove,
   onRename,
   onDelete,
+  onArchive,
 }: {
   seance: SeanceRow;
   index: number;
   isFirst: boolean;
   isLast: boolean;
+  executed: boolean;
   onEdit: () => void;
   onMove: (direction: -1 | 1) => Promise<void>;
   onRename: (name: string) => Promise<void>;
   onDelete: () => Promise<void>;
+  onArchive: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete'>('idle');
+  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete' | 'confirmArchive'>(
+    'idle',
+  );
+  const actions = planRowActions({ executed, archived: false, isCurrent: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -653,16 +781,34 @@ function SeanceRowItem({
           onConfirm={() => run(onDelete)}
           onCancel={() => setMode('idle')}
         />
+      ) : mode === 'confirmArchive' ? (
+        <ConfirmArchive
+          question="Archiver cette séance ?"
+          detail="Elle ne se choisit plus en salle. Son historique reste dans l'analyse. Tu pourras la désarchiver."
+          busy={busy}
+          error={error}
+          onConfirm={() => run(onArchive)}
+          onCancel={() => setMode('idle')}
+        />
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <RowAction label="Éditer" icon={EDIT_ICON} tone="accent" onClick={onEdit} />
           <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
-          <RowAction
-            label="Supprimer"
-            icon={DELETE_ICON}
-            tone="danger"
-            onClick={() => setMode('confirmDelete')}
-          />
+          {actions.canArchive && (
+            <RowAction
+              label="Archiver"
+              icon={ARCHIVE_ICON}
+              onClick={() => setMode('confirmArchive')}
+            />
+          )}
+          {actions.canDelete && (
+            <RowAction
+              label="Supprimer"
+              icon={DELETE_ICON}
+              tone="danger"
+              onClick={() => setMode('confirmDelete')}
+            />
+          )}
         </div>
       )}
 
@@ -840,6 +986,7 @@ function SeancePicker({
               <span className="w-full truncate text-[13px] text-ink-muted">
                 {entry.routineName}
                 {entry.isCurrentRoutine ? ' (courante)' : ''} · {exerciseCountLabel(entry.exerciseCount)}
+                {entry.isArchived ? ' · archivée' : ''}
               </span>
             </button>
           </li>
@@ -917,6 +1064,13 @@ const DELETE_ICON = (
     <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
     <path d="M10 11v6M14 11v6" />
+  </>
+);
+const ARCHIVE_ICON = (
+  <>
+    <rect x="3" y="4" width="18" height="4" rx="1" />
+    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+    <path d="M10 12h4" />
   </>
 );
 const STAR_ICON = (
@@ -1107,6 +1261,142 @@ function ConfirmDelete({
       </div>
       {error && <RowError message={error} />}
     </div>
+  );
+}
+
+/**
+ * Confirmation d'archivage INLINE (ADR 0017). Ton neutre, pas d'alerte : rien ne
+ * se perd, le geste se défait. Le détail dit ce qui reste.
+ */
+function ConfirmArchive({
+  question,
+  detail,
+  busy,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  question: string;
+  detail: string;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-2 rounded-xl bg-surface-2/60 p-3">
+      <p className="text-sm text-ink">{question}</p>
+      <p className="mt-0.5 text-xs text-ink-muted">{detail}</p>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
+        >
+          {busy ? 'Archivage…' : 'Archiver'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
+        >
+          Annuler
+        </button>
+      </div>
+      {error && <RowError message={error} />}
+    </div>
+  );
+}
+
+/** Section repliée des éléments archivés, en bas de liste (ADR 0017). */
+function ArchivedSection({ count, children }: { count: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="mt-6 border-t border-hair pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex min-h-[44px] w-full items-center justify-between text-sm font-medium text-ink-muted transition active:text-ink"
+      >
+        <span>
+          Archivées <span className="readout tabular-nums text-ink-faint">{count}</span>
+        </span>
+        <svg
+          viewBox="0 0 20 20"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={`transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <path d="M5 8l5 5 5-5" />
+        </svg>
+      </button>
+      {open && <ul className="mt-2 flex flex-col gap-2.5">{children}</ul>}
+    </section>
+  );
+}
+
+/** Une routine ou une séance archivée : son nom, et le geste qui la rend au plan. */
+function ArchivedRowItem({
+  name,
+  onOpen,
+  onUnarchive,
+}: {
+  name: string;
+  /** Routine : ouvrir ses séances reste possible. Absent pour une séance. */
+  onOpen?: () => void;
+  onUnarchive: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <RowCard>
+      <div className="flex items-center gap-2">
+        {onOpen ? (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left transition active:opacity-80"
+          >
+            <span className="block min-w-0 flex-1 truncate text-base font-medium text-ink-muted">
+              {name}
+            </span>
+            <Chevron />
+          </button>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-base font-medium text-ink-muted">
+            {name}
+          </span>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            try {
+              await onUnarchive();
+            } catch (err) {
+              setError(errMessage(err));
+              setBusy(false);
+            }
+          }}
+          className="btn btn-ghost h-11 shrink-0 rounded-xl px-3.5 text-sm font-medium disabled:opacity-50"
+        >
+          {busy ? 'Désarchivage…' : 'Désarchiver'}
+        </button>
+      </div>
+      {error && <RowError message={error} />}
+    </RowCard>
   );
 }
 

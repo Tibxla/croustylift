@@ -112,6 +112,25 @@ describe('parseImportFile', () => {
     expect(() => parseImportFile(json)).toThrow(/data/i);
   });
 
+  it('accepte une sauvegarde v1, d’avant l’archivage : journal des archivages vide', () => {
+    const { seance_archive_events: _events, ...v1Data } = emptyCollected();
+    const json = JSON.stringify({ version: 1, exportedAt: '2026-06-18T10:00:00.000Z', data: v1Data });
+    const result = parseImportFile(json);
+    expect(result.data.seance_archive_events).toEqual([]);
+  });
+
+  it('parse une sauvegarde v2 complète', () => {
+    const result = parseImportFile(validJson({ version: 2 }));
+    expect(result.version).toBe(2);
+    expect(result.data.seance_archive_events).toEqual([]);
+  });
+
+  it('rejette une sauvegarde v2 sans journal des archivages', () => {
+    const { seance_archive_events: _events, ...partial } = emptyCollected();
+    const json = JSON.stringify({ version: 2, exportedAt: '2026-09-13T10:00:00.000Z', data: partial });
+    expect(() => parseImportFile(json)).toThrow(/seance_archive_events/i);
+  });
+
   it('rejette si une table obligatoire est absente de data', () => {
     const partial = { ...emptyCollected() };
     // Supprimer une table requise
@@ -129,8 +148,8 @@ describe('parseImportFile', () => {
     expect(() => parseImportFile(json)).toThrow(/routines/i);
   });
 
-  it('expose IMPORT_FORMAT_VERSION = 1', () => {
-    expect(IMPORT_FORMAT_VERSION).toBe(1);
+  it('expose IMPORT_FORMAT_VERSION = 2 (journal des archivages, ADR 0017)', () => {
+    expect(IMPORT_FORMAT_VERSION).toBe(2);
   });
 });
 

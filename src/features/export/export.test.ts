@@ -49,12 +49,18 @@ describe('EXPORT_TABLES', () => {
       'routines',
       'routine_activations',
       'seances',
+      'seance_archive_events',
       'seance_versions',
       'prescriptions',
       'executions',
       'performed_sets',
       'dated_notes',
     ]);
+  });
+
+  it('seance_archive_events vient après seances (dépendance FK, ADR 0017)', () => {
+    const idx = (t: string) => EXPORT_TABLES.indexOf(t as typeof EXPORT_TABLES[number]);
+    expect(idx('seance_archive_events')).toBeGreaterThan(idx('seances'));
   });
 
   it('exercise_overrides vient après exercises (dépendance FK)', () => {
@@ -143,6 +149,7 @@ describe('buildExport', () => {
     routines: [{ id: 'r1', name: 'Ma routine' }],
     routine_activations: [],
     seances: [{ id: 's1', name: 'Upper A' }],
+    seance_archive_events: [],
     seance_versions: [],
     prescriptions: [],
     executions: [{ id: 'e1', performed_on: '2026-06-18' }],

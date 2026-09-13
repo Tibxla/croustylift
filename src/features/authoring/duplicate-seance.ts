@@ -55,12 +55,23 @@ export interface SeanceCatalogEntry {
   isCurrentRoutine: boolean;
   /** Nombre d'exos de sa version courante. 0 = séance vide, affichée quand même. */
   exerciseCount: number;
+  /**
+   * Séance archivée, ou dans une routine archivée (ADR 0017). Elle reste
+   * copiable : son contenu peut resservir dans une nouvelle routine.
+   */
+  isArchived: boolean;
 }
 
 /** Les lignes brutes dont le catalogue se déduit (formes minimales, pas les Row complètes). */
 export interface CatalogSources {
-  routines: { id: string; name: string }[];
-  seances: { id: string; name: string; routine_id: string; position: number }[];
+  routines: { id: string; name: string; archived_at?: string | null }[];
+  seances: {
+    id: string;
+    name: string;
+    routine_id: string;
+    position: number;
+    archived_at?: string | null;
+  }[];
   versions: { id: string; seance_id: string; version: number }[];
   prescriptions: { seance_version_id: string }[];
   currentRoutineId: string | null;
@@ -112,6 +123,9 @@ export function buildSeanceCatalog(sources: CatalogSources): SeanceCatalogEntry[
 
   const routineRank = new Map(sources.routines.map((routine, index) => [routine.id, index]));
   const routineName = new Map(sources.routines.map((routine) => [routine.id, routine.name]));
+  const archivedRoutines = new Set(
+    sources.routines.filter((routine) => routine.archived_at).map((routine) => routine.id),
+  );
 
   const sortable = sources.seances
     .filter((seance) => routineName.has(seance.routine_id))
@@ -124,6 +138,7 @@ export function buildSeanceCatalog(sources: CatalogSources): SeanceCatalogEntry[
         routineName: routineName.get(seance.routine_id) ?? '',
         isCurrentRoutine: seance.routine_id === sources.currentRoutineId,
         exerciseCount: versionId ? (countByVersion.get(versionId) ?? 0) : 0,
+        isArchived: Boolean(seance.archived_at) || archivedRoutines.has(seance.routine_id),
       };
       return {
         entry,

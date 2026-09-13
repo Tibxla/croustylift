@@ -307,20 +307,24 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
 /**
  * Les blocs de l'user : périodes continues de configuration de template
  * inchangée. On LIT le journal des changements de plan (activations de routine +
- * versions de séances + le lien séance->routine), on construit la timeline de
+ * versions de séances + archivages de séances + le lien séance->routine), on construit la timeline de
  * configs via le module pur `buildConfigTimeline`, puis on la passe à
  * `detectBlocks`. Aucune lecture d'exécution ici : une déviation ne peut pas
  * créer de bloc (cf. ADR 0001). Pas de logique de calcul dans cette couche.
  */
 export async function loadBlocks(): Promise<Block[]> {
-  const [activationsRes, versionsRes, seancesRes] = await Promise.all([
+  const [activationsRes, versionsRes, seancesRes, archivesRes] = await Promise.all([
     supabase.from('routine_activations').select('activated_at, routine_id'),
     supabase.from('seance_versions').select('created_at, seance_id'),
     supabase.from('seances').select('id, routine_id'),
+    // Archivages datés (ADR 0017) : archiver une séance de la routine courante
+    // change la configuration du template, donc coupe un bloc.
+    supabase.from('seance_archive_events').select('occurred_at, seance_id, archived'),
   ]);
   if (activationsRes.error) throw activationsRes.error;
   if (versionsRes.error) throw versionsRes.error;
   if (seancesRes.error) throw seancesRes.error;
+  if (archivesRes.error) throw archivesRes.error;
 
   const timeline = buildConfigTimeline({
     activations: (activationsRes.data ?? []).map((r) => ({
@@ -334,6 +338,11 @@ export async function loadBlocks(): Promise<Block[]> {
     seances: (seancesRes.data ?? []).map((r) => ({
       id: r.id,
       routineId: r.routine_id,
+    })),
+    seanceArchiveEvents: (archivesRes.data ?? []).map((r) => ({
+      occurredAt: r.occurred_at,
+      seanceId: r.seance_id,
+      archived: r.archived,
     })),
   });
 

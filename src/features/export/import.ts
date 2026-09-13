@@ -21,12 +21,22 @@
 
 import { EXPORT_FORMAT_VERSION, EXPORT_TABLES, type CollectedData, type Row } from './export';
 
-/** Version de FORMAT que cet importeur sait lire (= la version courante de l'export). */
+/** Version de FORMAT courante (= celle de l'export). */
 export const IMPORT_FORMAT_VERSION = EXPORT_FORMAT_VERSION;
+
+/** Versions de format que cet importeur sait lire. */
+const SUPPORTED_VERSIONS = [1, IMPORT_FORMAT_VERSION] as const;
+type SupportedVersion = (typeof SUPPORTED_VERSIONS)[number];
+
+/**
+ * Tables apparues en v2 : absentes d'une sauvegarde v1, qui les précède. On les
+ * lit alors comme vides (une sauvegarde v1 n'a connu aucun archivage).
+ */
+const TABLES_ADDED_IN_V2: readonly string[] = ['seance_archive_events'];
 
 /** Résultat du parsing d'un fichier d'export (même forme que UserDataExport). */
 export interface ParsedImport {
-  version: typeof IMPORT_FORMAT_VERSION;
+  version: SupportedVersion;
   exportedAt: string;
   data: CollectedData;
 }
@@ -82,11 +92,12 @@ export function parseImportFile(json: string): ParsedImport {
   if (typeof obj.version !== 'number' || !Number.isInteger(obj.version)) {
     throw new Error('Champ "version" invalide : doit être un entier.');
   }
-  if (obj.version !== IMPORT_FORMAT_VERSION) {
+  if (!(SUPPORTED_VERSIONS as readonly number[]).includes(obj.version)) {
     throw new Error(
-      `Version de format ${obj.version} inconnue ou incompatible. Seule la version ${IMPORT_FORMAT_VERSION} est prise en charge.`,
+      `Version de format ${obj.version} inconnue ou incompatible. Versions prises en charge : ${SUPPORTED_VERSIONS.join(', ')}.`,
     );
   }
+  const version = obj.version as SupportedVersion;
 
   // 3. Validation de data.
   if (!('data' in obj)) {
@@ -96,9 +107,15 @@ export function parseImportFile(json: string): ParsedImport {
     throw new Error('Champ "data" invalide : doit être un objet.');
   }
 
-  const data = obj.data as Record<string, unknown>;
+  const data = { ...(obj.data as Record<string, unknown>) };
 
-  // 4. Toutes les tables doivent être présentes et être des tableaux.
+  // 4. Toutes les tables doivent être présentes et être des tableaux. Une
+  //    sauvegarde v1 n'a pas les tables apparues en v2 : on les lit vides.
+  if (version === 1) {
+    for (const table of TABLES_ADDED_IN_V2) {
+      if (!(table in data)) data[table] = [];
+    }
+  }
   for (const table of EXPORT_TABLES) {
     if (!(table in data)) {
       throw new Error(`Table "${table}" absente du fichier de sauvegarde.`);
@@ -109,7 +126,7 @@ export function parseImportFile(json: string): ParsedImport {
   }
 
   return {
-    version: obj.version as typeof IMPORT_FORMAT_VERSION,
+    version,
     exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
     data: data as CollectedData,
   };

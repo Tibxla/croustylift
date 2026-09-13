@@ -4,11 +4,11 @@ Le bouton « Exporter mes données » (surface Séances, section Données) tél�
 
 Code : `src/features/export/` (`export.ts` = coeur testé, `data.ts` = client + téléchargement, `ExportButton.tsx` = UI). Nom du fichier : `croustylift-backup-AAAA-MM-JJ.json`.
 
-## Structure (version 1)
+## Structure (version 2)
 
 ```jsonc
 {
-  "version": 1,                                // version du FORMAT, pas des données
+  "version": 2,                                // version du FORMAT, pas des données
   "exportedAt": "2026-06-18T10:00:00.000Z",    // ISO 8601 UTC, instant de l'export
   "data": {                                    // une clé par table, lignes BRUTES
     "exercises":           [ /* exos PERSO uniquement (owner_id non null) */ ],
@@ -16,7 +16,8 @@ Code : `src/features/export/` (`export.ts` = coeur testé, `data.ts` = client + 
     "exercise_overrides":  [ /* overrides perso des exos de base (user_id) */ ],
     "routines":            [ ... ],
     "routine_activations": [ /* historique de la routine courante */ ],
-    "seances":             [ ... ],
+    "seances":             [ /* colonne archived_at : null = active */ ],
+    "seance_archive_events": [ /* journal daté des archivages de séance (v2, ADR 0017) */ ],
     "seance_versions":     [ ... ],
     "prescriptions":       [ ... ],
     "executions":          [ ... ],
@@ -35,8 +36,10 @@ Les listes de `data` sont ordonnées des **parents vers les enfants** (`exercise
 - **Exos de base exclus** : `exercises` ne contient que les **exos perso** (`owner_id` non null). Le catalogue commun (exos de base, `owner_id` null) est partagé en lecture seule entre tous les utilisateurs (cf. `CONTEXT.md`) ; il n'est pas « les données de l'utilisateur » et sera déjà présent chez qui réimporte.
 - **Import garanti sur l'instance d'origine seulement** (limite assumée, audit 2026-06-19) : comme les exos de base sont exclus, les lignes qui les RÉFÉRENCENT (`exercise_notes`, `exercise_overrides`, `prescriptions`, `performed_sets`, `dated_notes`) ne portent que leur **UUID**. L'import suppose donc le même catalogue de base aux mêmes UUID — vrai sur le **même projet Supabase** (le cas visé : filet anti-éviction du stockage local iOS), mais PAS sur une autre instance (les UUID de base y sont régénérés au seed, `gen_random_uuid()`) où ces FK lèveraient une `23503`. Un vrai portage cross-instance demanderait de re-résoudre les exos de base par **nom** à l'import — hors périmètre du filet de sauvegarde.
 - **`exercise_overrides`** : overrides perso des exos de base (champ `user_id`, pas `owner_id`). Exportés tels quels, comme toutes les tables scopées par RLS.
-- **Colonnes auto-incluses** : les colonnes ajoutées à des tables existantes sont exportées sans modification du format (lignes brutes). Actuellement incluses : `exercises.unilateral`, `exercises.primary_muscles`, `performed_sets.side` (côté unilatéral).
+- **Colonnes auto-incluses** : les colonnes ajoutées à des tables existantes sont exportées sans modification du format (lignes brutes). Actuellement incluses : `exercises.unilateral`, `exercises.primary_muscles`, `performed_sets.side` (côté unilatéral), `routines.archived_at`, `seances.archived_at`.
 
 ## Évolution
 
 Le champ `version` permet à un import de reconnaître le format. Tout changement de structure (table ajoutée, forme de ligne modifiée) incrémente `EXPORT_FORMAT_VERSION` dans `src/features/export/export.ts`.
+
+- **v2 (2026-09-13)** : table `seance_archive_events` et colonne `archived_at` sur `routines` et `seances` (ADR 0017). L'import lit toujours une sauvegarde **v1** : elle précède l'archivage, son journal est lu vide.

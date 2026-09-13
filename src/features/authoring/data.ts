@@ -41,6 +41,7 @@ import {
   mergeExerciseOverride,
   type ExerciseOverrideValues,
 } from '../../domain/exercise-override';
+import { executedRoutineIds } from './archive';
 import {
   buildSeanceCatalog,
   currentVersionIdBySeance,
@@ -346,13 +347,72 @@ export async function renameRoutine(id: string, name: string): Promise<RoutineRo
 }
 
 /**
- * Supprime une routine. Les séances, versions, prescriptions et activations
- * cascadent (on delete cascade) ; les executions de ses versions passent à
- * seance_version_id null (on delete set null) — l'historique réel survit.
+ * Supprime une routine JAMAIS exécutée. Les séances, versions, prescriptions et
+ * activations cascadent (on delete cascade). Une routine dont une séance a été
+ * exécutée est refusée par la base (migration 0014, 23503) : elle s'archive
+ * (ADR 0017). L'UI ne propose d'ailleurs que l'archivage dans ce cas.
  */
 export async function deleteRoutine(id: string): Promise<void> {
   const { error } = await supabase.from('routines').delete().eq('id', id);
+  if (error) {
+    if (isForeignKeyViolation(error)) {
+      throw new Error(
+        'Cette routine a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Archive une routine (ADR 0017) : elle sort de la liste et ne peut plus devenir
+ * courante, son historique reste entier. La routine courante ne s'archive pas :
+ * on relit la routine courante juste avant, pour refuser avec un message clair.
+ */
+export async function archiveRoutine(id: string): Promise<void> {
+  if ((await getCurrentRoutineId()) === id) {
+    throw new Error(
+      'La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.',
+    );
+  }
+  const { error } = await supabase
+    .from('routines')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id);
   if (error) throw error;
+}
+
+/** Désarchive une routine : elle revient dans la liste, prête à redevenir courante. */
+export async function unarchiveRoutine(id: string): Promise<void> {
+  const { error } = await supabase.from('routines').update({ archived_at: null }).eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * L'historique d'exécution du plan : les séances et les routines qui ont au
+ * moins une exécution. Sert à proposer « Archiver » plutôt que « Supprimer »
+ * (ADR 0017). Deux lectures à volume borné par l'historique du compte.
+ */
+export async function loadPlanHistory(): Promise<{
+  executedSeanceIds: Set<string>;
+  executedRoutineIds: Set<string>;
+}> {
+  const [executionsRes, seancesRes] = await Promise.all([
+    supabase.from('executions').select('seance_versions ( seance_id )'),
+    supabase.from('seances').select('id, routine_id'),
+  ]);
+  if (executionsRes.error) throw executionsRes.error;
+  if (seancesRes.error) throw seancesRes.error;
+
+  type Row = { seance_versions: { seance_id: string } | null };
+  const executedSeanceIds = new Set<string>();
+  for (const row of (executionsRes.data ?? []) as unknown as Row[]) {
+    if (row.seance_versions) executedSeanceIds.add(row.seance_versions.seance_id);
+  }
+  return {
+    executedSeanceIds,
+    executedRoutineIds: executedRoutineIds(seancesRes.data ?? [], executedSeanceIds),
+  };
 }
 
 // --- Routine courante (timeline routine_activations, ADR 0001) ----------------
@@ -440,11 +500,55 @@ export async function renameSeance(id: string, name: string): Promise<SeanceRow>
 }
 
 /**
- * Supprime une séance. Versions et prescriptions cascadent ; les executions de
- * ses versions passent à seance_version_id null (on delete set null).
+ * Supprime une séance JAMAIS exécutée. Versions et prescriptions cascadent. Une
+ * séance exécutée est refusée par la base (migration 0014, 23503) : elle
+ * s'archive (ADR 0017).
  */
 export async function deleteSeance(id: string): Promise<void> {
   const { error } = await supabase.from('seances').delete().eq('id', id);
+  if (error) {
+    if (isForeignKeyViolation(error)) {
+      throw new Error(
+        'Cette séance a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Archive une séance (ADR 0017) : elle ne se choisit plus en salle, son
+ * historique reste entier. Une seule écriture : le trigger de la migration 0014
+ * date l'archivage à l'heure du serveur et écrit l'événement que la timeline des
+ * blocs rejoue (archiver une séance de la routine courante coupe un bloc).
+ */
+export async function archiveSeance(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('seances')
+    .update({ archived_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+/**
+ * Désarchive une séance : elle revient au plan, en fin de routine, et sa
+ * Référence comme sa courbe reprennent. On la replace en dernière position :
+ * pendant l'archivage, les séances actives ont pu être réordonnées sans elle.
+ */
+export async function unarchiveSeance(id: string): Promise<void> {
+  const { data: seance, error: readErr } = await supabase
+    .from('seances')
+    .select('routine_id')
+    .eq('id', id)
+    .single();
+  if (readErr) throw readErr;
+  const siblings = await listSeances(seance.routine_id);
+  const position = nextPosition(siblings.filter((s) => s.id !== id).map((s) => s.position));
+
+  const { error } = await supabase
+    .from('seances')
+    .update({ archived_at: null, position })
+    .eq('id', id);
   if (error) throw error;
 }
 
@@ -602,7 +706,7 @@ export async function saveSeanceVersion(
 export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
   const [routines, seancesRes, versionsRes, currentRoutineId] = await Promise.all([
     listRoutines(),
-    supabase.from('seances').select('id, name, routine_id, position'),
+    supabase.from('seances').select('id, name, routine_id, position, archived_at'),
     supabase.from('seance_versions').select('id, seance_id, version'),
     getCurrentRoutineId(),
   ]);
