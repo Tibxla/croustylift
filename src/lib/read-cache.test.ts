@@ -240,6 +240,25 @@ describe('ordre des réponses et garde de compte', () => {
     await expect(cachedRead('k', async () => 'récent')).resolves.toBe('récent');
   });
 
+  it('une relance qui ÉCHOUE n’empêche pas la réponse tardive de la lecture précédente de semer la copie', async () => {
+    // Premier démarrage, réseau lent : la lecture à froid dépasse son délai,
+    // l'utilisateur relance, la relance échoue, puis la première répond.
+    const lente = deferred<string>();
+    const premiere = cachedRead('k', () => lente.promise);
+    await refreshRead('k', async () => {
+      throw new Error('réseau coupé');
+    });
+    lente.resolve('routine');
+    await premiere;
+
+    // La copie existe : hors ligne, elle est servie au lieu d'une erreur.
+    await expect(
+      cachedRead('k', async () => {
+        throw new Error('hors ligne');
+      }),
+    ).resolves.toBe('routine');
+  });
+
   it('la réponse dépassée est quand même rendue à son appelant', async () => {
     const ancienne = deferred<string>();
     const lecture = cachedRead('k', () => ancienne.promise); // à froid : attend le réseau

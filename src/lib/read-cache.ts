@@ -53,12 +53,17 @@ interface Envelope {
 const revalidators = new Map<string, () => Promise<void>>();
 
 /**
- * Numéro de la dernière lecture PARTIE pour chaque clé. La séquence est globale
- * et ne repart jamais de zéro : après une purge (`clearReadCache`), une réponse
- * encore en vol ne peut pas retrouver le numéro d'une lecture plus récente.
+ * Numéro de la lecture dont la réponse a été ÉCRITE en dernier, par clé. Une
+ * réponse n'écrit que si elle est partie APRÈS celle-là : une revalidation
+ * partie avant un acquittement ne peut pas écraser la relecture qui a suivi.
+ * On compare à la dernière réponse écrite, pas à la dernière lecture partie :
+ * sinon une relance qui échoue (« Réessayer » sur réseau lent) empêcherait la
+ * réponse tardive, valide, de la lecture précédente de semer la copie.
  */
-const latestRead = new Map<string, number>();
+const lastWritten = new Map<string, number>();
 let readSeq = 0;
+/** Incrémenté à chaque purge : une réponse partie avant ne ressème rien. */
+let purgeGen = 0;
 
 function fullKey(userId: string, key: string): string {
   return `${PREFIX}:${userId}:${key}`;
@@ -97,10 +102,11 @@ function writeEntry(key: string, value: unknown): void {
 }
 
 /**
- * Lit le réseau et sème la copie, sous deux gardes : la réponse n'écrit que si
- * aucune lecture de la même clé n'est partie depuis (sinon elle écraserait du
- * plus frais avec du plus vieux), et si le compte reconnu est toujours celui du
- * départ. Dans tous les cas la valeur est rendue à l'appelant.
+ * Lit le réseau et sème la copie, sous trois gardes : la réponse n'écrit que si
+ * elle est partie après la dernière réponse écrite pour cette clé (sinon elle
+ * écraserait du plus frais avec du plus vieux), si aucune purge n'a eu lieu
+ * depuis son départ, et si le compte reconnu est toujours celui du départ.
+ * Dans tous les cas la valeur est rendue à l'appelant.
  */
 async function guardedFetch<T>(
   userId: string,
@@ -109,10 +115,15 @@ async function guardedFetch<T>(
 ): Promise<T> {
   readSeq += 1;
   const seq = readSeq;
-  latestRead.set(storageKey, seq);
+  const gen = purgeGen;
   const value = await fetcher();
-  if (latestRead.get(storageKey) === seq && loadLocalAccount()?.userId === userId) {
+  if (
+    gen === purgeGen &&
+    seq > (lastWritten.get(storageKey) ?? 0) &&
+    loadLocalAccount()?.userId === userId
+  ) {
     writeEntry(storageKey, value);
+    lastWritten.set(storageKey, seq);
   }
   return value;
 }
@@ -253,9 +264,10 @@ export function revalidateReadCache(): void {
 /** Purge TOUTES les copies locales, tous comptes (Déconnexion / forçage). */
 export function clearReadCache(): void {
   revalidators.clear();
-  // Les lectures encore en vol ne sont plus « la dernière » de leur clé : leur
-  // réponse ne ressèmera pas une copie qu'on vient de purger.
-  latestRead.clear();
+  // Les lectures encore en vol sont parties avant la purge : leur réponse ne
+  // ressèmera pas une copie qu'on vient de purger.
+  lastWritten.clear();
+  purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {
     const doomed: string[] = [];
