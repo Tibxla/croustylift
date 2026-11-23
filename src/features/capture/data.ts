@@ -40,7 +40,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { readQueue, type OutboxOp } from './outbox';
+import { readOwnQueue, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -735,7 +735,9 @@ export async function loadExerciseRows(
   exerciseId: string,
 ): Promise<PerformedSetWithExecutionRow[]> {
   const rows = await loadExerciseExecutions(exerciseId);
-  return applyPendingSets(rows, readQueue(), exerciseId);
+  // Les écritures en attente du compte reconnu seulement : celles d'un autre
+  // compte restées en file n'entrent pas dans ses repères.
+  return applyPendingSets(rows, readOwnQueue(), exerciseId);
 }
 
 // --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------

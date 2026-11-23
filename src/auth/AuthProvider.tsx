@@ -11,7 +11,8 @@ import {
 import { clearReadCache } from '../lib/read-cache'
 import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
-import { clearQueue, pendingCount } from '../features/capture/outbox'
+import { adoptLegacyOps, clearQueue, pendingCount } from '../features/capture/outbox'
+import { foreignPendingWrites } from './pending-guard'
 import { flushOutbox } from '../features/capture/sync'
 import { clearCaptureState } from '../features/capture/state'
 
@@ -30,6 +31,11 @@ setSessionUserReader(async () => {
   const { data } = await supabase.auth.getSession()
   return data.session?.user.id ?? null
 })
+
+// Migration douce de la file d'écritures (audit sécurité, constat 1) : les ops
+// d'un bundle antérieur, sans compte, sont attribuées au compte reconnu ICI, au
+// chargement, avant que le moindre événement d'auth ne réécrive le marqueur.
+adoptLegacyOps()
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -156,21 +162,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localAccount,
       offlineRecognized,
       signIn: async (email, password) => {
-        const account = loadLocalAccount()
-        if (
-          account &&
-          pendingCount() > 0 &&
-          (account.email ?? '').toLowerCase() !== email.trim().toLowerCase()
-        ) {
-          // Un AUTRE compte veut s'installer par-dessus des écritures non
-          // synchronisées (ex. après révocation) : refus — seul le forçage
-          // explicite peut les jeter (ADR 0012).
-          throw new PendingWritesError(pendingCount())
-        }
+        // Un AUTRE compte veut s'installer par-dessus des écritures non
+        // synchronisées (ex. après révocation) : refus — seul le forçage
+        // explicite peut les jeter (ADR 0012).
+        const held = foreignPendingWrites(email)
+        if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
       },
       signUp: async (email, password) => {
+        // Même garde que la Connexion : sans confirmation d'e-mail, l'inscription
+        // ouvre une session sur-le-champ, par-dessus les saisies d'un autre.
+        const held = foreignPendingWrites(email)
+        if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
       },

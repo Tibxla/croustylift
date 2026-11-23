@@ -12,14 +12,17 @@ import {
   pendingCount,
   clearQueue,
   purgeByExecution,
+  adoptLegacyOps,
+  readOwnQueue,
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
 } from './outbox';
+import { saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
-const queueNoSeq = () => readQueue().map(({ _seq, ...op }) => op);
+const queueNoSeq = () => readQueue().map(({ _seq, _owner, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -842,6 +845,12 @@ describe('purgeByExecution', () => {
 // Le flush reçoit donc un lecteur de session et ne tente rien sans compte.
 
 describe('flush (session vérifiée)', () => {
+  // Les ops sont celles du compte reconnu sur l'appareil (cf. « file liée à un
+  // compte » plus bas) : la session vérifiée est ici la sienne.
+  beforeEach(() => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+  });
+
   it('sans session, aucune op n’est tentée et la file reste entière', async () => {
     enqueue({ type: 'updateExecution', id: 'exec-1', closedAt: '2026-06-18T10:00:00Z' });
     enqueue({ type: 'deleteSet', id: 'set-1' });
@@ -903,5 +912,107 @@ describe('flush (session vérifiée)', () => {
 
     expect(res).toEqual({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
+  });
+});
+
+// --- file liée à un compte (audit sécurité, constat 1) ----------------------
+//
+// Chaque op porte l'id du compte reconnu à l'enfilement. Sous une session
+// vérifiée, le flush ne rejoue que les ops de CE compte : celles d'un autre
+// restent en file, jamais envoyées sous une autre identité.
+
+describe('file liée à un compte', () => {
+  const compteA = { userId: 'user-a', email: 'a@exemple.com' };
+  const compteB = { userId: 'user-b', email: 'b@exemple.com' };
+
+  it('enqueue étiquette l’op avec le compte local reconnu', () => {
+    saveLocalAccount(compteA);
+    enqueue(execOp('exec-1'));
+
+    expect(readQueue()[0]?._owner).toBe('user-a');
+  });
+
+  it('le flush ne rejoue que les ops du compte connecté, les autres restent en file', async () => {
+    saveLocalAccount(compteA);
+    enqueue(execOp('exec-a'));
+    enqueue(setOp('set-a', 1, 'exec-a'));
+    saveLocalAccount(compteB);
+    enqueue(execOp('exec-b'));
+    saveLocalAccount(compteA);
+    enqueue({ type: 'deleteSet', id: 'set-a-2' });
+    saveLocalAccount(compteB);
+    const fns = okFns();
+
+    const res = await flush(fns, async () => 'user-b');
+
+    expect(fns.calls().map((o) => o.id)).toEqual(['exec-b']);
+    expect(res).toEqual({ remaining: 3, flushed: 1 });
+    // Les ops de A sont intactes, dans leur ordre d'enfilement.
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-a', 'set-a', 'set-a-2']);
+  });
+
+  it('le compte d’origine revenu, ses ops repartent dans l’ordre', async () => {
+    saveLocalAccount(compteA);
+    enqueue(execOp('exec-a'));
+    enqueue(setOp('set-a', 1, 'exec-a'));
+    const fns = okFns();
+    await flush(fns, async () => 'user-b');
+    expect(fns.calls()).toEqual([]);
+
+    const res = await flush(fns, async () => 'user-a');
+
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.calls().map((o) => o.id)).toEqual(['exec-a', 'set-a']);
+  });
+
+  it('la couche de sync reçoit l’op métier, sans étiquette de file', async () => {
+    saveLocalAccount(compteA);
+    enqueue(execOp('exec-a'));
+    const fns = okFns();
+
+    await flush(fns, async () => 'user-a');
+
+    expect(fns.calls()).toEqual([execOp('exec-a')]);
+  });
+
+  it('migration douce : les ops sans compte sont attribuées au compte local reconnu', async () => {
+    // File écrite par un bundle antérieur : ni `_owner` ni marqueur lu à l'époque.
+    localStorage.setItem(
+      'croustylift:outbox',
+      JSON.stringify([{ ...execOp('exec-a'), _seq: 1 }, { type: 'deleteSet', id: 'set-a', _seq: 2 }]),
+    );
+    saveLocalAccount(compteA);
+
+    adoptLegacyOps();
+
+    expect(readQueue().map((o) => o._owner)).toEqual(['user-a', 'user-a']);
+    // Un autre compte arrivé ensuite (lien de récupération) ne les envoie pas.
+    saveLocalAccount(compteB);
+    adoptLegacyOps();
+    const fns = okFns();
+    const res = await flush(fns, async () => 'user-b');
+    expect(fns.calls()).toEqual([]);
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+  });
+
+  it('sans compte local reconnu, une op sans compte reste en file sous une session vérifiée', async () => {
+    enqueue(execOp('exec-x'));
+    adoptLegacyOps();
+    const fns = okFns();
+
+    const res = await flush(fns, async () => 'user-b');
+
+    expect(fns.calls()).toEqual([]);
+    expect(res.remaining).toBe(1);
+  });
+
+  it('readOwnQueue ne rend que les ops du compte reconnu (Référence, ADR 0014)', () => {
+    saveLocalAccount(compteA);
+    enqueue(setOp('set-a', 1, 'exec-a'));
+    saveLocalAccount(compteB);
+    enqueue(setOp('set-b', 1, 'exec-b'));
+
+    expect(readOwnQueue().map((o) => o.id)).toEqual(['set-b']);
+    expect(readQueue()).toHaveLength(2);
   });
 });

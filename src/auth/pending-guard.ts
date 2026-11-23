@@ -1,0 +1,22 @@
+// Garde « écritures en attente d'un autre compte » (ADR 0012), commune à la
+// Connexion et à l'inscription.
+//
+// Des saisies non synchronisées appartiennent au compte que l'appareil reconnaît
+// (marqueur local-account). Un AUTRE compte ne s'installe pas par-dessus : seul
+// le forçage explicite peut les jeter. Avant, la garde ne couvrait que
+// `signIn` : « Créer un compte » la contournait (audit sync, constat 12).
+import { loadLocalAccount } from '../lib/local-account';
+import { pendingCount } from '../features/capture/outbox';
+
+/**
+ * Nombre d'écritures en attente qui interdisent à `email` de s'installer sur
+ * l'appareil : celles d'un compte reconnu dont l'adresse diffère. `0` = rien ne
+ * s'y oppose (aucun compte reconnu, file vide, ou même compte).
+ */
+export function foreignPendingWrites(email: string): number {
+  const account = loadLocalAccount();
+  if (!account) return 0;
+  const pending = pendingCount();
+  if (pending === 0) return 0;
+  return (account.email ?? '').toLowerCase() === email.trim().toLowerCase() ? 0 : pending;
+}

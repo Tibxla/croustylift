@@ -24,6 +24,7 @@
 // Chaque op est un FAIT à rejouer, portant l'`id` de la ligne concernée (UUID
 // client) pour rester idempotente. Discriminées par `type`.
 import type { Side } from '../../domain/types';
+import { loadLocalAccount } from '../../lib/local-account';
 
 /** Crée (ou ré-affirme) l'exécution du jour. Idempotent via upsert par id. */
 export interface UpsertExecutionOp {
@@ -150,7 +151,14 @@ export interface DeleteExecutionOp {
 // n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés sur
 // le même id). Optionnel : une op héritée d'un bundle antérieur n'en a pas (repli
 // sur (type,id) le temps qu'elle soit drainée).
-type Sequenced = { _seq?: number };
+//
+// `_owner` : id du COMPTE reconnu sur l'appareil à l'enfilement (marqueur
+// local-account), posé par `enqueue`. La file est commune à l'appareil ; sous
+// une session vérifiée, le flush ne rejoue que les ops du compte connecté : les
+// saisies de A ne remontent jamais sous B (audit sécurité, constat 1). Une op
+// sans `_owner` vient d'un bundle antérieur : `adoptLegacyOps` l'attribue au
+// compte reconnu au démarrage.
+type Sequenced = { _seq?: number; _owner?: string };
 
 export type OutboxOp = (
   | UpsertExecutionOp
@@ -262,6 +270,32 @@ function writeQueue(queue: OutboxOp[]): void {
   }
 }
 
+/**
+ * Les ops en file du compte local reconnu (marqueur), pour ce qui AFFICHE des
+ * écritures en attente (Référence fusionnée, ADR 0014) : les séries d'un autre
+ * compte restées en file n'entrent pas dans les repères de celui-ci. Une op
+ * sans compte (bundle antérieur) est tenue pour celle du compte reconnu.
+ */
+export function readOwnQueue(): OutboxOp[] {
+  const owner = loadLocalAccount()?.userId;
+  return readQueue().filter((op) => op._owner === undefined || op._owner === owner);
+}
+
+/**
+ * Migration douce : attribue au compte local reconnu les ops enfilées par un
+ * bundle antérieur (sans `_owner`). À appeler AU DÉMARRAGE, avant que la couche
+ * d'auth ne réécrive le marqueur : faite au flush, elle donnerait les ops de A
+ * au compte B arrivé entre-temps. Sans marqueur, rien n'est attribué : ces ops
+ * restent en file et ne partent sous aucun compte (on ne devine pas).
+ */
+export function adoptLegacyOps(): void {
+  const owner = loadLocalAccount()?.userId;
+  if (!owner) return;
+  const queue = readQueue();
+  if (queue.every((op) => op._owner !== undefined)) return;
+  writeQueue(queue.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op)));
+}
+
 /** Longueur courante de la file (pilote l'indicateur de sync). */
 export function pendingCount(): number {
   return readQueue().length;
@@ -344,17 +378,20 @@ export function enqueue(op: OutboxOp): number {
   // rester unique après un reload (le compteur en mémoire repart à 0, pas la file).
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
   seqCounter = Math.max(seqCounter, maxSeq) + 1;
-  queue.push({ ...op, _seq: seqCounter });
+  // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
+  const owner = loadLocalAccount()?.userId;
+  queue.push({ ...op, _seq: seqCounter, ...(owner ? { _owner: owner } : {}) });
   writeQueue(queue);
   return queue.length;
 }
 
 // --- Flush --------------------------------------------------------------------
 
-/** Retire le champ interne `_seq` (mécanique de file) : la couche sync reçoit l'op
- *  DOMAINE, jamais l'identité de queue. Générique → préserve le type narrowé. */
-function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq'> {
-  const { _seq: _ignored, ...rest } = op;
+/** Retire les champs internes `_seq` et `_owner` (mécanique de file) : la couche
+ *  sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique → préserve le
+ *  type narrowé. */
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner'> {
+  const { _seq: _ignored, _owner: _alsoIgnored, ...rest } = op;
   return rest;
 }
 
@@ -434,8 +471,10 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
     const { flushed, drained } = await runFlushOnce(fns, who);
     totalFlushed += flushed;
     const remaining = readQueue().length;
-    // Arrêt sur échec (pas drainé), file vide, ou garde-fou de convergence atteint.
-    if (!drained || remaining === 0 || --budget <= 0) {
+    // Arrêt sur échec (pas drainé), file vide, passe sans progrès (il ne reste
+    // que des ops d'un autre compte, qu'une nouvelle passe ne jouerait pas
+    // davantage), ou garde-fou de convergence atteint.
+    if (!drained || remaining === 0 || flushed === 0 || --budget <= 0) {
       return { remaining, flushed: totalFlushed };
     }
     // Drainé mais la file s'est re-remplie (enqueue concurrent en fin de passe) :
@@ -471,10 +510,13 @@ async function runFlushOnce(
       // La file a pu bouger pendant la lecture de la session.
       queue = readQueue();
     }
-    const op = queue[0];
-    // `queue.length > 0` garantit la tête : on prouve l'index au compilateur sans
-    // changer le flux (la file persistée n'est jamais vidée sous nos pieds ici,
-    // c'est `current` plus bas qui peut l'être).
+    // L'op à jouer : la première de la file ; sous une session vérifiée, la
+    // première du compte CONNECTÉ. Celles d'un autre compte sont sautées et
+    // restent en file, à leur place : elles ne partent que sous leur compte.
+    // L'ordre FIFO vaut entre les ops d'un même compte (dépendance
+    // exécution→séries), il n'y a aucune dépendance d'un compte à l'autre.
+    const op = who ? queue.find((candidate) => candidate._owner === user) : queue[0];
+    // Plus rien à jouer pour ce compte : la passe est finie.
     if (!op) break;
     try {
       await runOp(op, fns);
@@ -499,25 +541,27 @@ async function runFlushOnce(
     // est sans risque (idempotente par id). Même arrêt que hors ligne.
     if (who && (await who()) !== user) return { flushed, drained: false };
     // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
-    // retire l'op qu'on vient de traiter. Mais la tête a pu CHANGER pendant
-    // l'`await` : un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue`
-    // déclenché par une autre exécution peut avoir retiré l'op traitée, voire
-    // toute la file. On ne `shift()` que si la tête est ENCORE l'op traitée
-    // (même type + même id) : sinon un shift aveugle retirerait la MAUVAISE op
-    // (perte d'une op d'une nouvelle exécution). Si la tête a changé, l'op a déjà
-    // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
+    // retire l'op qu'on vient de traiter, OÙ QU'ELLE SOIT (des ops d'un autre
+    // compte peuvent la précéder). Mais la file a pu CHANGER pendant l'`await` :
+    // un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue` peut avoir
+    // retiré l'op traitée, voire toute la file. On ne retire que l'op ELLE-MÊME :
+    // si elle n'y est plus, elle a déjà été purgée → on ne retire rien (retirer
+    // la tête à l'aveugle perdrait une op d'une nouvelle exécution) et on reprend
+    // la boucle sur la file courante.
+    // Identité par `_seq` (unique, stampé à l'enqueue), type et id à l'appui.
+    // Une op héritée sans `_seq` (file d'un bundle antérieur) ne se reconnaît
+    // qu'en TÊTE par (type, id), le temps qu'elle soit drainée.
     const current = readQueue();
-    const head = current[0];
-    // Identité par `_seq` (unique, stampé à l'enqueue) : on retire la tête SEULEMENT
-    // si c'est encore l'op qu'on vient de traiter. Repli sur (type,id) pour une op
-    // héritée sans `_seq` (file d'un bundle antérieur), le temps qu'elle soit drainée.
-    const sameHead = head
-      ? op._seq !== undefined
-        ? head._seq === op._seq
-        : head.type === op.type && head.id === op.id
-      : false;
-    if (sameHead) {
-      current.shift();
+    const at =
+      op._seq !== undefined
+        ? current.findIndex(
+            (o) => o._seq === op._seq && o.type === op.type && o.id === op.id,
+          )
+        : current[0]?.type === op.type && current[0]?.id === op.id
+          ? 0
+          : -1;
+    if (at !== -1) {
+      current.splice(at, 1);
       writeQueue(current);
       flushed += 1;
     }

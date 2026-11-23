@@ -27,6 +27,7 @@ import {
   type HydratedProgress,
 } from './state';
 import { upperA } from './fixtures';
+import { saveLocalAccount } from '../../lib/local-account';
 
 // --- Fabriques ---------------------------------------------------------------
 
@@ -869,6 +870,32 @@ describe('persist / loadPersisted', () => {
 
   it('rien de persisté → null (capture vierge au premier montage)', () => {
     expect(loadPersisted(upperA, DATE)).toBeNull();
+  });
+  it('l’état persisté par un autre compte n’est pas restauré', () => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    const state = captureReducer(mkState(), {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(state);
+    expect(loadPersisted(upperA, DATE)).not.toBeNull();
+
+    // Un autre compte reconnu sur l'appareil : la capture de A n'est pas la sienne.
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+
+    // Le compte d'origine revenu la retrouve.
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    expect(loadPersisted(upperA, DATE)?.progress['bench-press']?.sets).toHaveLength(1);
+  });
+
+  it('un état persisté sans compte (ancien format) reste restauré', () => {
+    localStorage.setItem(`croustylift:capture:${upperA.id}:${DATE}`, JSON.stringify(mkState()));
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+
+    expect(loadPersisted(upperA, DATE)).not.toBeNull();
   });
 });
 
