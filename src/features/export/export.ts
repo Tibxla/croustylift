@@ -4,7 +4,9 @@
 // jamais importer `lib/supabase` : la couche app (data.ts) câble le vrai client,
 // les tests passent un faux. On sépare trois étapes :
 //   1. `collectUserData(client)` : un `select *` par table, scopé par RLS côté
-//      serveur (pas de filtre owner_id explicite, cf. capture/data.ts).
+//      serveur (pas de filtre owner_id explicite, cf. capture/data.ts), lu en
+//      ENTIER page par page (cf. lib/fetch-all : sans pagination, PostgREST
+//      tronquait la sauvegarde à 1000 lignes par table, en silence).
 //   2. `buildExport(collected, exportedAt)` : enveloppe versionnée { version,
 //      exportedAt, data } (pure).
 //   3. `serializeExport(export)` : JSON indenté, lisible et diffable (pur).
@@ -33,6 +35,8 @@
 // un import futur réinsère telles quelles. Les exos de BASE (catalogue commun,
 // owner_id null) sont VOLONTAIREMENT exclus : ils ne sont pas « les données de
 // l'utilisateur » et seront présents chez celui qui réimporte.
+
+import { afterId, fetchAllRows } from '../../lib/fetch-all';
 
 /**
  * Version du FORMAT d'export (à incrémenter si la structure change).
@@ -78,17 +82,26 @@ export interface UserDataExport {
 // --- Client injectable --------------------------------------------------------
 //
 // Surface MINIMALE du client Supabase dont l'export a besoin : `from(table)
-// .select('*')`. Mocker ça suffit aux tests ; le vrai `supabase` la satisfait.
+// .select('*').order('id')[.gt('id', curseur)].limit(n)` — une page au curseur.
+// Mocker ça suffit aux tests ; le vrai `supabase` la satisfait.
 
-// Le vrai `select(...)` de supabase-js renvoie un PostgrestFilterBuilder
-// (thenable, pas une Promise stricte) : on type donc le retour en `PromiseLike`
-// pour que le vrai client satisfasse l'interface sans cast.
+// Le vrai `limit(...)` de supabase-js renvoie un builder (thenable, pas une
+// Promise stricte) : on type donc le retour en `PromiseLike` pour que le vrai
+// client satisfasse l'interface sans cast.
+/** Une page de l'export : curseur optionnel sur `id`, puis limite (qui exécute). */
+export interface ExportPage {
+  gt(column: 'id', value: string): ExportPage;
+  limit(count: number): PromiseLike<{
+    data: unknown[] | null;
+    error: { message: string } | null;
+  }>;
+}
+
 export interface ExportClient {
   from(table: string): {
-    select(columns: string): PromiseLike<{
-      data: unknown[] | null;
-      error: { message: string } | null;
-    }>;
+    select(columns: string): {
+      order(column: string): ExportPage;
+    };
   };
 }
 
@@ -96,17 +109,27 @@ export interface ExportClient {
 
 /**
  * Lit toutes les tables scopées à l'utilisateur (RLS) et renvoie leurs lignes.
- * Les requêtes tournent en parallèle (une par table). Une erreur Supabase sur
- * n'importe quelle table fait échouer la collecte (pas d'export partiel).
+ * Les tables se lisent en parallèle, chacune PAGE PAR PAGE jusqu'au bout (curseur
+ * sur `id`, clé unique de toutes les tables exportées : aucune ligne sautée ni
+ * doublée entre deux pages, même si une écriture arrive pendant l'export). Ce
+ * n'est PAS un instantané transactionnel : les tables sont lues l'une après
+ * l'autre côté serveur, une sauvegarde prise pendant une séance peut porter une
+ * série dont l'exécution a été lue juste avant. Une erreur Supabase sur n'importe quelle table
+ * fait échouer la collecte (pas d'export partiel).
  *
  * Les exos de BASE (owner_id null) sont filtrés : seuls les exos perso sortent.
  */
 export async function collectUserData(client: ExportClient): Promise<CollectedData> {
   const entries = await Promise.all(
     EXPORT_TABLES.map(async (table) => {
-      const { data, error } = await client.from(table).select('*');
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as Row[];
+      const rows: Row[] = await fetchAllRows<Row & { id: string }>(async (after, limit) => {
+        const { data, error } = await afterId(
+          client.from(table).select('*').order('id'),
+          after,
+        ).limit(limit);
+        // Même message qu'avant la pagination : l'erreur Supabase, en `Error`.
+        return { data, error: error ? new Error(error.message) : null };
+      });
       return [table, table === 'exercises' ? rows.filter(isPersonalExercise) : rows] as const;
     }),
   );

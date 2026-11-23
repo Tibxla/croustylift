@@ -10,6 +10,7 @@
 //   - RLS scope déjà tout à l'utilisateur connecté ; pas de filtre owner_id.
 //   - Une `ExerciseExecution` du domaine = les séries d'un exo un jour donné.
 import { supabase } from '../../lib/supabase';
+import { afterId, fetchAllRows, inCreationOrder } from '../../lib/fetch-all';
 import { buildPrimaryCurve } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
@@ -98,19 +99,27 @@ export interface ExerciseAnalysis extends TrainedExercise {
  * On part de `performed_sets` (jointe au nom de l'exo) plutôt que de `exercises`
  * pour ne garder QUE les exos réellement travaillés (un exo du catalogue jamais
  * loggé n'a rien à analyser). On dédoublonne côté client : un même exercise_id
- * revient une fois par série, on n'en garde qu'un.
+ * revient une fois par série, on n'en garde qu'un. Lecture PAGINÉE (cf.
+ * lib/fetch-all) : au-delà du plafond de 1000 lignes, un exo dont aucune série
+ * ne tombait dans la première page disparaissait de l'Analyse.
  */
 export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
-  const [{ data, error }, overrides] = await Promise.all([
-    supabase.from('performed_sets').select('exercise_id, exercises ( name )'),
+  type Row = { id: string; exercise_id: string; exercises: { name: string } | null };
+  const [rows, overrides] = await Promise.all([
+    fetchAllRows<Row>((after, limit) =>
+      afterId(
+        supabase
+          .from('performed_sets')
+          .select('id, exercise_id, exercises ( name )')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
     // Nom personnalisé per-user (issue #50) : l'analyse affiche le même nom que
     // partout ailleurs (catalogue, Capture, log brut).
     loadExerciseOverrides(),
   ]);
-  if (error) throw error;
-
-  type Row = { exercise_id: string; exercises: { name: string } | null };
-  const rows = (data ?? []) as unknown as Row[];
 
   const byId = new Map<string, TrainedExercise>();
   for (const row of rows) {
@@ -155,15 +164,9 @@ export interface LoadedExecutions {
 export async function loadExerciseExecutions(
   exerciseId: string,
 ): Promise<LoadedExecutions> {
-  const { data, error } = await supabase
-    .from('performed_sets')
-    .select(
-      'weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
-    )
-    .eq('exercise_id', exerciseId);
-  if (error) throw error;
-
   type SetRow = {
+    id: string;
+    created_at: string;
     weight_kg: number;
     reps: number;
     rir: number;
@@ -183,11 +186,26 @@ export async function loadExerciseExecutions(
       } | null;
     } | null;
   };
-  const rows = (data ?? []) as unknown as SetRow[];
+  // Lecture paginée (cf. lib/fetch-all), dans l'ordre de saisie (`created_at`,
+  // départagé par `id` pour un tri total) : un exo très pratiqué dépasse le
+  // plafond de 1000 lignes, et la courbe perdait alors des exécutions.
+  const rows = await fetchAllRows<SetRow>((after, limit) =>
+    afterId(
+      supabase
+        .from('performed_sets')
+        .select(
+          'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
+        )
+        .eq('exercise_id', exerciseId)
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
 
   const byExecution = new Map<string, ExerciseExecution>();
   const seances = new Map<string, SeanceInfo>();
-  for (const row of rows) {
+  for (const row of inCreationOrder(rows)) {
     const execution = row.executions;
     if (!execution) continue; // garde-fou : exécution orpheline.
     const seanceId = execution.seance_versions?.seance_id;
@@ -315,17 +333,26 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
   const seances = seancesRes.data ?? [];
   if (seances.length === 0) return [];
 
-  const versionsRes = await supabase
-    .from('seance_versions')
-    .select('id, seance_id, version')
-    .in(
-      'seance_id',
-      seances.map((s) => s.id),
-    );
-  if (versionsRes.error) throw versionsRes.error;
+  // Toutes les versions de ces séances (append-only, ADR 0001) : paginé, sinon
+  // la « version courante » pouvait être une version ancienne passé 1000 lignes.
+  const versions = await fetchAllRows<{ id: string; seance_id: string; version: number }>(
+    (after, limit) =>
+      afterId(
+        supabase
+          .from('seance_versions')
+          .select('id, seance_id, version')
+          .in(
+            'seance_id',
+            seances.map((s) => s.id),
+          )
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+  );
   // Version courante de chaque séance -> la séance qu'elle porte.
   const seanceOfVersion = new Map(
-    [...currentVersionIdBySeance(versionsRes.data ?? [])].map(([seanceId, versionId]) => [
+    [...currentVersionIdBySeance(versions)].map(([seanceId, versionId]) => [
       versionId,
       seanceId,
     ]),
@@ -381,33 +408,61 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
  * créer de bloc (cf. ADR 0001). Pas de logique de calcul dans cette couche.
  */
 export async function loadBlocks(): Promise<Block[]> {
-  const [activationsRes, versionsRes, seancesRes, archivesRes] = await Promise.all([
-    supabase.from('routine_activations').select('activated_at, routine_id'),
-    supabase.from('seance_versions').select('created_at, seance_id'),
-    supabase.from('seances').select('id, routine_id'),
+  // Quatre journaux qui ne font que grossir avec l'âge du compte : lus en entier,
+  // page par page (cf. lib/fetch-all), sinon un bloc ancien ou récent sautait
+  // en silence passé 1000 lignes.
+  const [activations, versions, seances, archives] = await Promise.all([
+    fetchAllRows<{ id: string; activated_at: string; routine_id: string }>((after, limit) =>
+      afterId(
+        supabase
+          .from('routine_activations')
+          .select('id, activated_at, routine_id')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
+    fetchAllRows<{ id: string; created_at: string; seance_id: string }>((after, limit) =>
+      afterId(
+        supabase
+          .from('seance_versions')
+          .select('id, created_at, seance_id')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
+    fetchAllRows<{ id: string; routine_id: string }>((after, limit) =>
+      afterId(supabase.from('seances').select('id, routine_id').order('id').limit(limit), after),
+    ),
     // Archivages datés (ADR 0017) : archiver une séance de la routine courante
     // change la configuration du template, donc coupe un bloc.
-    supabase.from('seance_archive_events').select('occurred_at, seance_id, archived'),
+    fetchAllRows<{ id: string; occurred_at: string; seance_id: string; archived: boolean }>((after, limit) =>
+      afterId(
+        supabase
+          .from('seance_archive_events')
+          .select('id, occurred_at, seance_id, archived')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
   ]);
-  if (activationsRes.error) throw activationsRes.error;
-  if (versionsRes.error) throw versionsRes.error;
-  if (seancesRes.error) throw seancesRes.error;
-  if (archivesRes.error) throw archivesRes.error;
 
   const timeline = buildConfigTimeline({
-    activations: (activationsRes.data ?? []).map((r) => ({
+    activations: activations.map((r) => ({
       activatedAt: r.activated_at,
       routineId: r.routine_id,
     })),
-    seanceVersions: (versionsRes.data ?? []).map((r) => ({
+    seanceVersions: versions.map((r) => ({
       createdAt: r.created_at,
       seanceId: r.seance_id,
     })),
-    seances: (seancesRes.data ?? []).map((r) => ({
+    seances: seances.map((r) => ({
       id: r.id,
       routineId: r.routine_id,
     })),
-    seanceArchiveEvents: (archivesRes.data ?? []).map((r) => ({
+    seanceArchiveEvents: archives.map((r) => ({
       occurredAt: r.occurred_at,
       seanceId: r.seance_id,
       archived: r.archived,
@@ -461,18 +516,9 @@ export async function loadBlockComparisonData(
  * le module pur `buildRawLog` ; cette couche ne fait que mapper et déléguer.
  */
 export async function loadRawLog(): Promise<RawLogEntry[]> {
-  const [{ data, error }, overrides] = await Promise.all([
-    supabase
-      .from('performed_sets')
-      .select(
-        'weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
-      ),
-    // Nom personnalisé per-user (issue #50) : le log brut affiche le nom override.
-    loadExerciseOverrides(),
-  ]);
-  if (error) throw error;
-
   type Row = {
+    id: string;
+    created_at: string;
     weight_kg: number;
     reps: number;
     rir: number;
@@ -490,10 +536,29 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
       } | null;
     } | null;
   };
-  const rows = (data ?? []) as unknown as Row[];
+  // TOUT l'historique, donc lecture paginée (cf. lib/fetch-all) : sans elle le
+  // Journal s'arrêtait à 1000 séries, dans un ordre non garanti (séances
+  // récentes absentes, exécution à cheval amputée). Ordre de saisie, `id` en
+  // départage pour un tri total.
+  const [rows, overrides] = await Promise.all([
+    fetchAllRows<Row>((after, limit) =>
+      afterId(
+        supabase
+          .from('performed_sets')
+          .select(
+            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
+          )
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
+    // Nom personnalisé per-user (issue #50) : le log brut affiche le nom override.
+    loadExerciseOverrides(),
+  ]);
 
   return buildRawLog(
-    rows.flatMap((row) => {
+    inCreationOrder(rows).flatMap((row) => {
       const execution = row.executions;
       if (!execution) return []; // garde-fou : série orpheline d'exécution.
       return [
@@ -539,22 +604,29 @@ export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
   // SANS série n'est pas un point (garde « exécution vide », cf. buildSessionMetrics
   // + CONTEXT.md). Sans ce décompte, une orpheline (durée posée mais zéro série)
   // s'afficherait sur le graphe alors qu'elle n'apparaît pas au journal.
-  const { data, error } = await supabase
-    .from('executions')
-    .select('performed_on, bpm_avg, duration_min, performed_sets(count)');
-  if (error) throw error;
-
   type Row = {
+    id: string;
+    created_at: string;
     performed_on: string;
     bpm_avg: number | null;
     duration_min: number | null;
     // PostgREST renvoie l'agrégat `count` sous forme de tableau à un élément.
     performed_sets: { count: number }[] | null;
   };
-  const rows = (data ?? []) as unknown as Row[];
+  // Une ligne par exécution, sur tout l'historique : paginé (cf. lib/fetch-all).
+  const rows = await fetchAllRows<Row>((after, limit) =>
+    afterId(
+      supabase
+        .from('executions')
+        .select('id, created_at, performed_on, bpm_avg, duration_min, performed_sets(count)')
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
 
   return buildSessionMetrics(
-    rows.map((row) => ({
+    inCreationOrder(rows).map((row) => ({
       date: row.performed_on,
       bpmAvg: row.bpm_avg === null ? null : Number(row.bpm_avg),
       durationMin: row.duration_min === null ? null : Number(row.duration_min),
