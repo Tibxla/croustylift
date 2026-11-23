@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { E1rmPoint } from '../../domain/types'
-import { toWeeklySeries } from './comparison-series'
+import { toWeeklySeries, weekLabel } from './comparison-series'
 
 describe('toWeeklySeries', () => {
   it('met le premier point à la semaine 0', () => {
@@ -37,5 +37,26 @@ describe('toWeeklySeries', () => {
 
   it('renvoie [] pour une courbe vide', () => {
     expect(toWeeklySeries([])).toEqual([])
+  })
+})
+
+describe('weekLabel', () => {
+  it('la première semaine est S1 (jamais S0)', () => {
+    expect(weekLabel(0)).toBe('S1')
+  })
+
+  it('tronque au lieu d’arrondir : le jour 4 du bloc est encore en S1', () => {
+    const [, day4, day10] = toWeeklySeries([
+      { date: '2026-09-01', e1rm: 100 },
+      { date: '2026-09-05', e1rm: 100 },
+      { date: '2026-09-11', e1rm: 100 },
+    ])
+    expect(weekLabel(day4!.week)).toBe('S1')
+    expect(weekLabel(day10!.week)).toBe('S2')
+  })
+
+  it('une semaine pleine écoulée ouvre la suivante', () => {
+    expect(weekLabel(1)).toBe('S2')
+    expect(weekLabel(2)).toBe('S3')
   })
 })
