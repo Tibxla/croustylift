@@ -4,6 +4,10 @@ Ce fichier garde la trace de ce que les audits (2026-06-19, 2026-11-22) ont fait
 livrer et des décisions actées : des limites connues, acceptées en connaissance de
 cause. Ce n'est pas une liste de tâches.
 
+Aucune dette cachée : tout défaut connu que le lot 3 a laissé ouvert est inscrit plus
+bas, dans « Résiduels connus du lot 3 », avec sa gravité et une piste. Ce qui n'y
+figure pas n'est pas connu.
+
 ## Fait (pour mémoire)
 
 - ✅ **3 bugs reproduits** : compteur unilatéral (équivalent-séries), métriques durée/BPM
@@ -84,3 +88,136 @@ cause. Ce n'est pas une liste de tâches.
   clôture ou une suppression sortie de la file relève les lignes qu'elle a touchées : zéro
   ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
   (ADR 0021, amendement du 2026-11-23).
+
+## Résiduels connus du lot 3 (2026-11-23)
+
+Le lot 3 s'est arrêté après une relecture, un tour de corrections et une vérification
+(règle d'arrêt des relectures). Ce que la vérification et l'intégration ont laissé
+ouvert est listé ici. Tous ces cas sont rares : stockage de l'appareil plein, deux
+onglets ou deux appareils, réseau lent, file enfilée par une version antérieure.
+Gravité : importante (une donnée peut être perdue ou fausse), mineure (gêne, sans
+perte), finition.
+
+### Notes datées
+
+- **Rejeu d'une ancienne file : effacement acquitté sans effet** (importante). Une file
+  enfilée avant l'identité par couple peut contenir l'écriture d'une note sous son id
+  déterministe, puis son effacement, qui ne porte que cet id. Si la note du couple vit
+  en base sous un id historique, l'écriture vise la bonne ligne mais l'effacement en
+  vise une autre, touche zéro ligne et sort de la file : la note saisie puis effacée
+  reste. Piste : avant le premier envoi, compléter les effacements hérités à partir des
+  écritures en file du même compte et du même id (`capture/sync.ts`, `notes/data.ts`).
+- **Réponse tardive qui réaffiche une note effacée** (mineure). Si un autre onglet
+  acquitte l'effacement pendant que la réponse de la base, qui porte encore la note,
+  est en route, la Capture l'adopte de nouveau. Piste : passer au rapprochement les
+  écritures de notes relevées avant et après la lecture, comme pour les séries
+  (`reconcileDatedNotes`).
+- **Note adoptée visible à la réouverture seulement** (finition). Une note adoptée par
+  une réponse tardive pendant que le panneau de l'exo est ouvert n'apparaît dans le
+  champ qu'à sa réouverture. Sans perte : une saisie faite entre-temps est écrite sur la
+  ligne du couple. Piste : resemer le champ tant qu'il n'a pas été touché
+  (`useAutosavedNote`).
+
+### File d'écritures et stockage plein
+
+- **Mise à jour retenue après le retour du stockage** (mineure). Stockage plein puis
+  place libérée : « Mettre à jour » ne retente aucune écriture de la file, la mise à
+  jour reste retenue jusqu'au prochain enfilement ou acquittement. Piste : retenter la
+  persistance à la demande de mise à jour, puis réévaluer (`pwa/reload-guards.ts`).
+- **Ordre des écritures sous repli mémoire** (mineure). La file relue place les
+  écritures persistées avant celles tenues en mémoire. Deux onglets, stockage plein :
+  une ancienne note d'instructions gardée en mémoire par l'un peut partir après la
+  correction persistée par l'autre, et l'écraser. Piste : garder l'ordre des écritures
+  d'une même ligne entre onglets, ou les dater (`outbox.ts`).
+- **Adoption tardive sous stockage plein** (mineure). L'adoption de l'exécution du jour
+  juge le tableau « intact » sur sa copie enregistrée. Si le stockage a refusé
+  l'ouverture d'un exo ou un ajout, la copie paraît intacte et l'adoption remonte le
+  tableau, brouillon ou exo ajouté perdus. Piste : décider sur l'état courant du
+  tableau, pas sur sa copie (`CaptureScreen.tsx`).
+- **Éviction d'un exo ajouté à la séance en cours** (mineure). L'éviction des copies
+  protège les exos des templates, pas un exo ajouté ou remplacé dans la séance en
+  cours : ses copies évincées, la réouverture hors ligne l'ignore. Piste : protéger
+  aussi les exos des dispositions reprenables (`cache-eviction.ts`).
+- **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
+  à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
+  quarantaine, qui se décide par écriture.
+
+### Capture, reprise
+
+- **Insertion en file absente du calcul de rang** (mineure). Une série ajoutée depuis
+  le Journal à une exécution ouverte, encore en file à la reprise, n'entre pas dans le
+  réalisé de la Capture : la série suivante peut reprendre son rang. Piste : appliquer
+  à la réponse les insertions en file de l'exécution avant de calculer le rang
+  (`capture/data.ts`).
+- **Brouillon unilatéral réamorcé** (mineure). Une réponse tardive qui ajoute le côté
+  manquant fait basculer le sélecteur de côté, et le brouillon en cours (poids, reps,
+  RIR) est réinitialisé. Piste : tenir le côté choisi pour une partie du brouillon
+  touché (`ExerciseCapture.tsx`).
+
+### Comptes
+
+- **Invitation : entrer sans avoir défini son mot de passe** (importante, parcours
+  rares). L'obligation de définir un mot de passe est écrite sur l'appareil. Elle tient
+  au rechargement de l'écran, mais pas partout : forçage de la garde d'arrivée sur un
+  appareil qui retient les saisies d'un autre compte, stockage plein à l'arrivée,
+  démarrage en session locale. Piste : poser l'obligation avant la branche de la garde,
+  et la tenir côté serveur pour qu'elle survive à tout rechargement
+  (`auth/AuthProvider.tsx`, `auth/arrival-link`).
+
+### Éditeur de séance
+
+- **« Enregistrer » absent après « Continuer l'édition »** (mineure). Prescriptions
+  enregistrées avec une note encore en brouillon : la confirmation de sortie s'ouvre,
+  et « Continuer l'édition » laisse « Séance enregistrée » à la place du bouton, même
+  après une nouvelle modification. Contournement : quitter puis rouvrir la séance.
+  Piste : rendre le bouton dès que les prescriptions redeviennent modifiées
+  (`SeanceEditor.tsx`).
+
+### Base et import
+
+- **Import et archivage : verrous pris en ordre inverse** (mineure). `import_user_data`
+  prend le verrou du compte avant les verrous de ligne, le trigger d'archivage de la
+  migration 0021 fait l'inverse. Les deux gestes lancés au même instant peuvent
+  s'interbloquer ; Postgres le détecte et annule l'un des deux (`40P01`), qui se
+  relance. Déduit de la lecture, aucune course jouée au banc. Piste : une fonction
+  d'archivage qui prend le verrou du compte d'abord, et la course à deux sessions dans
+  `supabase/tests/banc/lancer.sh`.
+- **Sauvegarde dont une routine archivée a été réactivée depuis** : refusée en entier
+  (mineure). L'état final laisserait pour courante une routine archivée. Le message de
+  la base dit quoi faire : définir une autre routine courante, puis réimporter
+  (`docs/export-format.md`).
+- **Réordonnancement des séances : fonction prête, éteinte.** `reorder_seances`
+  (migration 0023) est écrite et son appel aussi, derrière `REORDER_SEANCES_RPC`,
+  laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
+  séance, sans transaction.
+- **Banc SQL non rejoué après les dernières retouches.** Les migrations 0021 et 0024 et
+  l'ordre de déploiement ont été modifiés en fin de lot (`supabase/tests/ORDRE.md`) et
+  vérifiés par lecture seulement. À faire avant toute application :
+  `supabase/tests/banc/lancer.sh`.
+
+### Réseau
+
+- **Lecture qui pend : jusqu'à environ 87 s avant l'échec** (mineure). Le délai d'une
+  requête est de 20 s, mais `postgrest-js` rejoue de lui-même une lecture échouée, trois
+  fois, avec 1 s, 2 s puis 4 s d'attente. Les écritures ne sont pas rejouées. Piste :
+  `.retry(false)` sur les lectures du chemin d'ouverture, ou un délai plus court pour
+  elles.
+
+### Messages, tests, build
+
+- **Erreurs encore affichées telles quelles** (mineure) : un refus de droits (42501) et
+  une erreur réseau (`TypeError: Failed to fetch`) ne sont pas traduits, et la feuille
+  du catalogue n'a pas de « Réessayer ». Seuls les refus de contrainte (23503, 23514)
+  et de nom (23505) le sont (`lib/db-errors.ts`).
+- **Aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM. La
+  logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
+  `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de
+  sortie, blocages de rechargement, brouillons) n'est vérifié qu'en navigateur.
+- **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
+  à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
+  (14) les fige.
+- **Inter toujours embarquée** (finition) : seconde de pile, environ 133 ko de polices
+  en précache. À caler sur les polices de la refonte visuelle.
+- **Exports sans consommateur** (finition) : `summarizeBlocks`, `describeNoteKind`,
+  `loadDatedNote`, `initialState`, `upperA`, et les autres exports sans appelant, pas
+  relus.
