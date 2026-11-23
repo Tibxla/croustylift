@@ -9,6 +9,13 @@ export function weeklyProgressionRate(
   }
 
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date))
+  // Trois points ne suffisent pas s'ils tiennent sur deux jours (séance reprise
+  // après Clôture, puis le lendemain) : la droite passerait par 24 h et
+  // s'afficherait « +13,9 %/sem ». On exige autant de DATES distinctes que de
+  // points minimaux.
+  if (new Set(sorted.map((p) => p.date)).size < minPoints) {
+    return null
+  }
   const first = sorted[0]
   // Garde indépendante de `minPoints` : un appel `minPoints <= 0` sur un tableau
   // vide franchirait la garde ci-dessus mais n'a aucune pente mesurable.
@@ -50,4 +57,15 @@ export function weeklyProgressionRate(
 
   const slope = sxy / sxx // kg / semaine
   return (slope / meanY) * 100
+}
+
+/**
+ * Une pente à la précision de son AFFICHAGE : 0,1 point de %/semaine. Sert à la
+ * fois au formatage et à l'égalité de deux pentes, pour qu'un verdict ne
+ * désigne jamais un gagnant entre deux cartes qui affichent le même chiffre.
+ * Un zéro négatif est ramené à zéro (jamais de « −0,0 »).
+ */
+export function roundRate(rate: number): number {
+  const rounded = Number(rate.toFixed(1))
+  return rounded === 0 ? 0 : rounded
 }
