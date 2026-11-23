@@ -6,9 +6,10 @@
 // Échoue (code 1) si un chunk dépasse le sien, si un chunk budgété a disparu ou
 // si un chunk nouveau n'a pas de budget : une dérive ne passe plus inaperçue.
 //
-// Les budgets sont les tailles mesurées à leur dernière révision, plus une marge
-// d'environ 15 %. Les relever est permis, mais c'est un geste délibéré, visible
-// dans le diff.
+// Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
+// arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
+// geste délibéré, visible dans le diff. Dernière révision : fin du lot 3 (taille
+// mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -18,14 +19,14 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 66_000, // code de l'app
-  'react.js': 64_000, // react, react-dom, scheduler
-  'supabase.js': 58_000,
-  'index.css': 11_000,
+  'index.js': 70_000, // code de l'app (mesuré : 66 832)
+  'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
+  'supabase.js': 57_500, // (mesuré : 54 775)
+  'index.css': 10_000, // (mesuré : 9 302)
   // À la demande.
-  'AnalysisScreen.js': 19_000, // code de l'Analyse
-  'recharts.js': 113_000, // recharts et ses dépendances, avec l'Analyse seulement
-  'workbox-window.prod.es5.js': 3_000, // enregistrement du service worker
+  'AnalysisScreen.js': 16_500, // code de l'Analyse (mesuré : 15 882)
+  'recharts.js': 112_000, // recharts et ses dépendances, avec l'Analyse seulement (mesuré : 106 899)
+  'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 
 const dist = resolve(process.argv[2] ?? 'dist')
