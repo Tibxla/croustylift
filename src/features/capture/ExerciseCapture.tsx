@@ -1041,8 +1041,13 @@ function DatedNoteSection({
   onSave: (body: string) => void;
 }) {
   const hasNote = !isBlankNote(value);
-  // Ouverte si une note existe déjà (consultation/édition), sinon repliée.
+  // Ouverte si une note existe déjà (consultation/édition), sinon repliée. Une
+  // note qui arrive après le montage (adoptée par une réponse tardive de la
+  // base) l'ouvre aussi : repliée, elle restait invisible jusqu'à la réouverture
+  // de l'exo. Ajusté pendant le rendu ; une fois ouverte, elle le reste, même
+  // vidée (on ne referme pas un champ sous les doigts).
   const [open, setOpen] = useState(hasNote);
+  if (hasNote && !open) setOpen(true);
   const { draft, saved, handleChange, flush } = useAutosavedNote(value, onSave);
 
   if (!open) {

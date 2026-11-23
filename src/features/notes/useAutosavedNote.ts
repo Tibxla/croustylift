@@ -8,6 +8,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { normalizeNoteBody } from '../../domain/notes';
 
+/**
+ * La valeur venue du parent a changé SANS que ce champ l'ait enregistrée : faut-il
+ * la reprendre dans le champ ? Oui si elle diffère de ce que le champ tient pour
+ * enregistré, et seulement si rien n'y est en cours de saisie (le brouillon vaut
+ * encore la dernière valeur enregistrée). Cas visé : une note écrite ailleurs,
+ * adoptée par une réponse tardive de la base pendant que le panneau est ouvert ;
+ * elle n'apparaissait qu'à sa réouverture. Une saisie en cours n'est jamais
+ * remplacée : elle partira à son tour, et gagnera. Les corps se comparent
+ * normalisés, comme à l'enregistrement. Pur.
+ */
+export function shouldAdoptIncomingNote(incoming: string, lastSaved: string, draft: string): boolean {
+  const saved = normalizeNoteBody(lastSaved);
+  return normalizeNoteBody(incoming) !== saved && normalizeNoteBody(draft) === saved;
+}
+
 /** Silence de frappe avant l'auto-save : court pour survivre à un reload en salle. */
 const AUTOSAVE_DEBOUNCE_MS = 700;
 /** Durée du feedback « enregistrée » avant de retomber. */
@@ -26,6 +41,22 @@ export function useAutosavedNote(
 } {
   const [draft, setDraft] = useState(initialValue);
   const [saved, setSaved] = useState(false);
+  // Ce que le champ tient pour enregistré, en état (le rendu en a besoin, cf.
+  // ci-dessous) ; `lastSavedRef` en est le miroir pour le flush de démontage.
+  const [baseline, setBaseline] = useState(initialValue);
+
+  // La valeur du parent change en cours de vie du champ (note adoptée par une
+  // réponse tardive) : elle est reprise si rien n'est en cours de saisie. Ajusté
+  // PENDANT le rendu (dérivation d'état sur un changement de prop), pas dans un
+  // effet : aucun rendu intermédiaire avec l'ancienne valeur.
+  const [seenValue, setSeenValue] = useState(initialValue);
+  if (seenValue !== initialValue) {
+    setSeenValue(initialValue);
+    if (shouldAdoptIncomingNote(initialValue, baseline, draft)) {
+      setDraft(initialValue);
+      setBaseline(initialValue);
+    }
+  }
 
   // Refs : dernière valeur PERSISTÉE (n'écrire que si le contenu réel a bougé),
   // brouillon courant et onSave frais (le parent recrée sa lambda à chaque
@@ -38,6 +69,14 @@ export function useAutosavedNote(
   useEffect(() => {
     onSaveRef.current = onSave;
   });
+  // Miroirs du brouillon et de la valeur enregistrée, pour le flush (démontage
+  // compris). Posés en effet : après une reprise ci-dessus, ils suivent l'état.
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+  useEffect(() => {
+    lastSavedRef.current = baseline;
+  }, [baseline]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -57,6 +96,7 @@ export function useAutosavedNote(
     lastSavedRef.current = body;
     onSaveRef.current(body);
     if (!mountedRef.current) return; // flush de démontage : pas de feedback
+    setBaseline(body);
     setSaved(true);
     if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
     savedTimerRef.current = setTimeout(() => setSaved(false), SAVED_FEEDBACK_MS);

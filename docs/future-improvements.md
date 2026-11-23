@@ -98,14 +98,6 @@ onglets ou deux appareils, réseau lent, file enfilée par une version antérieu
 Gravité : importante (une donnée peut être perdue ou fausse), mineure (gêne, sans
 perte), finition.
 
-### Notes datées
-
-- **Note adoptée visible à la réouverture seulement** (finition). Une note adoptée par
-  une réponse tardive pendant que le panneau de l'exo est ouvert n'apparaît dans le
-  champ qu'à sa réouverture. Sans perte : une saisie faite entre-temps est écrite sur la
-  ligne du couple. Piste : resemer le champ tant qu'il n'a pas été touché
-  (`useAutosavedNote`).
-
 ### File d'écritures et stockage plein
 
 - **Ordre des écritures sous repli mémoire** (mineure). La file relue place les
