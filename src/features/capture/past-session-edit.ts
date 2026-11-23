@@ -307,7 +307,8 @@ export function diffSetsToOps(
   // Suppressions : tout id d'origine absent de l'état édité.
   for (const s of original) {
     if (!editedIds.has(s.id)) {
-      deletes.push({ type: 'deleteSet', id: s.id });
+      // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
+      deletes.push({ type: 'deleteSet', id: s.id, exerciseIds: [ctx.exerciseId] });
     }
   }
 
