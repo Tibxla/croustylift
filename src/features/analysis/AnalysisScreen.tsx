@@ -1,6 +1,7 @@
 // La surface « Analyse au calme » : pour chaque exo entraîné, sa progression
-// %/semaine et la courbe e1RM de la 1ʳᵉ série, plus la tendance des séries 2+
-// en dessous (subordonnée). Distincte de la capture (salle).
+// %/semaine sur le BLOC EN COURS et la courbe e1RM de la 1ʳᵉ série (reps
+// effectives pour un exo jamais chargé), plus la tendance des séries 2+ en
+// dessous (subordonnée). Distincte de la capture (salle).
 //
 // Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
 // secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
@@ -30,6 +31,15 @@ import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 import { errorMessage } from '../../lib/error-message';
+import {
+  heroLabel,
+  measureLabel,
+  rateNote,
+  secondaryLabel,
+  zeroLoadHolesLabel,
+} from './unit-label';
+import { periodLabel, rateCaption } from './rate-period';
+import { timeAxis } from './chart-time';
 
 /** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
 type AnalysisTab = 'curves' | 'journal';
@@ -322,7 +332,8 @@ function JournalSkeleton() {
 }
 
 function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
-  const { name, seanceCurves, exerciseId } = analysis;
+  const { name, seanceCurves, exerciseId, unit } = analysis;
+  const holes = zeroLoadHolesLabel(analysis.zeroLoadHoles);
   // Courbes masquées depuis la légende, retenues sur l'appareil pour cet exo
   // (liste des MASQUÉES : une séance neuve apparaît d'elle-même).
   const [hidden, setHidden] = useState<Set<string>>(
@@ -346,15 +357,21 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
       [...next].filter((k) => allKeys.includes(k)),
     );
   }
-  // Une pente nulle (`null`) malgré des points = pas assez d'exécutions : la
-  // courbe reste le héros, on explique juste l'absence de pente sous le graphe.
-  const slopeUnavailable =
-    primary !== null && primary.weeklyRate === null && primary.curve.length > 0;
+  // La pente porte sur le BLOC EN COURS de la séance accent (ADR 0016,
+  // amendement du 2026-11-23) : on écrit sa période sous le graphe, et quand elle
+  // manque on dit ce qui manque dans ce bloc, sans retomber sur tout l'historique.
+  const year = new Date().getFullYear();
+  const caption = primary
+    ? rateCaption(primary.ratePeriod, primary.weeklyRate !== null, year)
+    : null;
+  // Même axe temps pour la courbe et les séries 2+ en dessous.
+  const axis = timeAxis(shown.map((sc) => sc.curve));
   // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []). En
   // multi-séances il suit la séance ACCENT seule : superposer aussi les
   // subordonnées en h-24 gris sur gris serait illisible.
   const hasSecondary = (primary?.secondaryCurve.length ?? 0) > 0;
-  // e1RM le plus récent de la séance accent : métrique « héros » d'un coup d'œil.
+  // Mesure la plus récente de la séance accent (e1RM, ou reps effectives pour un
+  // exo jamais chargé) : métrique « héros » d'un coup d'œil.
   const latest =
     primary && primary.curve.length > 0
       ? Math.round(primary.curve[primary.curve.length - 1]!.e1rm)
@@ -364,13 +381,16 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
     <section className="panel rounded-2xl p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <h3 className="text-base font-semibold leading-tight">{name}</h3>
-        <ProgressionBadge weeklyRate={primary?.weeklyRate ?? null} />
+        <ProgressionBadge
+          weeklyRate={primary?.weeklyRate ?? null}
+          period={primary ? periodLabel(primary.ratePeriod, year) : undefined}
+        />
       </div>
 
       {latest != null && (
         <div className="mb-2">
           <div className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-            e1RM estimé
+            {heroLabel(unit)}
             {/* Multi-séances : le chiffre héros est celui de la séance accent —
                 on le dit, sinon il contredirait la courbe grise du dessus. */}
             {multi && primary && (
@@ -381,12 +401,15 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
             <span className="readout text-[52px] font-medium leading-none tracking-[-0.03em] text-ink">
               {latest}
             </span>
-            <span className="text-xl text-ink-muted">kg</span>
+            <span className="text-xl text-ink-muted">{unit}</span>
           </div>
         </div>
       )}
 
       <E1rmChart
+        unit={unit}
+        axis={axis}
+        periodStart={primary?.ratePeriod.since}
         series={shown.map((sc) => ({
           id: curveKey(sc.seanceId),
           name: sc.label,
@@ -402,14 +425,20 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         }}
       />
 
-      <div className="mt-2 flex items-center justify-between">
-        <span className="readout text-[11px] text-ink-faint">e1RM · 1ʳᵉ série</span>
-        {slopeUnavailable && (
-          <span className="text-xs text-ink-muted">
-            Pas assez de séances pour la pente.
-          </span>
-        )}
+      <div className="mt-2">
+        <span className="readout text-[11px] text-ink-faint">
+          {measureLabel(unit)} · 1ʳᵉ série
+        </span>
       </div>
+      {caption && <p className="mt-1 text-xs text-ink-muted">{caption}</p>}
+      {/* Exo en reps : le pourcentage du badge n'est pas celui de la courbe. */}
+      {primary?.weeklyRate != null && rateNote(unit) && (
+        <p className="mt-1 text-[11px] text-ink-faint">{rateNote(unit)}</p>
+      )}
+
+      {/* Courbe en kilos d'un exo aussi saisi à 0 kg : ces séances-là sont des
+          trous, on le dit. */}
+      {holes && <p className="mt-1 text-[11px] text-ink-faint">{holes}.</p>}
 
       {hasSecondary && primary && (
         // Subordonné à la primaire : séparé par un filet tonal, libellé discret,
@@ -418,9 +447,10 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         // scopé à la séance accent (nommée quand plusieurs séances cohabitent).
         <div className="mt-3 border-t border-hair pt-3">
           <span className="text-[11px] text-ink-muted">
-            Séries 2+ · e1RM moyen{multi ? ` · ${primary.label}` : ''}
+            Séries 2+ · {secondaryLabel(unit)}
+            {multi ? ` · ${primary.label}` : ''}
           </span>
-          <SecondaryChart curve={primary.secondaryCurve} />
+          <SecondaryChart curve={primary.secondaryCurve} unit={unit} axis={axis} />
         </div>
       )}
 

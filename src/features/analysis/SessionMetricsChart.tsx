@@ -17,28 +17,11 @@ import {
   YAxis,
   type TooltipContentProps,
 } from 'recharts';
+import { shortDay } from './chart-time';
+import { ACCENT, HAIR, INK_MUTED, READOUT_TICK } from './chart-style';
 import type { SessionMetricPoint } from './session-metrics';
 
-// On lit les tokens OKLCH directement : le SVG de Recharts accepte
-// `stroke="var(--color-…)"`, donc l'accent reste la SEULE source de vérité.
-const ACCENT = 'var(--color-accent)';
-const LINE = 'var(--color-hair)';
-const INK_MUTED = 'var(--color-ink-muted)';
 
-/** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
-const READOUT_TICK = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  fill: INK_MUTED,
-  fontVariant: 'tabular-nums',
-} as const;
-
-/** 'YYYY-MM-DD' → 'JJ/MM' (mono, court : l'axe X ne doit jamais déborder). */
-function formatDateTick(iso: string): string {
-  const [, month, day] = iso.split('-');
-  if (!month || !day) return iso;
-  return `${day}/${month}`;
-}
 
 // Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
 // fournit donc vides au typage statique → on les rend partielles.
@@ -52,7 +35,7 @@ function SessionMetricsTooltip({
   const point = first.payload as SessionMetricPoint;
   return (
     <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
+      <p className="readout text-[11px] text-ink-muted">{shortDay(point.date)}</p>
       {point.bpmAvg !== null && (
         <p className="readout text-sm font-medium text-accent">
           {Math.round(point.bpmAvg)}
@@ -80,13 +63,13 @@ export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }
     <div className="h-40 w-full" role="img" aria-label={describeMetrics(points)}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={points} margin={{ top: 8, right: 4, bottom: 4, left: -8 }}>
-          <CartesianGrid stroke={LINE} strokeWidth={1} vertical={false} opacity={0.4} />
+          <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} opacity={0.4} />
           <XAxis
             dataKey="date"
-            tickFormatter={formatDateTick}
+            tickFormatter={shortDay}
             tick={READOUT_TICK}
             tickLine={false}
-            axisLine={{ stroke: LINE }}
+            axisLine={{ stroke: HAIR }}
             minTickGap={24}
             interval="preserveStartEnd"
           />
@@ -114,7 +97,7 @@ export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }
           />
           <Tooltip
             content={<SessionMetricsTooltip />}
-            cursor={{ stroke: LINE, strokeWidth: 1 }}
+            cursor={{ stroke: HAIR, strokeWidth: 1 }}
           />
           <Line
             yAxisId="bpm"

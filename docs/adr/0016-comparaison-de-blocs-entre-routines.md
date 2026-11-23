@@ -25,3 +25,23 @@ L'argument de fatigue de #67 interdit de mêler deux séances dans une même pen
 - Le nom d'une séance est unique dans sa routine et celui d'une routine unique dans le compte, archivées comprises (ADR 0017), casse et espaces en trop ignorés, pour que « séance · routine » désigne une seule séance. La contrainte se pose sans reprise de données : aucun doublon en base au 2026-09-13.
 - La séance en accent pilote toujours le chiffre héros, la pente et « Séries 2+ » de la carte, mais ne décide plus de la comparaison. La légende des courbes permet de masquer des séances ; l'accent revient à la plus récente des séances affichées.
 - L'argument de l'ADR 0015 contre la duplication de routine (« sans comparaison possible ») ne tient plus. L'interdiction reste, pour d'autres raisons, réécrites dans l'ADR 0015.
+
+## Amendement du 2026-11-23
+
+**La pente de la carte porte sur le bloc en cours.** « La séance en accent pilote toujours le chiffre héros, la pente et "Séries 2+" de la carte » reste vrai, mais la pente se calculait sur tout l'historique de cette séance. Le chiffre le plus visible de l'écran ne suivait donc pas l'unité de comparaison du produit : vingt semaines à plat puis six semaines d'un nouveau plan à +2 kg par semaine s'affichaient « +0,3 %/sem, stagnation », et une reprise après huit semaines de pause s'affichait en régression. La pente de la carte est désormais celle d'une option de comparaison comme les autres : **la séance en accent, lue dans le bloc en cours**.
+
+- Le bloc en cours est celui du glossaire et de l'ADR 0001 (`detectBlocks`, bloc dont la fin est ouverte), pas une période propre à la séance. Les exécutions y sont rattachées par leur instant de lancement, avec la même fonction que la comparaison (`executionsInBlock`) : on filtre les exécutions, jamais les points d'une courbe par date.
+- La période est écrite sous le graphe : « Pente : bloc en cours depuis le 3 nov. · 4 séances ». Quand des points précèdent le bloc, un trait vertical marque son début sur la courbe.
+- Un bloc trop court n'a pas de pente, et la carte dit ce qui manque avec le critère même du calcul (trois séances, sur trois jours distincts) : « Pas de pente : bloc en cours depuis le 3 nov. · 2 séances, il en faut 3 à des jours différents. » Jamais de repli sur tout l'historique, qui rendrait le chiffre ininterprétable.
+- Seule exception : un compte sans aucun bloc (ni routine activée ni séance rattachée à une routine). La pente couvre alors tout l'historique, et la carte l'écrit.
+- La courbe garde tout l'historique de la séance. Son axe horizontal est en temps réel pour une courbe seule comme pour une superposition : l'axe catégoriel d'origine posait un pas par séance, et huit semaines de pause y occupaient la largeur d'une semaine. Le graphe des séries 2+ partage le même axe.
+
+### Alternatives écartées
+
+- **Les N dernières semaines** : une fenêtre glissante mêle deux plans dès qu'un changement tombe dedans, et ne correspond à aucune option de la comparaison.
+- **Une période par séance** (depuis la dernière retouche de cette séance seulement) : plus stable pour les cartes des séances non retouchées, mais ce serait une seconde définition du bloc, et la pente de la carte ne correspondrait plus à celle que le panneau de comparaison affiche pour la même période.
+- **Garder la pente longue en second plan** : deux pourcentages sur une carte, dont un que le produit ne sait pas interpréter.
+
+### Conséquence assumée
+
+Toute retouche de la routine courante ouvre un bloc pour toutes ses séances (ADR 0001) : après une édition, chaque carte de la routine reste sans pente le temps de refaire trois séances. C'est le prix d'une seule définition du bloc.

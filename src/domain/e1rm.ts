@@ -42,10 +42,17 @@ export function estimateE1rm(weightKg: number, reps: number, rir: number): numbe
 // L'arrondi reste l'affaire de l'affichage, jamais de la comparaison.
 
 /**
- * La mesure entière d'un e1RM déjà calculé par `estimateE1rm` : centièmes de
- * kg × (29 + reps + RIR), soit 3000 fois l'e1RM. Deux séries ont le même e1RM
- * si et seulement si elles ont la même mesure. Le produit par 3000 retombe sur
- * l'entier exact : l'erreur flottante (de l'ordre de 1e-9 à
+ * La mesure entière d'une série : centièmes de kg × (29 + reps + RIR), soit
+ * 3000 fois son e1RM. Deux séries ont le même e1RM si et seulement si elles ont
+ * la même mesure.
+ */
+function e1rmUnits(weightKg: number, reps: number, rir: number): number {
+  return Math.round(weightKg * 100) * (29 + reps + rir)
+}
+
+/**
+ * La mesure entière d'un e1RM déjà calculé par `estimateE1rm`. Le produit par
+ * 3000 retombe sur l'entier exact : l'erreur flottante (de l'ordre de 1e-9 à
  * cette échelle) est très loin du demi qu'il faudrait pour changer d'entier.
  * Ce n'est pas un arrondi de la valeur, c'est la relecture de l'entier d'origine.
  */
@@ -66,4 +73,47 @@ export function e1rmBeats(candidate: number, best: number): boolean {
 /** Deux e1RM rendus par `estimateE1rm` sont-ils mathématiquement égaux ? */
 export function e1rmEquals(a: number, b: number): boolean {
   return unitsOf(a) === unitsOf(b)
+}
+
+// --- Charge nulle : la perf se juge aux reps (ADR 0013, amendement du 2026-11-23) ---
+//
+// Un exo au poids du corps saisi à 0 kg a un e1RM nul quelle que soit la perf :
+// 0 × 12 et 0 × 8 « s'égalisaient ». À charge nulle, la mesure devient les REPS
+// EFFECTIVES (reps + RIR, le RIR comptant 1 pour 1 comme dans l'e1RM).
+//
+// Une seule règle d'ordre pour la Référence, le Record et la meilleure série :
+//   1. l'e1RM d'abord, exactement (`e1rmUnits`) : toute série chargée passe donc
+//      devant toute série à 0 kg, et deux séries chargées de même e1RM restent à
+//      égalité (87,5 × 5 et 85 × 6) ;
+//   2. à 0 kg des deux côtés, et là seulement, les reps effectives départagent.
+// L'ordre est total et transitif : on ne compare jamais des reps à des kilos.
+
+/** Ce qu'il faut d'une série pour la juger. */
+export interface Performance {
+  weightKg: number
+  reps: number
+  rir: number
+}
+
+/** Reps effectives : les reps faites plus celles laissées en réserve. */
+export function effectiveReps(reps: number, rir: number): number {
+  return reps + rir
+}
+
+/** La charge est-elle nulle, au centième de kg (précision de la saisie) ? */
+export function isZeroLoad(weightKg: number): boolean {
+  return Math.round(weightKg * 100) === 0
+}
+
+/**
+ * Ordre de deux perfs : négatif si `a` est en deçà de `b`, nul à égalité,
+ * positif si `a` bat `b`. Cf. la règle ci-dessus.
+ */
+export function comparePerformance(a: Performance, b: Performance): number {
+  const byE1rm = e1rmUnits(a.weightKg, a.reps, a.rir) - e1rmUnits(b.weightKg, b.reps, b.rir)
+  if (byE1rm !== 0) return byE1rm
+  if (isZeroLoad(a.weightKg) && isZeroLoad(b.weightKg)) {
+    return effectiveReps(a.reps, a.rir) - effectiveReps(b.reps, b.rir)
+  }
+  return 0
 }

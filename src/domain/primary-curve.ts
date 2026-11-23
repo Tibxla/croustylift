@@ -1,5 +1,25 @@
-import { weakSideE1rm } from './unilateral'
-import type { ExerciseExecution, E1rmPoint } from './types'
+import { isZeroLoad } from './e1rm'
+import { curveValue, firstSeriesWeakSet } from './unilateral'
+import type { CurveUnit, ExerciseExecution, E1rmPoint } from './types'
+
+/**
+ * L'unité des courbes d'un exo (cf. `CurveUnit`) : 'reps' tant qu'aucune de ses
+ * séries n'a été chargée, 'kg' dès qu'une charge apparaît dans son historique.
+ * À appeler sur TOUTES les exécutions de l'exo, puis à passer telle quelle aux
+ * courbes d'un sous-ensemble (une séance, un bloc) : l'unité ne change pas d'une
+ * courbe à l'autre d'un même exo. Sans aucune série, 'kg' (cas général).
+ */
+export function curveUnit(executions: ExerciseExecution[], exerciseId: string): CurveUnit {
+  let seen = false
+  for (const execution of executions) {
+    if (execution.exerciseId !== exerciseId) continue
+    for (const set of execution.sets) {
+      if (!isZeroLoad(set.weightKg)) return 'kg'
+      seen = true
+    }
+  }
+  return seen ? 'reps' : 'kg'
+}
 
 /**
  * Un point de courbe en cours de construction : un `E1rmPoint` plus les clés de
@@ -29,18 +49,30 @@ export function compareCurvePoints(a: CurvePointSeed, b: CurvePointSeed): number
   return (a.id ?? '').localeCompare(b.id ?? '')
 }
 
+/**
+ * Courbe PRIMAIRE d'un exo : un point par exécution, la mesure de sa 1ʳᵉ série
+ * (e1RM en 'kg', reps effectives en 'reps'). `unit` vient de `curveUnit` sur
+ * tout l'historique de l'exo ; par défaut elle se déduit des exécutions passées,
+ * ce qui ne vaut que si ce sont toutes celles de l'exo.
+ *
+ * Sur une courbe en kilos, une exécution dont la 1ʳᵉ série est à 0 kg ne fait
+ * pas de point : c'est un trou, pas un zéro (un e1RM nul plongerait la courbe
+ * et fausserait la pente).
+ */
 export function buildPrimaryCurve(
   executions: ExerciseExecution[],
   exerciseId: string,
+  unit: CurveUnit = curveUnit(executions, exerciseId),
 ): E1rmPoint[] {
   const points = executions.flatMap((execution) => {
     if (execution.exerciseId !== exerciseId || execution.sets.length === 0) {
       return []
     }
-    // Point de l'exécution : l'e1RM de la 1ʳᵉ série. Pour un exo unilatéral, c'est
-    // le CÔTÉ FAIBLE de cette 1ʳᵉ série (e1RM min des deux côtés appariés par
-    // order) ; pour un bilatéral, l'e1RM simple de la 1ʳᵉ série (cf. unilateral.ts).
-    const e1rm = weakSideE1rm(execution.sets)
+    // Point de l'exécution : la mesure de la 1ʳᵉ série. Pour un exo unilatéral,
+    // c'est le CÔTÉ FAIBLE de cette 1ʳᵉ série (la moindre perf des deux côtés
+    // appariés par order) ; pour un bilatéral, la 1ʳᵉ série (cf. unilateral.ts).
+    const first = firstSeriesWeakSet(execution.sets)
+    const e1rm = first === null ? null : curveValue(first, unit)
     if (e1rm === null) return []
     // On garde `createdAt`/`id` le temps du tri (cf. compareCurvePoints) pour
     // départager deux exécutions le même jour de façon STABLE, puis on les jette :

@@ -31,6 +31,7 @@ import { TrendArrow } from './TrendArrow';
 import { trendColor, trendOf, winnerVerdict } from './trend';
 import { formatRate } from './format';
 import { errorMessage } from '../../lib/error-message';
+import { rateNote } from './unit-label';
 
 /** Sous ce nombre de points, une option n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -283,6 +284,8 @@ function ComparisonResult({
         winner={result.winner}
         firstLabel={oneLine(firstLabel)}
         secondLabel={oneLine(secondLabel)}
+        // Un exo jamais chargé se compare en reps effectives (cf. CurveUnit).
+        unit={result.unit}
       />
 
       <div className="grid grid-cols-2 gap-2">
@@ -299,6 +302,10 @@ function ComparisonResult({
           isWinner={result.winner === 'second'}
         />
       </div>
+
+      {rateNote(result.unit) && (
+        <p className="text-[11px] text-ink-faint">{rateNote(result.unit)}</p>
+      )}
 
       <Verdict
         winner={result.winner}

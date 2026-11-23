@@ -89,6 +89,20 @@ figure pas n'est pas connu.
   ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
   (ADR 0021, amendement du 2026-11-23).
 
+- **Exo au poids du corps : le poids du corps n'est pas demandé** (ADR 0013, amendement
+  du 2026-11-23). Saisi à 0 kg, l'exo se juge aux reps effectives. Lesté, son e1RM ne
+  porte que sur le lest (5 kg × 8 puis 10 kg × 8 se lit « +100 % »), et ses séances
+  restées à 0 kg sortent des courbes en kilos, comptées sous le graphe. Une seule série
+  chargée fait basculer tout l'exo en kilos ; la corriger dans le journal le ramène en
+  reps. Seule la saisie du poids du corps lèverait ces limites.
+
+- **Pente de la carte : le bloc en cours, pour toute la routine** (ADR 0016, amendement
+  du 2026-11-23). La pente du badge ne couvre plus que le bloc en cours, période écrite
+  sous le graphe. Une retouche de n'importe quelle séance de la routine courante ouvre
+  un bloc pour toutes (ADR 0001) : chaque carte reste sans pente le temps de refaire
+  trois séances, et le dit. Une période propre à chaque séance l'éviterait, au prix
+  d'une seconde définition du bloc.
+
 ## Résiduels connus du lot 3 (2026-11-23)
 
 Le lot 3 s'est arrêté après une relecture, un tour de corrections et une vérification

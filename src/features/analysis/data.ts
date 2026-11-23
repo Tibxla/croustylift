@@ -11,9 +11,10 @@
 //   - Une `ExerciseExecution` du domaine = les séries d'un exo un jour donné.
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows, inCreationOrder } from '../../lib/fetch-all';
-import { buildPrimaryCurve } from '../../domain/primary-curve';
+import { buildPrimaryCurve, curveUnit } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
-import { weeklyProgressionRate } from '../../domain/progression';
+import { MIN_SLOPE_POINTS, weeklyProgressionRate } from '../../domain/progression';
+import { executionsInBlock } from '../../domain/block-comparison';
 import { detectBlocks } from '../../domain/block';
 import { buildConfigTimeline, type FirstExecutionRow } from './config-timeline';
 import { orderByPlan, planExerciseOrder } from './exercise-order';
@@ -22,7 +23,7 @@ import { currentVersionIdBySeance } from '../authoring/duplicate-seance';
 import { resolveCaptureRoutineId } from '../capture/data';
 import { buildRawLog, type RawLogEntry } from './raw-log';
 import { buildSessionMetrics, type SessionMetricPoint } from './session-metrics';
-import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
+import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
 import { loadExerciseOverrides } from '../exercises/overrides';
 import {
   mergeExerciseOverride,
@@ -57,8 +58,10 @@ export interface TrainedExercise {
  * (séries 2+), dérivées des seules exécutions de cette séance — un même exo n'a
  * pas la même perf selon le contexte de fatigue de la séance (cf. GLOSSARY.md
  * « Référence », même logique que le scope de la Capture).
- * `weeklyRate` vaut `null` sans assez de points pour ajuster une droite ;
  * `secondaryCurve` est `[]` sans série 2+.
+ *
+ * La COURBE couvre tout l'historique de la séance ; la PENTE ne porte que sur le
+ * bloc en cours (cf. `weeklyRate`).
  */
 export interface SeanceCurve {
   /** Id de la séance (toutes versions), ou `null` si la séance n'est plus résoluble. */
@@ -75,9 +78,29 @@ export interface SeanceCurve {
   label: string;
   curve: E1rmPoint[];
   secondaryCurve: E1rmPoint[];
+  /**
+   * Pente %/semaine sur le BLOC EN COURS (ADR 0016, amendement du 2026-11-23) :
+   * les seules exécutions de cette séance lancées depuis le dernier changement
+   * de plan. `null` sans assez de points dans ce bloc ; jamais de repli sur tout
+   * l'historique, qui noierait le plan actuel sous les précédents.
+   */
   weeklyRate: number | null;
+  /** La période que couvre `weeklyRate`, pour l'écrire à côté du chiffre. */
+  ratePeriod: RatePeriod;
   /** Date du dernier point : départage la séance mise en avant (l'accent). */
   lastDate: string;
+}
+
+/** La période d'une pente : depuis quand, et sur combien de séances. */
+export interface RatePeriod {
+  /**
+   * Jour ISO (heure locale) où s'ouvre le bloc en cours. `null` quand le compte
+   * n'a aucun bloc (ni routine activée, ni séance rattachée à une routine) : la
+   * pente couvre alors tout l'historique, et l'écran le dit.
+   */
+  since: string | null;
+  /** Séances de cette courbe dans la période (ses points). */
+  sessions: number;
 }
 
 /**
@@ -85,10 +108,24 @@ export interface SeanceCurve {
  * première entrée est la séance la plus récemment exécutée — c'est ELLE qui
  * porte l'accent, le readout héros, la pente et le graphe secondaire dans l'UI ;
  * les autres se superposent en subordonné. Jamais vide pour un exo entraîné
- * (au moins une série loggée → au moins un point quelque part).
+ * (au moins une série loggée → au moins un point quelque part), sauf le cas
+ * limite d'un exo chargé dont toutes les 1ʳᵉˢ séries sont à 0 kg (cf.
+ * `zeroLoadHoles`).
  */
 export interface ExerciseAnalysis extends TrainedExercise {
   seanceCurves: SeanceCurve[];
+  /**
+   * L'unité de TOUTES les courbes de la carte (cf. `CurveUnit`) : 'reps' pour un
+   * exo jamais chargé (poids du corps saisi à 0 kg), 'kg' sinon. L'UI s'en sert
+   * pour dire « reps » et non « e1RM ».
+   */
+  unit: CurveUnit;
+  /**
+   * Exécutions absentes des courbes en kilos parce que leur 1ʳᵉ série est à 0 kg
+   * (un trou, pas un zéro). Toujours 0 en 'reps'. L'UI le dit : une donnée
+   * n'est jamais écartée en silence.
+   */
+  zeroLoadHoles: number;
 }
 
 // --- Exécutions passées d'un exo ----------------------------------------------
@@ -240,11 +277,16 @@ export async function loadExerciseExecutions(
  * forment un groupe « Hors séance » (jamais de donnée écartée en silence). Tri :
  * la séance la plus récemment exécutée d'abord (elle porte l'accent dans l'UI),
  * libellé en départage pour rester stable. Pure : pas d'accès réseau.
+ *
+ * `currentBlock` est le bloc en cours du compte (`null` s'il n'en a aucun) : la
+ * pente de chaque séance se mesure sur ses exécutions de ce bloc, rattachées par
+ * leur instant de lancement comme dans la comparaison de blocs.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
   executions: ExerciseExecution[],
   seances: ReadonlyMap<string, SeanceInfo>,
+  currentBlock: Block | null = null,
 ): ExerciseAnalysis {
   const groups = new Map<string | null, ExerciseExecution[]>();
   for (const execution of executions) {
@@ -254,24 +296,43 @@ export function analyzeExecutions(
     else groups.set(key, [execution]);
   }
 
+  // L'unité se décide sur TOUT l'exo, puis vaut pour chaque séance : les courbes
+  // d'une carte se superposent, elles ne peuvent pas mêler reps et kilos.
+  const unit = curveUnit(executions, exercise.exerciseId);
   const seanceCurves: SeanceCurve[] = [];
   const routineIds = new Set<string>();
+  let pointCount = 0;
   for (const [seanceId, group] of groups) {
-    const curve = buildPrimaryCurve(group, exercise.exerciseId);
+    const curve = buildPrimaryCurve(group, exercise.exerciseId, unit);
+    pointCount += curve.length;
     // Un groupe sans point (exécutions vides / autre exo) n'est pas une courbe.
     if (curve.length === 0) continue;
     const info = seanceId === null ? null : seances.get(seanceId);
     if (info?.routineId) routineIds.add(info.routineId);
     const seanceName =
       seanceId === null ? 'Hors séance' : info?.name ?? '(séance inconnue)';
+    // La pente : le bloc en cours seulement. On filtre les EXÉCUTIONS (par leur
+    // lancement), puis on reconstruit la courbe, plutôt que de couper les points
+    // par date.
+    const blockCurve = currentBlock
+      ? buildPrimaryCurve(
+          executionsInBlock(group, exercise.exerciseId, currentBlock),
+          exercise.exerciseId,
+          unit,
+        )
+      : curve;
     seanceCurves.push({
       seanceId,
       seanceName,
       routineName: info?.routineName ?? null,
       label: seanceName,
       curve,
-      secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId),
-      weeklyRate: weeklyProgressionRate(curve),
+      secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId, unit),
+      weeklyRate: weeklyProgressionRate(blockCurve, MIN_SLOPE_POINTS, unit),
+      ratePeriod: {
+        since: currentBlock?.start ?? null,
+        sessions: blockCurve.length,
+      },
       lastDate: curve[curve.length - 1]?.date ?? '',
     });
   }
@@ -291,7 +352,13 @@ export function analyzeExecutions(
       b.lastDate.localeCompare(a.lastDate) || a.label.localeCompare(b.label, 'fr'),
   );
 
-  return { ...exercise, seanceCurves };
+  // Une exécution réelle (au moins une série) fait un point, sauf si sa 1ʳᵉ
+  // série est à 0 kg sur une courbe en kilos : la différence compte ces trous.
+  const performed = executions.filter(
+    (e) => e.exerciseId === exercise.exerciseId && e.sets.length > 0,
+  ).length;
+
+  return { ...exercise, seanceCurves, unit, zeroLoadHoles: performed - pointCount };
 }
 
 /**
@@ -379,6 +446,9 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
  * Charge tous les exos entraînés et calcule leur analyse en une passe, dans
  * l'ordre du plan de la routine courante puis par nom (décision du 2026-09-13).
  *
+ * Les blocs du compte sont lus en parallèle : la pente de chaque carte porte sur
+ * le bloc en cours.
+ *
  * UNE lecture paginée de toutes les séries, regroupée par exo côté client
  * (`groupExecutionRows`). À ne pas refaire : une requête par exo. Trente exos
  * coûtaient une trentaine d'allers-retours en parallèle, après une première
@@ -389,7 +459,7 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
  * (issue #50), le même que partout ailleurs.
  */
 export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
-  const [rows, overrides, planOrder] = await Promise.all([
+  const [rows, overrides, planOrder, blocks] = await Promise.all([
     fetchAllRows<ExecutionSetRow>((after, limit) =>
       afterId(
         supabase.from('performed_sets').select(EXECUTION_SET_SELECT).order('id').limit(limit),
@@ -398,7 +468,10 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
     ),
     loadExerciseOverrides(),
     loadPlanExerciseOrder(),
+    // Le bloc en cours borne la pente de chaque carte (cf. `SeanceCurve.weeklyRate`).
+    loadBlocks(),
   ]);
+  const currentBlock = blocks.find((block) => block.end === null) ?? null;
 
   const grouped = groupExecutionRows(rows);
   const trainedByName: TrainedExercise[] = [...grouped].map(([exerciseId, exercise]) => ({
@@ -408,7 +481,7 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
 
   return orderByPlan(trainedByName, planOrder).map((exercise) => {
     const { executions, seances } = grouped.get(exercise.exerciseId)!;
-    return analyzeExecutions(exercise, executions, seances);
+    return analyzeExecutions(exercise, executions, seances, currentBlock);
   });
 }
 

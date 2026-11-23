@@ -9,10 +9,10 @@
 // `buildPrimaryCurve` (courbe e1RM de la 1ʳᵉ série) et `weeklyProgressionRate`
 // (régression linéaire %/semaine). Le seul travail propre à ce module est de
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
-import { buildPrimaryCurve } from './primary-curve'
-import { blockKey } from './block'
-import { roundRate, weeklyProgressionRate } from './progression'
-import type { ExerciseExecution, E1rmPoint, Block } from './types'
+import { buildPrimaryCurve, curveUnit } from './primary-curve'
+import { blockKey, instantMs } from './block'
+import { MIN_SLOPE_POINTS, roundRate, weeklyProgressionRate } from './progression'
+import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from './types'
 
 /** Le côté d'une comparaison à deux blocs. */
 export type Side = 'first' | 'second'
@@ -35,19 +35,14 @@ export interface BlockProgression {
 export interface BlockComparison {
   first: BlockProgression
   second: BlockProgression
+  /** L'unité des deux courbes, celle de l'exo (cf. `curveUnit`). */
+  unit: CurveUnit
   /**
    * Le bloc à la meilleure pente (la plus haute : celle qui monte le plus, ou
    * qui recule le moins), `'tie'` si les pentes affichées sont égales, ou
    * `null` si l'un des deux n'a pas de pente mesurable (pas de verdict trompeur).
    */
   winner: Winner
-}
-
-/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
-function instantMs(ts: string | undefined): number | null {
-  if (ts === undefined) return null
-  const ms = Date.parse(ts)
-  return Number.isNaN(ms) ? null : ms
 }
 
 /**
@@ -76,8 +71,13 @@ function isBeforeBoundary(
  * demi-ouverte `[début, fin)` : la fin est le début du bloc suivant, donc une
  * exécution lancée à cet instant appartient déjà au bloc suivant. Un bloc en
  * cours (`end === null`) capte tout depuis son début.
+ *
+ * Sert aussi à la pente de la carte d'un exo, lue sur le bloc en cours (ADR
+ * 0016, amendement du 2026-11-23). À ne pas refaire : filtrer les POINTS d'une
+ * courbe par date. Une séance faite avant une retouche du plan le même jour
+ * retomberait dans le nouveau bloc (ADR 0001, amendement du 2026-11-23).
  */
-function executionsInBlock(
+export function executionsInBlock(
   executions: ExerciseExecution[],
   exerciseId: string,
   block: Block,
@@ -92,20 +92,27 @@ function executionsInBlock(
   })
 }
 
+/**
+ * `unit` est l'unité de l'EXO (cf. `curveUnit`), décidée sur tout son historique
+ * et non sur la fenêtre : deux blocs d'un même exo se lisent toujours dans la
+ * même unité, on ne compare jamais une pente en reps à une pente en kilos.
+ */
 function progressionOf(
   executions: ExerciseExecution[],
   exerciseId: string,
   block: Block,
+  unit: CurveUnit,
 ): BlockProgression {
   const curve = buildPrimaryCurve(
     executionsInBlock(executions, exerciseId, block),
     exerciseId,
+    unit,
   )
   return {
     block,
     curve,
     pointCount: curve.length,
-    weeklyRate: weeklyProgressionRate(curve),
+    weeklyRate: weeklyProgressionRate(curve, MIN_SLOPE_POINTS, unit),
   }
 }
 
@@ -135,12 +142,14 @@ export function compareBlocks(
   first: Block,
   second: Block,
 ): BlockComparison {
-  const firstProgression = progressionOf(executions, exerciseId, first)
-  const secondProgression = progressionOf(executions, exerciseId, second)
+  const unit = curveUnit(executions, exerciseId)
+  const firstProgression = progressionOf(executions, exerciseId, first, unit)
+  const secondProgression = progressionOf(executions, exerciseId, second, unit)
 
   return {
     first: firstProgression,
     second: secondProgression,
+    unit,
     winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
   }
 }
@@ -192,6 +201,7 @@ export function summarizeBlockSeances(
     ),
   ]
 
+  const unit = curveUnit(executions, exerciseId)
   return blocks.flatMap((block) =>
     seanceIds
       .map((seanceId): BlockSeanceProgression => {
@@ -199,6 +209,7 @@ export function summarizeBlockSeances(
           executionsOfSeance(executions, seanceId),
           exerciseId,
           block,
+          unit,
         )
         return {
           ...progression,
@@ -218,20 +229,24 @@ export function compareBlockSeances(
   first: BlockSeance,
   second: BlockSeance,
 ): BlockComparison {
+  const unit = curveUnit(executions, exerciseId)
   const firstProgression = progressionOf(
     executionsOfSeance(executions, first.seanceId),
     exerciseId,
     first.block,
+    unit,
   )
   const secondProgression = progressionOf(
     executionsOfSeance(executions, second.seanceId),
     exerciseId,
     second.block,
+    unit,
   )
 
   return {
     first: firstProgression,
     second: secondProgression,
+    unit,
     winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
   }
 }

@@ -486,3 +486,50 @@ describe('verdict de comparaison et arrondi d’affichage', () => {
     expect(result.winner).toBe('first')
   })
 })
+
+// Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23) : la
+// pente se mesure sur les reps effectives, et l'unité est celle de l'exo entier.
+describe('comparaison de blocs d’un exo saisi à 0 kg', () => {
+  const bw = (date: string, reps: number, seanceId = 's1'): ExerciseExecution => ({
+    date,
+    exerciseId: EXO,
+    seanceId,
+    sets: [{ weightKg: 0, reps, rir: 0, order: 1 }],
+  })
+  const a = block('A', '2026-01-01', '2026-02-01')
+  const b = block('B', '2026-02-01', null)
+
+  it('deux blocs à 0 kg : chacun a une pente en reps, et un gagnant', () => {
+    const executions = [
+      bw('2026-01-01', 8),
+      bw('2026-01-08', 8),
+      bw('2026-01-15', 9),
+      bw('2026-02-01', 9),
+      bw('2026-02-08', 11),
+      bw('2026-02-15', 13),
+    ]
+    const result = compareBlockSeances(
+      executions,
+      EXO,
+      { block: a, seanceId: 's1' },
+      { block: b, seanceId: 's1' },
+    )
+    expect(result.first.curve.map((p) => p.e1rm)).toEqual([8, 8, 9])
+    expect(result.first.weeklyRate).not.toBeNull()
+    expect(result.second.weeklyRate!).toBeGreaterThan(result.first.weeklyRate!)
+    expect(result.winner).toBe('second')
+  })
+
+  it('exo chargé depuis : le bloc resté à 0 kg n’a plus de points, il sort des options', () => {
+    const executions = [
+      bw('2026-01-01', 8),
+      bw('2026-01-08', 9),
+      bw('2026-01-15', 10),
+      { ...bw('2026-02-01', 5), sets: [{ weightKg: 5, reps: 5, rir: 0, order: 1 }] },
+      { ...bw('2026-02-08', 5), sets: [{ weightKg: 7.5, reps: 5, rir: 0, order: 1 }] },
+    ]
+    const options = summarizeBlockSeances(executions, EXO, [a, b])
+    expect(options.map((o) => o.block.configId)).toEqual(['B'])
+    expect(options[0]!.pointCount).toBe(2)
+  })
+})

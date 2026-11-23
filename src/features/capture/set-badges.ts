@@ -5,13 +5,14 @@
 //   - RÉFÉRENCE (« dernière fois ») : la série à la MÊME position (et le même côté
 //     en unilatéral) lors de la dernière exécution. Juge = e1RM, seuils STRICTS :
 //     e1RM strictement supérieur -> « battu », strictement égal -> « égalisé »,
-//     inférieur -> rien. Comparaison exacte (`e1rmBeats` / `e1rmEquals`), comme
-//     pour le Record : 87,5 × 5 et 85 × 6 s'égalisent, aucun ne bat l'autre.
+//     inférieur -> rien. Comparaison exacte (`comparePerformance`), comme pour
+//     le Record : 87,5 × 5 et 85 × 6 s'égalisent, aucun ne bat l'autre. Deux
+//     séries à 0 kg (poids du corps) se jugent aux reps effectives.
 //   - RECORD personnel (all-time) : e1RM et/ou charge, géré par record-flags.
 //
 // Un seul badge par ligne, hiérarchie RECORD > battu > égalisé : si une série bat
 // son record, on montre « Record » (pas aussi « battu », redondant).
-import { e1rmBeats, e1rmEquals, estimateE1rm } from '../../domain/e1rm';
+import { comparePerformance } from '../../domain/e1rm';
 import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 import type { PerformedSet } from '../../domain/types';
 import {
@@ -43,11 +44,11 @@ export function referenceVerdict(
   if (!ref) return null;
   // Comparaison EXACTE (cf. domain/e1rm.ts) : ni flottants bruts, qui séparent
   // d'un bit deux e1RM égaux, ni arrondi au centième, qui confond deux e1RM
-  // distincts.
-  const here = estimateE1rm(set.weightKg, set.reps, set.rir);
-  const there = estimateE1rm(ref.weightKg, ref.reps, ref.rir);
-  if (e1rmBeats(here, there)) return 'battu';
-  if (e1rmEquals(here, there)) return 'egalise';
+  // distincts. À 0 kg des deux côtés, l'e1RM est nul et ne dit rien : les reps
+  // effectives jugent (`comparePerformance`).
+  const order = comparePerformance(set, ref);
+  if (order > 0) return 'battu';
+  if (order === 0) return 'egalise';
   return null;
 }
 

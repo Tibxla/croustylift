@@ -1,7 +1,6 @@
-import { estimateE1rm } from './e1rm'
-import { pairSidesByOrder } from './unilateral'
-import { compareCurvePoints } from './primary-curve'
-import type { ExerciseExecution, E1rmPoint, PerformedSet } from './types'
+import { curveValue, pairSidesByOrder, weakerSide } from './unilateral'
+import { compareCurvePoints, curveUnit } from './primary-curve'
+import type { CurveUnit, ExerciseExecution, E1rmPoint, PerformedSet } from './types'
 
 // Courbe SECONDAIRE : la tendance des séries 2+ (order >= 2), subordonnée à la
 // courbe primaire (1ʳᵉ série, cf. primary-curve.ts). On résume les séries qui
@@ -20,24 +19,28 @@ import type { ExerciseExecution, E1rmPoint, PerformedSet } from './types'
 // Une exécution sans aucune série 2+ ne produit pas de point : c'est un trou,
 // pas un zéro (miroir du traitement des exécutions vides dans la primaire). Si
 // AUCUNE exécution n'a de série 2+, le résultat est [] et l'UI n'affiche rien.
+//
+// UNITÉ (cf. `CurveUnit`) : la même que la primaire, décidée sur tout l'exo. En
+// 'reps' on moyenne les reps effectives ; en 'kg' une série à 0 kg est un trou
+// (elle ne tire pas la moyenne vers zéro).
 export function buildSecondaryCurve(
   executions: ExerciseExecution[],
   exerciseId: string,
+  unit: CurveUnit = curveUnit(executions, exerciseId),
 ): E1rmPoint[] {
   const points = executions.flatMap((execution) => {
     if (execution.exerciseId !== exerciseId) {
       return []
     }
-    const followUpE1rms = followUpSetE1rms(execution.sets)
-    if (followUpE1rms.length === 0) {
+    const followUps = followUpSetValues(execution.sets, unit)
+    if (followUps.length === 0) {
       return []
     }
-    const meanE1rm =
-      followUpE1rms.reduce((sum, e1rm) => sum + e1rm, 0) / followUpE1rms.length
+    const mean = followUps.reduce((sum, value) => sum + value, 0) / followUps.length
     // On garde `createdAt`/`id` le temps du tri (cf. compareCurvePoints) pour
     // départager deux exécutions le même jour de façon STABLE, comme la primaire,
     // puis on les jette : `E1rmPoint` reste `{ date, e1rm }` pour l'UI.
-    return [{ date: execution.date, e1rm: meanE1rm, createdAt: execution.createdAt, id: execution.id }]
+    return [{ date: execution.date, e1rm: mean, createdAt: execution.createdAt, id: execution.id }]
   })
 
   return points
@@ -46,31 +49,19 @@ export function buildSecondaryCurve(
 }
 
 /**
- * Les e1RM des séries 2+ (order >= 2) d'une exécution, une valeur par série :
- *   - UNILATÉRAL : le CÔTÉ FAIBLE de chaque paire G/D d'order >= 2 (e1RM min des
- *     deux côtés). Un côté manquant (saisie incomplète) tombe sur le côté présent.
- *   - BILATÉRAL (séries sans `side`) : l'e1RM brut de chaque série d'order >= 2.
+ * La mesure des séries 2+ (order >= 2) d'une exécution, une valeur par série :
+ *   - UNILATÉRAL : le CÔTÉ FAIBLE de chaque paire G/D d'order >= 2 (la moindre
+ *     perf des deux côtés). Un côté manquant (saisie incomplète) tombe sur le
+ *     côté présent.
+ *   - BILATÉRAL (séries sans `side`) : chaque série d'order >= 2.
+ * Les séries sans mesure dans l'unité (0 kg sur une courbe en kilos) sont omises.
  */
-function followUpSetE1rms(sets: PerformedSet[]): number[] {
+function followUpSetValues(sets: PerformedSet[], unit: CurveUnit): number[] {
   const isUnilateral = sets.some((s) => s.side !== undefined)
-  if (!isUnilateral) {
-    return sets
-      .filter((set) => set.order >= 2)
-      .map((set) => estimateE1rm(set.weightKg, set.reps, set.rir))
-  }
-
-  return pairSidesByOrder(sets)
-    .filter((pair) => pair.order >= 2)
-    .map((pair) => {
-      const left = pair.left
-        ? estimateE1rm(pair.left.weightKg, pair.left.reps, pair.left.rir)
-        : null
-      const right = pair.right
-        ? estimateE1rm(pair.right.weightKg, pair.right.reps, pair.right.rir)
-        : null
-      if (left !== null && right !== null) return Math.min(left, right)
-      // Un côté manquant : on retombe sur le côté présent (au moins un l'est, la
-      // paire n'existe que si une ligne au moins l'a créée).
-      return (left ?? right) as number
-    })
+  const followUps = isUnilateral
+    ? pairSidesByOrder(sets)
+        .filter((pair) => pair.order >= 2)
+        .flatMap((pair) => weakerSide(pair) ?? [])
+    : sets.filter((set) => set.order >= 2)
+  return followUps.flatMap((set) => curveValue(set, unit) ?? [])
 }

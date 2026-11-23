@@ -263,7 +263,7 @@ describe('deriveExerciseHistory', () => {
   it('le Record personnel reste ALL-TIME toutes séances (le 90 du Full Body compte)', () => {
     const h = deriveExerciseHistory(rows, 'exo-1', upperVersions, false);
     expect(h.personalRecord.bestWeightReps).toEqual({ weightKg: 90, reps: 8 });
-    expect(h.personalRecord.bestE1rmSet).toEqual({ weightKg: 90, reps: 8 });
+    expect(h.personalRecord.bestE1rmSet).toMatchObject({ weightKg: 90, reps: 8 });
   });
 
   it('exo bilatéral : pas de records par côté (null) ; unilatéral : dérivés', () => {

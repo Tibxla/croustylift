@@ -1,4 +1,11 @@
-import { e1rmBeats, e1rmEquals, estimateE1rm } from './e1rm'
+import {
+  e1rmBeats,
+  e1rmEquals,
+  estimateE1rm,
+  comparePerformance,
+  effectiveReps,
+  isZeroLoad,
+} from './e1rm'
 
 describe('estimateE1rm', () => {
   it('applies shifted Epley at RIR 0', () => {
@@ -91,5 +98,52 @@ describe('comparaison exacte d’e1RM', () => {
   it('un centième de charge en plus suffit à battre', () => {
     expect(e1rmBeats(e(100.01, 1), e(100, 1))).toBe(true)
     expect(e1rmEquals(e(100.01, 1), e(100, 1))).toBe(false)
+  })
+})
+
+// Exo au poids du corps saisi à 0 kg : l'e1RM est nul quelle que soit la perf.
+// La règle d'ordre (ADR 0013, amendement du 2026-11-23) juge alors aux reps
+// effectives, sans jamais comparer des reps à des kilos.
+describe('comparePerformance', () => {
+  const p = (weightKg: number, reps: number, rir = 0) => ({ weightKg, reps, rir })
+
+  it('à 0 kg des deux côtés, les reps effectives jugent', () => {
+    expect(comparePerformance(p(0, 11), p(0, 8))).toBeGreaterThan(0)
+    expect(comparePerformance(p(0, 9), p(0, 12))).toBeLessThan(0)
+    expect(comparePerformance(p(0, 10), p(0, 10))).toBe(0)
+  })
+
+  it('à 0 kg le RIR compte 1 pour 1, comme dans l’e1RM', () => {
+    expect(comparePerformance(p(0, 10, 2), p(0, 12, 0))).toBe(0)
+    expect(comparePerformance(p(0, 10, 2), p(0, 11, 0))).toBeGreaterThan(0)
+  })
+
+  it('une série chargée passe devant toute série à 0 kg, quelles que soient les reps', () => {
+    expect(comparePerformance(p(2.5, 1), p(0, 30))).toBeGreaterThan(0)
+    expect(comparePerformance(p(0, 30), p(2.5, 1))).toBeLessThan(0)
+  })
+
+  it('deux séries chargées se jugent à l’e1RM exact, jamais aux reps', () => {
+    // 87,5 × 5 et 85 × 6 : même e1RM, reps différentes -> égalité.
+    expect(comparePerformance(p(87.5, 5), p(85, 6))).toBe(0)
+    expect(comparePerformance(p(100, 6, 1), p(100, 5, 1))).toBeGreaterThan(0)
+  })
+
+  it('l’ordre est transitif à travers la frontière charge nulle / chargé', () => {
+    const sorted = [p(5, 3), p(0, 8), p(0, 12), p(2.5, 1), p(0, 10, 2)].sort(comparePerformance)
+    expect(sorted.map((s) => `${s.weightKg}x${s.reps}+${s.rir}`)).toEqual([
+      '0x8+0',
+      '0x12+0',
+      '0x10+2',
+      '2.5x1+0',
+      '5x3+0',
+    ])
+  })
+
+  it('la charge nulle se lit au centième de kg', () => {
+    expect(isZeroLoad(0)).toBe(true)
+    expect(isZeroLoad(0.004)).toBe(true)
+    expect(isZeroLoad(0.01)).toBe(false)
+    expect(effectiveReps(10, 2)).toBe(12)
   })
 })

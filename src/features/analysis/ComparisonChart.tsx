@@ -21,20 +21,12 @@ import {
   type TooltipContentProps,
 } from 'recharts';
 import type { Side } from '../../domain/block-comparison';
+import type { CurveUnit } from '../../domain/types';
+import { ACCENT, HAIR, INK_MUTED, LINE, READOUT_TICK } from './chart-style';
+import { measureLabel } from './unit-label';
 import { weekLabel, type WeeklyPoint } from './comparison-series';
 
-const ACCENT = 'var(--color-accent)';
-const LINE = 'var(--color-line)';
-const HAIR = 'var(--color-hair)';
-const INK_MUTED = 'var(--color-ink-muted)';
 
-/** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
-const READOUT_TICK = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  fill: INK_MUTED,
-  fontVariant: 'tabular-nums',
-} as const;
 
 export interface ComparisonChartProps {
   first: WeeklyPoint[];
@@ -44,6 +36,8 @@ export interface ComparisonChartProps {
   /** Libellés humains des deux blocs (légende + tooltip). */
   firstLabel: string;
   secondLabel: string;
+  /** L'unité des deux courbes : 'reps' pour un exo jamais chargé (cf. CurveUnit). */
+  unit: CurveUnit;
 }
 
 /** Couleur d'un côté : accent s'il gagne, ink-muted sinon (jamais deux accents). */
@@ -59,9 +53,16 @@ function colorFor(side: Side, winner: ComparisonChartProps['winner']): string {
 type ComparisonTooltipProps = Partial<TooltipContentProps<number, string>> & {
   firstLabel: string;
   secondLabel: string;
+  unit: CurveUnit;
 };
 
-function ComparisonTooltip({ active, payload, firstLabel, secondLabel }: ComparisonTooltipProps) {
+function ComparisonTooltip({
+  active,
+  payload,
+  firstLabel,
+  secondLabel,
+  unit,
+}: ComparisonTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   const first = payload[0];
   if (!first) return null;
@@ -76,7 +77,7 @@ function ComparisonTooltip({ active, payload, firstLabel, secondLabel }: Compari
           <p key={entry.name} className="readout text-sm font-medium text-ink">
             <span className="text-xs font-normal text-ink-muted">{label} </span>
             {Math.round(p.e1rm)}
-            <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+            <span className="ml-1 text-xs font-normal text-ink-muted">{unit}</span>
           </p>
         );
       })}
@@ -90,6 +91,7 @@ export function ComparisonChart({
   winner,
   firstLabel,
   secondLabel,
+  unit,
 }: ComparisonChartProps) {
   const firstColor = colorFor('first', winner);
   const secondColor = colorFor('second', winner);
@@ -99,7 +101,7 @@ export function ComparisonChart({
       <div
         className="h-40 w-full"
         role="img"
-        aria-label={`Comparaison des pentes e1RM des blocs ${firstLabel} et ${secondLabel}, par semaine de bloc.`}
+        aria-label={`Comparaison des pentes ${measureLabel(unit)} des blocs ${firstLabel} et ${secondLabel}, par semaine de bloc.`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
@@ -129,6 +131,7 @@ export function ComparisonChart({
                   {...(props as Partial<TooltipContentProps<number, string>>)}
                   firstLabel={firstLabel}
                   secondLabel={secondLabel}
+                  unit={unit}
                 />
               )}
               cursor={{ stroke: LINE, strokeWidth: 1 }}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildPrimaryCurve } from './primary-curve'
+import { buildPrimaryCurve, curveUnit } from './primary-curve'
 import { estimateE1rm } from './e1rm'
 import type { ExerciseExecution } from './types'
 
@@ -200,5 +200,88 @@ describe('buildPrimaryCurve', () => {
     // côté faible = gauche (e1RM le plus bas), pas droite ni une moyenne
     expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
     expect(curve[0]!.e1rm).toBeLessThan(estimateE1rm(32, 10, 2))
+  })
+})
+
+// Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23).
+describe('unité des courbes : reps effectives pour un exo jamais chargé', () => {
+  const bodyweight = (date: string, reps: number, rir = 0): ExerciseExecution => ({
+    date,
+    exerciseId: 'tractions',
+    sets: [{ weightKg: 0, reps, rir, order: 1 }],
+  })
+
+  it('curveUnit : reps tant qu’aucune série n’est chargée, kg dès la première charge', () => {
+    const history = [bodyweight('2026-01-01', 8), bodyweight('2026-01-08', 9)]
+    expect(curveUnit(history, 'tractions')).toBe('reps')
+    const loaded: ExerciseExecution = {
+      date: '2026-01-15',
+      exerciseId: 'tractions',
+      // La charge est sur la 2ᵉ série : elle suffit, on regarde TOUTES les séries.
+      sets: [
+        { weightKg: 0, reps: 9, rir: 0, order: 1 },
+        { weightKg: 5, reps: 3, rir: 0, order: 2 },
+      ],
+    }
+    expect(curveUnit([...history, loaded], 'tractions')).toBe('kg')
+  })
+
+  it('curveUnit : kg sans aucune série, et les autres exos ne comptent pas', () => {
+    expect(curveUnit([], 'tractions')).toBe('kg')
+    const other: ExerciseExecution = {
+      date: '2026-01-01',
+      exerciseId: 'bench',
+      sets: [{ weightKg: 100, reps: 5, rir: 0, order: 1 }],
+    }
+    expect(curveUnit([bodyweight('2026-01-01', 8), other], 'tractions')).toBe('reps')
+  })
+
+  it('en reps, le point vaut les reps effectives de la 1ʳᵉ série (plus une courbe plate à 0)', () => {
+    const curve = buildPrimaryCurve(
+      [bodyweight('2026-01-01', 8), bodyweight('2026-01-08', 9, 2), bodyweight('2026-01-15', 12)],
+      'tractions',
+    )
+    expect(curve).toEqual([
+      { date: '2026-01-01', e1rm: 8 },
+      { date: '2026-01-08', e1rm: 11 },
+      { date: '2026-01-15', e1rm: 12 },
+    ])
+  })
+
+  it('en reps, unilatéral : le côté faible est celui aux moindres reps effectives', () => {
+    const curve = buildPrimaryCurve(
+      [
+        {
+          date: '2026-01-01',
+          exerciseId: 'pistol',
+          sets: [
+            { weightKg: 0, reps: 8, rir: 0, order: 1, side: 'left' },
+            { weightKg: 0, reps: 6, rir: 1, order: 1, side: 'right' },
+          ],
+        },
+      ],
+      'pistol',
+    )
+    expect(curve).toEqual([{ date: '2026-01-01', e1rm: 7 }])
+  })
+
+  it('en kg, une exécution dont la 1ʳᵉ série est à 0 kg est un trou, pas un zéro', () => {
+    const curve = buildPrimaryCurve(
+      [
+        bodyweight('2026-01-01', 12),
+        { date: '2026-01-08', exerciseId: 'tractions', sets: [{ weightKg: 5, reps: 5, rir: 0, order: 1 }] },
+        bodyweight('2026-01-15', 14),
+        { date: '2026-01-22', exerciseId: 'tractions', sets: [{ weightKg: 7.5, reps: 5, rir: 0, order: 1 }] },
+      ],
+      'tractions',
+    )
+    expect(curve.map((p) => p.date)).toEqual(['2026-01-08', '2026-01-22'])
+    expect(curve.every((p) => p.e1rm > 0)).toBe(true)
+  })
+
+  it('l’unité passée prime sur celle du sous-ensemble : une séance à 0 kg d’un exo chargé reste en kg', () => {
+    // Le sous-ensemble (une séance) est tout à 0 kg, mais l'exo est chargé
+    // ailleurs : pas de courbe en reps au milieu de courbes en kilos.
+    expect(buildPrimaryCurve([bodyweight('2026-01-01', 12)], 'tractions', 'kg')).toEqual([])
   })
 })

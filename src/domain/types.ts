@@ -78,7 +78,22 @@ export interface ExerciseExecution {
   seanceId?: string;
 }
 
-/** Un point de la courbe e1RM : un 1RM estimé à une date. */
+/**
+ * L'unité d'une courbe de progression (ADR 0013, amendement du 2026-11-23) :
+ *   - 'kg'   : l'e1RM, cas général ;
+ *   - 'reps' : les reps effectives (reps + RIR), pour un exo dont AUCUNE série
+ *     n'a jamais été chargée (poids du corps saisi à 0 kg), où l'e1RM est nul
+ *     quelle que soit la perf.
+ * Elle se décide une fois par exercice, sur tout son historique, et vaut pour
+ * toutes ses courbes : on ne superpose jamais des reps et des kilos.
+ */
+export type CurveUnit = 'kg' | 'reps';
+
+/**
+ * Un point d'une courbe de progression : une mesure à une date. `e1rm` porte un
+ * 1RM estimé en kg, ou des reps effectives quand la courbe est en 'reps' (cf.
+ * `CurveUnit`) : l'unité est celle de la courbe, jamais du point.
+ */
 export interface E1rmPoint {
   /** Date ISO 'YYYY-MM-DD'. */
   date: string;
