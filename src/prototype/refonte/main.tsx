@@ -12,7 +12,9 @@ import { VariantA, name as nameA } from './VariantA';
 // VariantB et VariantC : 1er tour, gardées pour mémoire hors bascule.
 
 import { VariantD, name as nameD } from './VariantD';
-import { VariantE, name as nameE } from './VariantE';
+// E : depuis le 3ᵉ tour, socle de l'app entière (e/App.tsx). Les VariantE*.tsx
+// restent en fichiers pour mémoire mais ne sont plus servis.
+import { AppE as VariantE, name as nameE } from './e/App';
 import { VariantF, name as nameF } from './VariantF';
 
 const VARIANTS = [
