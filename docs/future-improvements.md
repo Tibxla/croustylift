@@ -37,10 +37,10 @@ qui a été fait et des décisions actées.
   d'historique de son exo est relue depuis le réseau, à la fin de tout flush, sans attendre
   la relance (`refreshExerciseRows`, ADR 0020). Les lectures d'une même clé pouvant se
   croiser, la copie ne s'écrit que sous gardes d'ordre : dernière réponse écrite, seuil
-  posé par la relecture d'après acquittement, purge et compte. Le retard résiduel ne
-  concerne que les lectures qui n'ont pas de source locale équivalente. Piste si ça
-  devenait gênant : réchauffer les copies des séances de la routine courante après un
-  flush au boot.
+  posé par la relecture d'après acquittement, purge et compte. Une copie en retard d'une
+  série écrite ailleurs est rattrapée par sa revalidation de fond, et la Capture montée
+  suit ce changement sans remontage (ADR 0020, amendement du 2026-11-23). Reste : hors
+  ligne, rien ne revalide, la copie garde son retard jusqu'au retour du réseau.
 
 - **Protection « mots de passe compromis » (advisor `auth_leaked_password_protection`)** :
   fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée

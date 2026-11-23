@@ -28,5 +28,15 @@ On compare à la dernière réponse écrite, pas à la dernière lecture partie.
 - `flush` ne dit pas quelles ops sont passées : chaque fonction de sync note les exos qu'elle touche, et `flushOutbox`, point de passage de tous les flush, relit leurs copies une fois la passe finie, même arrêtée sur un échec.
 - Une suppression ne porte que l'id de sa ligne. Ses exos se retrouvent par trois voies : ceux que l'émetteur nomme sur l'op (`exerciseIds`, posé par l'annulation en Capture et par l'éditeur de séance passée), les copies qui contiennent la ligne, et la mémoire de session des séries acquittées. Une op ancienne sans `exerciseIds` garde les deux dernières.
 - Les ops d'exécution (création, clôture, métriques) ne déclenchent aucune relecture : la copie ne porte ni clôture ni métriques de fin.
-- Limite : seules les écritures faites depuis cet appareil déclenchent la relecture. Une série écrite ailleurs, ou une app tuée entre l'acquittement et la réponse de la relecture, laisse la copie en retard jusqu'à la prochaine revalidation (remontage de l'écran ou relance). Il n'y a pas de mise à jour en direct.
+- Seules les écritures faites depuis cet appareil déclenchent la relecture sous seuil. Une série écrite ailleurs, ou une app tuée entre l'acquittement et la réponse de la relecture, est rattrapée par la revalidation de fond de la copie, que l'écran monté suit désormais (amendement du 2026-11-23). Hors ligne, la copie reste en retard jusqu'au retour du réseau.
 - Complète l'ADR 0014 (la Référence ne retombe plus en retard quand la file se vide) et la limite de revalidation de l'ADR 0012.
+
+## Amendement du 2026-11-23 (Lot 3)
+
+**Référence suivie en direct.** La limite « pas de mise à jour en direct » est levée. La séance s'ouvre sur les copies locales, et leur revalidation de fond répond juste après : quand la copie d'historique d'un exo change, la Capture montée rejoue sa dérivation (copie fusionnée avec la file, sans réseau) et met à jour la Référence, le repli de préremplissage et les records de cet exo. Trois règles tiennent l'écran :
+
+- Seule une écriture passée par les gardes d'ordre prévient l'écran (`onReadWritten`) : une réponse supplantée, non écrite, ne peut pas faire reculer l'affichage. Une purge n'est pas une écriture, et une copie absente ne change rien à l'écran.
+- La dérivation est rejouée à chaque écriture de la copie (chaque série acquittée en provoque une), mais l'exo n'est remplacé que si le résultat diffère. Elle est aussi rejouée une fois au montage, la revalidation pouvant répondre avant.
+- Le brouillon de la série en cours est marqué « touché » à la première interaction dans la zone de saisie (tap, focus, frappe même non validée) et ne bouge alors plus : seul l'historique change. Un brouillon intact suit le nouveau préremplissage. Le marqueur est levé quand une nouvelle saisie commence (série loggée ou annulée, changement de côté ou d'exo) (`shouldReseedDraft`).
+
+Reste : hors ligne, rien ne revalide, la copie garde son retard jusqu'au retour du réseau.

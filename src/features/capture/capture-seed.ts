@@ -152,3 +152,18 @@ export function seedDraft({
 
   return { weightKg, reps, rir };
 }
+
+/**
+ * Faut-il RÉAMORCER le brouillon de la série en cours avec le préremplissage
+ * recalculé ? Deux sortes de déclencheurs :
+ *   - `explicit` : un geste ou un fait de la séance (changement d'exo, série
+ *     loggée ou annulée, changement de côté). Toujours : c'est une nouvelle
+ *     saisie qui commence, et le marqueur « touché » est levé avec elle ;
+ *   - `history` : seul l'historique a changé sous l'écran (la Référence vient
+ *     d'être rafraîchie depuis le réseau). Seulement si le brouillon n'a PAS été
+ *     touché : dès la première interaction (tap, frappe, même non validée), ce
+ *     que l'utilisateur règle ne bouge plus. Le repère affiché, lui, suit.
+ */
+export function shouldReseedDraft(trigger: 'explicit' | 'history', touched: boolean): boolean {
+  return trigger === 'explicit' || !touched;
+}

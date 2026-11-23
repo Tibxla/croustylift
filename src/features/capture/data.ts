@@ -24,6 +24,7 @@ import {
   cachedRead,
   dropRead,
   networkFirstRead,
+  onReadWritten,
   peekRead,
   refreshRead,
 } from '../../lib/read-cache';
@@ -818,6 +819,60 @@ export async function loadExerciseRows(
   // Les écritures en attente du compte reconnu seulement : celles d'un autre
   // compte restées en file n'entrent pas dans ses repères.
   return applyPendingSets(rows, readOwnQueue(), exerciseId);
+}
+
+/**
+ * Les dérivées d'historique d'un exo relues SANS réseau, depuis la copie locale
+ * fusionnée avec les écritures en attente : de quoi rejouer la dérivation d'un
+ * écran déjà monté quand la copie vient de changer (cf. `onExerciseRowsWritten`).
+ * `null` si la copie est ABSENTE (purgée, stockage plein) : l'appelant ne touche
+ * alors à rien, une copie qui manque n'est pas un historique vide.
+ */
+export function peekExerciseHistory(
+  exerciseId: string,
+  seanceVersionIds: readonly string[],
+  unilateral: boolean,
+  currentExecutionId: string | null,
+): ExerciseHistory | null {
+  const rows = peekRead<PerformedSetWithExecutionRow[]>(exerciseRowsKey(exerciseId));
+  if (rows === null) return null;
+  return deriveExerciseHistory(
+    applyPendingSets(rows, readOwnQueue(), exerciseId),
+    exerciseId,
+    seanceVersionIds,
+    unilateral,
+    currentExecutionId,
+  );
+}
+
+/**
+ * S'abonne aux copies d'historique d'exo dont le contenu change (revalidation de
+ * fond, relecture d'après acquittement) : `listener` reçoit l'id de l'exo. Rend
+ * la fonction de désabonnement.
+ */
+export function onExerciseRowsWritten(listener: (exerciseId: string) => void): () => void {
+  return onReadWritten((key) => {
+    if (key.startsWith(EXERCISE_ROWS_PREFIX)) listener(key.slice(EXERCISE_ROWS_PREFIX.length));
+  });
+}
+
+/** Les dérivées d'historique telles qu'un exo de séance les porte (champs optionnels ou nuls). */
+type LooseExerciseHistory = { [K in keyof ExerciseHistory]?: ExerciseHistory[K] | null };
+
+/**
+ * Deux jeux de dérivées d'historique disent-ils la même chose ? Chaque série
+ * acquittée réécrit la copie de son exo : la dérivation est rejouée souvent,
+ * mais l'écran ne doit être re-rendu que si le résultat DIFFÈRE. Pur.
+ */
+export function sameExerciseHistory(a: LooseExerciseHistory, b: LooseExerciseHistory): boolean {
+  const shape = (h: LooseExerciseHistory) =>
+    JSON.stringify([
+      h.reference ?? null,
+      h.fallbackReference ?? null,
+      h.personalRecord ?? null,
+      h.personalRecordBySide ?? null,
+    ]);
+  return shape(a) === shape(b);
 }
 
 // --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------

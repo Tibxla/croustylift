@@ -141,7 +141,13 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from } };
 });
 
-import { deriveExerciseHistory, loadExerciseRows } from './data';
+import {
+  deriveExerciseHistory,
+  loadExerciseRows,
+  onExerciseRowsWritten,
+  peekExerciseHistory,
+  sameExerciseHistory,
+} from './data';
 import { clearQueue, enqueue, pendingCount } from './outbox';
 import { flushOutbox } from './sync';
 import { clearReadCache } from '../../lib/read-cache';
@@ -474,3 +480,103 @@ describe('Référence après un flush acquitté', () => {
   });
 });
 
+
+// Référence d'un écran DÉJÀ monté (écart 9, ADR 0020) : la série a été écrite
+// depuis un autre appareil, ou l'app a été tuée entre l'acquittement et la
+// relecture. La copie n'est rattrapée que par sa revalidation de fond, qui
+// répond APRÈS l'ouverture de la séance : avant, l'écran gardait l'ancien
+// repère jusqu'à son prochain remontage.
+describe('Référence suivie en direct par l’écran monté', () => {
+  /** Ce que l'écran rejoue quand la copie change. */
+  const relue = (executionEnCours: string) =>
+    peekExerciseHistory(BENCH, [VERSION], false, executionEnCours)?.reference?.[0]?.weightKg;
+
+  /** Une séance faite sur un AUTRE appareil : en base, pas dans la copie locale. */
+  function seanceFaiteAilleurs() {
+    server.executions.set('exec-ailleurs', {
+      id: 'exec-ailleurs',
+      performed_on: '2026-11-08',
+      seance_version_id: VERSION,
+      created_at: '2026-11-08T10:00:00Z',
+    });
+    server.sets.set('set-ailleurs', {
+      id: 'set-ailleurs',
+      execution_id: 'exec-ailleurs',
+      exercise_id: BENCH,
+      set_order: 1,
+      weight_kg: 42.5,
+      reps: 8,
+      rir: 2,
+      side: null,
+    });
+  }
+
+  it('série écrite ailleurs : l’ouverture sert l’ancienne copie, puis l’écran est prévenu et relit la nouvelle', async () => {
+    seanceFaiteAilleurs();
+    const prevenus: string[] = [];
+    const off = onExerciseRowsWritten((exerciseId) => prevenus.push(exerciseId));
+
+    // Ouverture de la séance : copie servie d'abord (20 kg), revalidation en fond.
+    expect(await referenceOuverture('exec-3')).toBe(20);
+    await settle();
+
+    expect(prevenus).toEqual([BENCH]);
+    expect(relue('exec-3')).toBe(42.5);
+    off();
+  });
+
+  it('copie inchangée : personne n’est prévenu', async () => {
+    const prevenus: string[] = [];
+    const off = onExerciseRowsWritten((exerciseId) => prevenus.push(exerciseId));
+
+    await referenceOuverture('exec-3');
+    await settle();
+
+    expect(prevenus).toEqual([]);
+    off();
+  });
+
+  it('les séries du jour acquittées réécrivent la copie sans changer le repère dérivé', async () => {
+    const avant = peekExerciseHistory(BENCH, [VERSION], false, 'exec-2');
+    const prevenus: string[] = [];
+    const off = onExerciseRowsWritten((exerciseId) => prevenus.push(exerciseId));
+
+    await loggerSerie('exec-2', 'set-2', '2026-11-08', 31.25);
+    await settle();
+
+    // La copie a changé (la série du jour y est), mais l'exécution en cours est
+    // écartée de la dérivation : rien à re-rendre.
+    expect(prevenus).toEqual([BENCH]);
+    const apres = peekExerciseHistory(BENCH, [VERSION], false, 'exec-2');
+    expect(sameExerciseHistory(avant!, apres!)).toBe(true);
+    off();
+  });
+
+  it('copie absente (purgée) : rien à dériver, l’écran garde ce qu’il affiche', () => {
+    clearReadCache();
+    expect(peekExerciseHistory(BENCH, [VERSION], false, 'exec-3')).toBeNull();
+  });
+
+  it('une série encore en file compte dans la relecture locale, comme à l’ouverture', async () => {
+    server.failReads = true;
+    enqueue({ type: 'upsertExecution', id: 'exec-2', seanceVersionId: VERSION, performedOn: '2026-11-08' });
+    enqueue({
+      type: 'insertSet',
+      id: 'set-2',
+      executionId: 'exec-2',
+      exerciseId: BENCH,
+      setOrder: 1,
+      weightKg: 31.25,
+      reps: 8,
+      rir: 2,
+    });
+
+    expect(relue('exec-3')).toBe(31.25);
+  });
+
+  it('sameExerciseHistory distingue un repère qui a changé', () => {
+    const a = peekExerciseHistory(BENCH, [VERSION], false, 'exec-3')!;
+    expect(sameExerciseHistory(a, { ...a })).toBe(true);
+    expect(sameExerciseHistory(a, { ...a, reference: null })).toBe(false);
+  });
+});

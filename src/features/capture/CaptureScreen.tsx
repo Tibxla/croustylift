@@ -28,7 +28,10 @@ import {
   loadPreviousDatedNotes,
   loadSeanceForCapture,
   loadTodayExecutionWithin,
+  onExerciseRowsWritten,
+  peekExerciseHistory,
   pruneCaptureCopies,
+  sameExerciseHistory,
   TODAY_READ_BUDGET_MS,
   type LoadedSeance,
   type SeanceChoice,
@@ -712,6 +715,47 @@ function CaptureBoard({
   // référence du diff de déviations : ses ids sont passés à part (`templateIds`),
   // il n'est JAMAIS modifié (le versionné en base non plus).
   const [session, setSession] = useState(initialSession);
+
+  // RÉFÉRENCE SUIVIE EN DIRECT (ADR 0020). La séance s'ouvre sur les copies
+  // locales, que leur revalidation de fond rattrape juste APRÈS : une série
+  // écrite depuis un autre appareil, ou une relecture restée en vol quand l'app
+  // a été tuée, n'atteignait l'écran qu'à son remontage suivant. Dès que la copie
+  // d'historique d'un exo change, sa dérivation est donc rejouée ici (sans
+  // réseau : copie + file, cf. `peekExerciseHistory`) et l'exo n'est remplacé
+  // que si le résultat DIFFÈRE (chaque série acquittée réécrit sa copie). Seul
+  // l'historique change : référence, repli de préremplissage, records. Le
+  // brouillon de la série en cours, lui, ne bouge plus dès qu'il a été touché
+  // (cf. ExerciseCapture, `shouldReseedDraft`). Une copie absente ne change rien.
+  // La dérivation est aussi rejouée une fois à l'abonnement : la revalidation a
+  // pu répondre entre la lecture des lignes et ce montage.
+  useEffect(() => {
+    let subscribed = true;
+    const refresh = (onlyExerciseId?: string) => {
+      if (!subscribed) return;
+      setSession((current) => {
+        let changed = false;
+        const exercises = current.exercises.map((ex) => {
+          if (onlyExerciseId !== undefined && ex.exerciseId !== onlyExerciseId) return ex;
+          const history = peekExerciseHistory(
+            ex.exerciseId,
+            historyCtx.seanceVersionIds,
+            ex.unilateral ?? false,
+            historyCtx.currentExecutionId,
+          );
+          if (history === null || sameExerciseHistory(ex, history)) return ex;
+          changed = true;
+          return { ...ex, ...history };
+        });
+        return changed ? { ...current, exercises } : current;
+      });
+    };
+    const unsubscribe = onExerciseRowsWritten(refresh);
+    void Promise.resolve().then(() => refresh());
+    return () => {
+      subscribed = false;
+      unsubscribe();
+    };
+  }, [historyCtx]);
 
   // Restauration au montage : Supabase fait foi, localStorage est un filet
   // (survie au background / écriture offline non encore synchronisée). On fusionne

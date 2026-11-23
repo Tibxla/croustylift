@@ -10,6 +10,7 @@ import {
   clearReadCache,
   invalidateReads,
   networkFirstRead,
+  onReadWritten,
   refreshRead,
   revalidateReadCache,
   seedRead,
@@ -496,5 +497,70 @@ describe('seedRead', () => {
     seedRead('exo-note:e1', 'ma note', 'user-1');
 
     expect(localStorage.getItem('croustylift:readcache:user-1:exo-note:e1')).not.toBeNull();
+  });
+});
+
+// Abonnement aux copies dont le contenu change (Référence suivie en direct).
+describe('onReadWritten', () => {
+  it('prévient quand une revalidation écrit une valeur différente, avec la clé sans compte', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    await cachedRead('exo-execs:e1', async () => ['a', 'b']);
+    await settle();
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+  });
+
+  it('une copie réécrite à l’identique ne prévient personne', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+
+    expect(written).toEqual([]);
+    off();
+  });
+
+  it('une réponse supplantée (non écrite) ne prévient pas : l’écran ne recule pas', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a', 'supprimée']);
+    let answer!: (value: string[]) => void;
+    // Revalidation partie AVANT la relecture d'après acquittement.
+    void cachedRead('exo-execs:e1', () => new Promise<string[]>((resolve) => (answer = resolve)));
+    const written: string[][] = [];
+    const off = onReadWritten(() =>
+      written.push(JSON.parse(localStorage.getItem('croustylift:readcache:user-1:exo-execs:e1')!).value),
+    );
+    await refreshRead('exo-execs:e1', async () => ['a']);
+    answer(['a', 'supprimée']);
+    await settle();
+
+    expect(written).toEqual([['a']]);
+    off();
+  });
+
+  it('une purge ou une invalidation ne sont pas des écritures', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    invalidateReads(['exo-execs:']);
+    clearReadCache();
+
+    expect(written).toEqual([]);
+    off();
+  });
+
+  it('après désabonnement, plus de notification', async () => {
+    const written: string[] = [];
+    onReadWritten((key) => written.push(key))();
+
+    await cachedRead('exo-execs:e1', async () => ['a']);
+
+    expect(written).toEqual([]);
   });
 });

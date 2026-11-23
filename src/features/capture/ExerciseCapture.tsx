@@ -1,6 +1,6 @@
 // Panneau de capture d'un exo. Nom = roi ; « dernière fois » = co-roi à battre ;
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
 import {
   currentSetOrder,
@@ -17,7 +17,7 @@ import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
 import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
-import { seedDraft } from './capture-seed';
+import { seedDraft, shouldReseedDraft } from './capture-seed';
 import { draftE1rm } from './draft-e1rm';
 import { NoteField } from '../notes/NoteField';
 import { useAutosavedNote } from '../notes/useAutosavedNote';
@@ -158,20 +158,41 @@ export function ExerciseCapture({
         loggedSets: progress.sets,
         side: currentSide ?? undefined,
       }),
+    // La référence et son repli sont dans les dépendances : ils peuvent changer
+    // sous l'écran (Référence suivie en direct, cf. CaptureScreen).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [exercise.exerciseId, loggedCount, currentSide],
+    [exercise.exerciseId, loggedCount, currentSide, reference, exercise.fallbackReference],
   );
 
   const [weightKg, setWeightKg] = useState(seed.weightKg);
   const [reps, setReps] = useState(seed.reps);
   const [rir, setRir] = useState(seed.rir);
 
-  // Quand on change d'exo ou qu'on logge/annule une série, on ré-amorce le brouillon.
+  // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
+  // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
+  // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
+  // l'historique ne déplace plus ce que l'utilisateur règle.
+  const draftTouchedRef = useRef(false);
+  const touchDraft = useCallback(() => {
+    draftTouchedRef.current = true;
+  }, []);
+  // Ce qui ouvre une NOUVELLE saisie : l'exo, le nombre de séries loggées, le côté.
+  const draftKey = `${exercise.exerciseId}:${loggedCount}:${currentSide ?? ''}`;
+  const seededKeyRef = useRef(draftKey);
+
+  // Ré-amorce le brouillon (cf. `shouldReseedDraft`) : toujours quand une nouvelle
+  // saisie commence (changement d'exo, série loggée ou annulée, changement de
+  // côté), et le marqueur est alors levé ; quand seul l'historique a changé
+  // sous l'écran, seulement si le brouillon est intact.
   useEffect(() => {
+    const trigger = seededKeyRef.current === draftKey ? 'history' : 'explicit';
+    seededKeyRef.current = draftKey;
+    if (!shouldReseedDraft(trigger, draftTouchedRef.current)) return;
+    if (trigger === 'explicit') draftTouchedRef.current = false;
     setWeightKg(seed.weightKg);
     setReps(seed.reps);
     setRir(seed.rir);
-  }, [seed]);
+  }, [seed, draftKey]);
 
   // Remonte le brouillon courant vers la barre d'action fixe (qui commit le log).
   // Pour un exo unilatéral, on y joint le côté CHOISI (issue #63) : c'est ce côté
@@ -412,7 +433,15 @@ export function ExerciseCapture({
 
       {/* Cluster instrument : POIDS (hero) + REPS / RIR (deux colonnes), steppers
           ronds au pouce. La saisie tapée (pavé numérique, issue #58) est conservée. */}
-      <div className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]">
+      <div
+        // Toute interaction dans la zone des steppers marque le brouillon touché,
+        // AVANT qu'une valeur soit validée (les événements sont pris en capture).
+        onPointerDownCapture={touchDraft}
+        onKeyDownCapture={touchDraft}
+        onFocusCapture={touchDraft}
+        onInputCapture={touchDraft}
+        className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]"
+      >
         <ClusterStepper
           label="Poids"
           variant="hero"

@@ -9,9 +9,11 @@
 //
 // Sémantiques offertes :
 //   - `cachedRead`      : copie locale servie immédiatement si présente, puis
-//     revalidation en arrière-plan (met à jour le CACHE, jamais l'UI montée —
-//     l'écran relit à son prochain montage ; on ne re-rend pas une capture en
-//     cours de saisie). Sans copie : réseau, et l'échec remonte à l'appelant.
+//     revalidation en arrière-plan, qui met à jour le CACHE. L'écran monté n'est
+//     pas re-rendu par le cache lui-même ; qui veut suivre une copie s'y abonne
+//     (`onReadWritten`, ce que fait la Capture pour l'historique des exos, sans
+//     jamais déplacer une saisie en cours). Sans copie : réseau, et l'échec
+//     remonte à l'appelant.
 //   - `tolerantRead`    : pareil, mais un échec total rend un repli fourni —
 //     pour les lectures datées du jour (exécution en cours, repère « tu
 //     notais ») dont l'absence est un état valide du système.
@@ -38,9 +40,10 @@
 // rejouer que les lectures déjà VUES dans la session en cours (registre
 // mémoire). La Référence n'en dépend plus pour ce qui est écrit d'ici : l'outbox
 // est fusionnée tant qu'une série attend (ADR 0014), et la copie d'historique
-// de l'exo est relue dès l'acquittement (`refreshRead`, ADR 0020). Reste en
-// retard, jusqu'à sa prochaine revalidation, une copie dont les lignes ont
-// changé ailleurs (autre appareil).
+// de l'exo est relue dès l'acquittement (`refreshRead`, ADR 0020). Une copie
+// dont les lignes ont changé ailleurs (autre appareil) est rattrapée par sa
+// revalidation de fond, et la Capture montée suit ce changement
+// (`onReadWritten`). Hors ligne, elle reste en retard jusqu'au retour du réseau.
 import { loadLocalAccount } from './local-account';
 
 const PREFIX = 'croustylift:readcache';
@@ -123,15 +126,50 @@ function readEntry<T>(key: string): { value: T; stale: boolean } | null {
   }
 }
 
-/** Écrit une entrée (dégrade en silence si quota plein / mode privé). */
+/**
+ * Écrit une entrée (dégrade en silence si quota plein / mode privé), puis
+ * prévient les abonnés (`onReadWritten`) si le CONTENU a changé.
+ */
 function writeEntry(key: string, value: unknown): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(key, JSON.stringify({ v: 1, value } satisfies Envelope));
+    const before = localStorage.getItem(key);
+    const after = JSON.stringify({ v: 1, value } satisfies Envelope);
+    localStorage.setItem(key, after);
+    if (before !== after) notifyWritten(key);
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
     // fois : dégradation acceptable, on ne bloque jamais la lecture en cours.
   }
+}
+
+/** Abonnés aux écritures de copies (cf. `onReadWritten`). */
+const writeListeners = new Set<(key: string) => void>();
+
+function notifyWritten(storageKey: string): void {
+  if (writeListeners.size === 0) return;
+  const account = loadLocalAccount();
+  if (!account) return;
+  const scope = fullKey(account.userId, '');
+  if (!storageKey.startsWith(scope)) return;
+  const key = storageKey.slice(scope.length);
+  for (const listener of [...writeListeners]) listener(key);
+}
+
+/**
+ * S'abonne aux copies dont le contenu CHANGE : `listener` reçoit la clé (sans
+ * l'étiquette de compte) de chaque copie réécrite avec une autre valeur. Seules
+ * les écritures passées par les gardes d'ordre notifient (`guardedFetch`,
+ * `seedRead`) : une réponse supplantée, donc non écrite, ne prévient personne,
+ * et une copie réécrite à l'identique non plus. Une purge ou une invalidation
+ * ne sont pas des écritures : elles ne notifient pas. Rend la fonction de
+ * désabonnement.
+ */
+export function onReadWritten(listener: (key: string) => void): () => void {
+  writeListeners.add(listener);
+  return () => {
+    writeListeners.delete(listener);
+  };
 }
 
 /**
