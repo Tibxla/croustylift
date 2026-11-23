@@ -24,9 +24,10 @@
 //
 // Chaque changement porte son INSTANT (`at`) et son jour LOCAL (`date`). Les
 // blocs se bornent à l'instant (ADR 0001, amendement du 2026-11-23) : une séance
-// faite avant l'édition du plan, le même jour, reste dans l'ancien bloc. Le jour
-// sert au libellé et de repli ; il est local parce que `performed_on` l'est
-// (daté en UTC, un plan édité à 00 h 30 à Paris tombait la veille).
+// lancée avant l'édition du plan reste dans l'ancien bloc, quel que soit le
+// fuseau où on relit les données. Le jour sert au libellé, et de repli pour les
+// exécutions sans lancement horodaté ; il est local parce que `performed_on`
+// l'est (daté en UTC, un plan édité à 00 h 30 à Paris tombait la veille).
 import type { ConfigChange } from '../../domain/types'
 
 /** Une activation de routine courante (table `routine_activations`). */
@@ -61,8 +62,8 @@ export interface SeanceArchiveEventRow {
 export interface FirstExecutionRow {
   /** Jour ISO 'YYYY-MM-DD' de la séance (colonne `performed_on`, heure locale). */
   date: string
-  /** Instant ISO : lancement (`started_at`), à défaut création de la ligne. */
-  at?: string
+  /** Instant ISO du lancement (`started_at`). Absent sur une exécution d'avant la colonne. */
+  startedAt?: string
   /** La routine de la séance exécutée. */
   routineId: string
 }
@@ -115,10 +116,8 @@ function compareInstants(a: string, b: string): number {
 /**
  * L'événement d'activation IMPLICITE, ou `null` si la première exécution ne
  * précède pas la première activation. Même règle que le rattachement d'une
- * exécution à son bloc : le jour tranche d'abord, l'instant départage le même
- * jour. L'instant de l'exécution n'est retenu que s'il tombe bien le jour de la
- * séance : une ligne arrivée en base plus tard (séance hors ligne) garde son
- * jour, sans instant.
+ * exécution à son bloc : avec un lancement horodaté, on compare les instants ;
+ * sans, on compare les jours, et le jour de l'activation lui appartient.
  */
 function implicitActivation(
   input: ConfigTimelineInput,
@@ -126,26 +125,24 @@ function implicitActivation(
 ): Event | null {
   const first = input.firstExecution
   if (!first) return null
-  const at = first.at !== undefined && toDay(first.at) === first.date ? first.at : undefined
 
   const earliest = input.activations
     .map((a) => a.activatedAt)
     .sort(compareInstants)[0]
   if (earliest !== undefined) {
-    const activationDay = toDay(earliest)
     const before =
-      first.date !== activationDay
-        ? first.date < activationDay
-        : at !== undefined && compareInstants(at, earliest) < 0
+      first.startedAt !== undefined
+        ? compareInstants(first.startedAt, earliest) < 0
+        : first.date < toDay(earliest)
     if (!before) return null
   }
 
   return {
-    // Sans instant fiable : minuit local du jour de la séance, pour le tri seul.
-    ts: at ?? `${first.date}T00:00:00`,
+    // Sans lancement horodaté : minuit local du jour de la séance, pour le tri seul.
+    ts: first.startedAt ?? `${first.date}T00:00:00`,
     kind: 'activation',
     routineId: first.routineId,
-    implicit: { ...first, at },
+    implicit: first,
   }
 }
 
@@ -235,9 +232,10 @@ export function buildConfigTimeline(
     }
 
     if (ev.kind === 'activation' && ev.implicit) {
-      // Bloc implicite : daté du jour de la séance, avec son instant s'il est fiable.
+      // Bloc implicite : daté du jour de la séance, à l'instant de son lancement
+      // s'il est connu.
       const change: ConfigChange = { date: ev.implicit.date, configId: signature() }
-      if (ev.implicit.at !== undefined) change.at = ev.implicit.at
+      if (ev.implicit.startedAt !== undefined) change.at = ev.implicit.startedAt
       timeline.push(change)
       continue
     }

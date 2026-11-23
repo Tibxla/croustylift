@@ -404,9 +404,26 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
     expect(result.second.pointCount).toBe(1)
   })
 
-  it('sans lancement horodaté, l’instant de création de l’exécution sert de repli', () => {
+  it('sans lancement horodaté, repli au jour : la création de la ligne ne compte pas', () => {
+    // `created_at` est l'heure d'arrivée en base, fausse après une séance hors
+    // ligne : il ne remplace jamais le lancement. Le jour de la coupure va donc
+    // au bloc qui s'ouvre, comme avant.
     const executions = [at('2026-09-22', 105, { createdAt: '2026-09-22T16:05:00+00:00' })]
-    expect(compareBlocks(executions, EXO, blockA, blockB).first.pointCount).toBe(1)
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.pointCount).toBe(0)
+    expect(result.second.pointCount).toBe(1)
+  })
+
+  it('avec lancement et instant de frontière, seuls les instants comptent, pas les jours', () => {
+    // Séance lancée à 00 h 10 à Paris le 23 (22:10 UTC le 22), datée du 23 par
+    // l'appareil, AVANT la retouche de 22:30 UTC. Relue depuis Londres, la
+    // frontière est datée du 22 : au jour, la séance passait dans le nouveau bloc.
+    const londonA: Block = { ...blockA, endAt: '2026-09-22T22:30:00+00:00' }
+    const londonB: Block = { ...blockB, startAt: '2026-09-22T22:30:00+00:00' }
+    const executions = [at('2026-09-23', 105, { startedAt: '2026-09-22T22:10:00+00:00' })]
+    const result = compareBlocks(executions, EXO, londonA, londonB)
+    expect(result.first.pointCount).toBe(1)
+    expect(result.second.pointCount).toBe(0)
   })
 
   it('le lancement prime sur la création (séance hors ligne, envoyée après l’édition)', () => {
@@ -419,7 +436,7 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
     expect(compareBlocks(executions, EXO, blockA, blockB).first.pointCount).toBe(1)
   })
 
-  it('le jour tranche d’abord : un instant de création tardif ne déplace pas une séance d’un autre jour', () => {
+  it('sans lancement, un instant de création tardif ne déplace pas une séance d’un autre jour', () => {
     // Séance du 15/09 hors ligne, ligne créée en base le 23/09 seulement.
     const executions = [at('2026-09-15', 102.5, { createdAt: '2026-09-23T07:00:00+00:00' })]
     const result = compareBlocks(executions, EXO, blockA, blockB)

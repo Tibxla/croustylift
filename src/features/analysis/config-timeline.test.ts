@@ -387,7 +387,7 @@ describe('buildConfigTimeline : bloc implicite avant toute activation', () => {
   }
   const firstExecution = {
     date: '2026-08-05',
-    at: '2026-08-05T16:00:00+00:00',
+    startedAt: '2026-08-05T16:00:00+00:00',
     routineId: 'R',
   }
 
@@ -450,16 +450,83 @@ describe('buildConfigTimeline : bloc implicite avant toute activation', () => {
     expect(withFirst).toEqual(without)
   })
 
-  it('le bloc implicite est daté du jour de la séance, même si sa ligne est arrivée en base plus tard', () => {
-    // Séance du 05/08 hors ligne, créée en base le 07/08 : le bloc doit la contenir.
+  it('sans lancement horodaté, le bloc implicite est daté du jour de la séance, sans instant', () => {
     const timeline = buildConfigTimeline({
       ...input(base),
-      firstExecution: { ...firstExecution, at: '2026-08-07T09:00:00+00:00' },
+      firstExecution: { date: '2026-08-05', routineId: 'R' },
     })
     expect(timeline[0]).toEqual({ date: '2026-08-05', configId: timeline[0]!.configId })
   })
 
+  it('séance lancée avant l’activation du même jour : le bloc implicite s’ouvre à son lancement', () => {
+    // Hors ligne à 8 h, activation à midi : l'instant du lancement tranche.
+    const timeline = buildConfigTimeline({
+      ...input({
+        seances: base.seances,
+        activations: [{ activatedAt: '2026-08-05T12:00:00+00:00', routineId: 'R2' }],
+      }),
+      firstExecution: { ...firstExecution, startedAt: '2026-08-05T08:00:00+00:00' },
+    })
+    expect(timeline.map((c) => c.at)).toEqual([
+      '2026-08-05T08:00:00+00:00',
+      '2026-08-05T12:00:00+00:00',
+    ])
+    expect(timeline[0]!.configId).toContain('routine=R|')
+  })
+
   it('sans première exécution, rien ne change : aucun bloc avant l’activation', () => {
     expect(buildConfigTimeline(input(base))).toEqual([])
+  })
+})
+
+// --- Même résultat quel que soit le fuseau de lecture --------------------------
+//
+// Les mêmes données relues depuis Londres ou Paris doivent ranger les mêmes
+// séances dans les mêmes blocs : avec un lancement horodaté, seuls les instants
+// comptent, le jour local des frontières ne sert plus qu'au libellé.
+
+describe('rattachement indépendant du fuseau de lecture', () => {
+  const londonDay = (ts: string) => new Date(Date.parse(ts) + 1 * 3600_000).toISOString().slice(0, 10)
+  const data = input({
+    // Routine activée à 23 h 15 à Londres le 22/09 (00 h 15 à Paris le 23).
+    activations: [
+      { activatedAt: '2026-09-01T08:00:00+00:00', routineId: 'R' },
+      { activatedAt: '2026-09-22T22:15:00+00:00', routineId: 'R2' },
+    ],
+    seances: [
+      { id: 'A', routineId: 'R' },
+      { id: 'B', routineId: 'R2' },
+    ],
+  })
+  const ex = (date: string, startedAt: string, seanceId: string, weightKg: number): ExerciseExecution => ({
+    date,
+    exerciseId: 'dc',
+    seanceId,
+    id: startedAt,
+    startedAt,
+    sets: [{ weightKg, reps: 5, rir: 0, order: 1 }],
+  })
+  const executions = [
+    ex('2026-09-15', '2026-09-15T16:00:00+00:00', 'A', 100),
+    // Lancée à Londres à 23 h 30 le 22, après l'activation, datée du 22.
+    ex('2026-09-22', '2026-09-22T22:30:00+00:00', 'B', 60),
+    // Lancée à Paris à 00 h 05 le 23, AVANT l'activation, datée du 23.
+    ex('2026-09-23', '2026-09-22T22:05:00+00:00', 'A', 102),
+  ]
+  const pointsByBlock = (toDay: (ts: string) => string) =>
+    summarizeBlockSeances(executions, 'dc', detectBlocks(buildConfigTimeline(data, toDay))).map(
+      (o) => [o.block.startAt, o.seanceId, o.curve.map((p) => p.e1rm)],
+    )
+
+  it('Londres et Paris rangent les mêmes points dans les mêmes blocs', () => {
+    expect(pointsByBlock(londonDay)).toEqual(pointsByBlock(parisSummerDay))
+  })
+
+  it('et ce rangement suit les instants', () => {
+    const blocks = pointsByBlock(parisSummerDay)
+    expect(blocks.map(([start, seance, points]) => [start, seance, (points as number[]).length])).toEqual([
+      ['2026-09-01T08:00:00+00:00', 'A', 2],
+      ['2026-09-22T22:15:00+00:00', 'B', 1],
+    ])
   })
 })

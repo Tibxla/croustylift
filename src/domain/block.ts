@@ -8,16 +8,15 @@ function instantMs(at: string | undefined): number | null {
 }
 
 /**
- * Ordre chronologique de deux changements : le jour d'abord (ISO 'YYYY-MM-DD',
- * ordre lexicographique), puis l'instant quand les deux en portent un. Deux
- * éditions du plan le même jour s'ordonnent donc par leur heure.
+ * Ordre chronologique de deux changements : par INSTANT quand les deux en
+ * portent un (le jour d'un changement dépend du fuseau où on le lit, pas son
+ * instant) ; sinon par jour (ISO 'YYYY-MM-DD', ordre lexicographique).
  */
 function compareChanges(a: ConfigChange, b: ConfigChange): number {
-  const byDay = a.date.localeCompare(b.date)
-  if (byDay !== 0) return byDay
   const aMs = instantMs(a.at)
   const bMs = instantMs(b.at)
-  return aMs === null || bMs === null ? 0 : aMs - bMs
+  if (aMs !== null && bMs !== null) return aMs - bMs
+  return a.date.localeCompare(b.date)
 }
 
 export function detectBlocks(changes: ConfigChange[]): Block[] {

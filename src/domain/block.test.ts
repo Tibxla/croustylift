@@ -96,4 +96,13 @@ describe('detectBlocks', () => {
     // Sans instant, le jour reste la clé.
     expect(blockKey({ configId: 'A', start: '2026-01-01', end: null })).toBe('2026-01-01')
   })
+
+  it('deux changements horodatés s’ordonnent par instant, même si leurs jours disent l’inverse', () => {
+    // Jours calculés dans deux fuseaux : l'instant fait foi.
+    const blocks = detectBlocks([
+      { date: '2026-09-22', at: '2026-09-22T23:30:00+00:00', configId: 'B' },
+      { date: '2026-09-23', at: '2026-09-22T22:30:00+00:00', configId: 'A' },
+    ])
+    expect(blocks.map((b) => b.configId)).toEqual(['A', 'B'])
+  })
 })

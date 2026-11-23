@@ -62,9 +62,9 @@ export interface ExerciseExecution {
   /**
    * Timestamp ISO du LANCEMENT de la séance (`executions.started_at`, ADR 0011).
    * C'est l'instant qui rattache l'exécution à son bloc (ADR 0001) : posé par
-   * l'appareil au lancement, il ne dépend pas du moment où la ligne atteint la
-   * base (`createdAt`, plus tardif après une séance hors ligne). Absent sur les
-   * exécutions d'avant la colonne : `createdAt` sert alors de repli.
+   * l'appareil au lancement, il est exact même hors ligne. `createdAt`, l'heure
+   * d'arrivée de la ligne en base, ne le remplace jamais. Absent sur les
+   * exécutions d'avant la colonne : le rattachement se fait alors au jour.
    */
   startedAt?: string;
   /**
@@ -87,12 +87,12 @@ export interface E1rmPoint {
 
 /** Un changement de configuration de template à un instant (cf. ADR 0001). */
 export interface ConfigChange {
-  /** Jour ISO 'YYYY-MM-DD' (heure locale) du changement : libellé et repli sans instant. */
+  /** Jour ISO 'YYYY-MM-DD' (heure locale) du changement : libellé, et repli au jour. */
   date: string;
   /**
-   * Instant ISO du changement. C'est LUI qui borne les blocs : une séance faite
-   * le même jour mais avant lui reste dans le bloc précédent. Absent seulement
-   * quand la source n'a qu'un jour (bloc implicite d'avant toute activation).
+   * Instant ISO du changement. C'est LUI qui borne les blocs : une séance lancée
+   * avant lui reste dans le bloc précédent. Absent seulement quand la source n'a
+   * qu'un jour (bloc implicite ouvert par une séance sans lancement horodaté).
    */
   at?: string;
   /** Identité de la configuration de template active (routine + ses séances versionnées). */

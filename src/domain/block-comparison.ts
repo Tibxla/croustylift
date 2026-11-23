@@ -43,9 +43,8 @@ export interface BlockComparison {
   winner: Winner
 }
 
-/** Instant d'une exécution : son lancement, à défaut la création de sa ligne. */
-function executionInstant(execution: ExerciseExecution): number | null {
-  const ts = execution.startedAt ?? execution.createdAt
+/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
+function instantMs(ts: string | undefined): number | null {
   if (ts === undefined) return null
   const ms = Date.parse(ts)
   return Number.isNaN(ms) ? null : ms
@@ -53,24 +52,23 @@ function executionInstant(execution: ExerciseExecution): number | null {
 
 /**
  * L'exécution a-t-elle eu lieu AVANT la frontière (son jour, son instant) ?
- *   - Jours différents : le jour tranche. Un instant de création tardif (séance
- *     hors ligne envoyée plus tard) ne déplace donc jamais une séance d'un jour
- *     à l'autre.
- *   - Même jour : on compare les instants (ADR 0001 : une séance faite avant
- *     l'édition du plan reste dans l'ancien bloc).
- *   - Même jour sans instant d'un côté ou de l'autre : la séance appartient au
- *     bloc qui s'ouvre (règle au jour d'origine, seul repli possible).
+ *   - Lancement horodaté ET frontière horodatée : on compare les INSTANTS, rien
+ *     d'autre (ADR 0001 : une séance faite avant l'édition du plan reste dans
+ *     l'ancien bloc). Le résultat ne dépend pas du fuseau où on relit les données.
+ *   - Sinon (exécution d'avant `started_at`, ou frontière sans instant) : règle
+ *     au jour d'origine, le jour de la coupure appartient au bloc qui s'ouvre.
+ * `createdAt` ne remplace JAMAIS le lancement : c'est l'heure d'arrivée de la
+ * ligne en base, fausse après une séance hors ligne.
  */
 function isBeforeBoundary(
   execution: ExerciseExecution,
   day: string,
   at: string | undefined,
 ): boolean {
-  if (execution.date !== day) return execution.date < day
-  const instant = executionInstant(execution)
-  const boundary = at === undefined ? Number.NaN : Date.parse(at)
-  if (instant === null || Number.isNaN(boundary)) return false
-  return instant < boundary
+  const started = instantMs(execution.startedAt)
+  const boundary = instantMs(at)
+  if (started !== null && boundary !== null) return started < boundary
+  return execution.date < day
 }
 
 /**
