@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultFields, moveRow, toggleMode, type EditorRow } from './prescription-edit'
 import {
+  editingResumed,
   hasNoteDraftChanges,
   hasPrescriptionChanges,
   hasUnsavedEdits,
+  leavePrompt,
+  noteDraftExerciseIds,
   requestLeave,
+  SAVE_BUSY,
+  SAVE_DONE,
+  SAVE_IDLE,
+  saveControl,
+  saveFailed,
   setLeaveGuard,
+  type SaveStatus,
 } from './seance-dirty'
 
 const row = (over: Partial<EditorRow> = {}): EditorRow => ({
@@ -162,5 +171,97 @@ describe('garde de sortie', () => {
     const proceed = vi.fn()
     requestLeave(proceed)
     expect(proceed).toHaveBeenCalledOnce()
+  })
+})
+
+// U48 : prescriptions enregistrées avec une note encore en brouillon, la garde
+// de sortie retient le retour différé. « Continuer l'édition » laissait
+// « Séance enregistrée. » à la place du bouton, pour toujours.
+describe('bouton « Enregistrer » après un enregistrement réussi', () => {
+  const v1 = [row({ rowId: 'a', exerciseId: 'bench' })]
+  const v2 = [{ ...v1[0]!, sets: { mode: 'fixe' as const, min: 4, max: 4 } }]
+  const v3 = [{ ...v1[0]!, sets: { mode: 'fixe' as const, min: 5, max: 5 } }]
+  const noteDrafts = { bench: 'Prise serrée' }
+
+  it('le bandeau ne tient que tant que rien n’a bougé depuis', () => {
+    expect(saveControl(SAVE_IDLE, false)).toBe('button')
+    expect(saveControl(SAVE_BUSY, true)).toBe('button')
+    expect(saveControl(saveFailed('refus'), true)).toBe('button')
+    expect(saveControl(SAVE_DONE, false)).toBe('saved')
+    // Modifié de nouveau pendant que le bandeau est affiché : le bouton revient.
+    expect(saveControl(SAVE_DONE, true)).toBe('button')
+  })
+
+  it('« Continuer l’édition » rend le bouton, et une seconde sauvegarde passe', () => {
+    // L'écran tel que l'éditeur le tient : lignes enregistrées, lignes en cours,
+    // état de l'enregistrement.
+    let savedRows = v1
+    let rows = v2
+    let save: SaveStatus = SAVE_IDLE
+    const dirty = () => hasPrescriptionChanges(savedRows, rows)
+    const unsaved = () => hasUnsavedEdits({ savedRows, rows, savedNotes: {}, noteDrafts })
+
+    // Premier enregistrement, avec la note de l'exo encore en brouillon.
+    expect(saveControl(save, dirty())).toBe('button')
+    save = SAVE_BUSY
+    expect(save.busy).toBe(true)
+    savedRows = rows
+    save = SAVE_DONE
+    expect(saveControl(save, dirty())).toBe('saved')
+    // Le retour différé passe par la garde : la note retient la sortie.
+    expect(unsaved()).toBe(true)
+
+    // « Continuer l'édition » : l'éditeur reste monté, le bouton revient.
+    save = editingResumed(save)
+    expect(saveControl(save, dirty())).toBe('button')
+    expect(dirty()).toBe(false) // rien à enregistrer pour l'instant : bouton inactif
+
+    // Nouvelle modification : enregistrable, puis enregistrée une seconde fois.
+    rows = v3
+    expect(dirty()).toBe(true)
+    expect(saveControl(save, dirty())).toBe('button')
+    save = SAVE_BUSY
+    expect(save.busy).toBe(true)
+    savedRows = rows
+    save = SAVE_DONE
+    expect(saveControl(save, dirty())).toBe('saved')
+  })
+
+  it('même sans « Continuer », des prescriptions remodifiées ramènent le bouton', () => {
+    expect(saveControl(SAVE_DONE, hasPrescriptionChanges(v2, v3))).toBe('button')
+  })
+
+  it('reprendre l’édition ne touche pas un état qui n’est pas « enregistré »', () => {
+    const failed = saveFailed('refus')
+    expect(editingResumed(failed)).toBe(failed)
+    expect(editingResumed(SAVE_IDLE)).toBe(SAVE_IDLE)
+    expect(editingResumed(SAVE_DONE)).toEqual(SAVE_IDLE)
+  })
+})
+
+describe('confirmation de sortie', () => {
+  it('prescriptions modifiées : la séance n’est pas enregistrée', () => {
+    const prompt = leavePrompt({ prescriptions: true, noteDraftNames: ['Développé couché'] })
+    expect(prompt.title).toBe('Quitter sans enregistrer ?')
+    expect(prompt.detail).toMatch(/modifications de cette séance/)
+  })
+
+  it('note seule (juste après un enregistrement réussi) : c’est la NOTE qui ne l’est pas', () => {
+    const prompt = leavePrompt({ prescriptions: false, noteDraftNames: ['Développé couché'] })
+    expect(prompt.title).toBe('Quitter sans enregistrer la note ?')
+    expect(prompt.detail).toContain('Les prescriptions sont enregistrées.')
+    expect(prompt.detail).toContain('« Développé couché »')
+    expect(prompt.label).toBe('Note non enregistrée')
+  })
+
+  it('plusieurs notes : leur nombre', () => {
+    const prompt = leavePrompt({ prescriptions: false, noteDraftNames: ['Squat', 'Curl'] })
+    expect(prompt.title).toBe('Quitter sans enregistrer les notes ?')
+    expect(prompt.detail).toContain('2 exercices')
+  })
+
+  it('les exos au brouillon de note : sans doublon, ceux de la séance seulement', () => {
+    const drafts = { bench: 'Prise serrée', squat: '', retire: 'x' }
+    expect(noteDraftExerciseIds({ squat: '' }, drafts, ['bench', 'squat', 'bench'])).toEqual(['bench'])
   })
 })

@@ -164,15 +164,6 @@ perte), finition.
   et la tenir côté serveur pour qu'elle survive à tout rechargement
   (`auth/AuthProvider.tsx`, `auth/arrival-link`).
 
-### Éditeur de séance
-
-- **« Enregistrer » absent après « Continuer l'édition »** (mineure). Prescriptions
-  enregistrées avec une note encore en brouillon : la confirmation de sortie s'ouvre,
-  et « Continuer l'édition » laisse « Séance enregistrée » à la place du bouton, même
-  après une nouvelle modification. Contournement : quitter puis rouvrir la séance.
-  Piste : rendre le bouton dès que les prescriptions redeviennent modifiées
-  (`SeanceEditor.tsx`).
-
 ### Base et import
 
 - **Import et archivage : verrous pris en ordre inverse** (mineure). `import_user_data`
