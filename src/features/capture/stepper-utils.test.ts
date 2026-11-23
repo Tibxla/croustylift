@@ -2,7 +2,14 @@
 // Toutes les fonctions sont pures — testables sans DOM (environment: 'node').
 
 import { describe, expect, it } from 'vitest';
-import { boundSetValues, parseTypedValue, REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
+import {
+  boundSetValues,
+  parseTypedValue,
+  REPS_MAX,
+  RIR_MAX,
+  roundWeightKg,
+  WEIGHT_MAX_KG,
+} from './stepper-utils';
 
 describe('parseTypedValue — saisie à précision libre (poids, allowDecimals=true)', () => {
   const fallback = 80;
@@ -111,5 +118,26 @@ describe('plafonds de saisie alignés sur la base', () => {
       reps: 8,
       rir: 1,
     });
+  });
+});
+
+describe('poids au centième de kg (précision de la base)', () => {
+  it('un poids tapé à trois décimales est arrondi au centième', () => {
+    expect(parseTypedValue('85,004', 0, WEIGHT_MAX_KG, 80, true)).toBe(85);
+    expect(parseTypedValue('85.006', 0, WEIGHT_MAX_KG, 80, true)).toBe(85.01);
+  });
+
+  it('les paliers usuels restent intacts', () => {
+    expect(parseTypedValue('41,25', 0, WEIGHT_MAX_KG, 80, true)).toBe(41.25);
+    expect(roundWeightKg(82.5)).toBe(82.5);
+    expect(roundWeightKg(101.25)).toBe(101.25);
+  });
+
+  it('la série enfilée porte le poids que la base stockera', () => {
+    expect(boundSetValues({ weightKg: 85.004, reps: 8, rir: 1 }).weightKg).toBe(85);
+  });
+
+  it('nettoie le bruit flottant d’une addition de paliers', () => {
+    expect(roundWeightKg(0.1 + 0.2)).toBe(0.3);
   });
 });

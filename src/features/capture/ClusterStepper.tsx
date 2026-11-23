@@ -5,7 +5,7 @@
 // `Stepper` rectangulaire générique (éditeurs, formulaires), qui reste inchangé.
 import { useCallback, useState } from 'react';
 
-import { parseTypedValue } from './stepper-utils';
+import { parseTypedValue, roundWeightKg } from './stepper-utils';
 
 interface ClusterStepperProps {
   /** Libellé (« POIDS », « REPS », « RIR »), aussi utilisé pour l'aria-label. */
@@ -98,7 +98,8 @@ export function ClusterStepper({
   const [draft, setDraft] = useState<string | null>(null);
 
   const clamp = useCallback(
-    (n: number) => Math.min(max, Math.max(min, Math.round(n * 1000) / 1000)),
+    // Au centième (précision du poids en base) : sans effet sur des entiers.
+    (n: number) => Math.min(max, Math.max(min, roundWeightKg(n))),
     [min, max],
   );
   const bump = useCallback(
