@@ -22,6 +22,7 @@ import {
 } from '../authoring/exercise-input';
 import { NoteField } from '../notes/NoteField';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
+import { errorMessage } from '../../lib/error-message';
 
 /** Raison du blocage de rechargement tenu par un formulaire d'exo modifié et non enregistré. */
 const EXERCISE_DRAFT_BLOCK = 'brouillon-exercice';
@@ -103,7 +104,7 @@ export function ExerciseForm({
       // Succès : le parent ferme le formulaire, pas de reset nécessaire ici.
       releaseDraft();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }

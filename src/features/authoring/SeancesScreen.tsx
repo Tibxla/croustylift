@@ -43,6 +43,7 @@ import { nextFreeName } from '../../domain/unique-name';
 import { planRowActions } from './archive';
 import { ExportButton } from '../export/ExportButton';
 import { ImportButton } from '../export/ImportButton';
+import { errorMessage } from '../../lib/error-message';
 
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
 type SeanceRow = Database['public']['Tables']['seances']['Row'];
@@ -136,7 +137,7 @@ function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }
         });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -232,7 +233,7 @@ function SeancesContainer({
         });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -464,7 +465,7 @@ function RoutineRowItem({
       // les flèches de réordonnancement restaient désactivées.
       setMode('idle');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -741,7 +742,7 @@ function SeanceRowItem({
       // les flèches de réordonnancement restaient désactivées.
       setMode('idle');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -1396,7 +1397,7 @@ function ArchivedRowItem({
             try {
               await onUnarchive();
             } catch (err) {
-              setError(errMessage(err));
+              setError(errorMessage(err));
               setBusy(false);
             }
           }}
@@ -1512,7 +1513,7 @@ function CreateForm({
           try {
             await onSubmit(name);
           } catch (err) {
-            setError(errMessage(err));
+            setError(errorMessage(err));
             setBusy(false);
           }
         }}
@@ -1643,8 +1644,4 @@ function ScreenError({
       </button>
     </div>
   );
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

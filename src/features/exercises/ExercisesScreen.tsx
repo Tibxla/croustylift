@@ -61,6 +61,7 @@ import {
   toListExercise,
   type ListExercise,
 } from './exercises-list';
+import { errorMessage } from '../../lib/error-message';
 
 // =====================================================================
 // Conteneur : chargement + mutations
@@ -100,7 +101,7 @@ export function ExercisesScreen() {
         setLoad({ phase: 'ready', exercises: rows.map(toListExercise), overridden });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -399,7 +400,7 @@ function BaseRow({
       setNote(await onLoadNote(exo.id));
       setMode('edit');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setMode('idle');
     }
   }
@@ -445,7 +446,7 @@ function BaseRow({
       // version de base. On referme la confirmation, sinon elle restait figée.
       setMode('idle');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -538,7 +539,7 @@ function PersonalRow({
       setNote(await onLoadNote(exo.id));
       setMode('edit');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setMode('idle');
     }
   }
@@ -579,7 +580,7 @@ function PersonalRow({
       // Succès : le conteneur recharge, cette ligne disparaît.
     } catch (err) {
       // Suppression refusée (exo référencé) ou échec réseau : message lisible.
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -942,8 +943,4 @@ function ScreenError({
       </button>
     </div>
   );
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

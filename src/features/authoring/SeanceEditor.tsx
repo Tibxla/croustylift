@@ -50,6 +50,7 @@ import {
 import { hasPrescriptionChanges, setLeaveGuard } from './seance-dirty';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets, type CountRange } from '../../domain/set-count';
+import { errorMessage } from '../../lib/error-message';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
@@ -127,7 +128,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
         setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -359,7 +360,7 @@ export function SeanceEditorView({
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
       backTimerRef.current = setTimeout(onBack, 900);
     } catch (err) {
-      setSave({ busy: false, error: errMessage(err), done: false });
+      setSave({ busy: false, error: errorMessage(err), done: false });
     }
   }
 
@@ -801,7 +802,7 @@ function ExerciseNoteEditor({
       if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -1285,8 +1286,4 @@ function ScreenError({
       </button>
     </div>
   );
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
