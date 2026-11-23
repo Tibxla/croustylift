@@ -256,7 +256,9 @@ const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
 // par passer). Dès qu'une écriture passe, le miroir est rendu.
 //
 // Ce que le miroir ne sauve pas : la page fermée avant le retour du stockage, ce
-// qui n'y a pas été écrit est perdu. `storageFailing` le dit à la bannière.
+// qui n'y a pas été écrit est perdu, et la file persistée, en retard sur le
+// miroir, peut rejouer une insertion dont la suppression n'était qu'en mémoire
+// (cf. `removeFromQueue`). `storageFailing` le dit à la bannière.
 // Lié à l'objet `localStorage` qui l'a refusé (il ne survit pas à son remplacement).
 let volatileQueue: { storage: Storage; queue: OutboxOp[] } | null = null;
 
@@ -554,8 +556,11 @@ function isQueued(op: OutboxOp): boolean {
  * est donc TOUJOURS dans la file. L'appelant doit alors arrêter sa passe, sinon
  * il la relirait et la rejouerait sans fin. Un retrait que le stockage refuse
  * mais que le miroir mémoire tient vaut `'removed'` : la file persistée garde
- * alors une op déjà passée en base, qui serait rejouée après un rechargement
- * (sans dommage, les ops sont idempotentes par id).
+ * alors une op déjà passée en base, qui serait rejouée après un rechargement.
+ * Rejouer une op est sans effet (idempotence par id), SAUF dans un cas : une
+ * insertion restée persistée alors que la suppression de la même ligne n'a
+ * existé qu'en mémoire recrée la ligne. Limite du stockage plein, bornée à la
+ * fenêtre où la file en mémoire dépasse la file persistée.
  */
 function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
   const current = readQueue();
