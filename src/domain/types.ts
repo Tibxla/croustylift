@@ -60,6 +60,14 @@ export interface ExerciseExecution {
    */
   id?: string;
   /**
+   * Timestamp ISO du LANCEMENT de la séance (`executions.started_at`, ADR 0011).
+   * C'est l'instant qui rattache l'exécution à son bloc (ADR 0001) : posé par
+   * l'appareil au lancement, il ne dépend pas du moment où la ligne atteint la
+   * base (`createdAt`, plus tardif après une séance hors ligne). Absent sur les
+   * exécutions d'avant la colonne : `createdAt` sert alors de repli.
+   */
+  startedAt?: string;
+  /**
    * Id de la SÉANCE (le template, à travers toutes ses versions) dont cette
    * exécution est le déroulé. Porte le scope « même séance » des dérivées :
    * Référence en Capture, courbes e1RM par séance en Analyse (un même exo n'a
@@ -77,10 +85,16 @@ export interface E1rmPoint {
   e1rm: number;
 }
 
-/** Un changement de configuration de template à une date (cf. ADR 0001). */
+/** Un changement de configuration de template à un instant (cf. ADR 0001). */
 export interface ConfigChange {
-  /** Date ISO 'YYYY-MM-DD' à partir de laquelle `configId` est la config courante. */
+  /** Jour ISO 'YYYY-MM-DD' (heure locale) du changement : libellé et repli sans instant. */
   date: string;
+  /**
+   * Instant ISO du changement. C'est LUI qui borne les blocs : une séance faite
+   * le même jour mais avant lui reste dans le bloc précédent. Absent seulement
+   * quand la source n'a qu'un jour (bloc implicite d'avant toute activation).
+   */
+  at?: string;
   /** Identité de la configuration de template active (routine + ses séances versionnées). */
   configId: string;
 }
@@ -88,8 +102,12 @@ export interface ConfigChange {
 /** Un bloc : période continue de configuration inchangée. Dérivé, jamais déclaré. */
 export interface Block {
   configId: string;
-  /** Date ISO de début (incluse). */
+  /** Jour ISO de début (heure locale) : libellé, et borne au jour faute d'instant. */
   start: string;
-  /** Date ISO de début du bloc suivant, ou `null` si bloc en cours. */
+  /** Jour ISO de début du bloc suivant, ou `null` si bloc en cours. */
   end: string | null;
+  /** Instant ISO de début (inclus), quand le changement de plan en porte un. */
+  startAt?: string;
+  /** Instant ISO de début du bloc suivant (exclu). Absent si en cours ou sans instant. */
+  endAt?: string;
 }
