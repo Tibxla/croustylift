@@ -6,6 +6,7 @@ import type { Session } from './fixtures';
 import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
 import { writeMakingRoom } from './cache-eviction';
+import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -929,7 +930,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
 // L'exécution en cours est sauvée en localStorage et restaurée au montage.
 
 /** Préfixe des clés d'état de capture : `croustylift:capture:<séance>:<date>`. */
-export const STORAGE_PREFIX = 'croustylift:capture:';
+export const STORAGE_PREFIX = CAPTURE_STATE_PREFIX;
 
 function storageKey(sessionId: string, date: string): string {
   return `${STORAGE_PREFIX}${sessionId}:${date}`;
@@ -1062,6 +1063,18 @@ export function capturePersistFailing(): boolean {
   return persistFailing;
 }
 
+/**
+ * Les exos qu'un état de capture porte : ceux de sa disposition (ajoutés ou
+ * remplaçants, absents du template), ceux qui ont du réalisé, et l'exo ouvert.
+ */
+function captureStateExerciseIds(state: CaptureState): string[] {
+  return [
+    ...(state.layout ?? []).map((edit) => edit.exerciseId),
+    ...Object.keys(state.progress),
+    ...(state.activeExerciseId ? [state.activeExerciseId] : []),
+  ];
+}
+
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
   // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
@@ -1080,8 +1093,10 @@ export function persist(state: CaptureState): void {
   // Quota plein : les copies de lecture NON ESSENTIELLES cèdent la place (cf.
   // cache-eviction : jamais celles du chemin d'ouverture de la Capture), puis
   // nouvel essai. Si rien n'y fait, la capture reste en mémoire et le refus est
-  // signalé (bannière), au lieu de l'ancienne dégradation muette.
-  persistFailing = !writeMakingRoom(write);
+  // signalé (bannière), au lieu de l'ancienne dégradation muette. Les exos de
+  // CET état ne cèdent jamais leurs copies : c'est souvent l'ajout d'un exo qui
+  // déclenche l'éviction, avant même que sa disposition soit sur l'appareil.
+  persistFailing = !writeMakingRoom(write, captureStateExerciseIds(state));
 }
 
 export function clearPersisted(session: Session, date: string): void {

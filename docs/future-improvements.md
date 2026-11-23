@@ -111,10 +111,6 @@ perte), finition.
   l'ouverture d'un exo ou un ajout, la copie paraît intacte et l'adoption remonte le
   tableau, brouillon ou exo ajouté perdus. Piste : décider sur l'état courant du
   tableau, pas sur sa copie (`CaptureScreen.tsx`).
-- **Éviction d'un exo ajouté à la séance en cours** (mineure). L'éviction des copies
-  protège les exos des templates, pas un exo ajouté ou remplacé dans la séance en
-  cours : ses copies évincées, la réouverture hors ligne l'ignore. Piste : protéger
-  aussi les exos des dispositions reprenables (`cache-eviction.ts`).
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.
