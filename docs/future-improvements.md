@@ -100,11 +100,12 @@ perte), finition.
 
 ### File d'écritures et stockage plein
 
-- **Ordre des écritures sous repli mémoire** (mineure). La file relue place les
-  écritures persistées avant celles tenues en mémoire. Deux onglets, stockage plein :
-  une ancienne note d'instructions gardée en mémoire par l'un peut partir après la
-  correction persistée par l'autre, et l'écraser. Piste : garder l'ordre des écritures
-  d'une même ligne entre onglets, ou les dater (`outbox.ts`).
+- **Écriture ancienne envoyée après une correction déjà partie** (finition). Stockage
+  plein, deux onglets : une écriture tenue en mémoire par l'un est désormais replacée
+  dans la file à son instant d'enfilement, donc avant une correction de la même ligne
+  encore en file. Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
+  et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
+  se présente : dater les écritures d'une même ligne côté base.
 - **Adoption tardive sous stockage plein** (mineure). L'adoption de l'exécution du jour
   juge le tableau « intact » sur sa copie enregistrée. Si le stockage a refusé
   l'ouverture d'un exo ou un ajout, la copie paraît intacte et l'adoption remonte le

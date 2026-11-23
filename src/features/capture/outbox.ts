@@ -201,7 +201,11 @@ export interface DeleteExecutionOp {
 // saisies de A ne remontent jamais sous B (audit sécurité, constat 1). Une op
 // sans `_owner` vient d'un bundle antérieur : `adoptLegacyOps` l'attribue au
 // compte reconnu au démarrage.
-type Sequenced = { _seq?: number; _owner?: string; _uid?: string };
+//
+// `_at` : instant de l'enfilement (epoch ms, horloge de l'appareil, donc
+// comparable entre ses onglets). Il ne sert qu'à replacer dans la file les
+// écritures tenues en mémoire quand le stockage est plein (cf. `readQueue`).
+type Sequenced = { _seq?: number; _owner?: string; _uid?: string; _at?: number };
 
 export type OutboxOp = (
   | UpsertExecutionOp
@@ -350,10 +354,42 @@ export function readQueue(): OutboxOp[] {
   const gap = activeVolatile();
   if (gap === null) return persisted;
   const present = new Set(persisted.map(opKey));
-  return [
-    ...persisted.filter((op) => !gap.removals.has(opKey(op))),
-    ...gap.adds.filter((op) => !present.has(opKey(op))),
-  ];
+  return mergeByEnqueueTime(
+    persisted.filter((op) => !gap.removals.has(opKey(op))),
+    gap.adds.filter((op) => !present.has(opKey(op))),
+  );
+}
+
+/**
+ * Replace les écritures tenues en mémoire (`adds`) dans la file persistée, à
+ * leur instant d'enfilement (`_at`). Avant, elles partaient toutes APRÈS la file
+ * persistée : stockage plein, deux onglets, l'un garde en mémoire une note
+ * d'instructions, l'autre persiste ensuite sa correction ; le premier envoyait
+ * la correction puis l'ancienne note, qui gagnait en base.
+ *
+ * Fusion stable : l'ordre de chaque liste est conservé, une écriture en mémoire
+ * passe avant la première écriture persistée STRICTEMENT plus récente qu'elle
+ * (à instant égal, la persistée d'abord). Une op sans `_at` (bundle antérieur)
+ * ne déplace rien : persistée, elle est tenue pour plus ancienne que tout ; en
+ * mémoire, elle reste en fin de file, comme avant. Pur.
+ */
+export function mergeByEnqueueTime(persisted: OutboxOp[], adds: OutboxOp[]): OutboxOp[] {
+  if (adds.length === 0) return persisted;
+  const out: OutboxOp[] = [];
+  let next = 0;
+  for (const op of persisted) {
+    const at = op._at;
+    if (at !== undefined) {
+      while (next < adds.length) {
+        const addAt = adds[next]!._at;
+        if (addAt === undefined || addAt >= at) break;
+        out.push(adds[next]!);
+        next += 1;
+      }
+    }
+    out.push(op);
+  }
+  return [...out, ...adds.slice(next)];
 }
 
 /** Met le blob fautif de côté (clé de quarantaine) et prévient une fois. */
@@ -922,7 +958,13 @@ export function enqueueTracked(op: OutboxOp): string {
   // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
   const owner = loadLocalAccount()?.userId;
   const uid = newUid();
-  queue.push({ ...op, _seq: seqCounter, _uid: uid, ...(owner ? { _owner: owner } : {}) });
+  queue.push({
+    ...op,
+    _seq: seqCounter,
+    _uid: uid,
+    _at: Date.now(),
+    ...(owner ? { _owner: owner } : {}),
+  });
   writeQueue(queue);
   return uid;
 }
@@ -947,11 +989,11 @@ export function refusedAmong(uids: readonly string[]): number {
 
 // --- Flush --------------------------------------------------------------------
 
-/** Retire les champs internes `_seq`, `_uid` et `_owner` (mécanique de file) : la
+/** Retire les champs internes `_seq`, `_uid`, `_owner` et `_at` (mécanique de file) : la
  *  couche sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique →
  *  préserve le type narrowé. */
-function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner' | '_uid'> {
-  const { _seq: _ignored, _owner: _alsoIgnored, _uid: _ignoredToo, ...rest } = op;
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner' | '_uid' | '_at'> {
+  const { _seq: _ignored, _owner: _alsoIgnored, _uid: _ignoredToo, _at: _ignoredAsWell, ...rest } = op;
   return rest;
 }
 
