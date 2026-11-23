@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Stepper } from '../capture/Stepper';
 import { MetricRow } from '../capture/MetricRow';
 import { formatWeight } from '../capture/format';
-import { newId } from '../capture/state';
+import { clearPersistedExecution, newId } from '../capture/state';
 import { loadExecutionForEdit, type EditableExecution } from '../capture/data';
 import {
   addSet,
@@ -277,7 +277,18 @@ export function PastSessionEditor({
       // signaler honnêtement (« partira au retour du réseau ») plutôt que de
       // fermer en laissant croire à une synchro immédiate. Sinon, fermeture
       // optimiste : l'éditeur se referme sur l'exécution supprimée.
-      const result = await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      //
+      // Si la Capture tient encore CETTE exécution en cours (séance du jour non
+      // clôturée), on efface son état local comme le fait l'Annulation : il prime
+      // à la réhydratation, et la série suivante recréerait l'exécution supprimée.
+      clearPersistedExecution(executionId);
+      // Les exos de la séance sont connus ici : l'op les porte pour que leurs
+      // copies locales d'historique soient relues à l'acquittement.
+      const exerciseIds =
+        load.phase === 'ready' ? load.exercises.map((ex) => ex.exerciseId) : undefined;
+      const result = await flushOps([
+        { type: 'deleteExecution', id: executionId, ...(exerciseIds ? { exerciseIds } : {}) },
+      ]);
       if (result.remaining > 0) {
         setDel({ phase: 'error', message: 'Pas de réseau pour le moment.' });
         return;

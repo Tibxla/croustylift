@@ -65,6 +65,7 @@ import {
 import {
   enqueue,
   pendingCount,
+  quarantineCount,
   purgeByExecution,
   readQueue,
 } from './outbox';
@@ -73,6 +74,7 @@ import {
 // `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces. On
 // passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
 import { flushOutbox } from './sync';
+import { syncBannerLabel, type SyncTone } from './sync-label';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
@@ -191,7 +193,9 @@ export function CaptureScreen() {
             return { ...ex, rows, perExerciseNote };
           }),
         ),
-        loadTodayExecution(seanceVersionId, date),
+        // L'exécution déjà tenue par l'appareil se relit par son id : elle a pu
+        // rester sur une version antérieure de la séance (plan retouché en cours).
+        loadTodayExecution(seanceVersionId, date, restored?.executionId ?? null),
         loadLastSeanceExecution(versionIds, date).then(loadPreviousDatedNotes),
       ]);
 
@@ -618,7 +622,8 @@ function CaptureBoard({
   // L'exécution existe-t-elle DÉJÀ (en base ou enfilée) ? Tranché une fois au
   // montage depuis l'état restauré, la réhydratation et l'outbox, puis vrai dès
   // qu'on l'enfile ici. C'est ELLE qui garde le chrono (ADR 0011) : une exécution
-  // née n'est jamais réancrée, donc sa ré-affirmation repose le même started_at.
+  // née n'est jamais réancrée, et sa ré-affirmation ne modifie pas la ligne en base
+  // (insertion seule, cf. upsertExecution) : started_at reste celui du lancement.
   const [startedAtMount] = useState(() =>
     isExecutionStarted(state, init.executionInBase ? init.executionId : null, readQueue()),
   );
@@ -724,7 +729,8 @@ function CaptureBoard({
       // cache d'ANCIEN format (série sans id) : rien à enfiler (le delete par id ne
       // saurait quoi viser), on annule en local seulement (rare, assumé).
       if (lastId) {
-        enqueueAndFlush({ type: 'deleteSet', id: lastId });
+        // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
+        enqueueAndFlush({ type: 'deleteSet', id: lastId, exerciseIds: [exerciseId] });
       }
     },
     [],
@@ -813,7 +819,12 @@ function CaptureBoard({
     // flushés) : purgeByExecution ne défait rien en base. On enfile un
     // deleteExecution (idempotent, cascade DB) pour ne pas laisser d'orpheline que
     // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
-    enqueueAndFlush({ type: 'deleteExecution', id: state.executionId });
+    enqueueAndFlush({
+      type: 'deleteExecution',
+      id: state.executionId,
+      // Les exos déjà saisis : leurs copies locales seront relues à l'acquittement.
+      exerciseIds: Object.keys(stateRef.current.progress),
+    });
     executionEnqueuedRef.current = false;
     executionStartedRef.current = false;
     // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution
@@ -949,31 +960,30 @@ function CaptureBoard({
  *   - vide      → « Synchronisé » (vert, discret) ;
  *   - en ligne  → « N en attente » (info, sync en cours) ;
  *   - hors ligne→ « Hors ligne » (warn).
+ * Et par la QUARANTAINE (ops rejetées par la base) : tant qu'elle n'est pas vide,
+ * jamais « Synchronisé », une ligne ambre le dit (cf. `syncBannerLabel`). Elle
+ * est lue ici, pas par les appelants : la bannière la signale partout où elle
+ * s'affiche.
  * Couleur ET texte portent toujours l'info (jamais la couleur seule). « Synchronisé »
  * reste rendu pour stabiliser la mise en page et confirmer la reprise après coup.
  */
 export function SyncBanner({ status, pending }: { status: SyncStatus; pending: number }) {
-  const variants: Record<
-    SyncStatus,
-    { dot: string; text: string; label: string }
-  > = {
-    synced: {
-      dot: 'bg-good shadow-[0_0_8px_var(--color-good)]',
-      text: 'text-ink-muted',
-      label: 'Synchronisé. Tout est en base.',
-    },
-    pending: {
-      dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]',
-      text: 'text-ink-muted',
-      label: `Synchronisation… ${pending} en attente.`,
-    },
-    offline: {
-      dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]',
-      text: 'text-warn',
-      label: `Hors ligne. ${pending} en attente, gardé sur l’appareil.`,
-    },
+  const quarantined = useSyncExternalStore(
+    subscribeSync,
+    () => quarantineCount(),
+    () => 0,
+  );
+  const { tone, label } = syncBannerLabel({
+    pending,
+    quarantined,
+    online: status !== 'offline',
+  });
+  const tones: Record<SyncTone, { dot: string; text: string }> = {
+    good: { dot: 'bg-good shadow-[0_0_8px_var(--color-good)]', text: 'text-ink-muted' },
+    info: { dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]', text: 'text-ink-muted' },
+    warn: { dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]', text: 'text-warn' },
   };
-  const v = variants[status];
+  const v = { ...tones[tone], label };
 
   return (
     <div

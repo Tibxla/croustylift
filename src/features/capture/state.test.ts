@@ -18,6 +18,7 @@ import {
   loadPersisted,
   persist,
   clearPersisted,
+  clearPersistedExecution,
   nextSetOrder,
   pendingSide,
   previousDayIso,
@@ -27,6 +28,7 @@ import {
   type HydratedProgress,
 } from './state';
 import { upperA } from './fixtures';
+import { saveLocalAccount } from '../../lib/local-account';
 
 // --- Fabriques ---------------------------------------------------------------
 
@@ -802,6 +804,49 @@ describe('clearCaptureState', () => {
   });
 });
 
+// --- clearPersistedExecution (suppression d'une exécution depuis le journal) ---
+//
+// Le bug : supprimer depuis le journal l'exécution que la Capture tient encore en
+// cours laissait son état local. Il prime à la réhydratation, donc la série
+// suivante recréait l'exécution supprimée sous le même id.
+
+describe('clearPersistedExecution', () => {
+  const DATE = '2026-06-18';
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('efface l’état de capture qui porte cette exécution : la séance repart vierge', () => {
+    persist(mkState({ executionId: 'exec-supprimee' }));
+    expect(loadPersisted(upperA, DATE)?.executionId).toBe('exec-supprimee');
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+  });
+
+  it('laisse l’état d’une AUTRE exécution, et tout ce qui n’est pas un état de capture', () => {
+    persist(mkState({ executionId: 'exec-en-cours' }));
+    persist(mkState({ sessionId: 'autre-seance', executionId: 'exec-supprimee' }));
+    localStorage.setItem('croustylift:outbox', '[{"type":"deleteExecution","id":"exec-supprimee"}]');
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)?.executionId).toBe('exec-en-cours');
+    expect(localStorage.getItem(`croustylift:capture:autre-seance:${DATE}`)).toBeNull();
+    expect(localStorage.getItem('croustylift:outbox')).not.toBeNull();
+  });
+
+  it('un état illisible ne bloque pas le balayage', () => {
+    localStorage.setItem('croustylift:capture:cassee:2026-06-17', '{pas du json');
+    persist(mkState({ executionId: 'exec-supprimee' }));
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:cassee:2026-06-17')).not.toBeNull();
+  });
+});
+
 // --- persist / loadPersisted (survie au background + clôture transitoire) -----
 //
 // ADR 0009 : une séance EN COURS se restaure (offline : on ne perd pas les séries
@@ -869,6 +914,32 @@ describe('persist / loadPersisted', () => {
 
   it('rien de persisté → null (capture vierge au premier montage)', () => {
     expect(loadPersisted(upperA, DATE)).toBeNull();
+  });
+  it('l’état persisté par un autre compte n’est pas restauré', () => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    const state = captureReducer(mkState(), {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    persist(state);
+    expect(loadPersisted(upperA, DATE)).not.toBeNull();
+
+    // Un autre compte reconnu sur l'appareil : la capture de A n'est pas la sienne.
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+
+    // Le compte d'origine revenu la retrouve.
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    expect(loadPersisted(upperA, DATE)?.progress['bench-press']?.sets).toHaveLength(1);
+  });
+
+  it('un état persisté sans compte (ancien format) reste restauré', () => {
+    localStorage.setItem(`croustylift:capture:${upperA.id}:${DATE}`, JSON.stringify(mkState()));
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+
+    expect(loadPersisted(upperA, DATE)).not.toBeNull();
   });
 });
 

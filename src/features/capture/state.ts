@@ -3,6 +3,7 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
+import { loadLocalAccount } from '../../lib/local-account';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -250,7 +251,8 @@ export function isExecutionStarted(
  * lancement a expiré (plus d'1 h) ET que l'exécution n'est pas encore née : un
  * lancement oublié, jamais suivi d'un set. Une séance entamée garde son
  * lancement, quel que soit son âge et quel que soit le nombre de remontages —
- * l'`upsertExecution` de ré-affirmation repose alors le MÊME `started_at`.
+ * sa ré-affirmation ne touche plus la ligne (`upsertExecution` est une insertion
+ * seule), donc le `started_at` en base reste celui du lancement.
  */
 export function shouldReanchorLaunch(
   state: CaptureState,
@@ -623,8 +625,15 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
   try {
     const raw = localStorage.getItem(storageKey(session.id, date));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CaptureState>;
+    const parsed = JSON.parse(raw) as Partial<CaptureState> & { ownerId?: unknown };
     if (parsed.sessionId !== session.id || parsed.date !== date) return null;
+    // État persisté par un AUTRE compte (audit sécurité, constat 1) : ce n'est pas
+    // la capture de celui que l'appareil reconnaît. Il n'est pas restauré, et pas
+    // effacé non plus (son compte le retrouvera). Sans `ownerId` (ancien format),
+    // l'état est tenu pour celui du compte reconnu.
+    if (typeof parsed.ownerId === 'string' && parsed.ownerId !== loadLocalAccount()?.userId) {
+      return null;
+    }
     return {
       sessionId: session.id,
       // CONSERVE l'executionId persisté : un log offline et son upsert d'exécution
@@ -658,7 +667,13 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(storageKey(state.sessionId, state.date), JSON.stringify(state));
+    // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
+    // capture d'un compte sous un autre (cf. `loadPersisted`).
+    const ownerId = loadLocalAccount()?.userId;
+    localStorage.setItem(
+      storageKey(state.sessionId, state.date),
+      JSON.stringify(ownerId ? { ...state, ownerId } : state),
+    );
   } catch {
     // Quota plein / mode privé : on dégrade silencieusement, la capture reste en mémoire.
   }
@@ -668,6 +683,35 @@ export function clearPersisted(session: Session, date: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(storageKey(session.id, date));
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
+ * Efface l'état de capture persisté qui porte CETTE exécution, quelle que soit sa
+ * séance ou sa date. Sert à la suppression d'une exécution depuis le journal :
+ * la Capture n'est alors pas montée pour nettoyer son propre état, et un état
+ * restauré prime sur la base à la réhydratation (`mergeProgress`), donc la série
+ * suivante recréerait l'exécution supprimée sous le même id. Même geste que la
+ * Clôture et l'Annulation (`clearPersisted`), ciblé par id d'exécution.
+ */
+export function clearPersistedExecution(executionId: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    // Collecte avant suppression : retirer en itérant décale les index.
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<CaptureState> | null;
+        if (parsed?.executionId === executionId) keys.push(key);
+      } catch {
+        // État illisible : pas le nôtre à juger ici, `loadPersisted` l'ignore déjà.
+      }
+    }
+    for (const key of keys) localStorage.removeItem(key);
   } catch {
     /* no-op */
   }

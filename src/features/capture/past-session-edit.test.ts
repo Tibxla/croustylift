@@ -19,7 +19,7 @@ import {
   type EditableSet,
   type EditableSetRow,
 } from './past-session-edit';
-import type { InsertSetOp, DeleteSetOp } from './outbox';
+import type { InsertSetOp } from './outbox';
 import type { Side } from '../../domain/types';
 
 // --- Fabriques ---------------------------------------------------------------
@@ -291,7 +291,7 @@ describe('diffSetsToOps', () => {
     const edited = removeSet(original(), 's2'); // reste s1 (order 1), s3 (passe order 2)
     const ops = diffSetsToOps(original(), edited, ctx);
     // s2 supprimée ; s3 voit son order changer (3 -> 2) donc ré-affirmée.
-    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 's2' });
+    expect(ops).toContainEqual(expect.objectContaining({ type: 'deleteSet', id: 's2' }));
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 's3',
@@ -323,7 +323,7 @@ describe('diffSetsToOps', () => {
     edited = addSet(edited, mkSet('new-1', 70, 12, 1));
     const ops = diffSetsToOps(original(), edited, ctx);
 
-    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 's3' });
+    expect(ops).toContainEqual(expect.objectContaining({ type: 'deleteSet', id: 's3' }));
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 's1',
@@ -464,8 +464,8 @@ describe('diffSetsToOps (unilatéral)', () => {
     // L'UI supprime la série 1 G+D : restent l2/r2 qui passent de l'order 2 à 1.
     const edited = removeSet(removeSet(uni(), 'l1'), 'r1');
     const ops = diffSetsToOps(uni(), edited, ctx);
-    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 'l1' });
-    expect(ops).toContainEqual<DeleteSetOp>({ type: 'deleteSet', id: 'r1' });
+    expect(ops).toContainEqual(expect.objectContaining({ type: 'deleteSet', id: 'l1' }));
+    expect(ops).toContainEqual(expect.objectContaining({ type: 'deleteSet', id: 'r1' }));
     // l2/r2 ré-affirmés au nouvel order 1, chacun avec SON côté préservé.
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',

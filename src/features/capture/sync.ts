@@ -10,6 +10,7 @@
 import {
   deleteExecutionById,
   deleteSetById,
+  exercisesHoldingRows,
   refreshExerciseRows,
   updateExecution,
   upsertExecution,
@@ -21,7 +22,16 @@ import {
   upsertExerciseNoteRow,
   deleteExerciseNoteByExercise,
 } from '../notes/data';
-import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
+import {
+  enqueue,
+  flush,
+  readQuarantine,
+  readQueue,
+  type FlushResult,
+  type OutboxOp,
+  type SyncFns,
+} from './outbox';
+import { sessionUserId } from '../../lib/session-identity';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
 // depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
@@ -31,8 +41,37 @@ import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFn
 // ni clôture ni métriques de fin, et la date d'une exécution ne change jamais
 // après coup (elle arrive avec ses premières séries, qui déclenchent la relecture).
 const touchedExercises = new Set<string>();
-// Une suppression ne porte que l'id de sa ligne : on relit toutes les copies.
-let touchedAll = false;
+// Les séries acquittées PAR CETTE SESSION : de quel exo et de quelle exécution.
+// Une suppression ne porte que l'id de sa ligne ; on retrouve ses exos dans les
+// copies qui la CONTIENNENT (`exercisesHoldingRows`), mais une série tout juste
+// acquittée peut ne pas y être encore (sa relecture est en vol, et sa réponse
+// la ramènerait après coup) : cette mémoire désigne alors son exo. Bornée à la
+// session (quelques dizaines d'ids), jamais persistée.
+const ackedSets = new Map<string, { exerciseId: string; executionId: string }>();
+
+/**
+ * Une suppression vient d'être acquittée : marque à relire les seuls exos
+ * concernés (copies qui contiennent la ligne, plus la mémoire de session). Les
+ * autres copies ne sont ni relues ni marquées d'un seuil : la réponse tardive
+ * d'un exo sans rapport reste valide.
+ */
+function touchDeleted(
+  deleted: { setIds: string[]; executionIds: string[] },
+  named: readonly string[] = [],
+): void {
+  // Les exos que l'émetteur de l'op a nommés (`exerciseIds`) : la ligne peut
+  // n'être dans aucune copie ni dans la mémoire de session (série faite
+  // ailleurs, copie en retard) alors qu'une revalidation partie avant la
+  // suppression la ramènerait. Le seuil posé par la relecture l'en empêche.
+  for (const exerciseId of named) touchedExercises.add(exerciseId);
+  for (const exerciseId of exercisesHoldingRows(deleted)) touchedExercises.add(exerciseId);
+  for (const [setId, acked] of ackedSets) {
+    if (deleted.setIds.includes(setId) || deleted.executionIds.includes(acked.executionId)) {
+      touchedExercises.add(acked.exerciseId);
+      ackedSets.delete(setId);
+    }
+  }
+}
 
 /**
  * Relit en fond les copies d'historique que la passe vient de rendre périmées
@@ -40,9 +79,8 @@ let touchedAll = false;
  * retour de cette lecture, et un échec réseau laisse simplement la copie.
  */
 function refreshTouchedHistory(): void {
-  if (!touchedAll && touchedExercises.size === 0) return;
-  const target = touchedAll ? 'all' : [...touchedExercises];
-  touchedAll = false;
+  if (touchedExercises.size === 0) return;
+  const target = [...touchedExercises];
   touchedExercises.clear();
   void refreshExerciseRows(target);
 }
@@ -74,10 +112,11 @@ export const syncFns: SyncFns = {
       side: op.side,
     });
     touchedExercises.add(op.exerciseId);
+    ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
   },
   deleteSet: async (op) => {
     await deleteSetById(op.id);
-    touchedAll = true;
+    touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
   },
   updateExecution: (op) =>
     updateExecution({
@@ -101,7 +140,7 @@ export const syncFns: SyncFns = {
   deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
-    touchedAll = true;
+    touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
   },
 };
 
@@ -123,12 +162,20 @@ export const syncFns: SyncFns = {
  */
 export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
   const ourIds = new Set(ops.map((op) => op.id));
+  const quarantinedBefore = readQuarantine().length;
   for (const op of ops) enqueue(op);
   // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
   // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
   const { flushed } = await flushOutbox();
   // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
-  const remaining = readQueue().filter((op) => ourIds.has(op.id)).length;
+  // Une de nos ops REJETÉE par la base a quitté la file pour la quarantaine :
+  // elle n'est pas en base non plus, ce n'est pas un succès. Elle compte donc
+  // (la quarantaine ne fait que s'allonger : les entrées d'après notre enfilement).
+  const remaining =
+    readQueue().filter((op) => ourIds.has(op.id)).length +
+    readQuarantine()
+      .slice(quarantinedBefore)
+      .filter((q) => ourIds.has(q.op.id)).length;
   return { remaining, flushed };
 }
 
@@ -146,5 +193,8 @@ export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
  * acquittées sont relues (`refreshTouchedHistory`).
  */
 export function flushOutbox() {
-  return flush(syncFns).finally(refreshTouchedHistory);
+  // Le lecteur de session ferme la porte aux écritures sans compte vérifié : sans
+  // session, une requête part sous la clé publique et un `update`/`delete` est
+  // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
+  return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
 }

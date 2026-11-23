@@ -289,6 +289,25 @@ describe('ordre des réponses et garde de compte', () => {
     await expect(cachedRead('k', async () => 'récent')).resolves.toBe('récent');
   });
 
+  it('registre de revalidation après un changement de compte SANS purge : rien ne s’écrit sous la clé de l’un ni de l’autre', async () => {
+    // user-1 a lu « k » : sa revalidation est au registre. Un autre compte est
+    // reconnu sans purge (l'ancien a des écritures en attente) : rejouer le
+    // registre lit sous la session du nouveau, donc SES données.
+    let reponse = 'données de user-1';
+    await cachedRead('k', async () => reponse);
+    await settle();
+    saveLocalAccount({ userId: 'user-2', email: null });
+    reponse = 'données de user-2';
+
+    revalidateReadCache();
+    await settle();
+
+    expect(localStorage.getItem('croustylift:readcache:user-1:k')).toBe(
+      JSON.stringify({ v: 1, value: 'données de user-1' }),
+    );
+    expect(localStorage.getItem('croustylift:readcache:user-2:k')).toBeNull();
+  });
+
   it('compte changé pendant la lecture : la réponse ne s’écrit nulle part', async () => {
     const lente = deferred<string>();
     const relecture = refreshRead('k', () => lente.promise);

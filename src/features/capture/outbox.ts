@@ -16,6 +16,8 @@
 //     avant l'`upsertExecution` de son exécution (dépendance FK exécution→séries).
 //   - ARRÊTÉE à la première op qui échoue (probable coupure réseau) : on GARDE
 //     cette op et toutes les suivantes pour les rejouer au prochain flush.
+//   - Sauf REJET DÉFINITIF de la base (contrainte, RLS) : l'op fautive part en
+//     QUARANTAINE (conservée à part, jamais rejouée seule) et la file continue.
 //
 // Cette couche est de la DURABILITÉ sous l'UI : le flux de log reste piloté par
 // le reducer local (UI immédiate), l'outbox synchronise en fond.
@@ -24,6 +26,7 @@
 // Chaque op est un FAIT à rejouer, portant l'`id` de la ligne concernée (UUID
 // client) pour rester idempotente. Discriminées par `type`.
 import type { Side } from '../../domain/types';
+import { loadLocalAccount } from '../../lib/local-account';
 
 /** Crée (ou ré-affirme) l'exécution du jour. Idempotent via upsert par id. */
 export interface UpsertExecutionOp {
@@ -62,6 +65,15 @@ export interface InsertSetOp {
 export interface DeleteSetOp {
   type: 'deleteSet';
   id: string;
+  /**
+   * Exos dont l'historique est touché par cette suppression, quand l'émetteur
+   * les connaît (annulation en Capture, éditeur de séance passée). L'op ne porte
+   * sinon que l'id de sa ligne : ce champ dit quelles copies locales relire à
+   * l'acquittement (cf. sync.ts), même si la ligne n'y figure pas encore. Jamais
+   * envoyé en base (le delete ne prend que l'id). Absent sur une op ancienne :
+   * seules les copies qui contiennent la ligne sont alors relues.
+   */
+  exerciseIds?: string[];
 }
 
 /** Pose les métriques de fin (BPM, durée) sur l'exécution. Update par id. */
@@ -143,6 +155,15 @@ export interface DeleteExerciseNoteOp {
 export interface DeleteExecutionOp {
   type: 'deleteExecution';
   id: string;
+  /**
+   * Exos dont l'historique est touché par cette suppression, quand l'émetteur
+   * les connaît (annulation en Capture, éditeur de séance passée). L'op ne porte
+   * sinon que l'id de sa ligne : ce champ dit quelles copies locales relire à
+   * l'acquittement (cf. sync.ts), même si la ligne n'y figure pas encore. Jamais
+   * envoyé en base (le delete ne prend que l'id). Absent sur une op ancienne :
+   * seules les copies qui contiennent la ligne sont alors relues.
+   */
+  exerciseIds?: string[];
 }
 
 // `_seq` : identité interne UNIQUE d'une op en file, stampée par `enqueue`. Sert à
@@ -150,7 +171,14 @@ export interface DeleteExecutionOp {
 // n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés sur
 // le même id). Optionnel : une op héritée d'un bundle antérieur n'en a pas (repli
 // sur (type,id) le temps qu'elle soit drainée).
-type Sequenced = { _seq?: number };
+//
+// `_owner` : id du COMPTE reconnu sur l'appareil à l'enfilement (marqueur
+// local-account), posé par `enqueue`. La file est commune à l'appareil ; sous
+// une session vérifiée, le flush ne rejoue que les ops du compte connecté : les
+// saisies de A ne remontent jamais sous B (audit sécurité, constat 1). Une op
+// sans `_owner` vient d'un bundle antérieur : `adoptLegacyOps` l'attribue au
+// compte reconnu au démarrage.
+type Sequenced = { _seq?: number; _owner?: string };
 
 export type OutboxOp = (
   | UpsertExecutionOp
@@ -181,6 +209,14 @@ export interface SyncFns {
   deleteExerciseNote: (op: DeleteExerciseNoteOp) => Promise<void>;
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
 }
+
+/**
+ * Lecteur de session passé à `flush` : l'id du compte CONNECTÉ, vérifié à
+ * l'instant (jeton présent et non expiré, ou rafraîchi avec succès). Toute autre
+ * valeur (`null` : pas de session ; `undefined` : aucun lecteur posé) veut dire
+ * « personne de vérifiable » et arrête la passe.
+ */
+export type SessionReader = () => Promise<string | null | undefined>;
 
 /** État renvoyé par `flush` : combien d'ops restent en file après la passe. */
 export interface FlushResult {
@@ -237,11 +273,16 @@ function quarantineBlob(raw: string, reason: string): void {
   );
 }
 
-/** Écrit la file (dégrade en `console.warn` si quota plein / mode privé). */
-function writeQueue(queue: OutboxOp[]): void {
-  if (typeof localStorage === 'undefined') return;
+/**
+ * Écrit la file (dégrade en `console.warn` si quota plein / mode privé). Rend
+ * faux si l'écriture a été refusée : le flush s'en sert pour ne pas reprendre
+ * une file dont il n'a pas pu retirer l'op traitée.
+ */
+function writeQueue(queue: OutboxOp[]): boolean {
+  if (typeof localStorage === 'undefined') return false;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+    return true;
   } catch {
     // Quota plein / mode privé : la file en mémoire reste correcte pour la
     // session courante, on dégrade sans bloquer la capture. On le SIGNALE
@@ -251,7 +292,34 @@ function writeQueue(queue: OutboxOp[]): void {
       '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
         'la file reste en mémoire pour la session mais ne survivra pas à un reload.',
     );
+    return false;
   }
+}
+
+/**
+ * Les ops en file du compte local reconnu (marqueur), pour ce qui AFFICHE des
+ * écritures en attente (Référence fusionnée, ADR 0014) : les séries d'un autre
+ * compte restées en file n'entrent pas dans les repères de celui-ci. Une op
+ * sans compte (bundle antérieur) est tenue pour celle du compte reconnu.
+ */
+export function readOwnQueue(): OutboxOp[] {
+  const owner = loadLocalAccount()?.userId;
+  return readQueue().filter((op) => op._owner === undefined || op._owner === owner);
+}
+
+/**
+ * Migration douce : attribue au compte local reconnu les ops enfilées par un
+ * bundle antérieur (sans `_owner`). À appeler AU DÉMARRAGE, avant que la couche
+ * d'auth ne réécrive le marqueur : faite au flush, elle donnerait les ops de A
+ * au compte B arrivé entre-temps. Sans marqueur, rien n'est attribué : ces ops
+ * restent en file et ne partent sous aucun compte (on ne devine pas).
+ */
+export function adoptLegacyOps(): void {
+  const owner = loadLocalAccount()?.userId;
+  if (!owner) return;
+  const queue = readQueue();
+  if (queue.every((op) => op._owner !== undefined)) return;
+  writeQueue(queue.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op)));
 }
 
 /** Longueur courante de la file (pilote l'indicateur de sync). */
@@ -259,17 +327,188 @@ export function pendingCount(): number {
   return readQueue().length;
 }
 
+// --- Quarantaine des ops rejetées par la base ---------------------------------
+//
+// Une op que la base refuse DÉFINITIVEMENT (violation de contrainte, RLS) échoue
+// à l'identique à chaque passe. Laissée en tête, elle bloquait toute la file
+// derrière elle, sans autre issue que la purge totale (audit sync, constat 6).
+// Elle est mise de côté ici : conservée telle quelle avec la raison du rejet,
+// JAMAIS rejouée automatiquement, comptée à part (`quarantineCount`) pour que
+// l'UI puisse la signaler. Elle ne part qu'avec `clearQueue` (Déconnexion
+// forcée, forçage de purge) : les gardes d'auth la comptent via `heldCount`.
+
+const QUARANTINE_KEY = `${STORAGE_KEY}:quarantine`;
+
+/** Une op mise de côté : l'op telle qu'elle était en file, et pourquoi. */
+export interface QuarantinedOp {
+  op: OutboxOp;
+  /** Raison lisible : le rejet de la base, ou l'op en quarantaine dont elle dépend. */
+  reason: string;
+  /** Horodatage ISO de la mise en quarantaine. */
+  at: string;
+  /**
+   * Vrai pour un `upsertExecution` refusé puis ré-affirmé AVEC SUCCÈS depuis :
+   * l'exécution existe en base, ses ops filles ne sont plus retenues.
+   */
+  superseded?: boolean;
+}
+
+/** Les ops en quarantaine (vide si rien / illisible). */
+export function readQuarantine(): QuarantinedOp[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(QUARANTINE_KEY) ?? '[]');
+    return Array.isArray(parsed) ? (parsed as QuarantinedOp[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Nombre d'ops en quarantaine : le compteur à exposer à l'utilisateur. */
+export function quarantineCount(): number {
+  return readQuarantine().length;
+}
+
+/**
+ * Tout ce que l'appareil retient d'écritures non remontées : la file ET la
+ * quarantaine. C'est ce que protègent les gardes d'auth (ADR 0012 : rien ne se
+ * perd sans geste explicite). L'indicateur de synchro, lui, reste sur
+ * `pendingCount` : une op en quarantaine n'est plus « en attente d'envoi ».
+ */
+export function heldCount(): number {
+  return pendingCount() + quarantineCount();
+}
+
+/**
+ * Vrai si l'erreur est un REJET DÉFINITIF de la base : rejouer l'op telle quelle
+ * échouera à l'identique. Les fonctions de sync relancent l'objet d'erreur de
+ * PostgREST, sans statut HTTP ; seul son `code` (SQLSTATE) est fiable. Liste
+ * BLANCHE, tout le reste est tenu pour transitoire (arrêt, nouvel essai) :
+ *   - classe 22 (donnée invalide) et classe 23 (violation de contrainte : clé
+ *     étrangère, unicité, check, not null) ;
+ *   - 42501 (refus RLS / privilège insuffisant).
+ * Hors liste donc : erreur réseau (code vide ou absent), 401 jeton (PGRST3xx),
+ * 5xx, 408, 429, annulation, conflit de sérialisation, erreur locale.
+ */
+export function isPermanentRejection(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && (/^2[23][0-9A-Z]{3}$/.test(code) || code === '42501');
+}
+
+/** L'id de l'exécution dont l'op a BESOIN en base (FK ou update par id), sinon null. */
+function requiredExecution(op: OutboxOp): string | null {
+  switch (op.type) {
+    case 'insertSet':
+    case 'upsertDatedNote':
+      return op.executionId;
+    case 'updateExecution':
+      return op.id;
+    default:
+      return null;
+  }
+}
+
+/**
+ * L'op dépend-elle d'une exécution dont la création est en quarantaine ? Elle
+ * échouerait alors à son tour (clé étrangère), ou pire « réussirait » à vide
+ * (clôture d'une exécution absente) : elle rejoint la quarantaine sans être
+ * envoyée.
+ */
+function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean {
+  const executionId = requiredExecution(op);
+  if (executionId === null) return false;
+  return quarantine.some(
+    (q) => q.op.type === 'upsertExecution' && q.op.id === executionId && !q.superseded,
+  );
+}
+
+/** Position de l'op `op` ELLE-MÊME dans `queue` (cf. `removeFromQueue`), -1 si absente. */
+function indexInQueue(queue: OutboxOp[], op: OutboxOp): number {
+  if (op._seq !== undefined) {
+    return queue.findIndex((o) => o._seq === op._seq && o.type === op.type && o.id === op.id);
+  }
+  return queue[0]?.type === op.type && queue[0]?.id === op.id ? 0 : -1;
+}
+
+/** L'op est-elle encore dans la file persistée ? */
+function isQueued(op: OutboxOp): boolean {
+  return indexInQueue(readQueue(), op) !== -1;
+}
+
+/**
+ * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_seq`
+ * (unique, stampé à l'enqueue), type et id à l'appui. Une op héritée sans `_seq`
+ * (file d'un bundle antérieur) ne se reconnaît qu'en TÊTE par (type, id), le
+ * temps qu'elle soit drainée.
+ *
+ * Rend `'removed'`, `'absent'` (elle n'y était plus : purgée entre-temps), ou
+ * `'unwritable'` : le retrait n'a pas pu être persisté (quota plein), l'op est
+ * donc TOUJOURS dans la file persistée. L'appelant doit alors arrêter sa passe,
+ * sinon il la relirait et la rejouerait sans fin.
+ */
+function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
+  const current = readQueue();
+  const at = indexInQueue(current, op);
+  if (at === -1) return 'absent';
+  current.splice(at, 1);
+  return writeQueue(current) ? 'removed' : 'unwritable';
+}
+
+/**
+ * Déplace `op` de la file vers la quarantaine. La quarantaine est écrite AVANT
+ * le retrait de la file : si une des deux écritures échoue (quota plein), l'op
+ * reste en file et l'appelant arrête la passe (conserver plutôt que perdre).
+ * Rend faux dans ce cas.
+ */
+function moveToQuarantine(op: OutboxOp, reason: string): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  // L'op a pu être retirée de la file pendant sa requête (« Annuler la séance »,
+  // `purgeByExecution`) : l'utilisateur l'a abandonnée, la réponse tardive de la
+  // base ne la remet pas en quarantaine. Rien à déplacer, la passe continue.
+  if (!isQueued(op)) return true;
+  try {
+    const entry: QuarantinedOp = { op, reason, at: new Date().toISOString() };
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...readQuarantine(), entry]));
+  } catch {
+    return false;
+  }
+  return removeFromQueue(op) !== 'unwritable';
+}
+
+/**
+ * Une exécution vient d'être (ré-)affirmée AVEC SUCCÈS : un ancien refus de sa
+ * création ne retient plus ses ops filles (cf. `blockedByQuarantine`). L'op
+ * refusée, elle, reste conservée en quarantaine.
+ */
+function liftExecutionBlock(executionId: string): void {
+  const quarantine = readQuarantine();
+  const concerns = (q: QuarantinedOp) =>
+    q.op.type === 'upsertExecution' && q.op.id === executionId && !q.superseded;
+  if (!quarantine.some(concerns)) return;
+  try {
+    localStorage.setItem(
+      QUARANTINE_KEY,
+      JSON.stringify(quarantine.map((q) => (concerns(q) ? { ...q, superseded: true } : q))),
+    );
+  } catch {
+    // Quota plein : le blocage reste, les ops filles iront en quarantaine au lieu
+    // de passer. Rien n'est perdu.
+  }
+}
+
 /**
  * Vide entièrement la file (sert à la déconnexion / aux tests). Supprime AUSSI le
  * blob de QUARANTAINE (`CORRUPT_KEY`) : à la déconnexion sur un appareil partagé,
  * il contient du réalisé en clair (issue F11) et ne doit pas survivre au départ de
- * l'utilisateur entre deux comptes — le retirer ferme cette fuite (BUG M5).
+ * l'utilisateur entre deux comptes — le retirer ferme cette fuite (BUG M5). Même
+ * raison pour les ops en quarantaine (`QUARANTINE_KEY`).
  */
 export function clearQueue(): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(CORRUPT_KEY);
+    localStorage.removeItem(QUARANTINE_KEY);
   } catch {
     /* no-op */
   }
@@ -299,26 +538,56 @@ export function clearQueue(): void {
  */
 export function purgeByExecution(executionId: string): void {
   const queue = readQueue();
-  const kept = queue.filter((op) => {
-    switch (op.type) {
-      case 'upsertExecution':
-      case 'updateExecution':
-        return op.id !== executionId;
-      case 'insertSet':
-      case 'upsertDatedNote':
-        return op.executionId !== executionId;
-      default:
-        // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
-        // la ligne (pas d'executionId rattachable) et sont idempotents par id
-        // (sans effet si la ligne n'existe pas) → on les laisse.
-        // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
-        // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
-        // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
-        // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
-        return true;
-    }
-  });
+  const kept = queue.filter((op) => !belongsToExecution(op, executionId));
   if (kept.length !== queue.length) writeQueue(kept);
+  purgeQuarantineByExecution(executionId);
+}
+
+/**
+ * L'op crée-t-elle ou ré-affirme-t-elle l'exécution `executionId` ou une de ses
+ * lignes filles ? (Critère de `purgeByExecution`, cf. son en-tête.)
+ */
+function belongsToExecution(op: OutboxOp, executionId: string): boolean {
+  switch (op.type) {
+    case 'upsertExecution':
+    case 'updateExecution':
+      return op.id === executionId;
+    case 'insertSet':
+    case 'upsertDatedNote':
+      return op.executionId === executionId;
+    default:
+      // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
+      // la ligne (pas d'executionId rattachable) et sont idempotents par id
+      // (sans effet si la ligne n'existe pas) → on les laisse.
+      // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
+      // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
+      // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
+      // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
+      return false;
+  }
+}
+
+/**
+ * Pendant de `purgeByExecution` côté QUARANTAINE : les ops refusées de
+ * l'exécution abandonnée n'ont plus d'objet, et les garder bloquerait la
+ * Déconnexion (`heldCount`) pour une séance que l'utilisateur a lui-même
+ * annulée. Seulement celles du compte reconnu (ou sans compte) : la quarantaine
+ * d'un autre compte ne se purge pas d'ici.
+ */
+function purgeQuarantineByExecution(executionId: string): void {
+  const owner = loadLocalAccount()?.userId;
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter(
+    (q) =>
+      !belongsToExecution(q.op, executionId) ||
+      (q.op._owner !== undefined && q.op._owner !== owner),
+  );
+  if (kept.length === quarantine.length) return;
+  try {
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify(kept));
+  } catch {
+    // Quota plein : les entrées restent, rien n'est perdu ni faussé.
+  }
 }
 
 // --- Enfilement ---------------------------------------------------------------
@@ -336,17 +605,20 @@ export function enqueue(op: OutboxOp): number {
   // rester unique après un reload (le compteur en mémoire repart à 0, pas la file).
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
   seqCounter = Math.max(seqCounter, maxSeq) + 1;
-  queue.push({ ...op, _seq: seqCounter });
+  // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
+  const owner = loadLocalAccount()?.userId;
+  queue.push({ ...op, _seq: seqCounter, ...(owner ? { _owner: owner } : {}) });
   writeQueue(queue);
   return queue.length;
 }
 
 // --- Flush --------------------------------------------------------------------
 
-/** Retire le champ interne `_seq` (mécanique de file) : la couche sync reçoit l'op
- *  DOMAINE, jamais l'identité de queue. Générique → préserve le type narrowé. */
-function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq'> {
-  const { _seq: _ignored, ...rest } = op;
+/** Retire les champs internes `_seq` et `_owner` (mécanique de file) : la couche
+ *  sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique → préserve le
+ *  type narrowé. */
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner'> {
+  const { _seq: _ignored, _owner: _alsoIgnored, ...rest } = op;
   return rest;
 }
 
@@ -395,21 +667,28 @@ let inFlight: Promise<FlushResult> | null = null;
  *
  * Traite DANS L'ORDRE (cf. `runFlushOnce`) : chaque op réussie est retirée et le
  * progrès persisté, on S'ARRÊTE à la première qui échoue (offline) en gardant l'op
- * + la suite. On NE saute jamais une op : l'ordre exécution→séries (et insert→delete)
- * est une dépendance, pas une préférence. Une op enfilée en cours de flush est
- * rattrapée (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
+ * + la suite. L'ordre exécution→séries (et insert→delete) est une dépendance, pas
+ * une préférence : une op n'est jamais dépassée par une op du MÊME compte qui la
+ * suit. Deux exceptions, qui ne cassent pas cette dépendance : une op REJETÉE
+ * définitivement par la base quitte la file pour la quarantaine (ses ops filles
+ * avec elle), et les ops d'un AUTRE compte que celui de `who` sont laissées en
+ * file sans être jouées. Une op enfilée en cours de flush est rattrapée
+ * (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
+ *
+ * `who` : lecteur de la session vérifiée. Fourni, rien ne part sans compte
+ * connecté. Absent (tests de la file seule), aucun contrôle de session ni de compte.
  *
  * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
  */
-export function flush(fns: SyncFns): Promise<FlushResult> {
+export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   if (inFlight) return inFlight;
-  inFlight = runFlush(fns).finally(() => {
+  inFlight = runFlush(fns, who).finally(() => {
     inFlight = null;
   });
   return inFlight;
 }
 
-async function runFlush(fns: SyncFns): Promise<FlushResult> {
+async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   // RÉ-ARMEMENT (issue F12) : une op enfilée DANS la fenêtre étroite entre la fin
   // d'une passe et le `finally` qui remet `inFlight` à null n'est pas traitée par
   // cette passe ; un `flush` concurrent reçoit alors ce résultat périmé
@@ -423,11 +702,13 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
   let budget = readQueue().length + 1;
 
   while (true) {
-    const { flushed, drained } = await runFlushOnce(fns);
+    const { flushed, drained } = await runFlushOnce(fns, who);
     totalFlushed += flushed;
     const remaining = readQueue().length;
-    // Arrêt sur échec (pas drainé), file vide, ou garde-fou de convergence atteint.
-    if (!drained || remaining === 0 || --budget <= 0) {
+    // Arrêt sur échec (pas drainé), file vide, passe sans progrès (il ne reste
+    // que des ops d'un autre compte, qu'une nouvelle passe ne jouerait pas
+    // davantage), ou garde-fou de convergence atteint.
+    if (!drained || remaining === 0 || flushed === 0 || --budget <= 0) {
       return { remaining, flushed: totalFlushed };
     }
     // Drainé mais la file s'est re-remplie (enqueue concurrent en fin de passe) :
@@ -437,23 +718,73 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
 
 /**
  * UNE passe : traite la file DANS L'ORDRE, retire chaque op réussie et persiste le
- * progrès, S'ARRÊTE à la première op qui échoue (offline) en gardant l'op + le reste.
- * `drained` = true si la file a été entièrement vidée, false si on s'est arrêté sur
- * un échec (la distinction pilote le ré-armement, cf. `runFlush`).
+ * progrès, S'ARRÊTE à la première op qui échoue (offline, session absente) en
+ * gardant l'op + le reste ; une op rejetée définitivement part en quarantaine et
+ * la passe continue. `drained` = true s'il ne reste plus rien à jouer pour ce
+ * compte, false si on s'est arrêté sur un échec (la distinction pilote le
+ * ré-armement, cf. `runFlush`).
  */
-async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: boolean }> {
+async function runFlushOnce(
+  fns: SyncFns,
+  who?: SessionReader,
+): Promise<{ flushed: number; drained: boolean }> {
   let queue = readQueue();
   let flushed = 0;
 
   while (queue.length > 0) {
-    const op = queue[0];
-    // `queue.length > 0` garantit la tête : on prouve l'index au compilateur sans
-    // changer le flux (la file persistée n'est jamais vidée sous nos pieds ici,
-    // c'est `current` plus bas qui peut l'être).
+    // SESSION VÉRIFIÉE avant chaque op (audit sync, constat 4). Sans session,
+    // supabase-js envoie la requête sous la clé publique : la RLS fait alors
+    // toucher 0 ligne à un `update` ou un `delete` SANS erreur, et l'op serait
+    // retirée comme acquittée (clôture, annulation, suppression perdues). On
+    // s'arrête donc comme hors ligne : rien n'est tenté, tout reste en file.
+    // Sans lecteur (tests de la file seule), rien n'est vérifié.
+    let user: string | undefined;
+    if (who) {
+      const connected = await who();
+      if (typeof connected !== 'string') return { flushed, drained: false };
+      user = connected;
+      // La file a pu bouger pendant la lecture de la session.
+      queue = readQueue();
+    }
+    // L'op à jouer : la première de la file ; sous une session vérifiée, la
+    // première du compte CONNECTÉ. Celles d'un autre compte sont sautées et
+    // restent en file, à leur place : elles ne partent que sous leur compte.
+    // L'ordre FIFO vaut entre les ops d'un même compte (dépendance
+    // exécution→séries), il n'y a aucune dépendance d'un compte à l'autre.
+    const op = who ? queue.find((candidate) => candidate._owner === user) : queue[0];
+    // Plus rien à jouer pour ce compte : la passe est finie.
     if (!op) break;
+    // Op fille d'une exécution dont la création est en quarantaine : elle la
+    // rejoint sans être envoyée, et la file continue.
+    if (blockedByQuarantine(op, readQuarantine())) {
+      const moved = moveToQuarantine(
+        op,
+        `dépend de l'exécution ${requiredExecution(op) ?? ''}, en quarantaine`,
+      );
+      if (!moved) return { flushed, drained: false };
+      queue = readQueue();
+      continue;
+    }
     try {
       await runOp(op, fns);
     } catch (err) {
+      // REJET DÉFINITIF de la base (cf. `isPermanentRejection`) : rejouer l'op
+      // échouerait à l'identique et bloquerait tout ce qui suit. Elle part en
+      // quarantaine et la file continue. Sous une session vérifiée, on REVÉRIFIE
+      // d'abord la session : si elle vient de tomber, la requête a pu partir sous
+      // la clé publique et le refus (RLS) ne dit rien de l'op, qui reste en file.
+      if (isPermanentRejection(err) && (!who || (await who()) === user)) {
+        const code = (err as { code: string }).code;
+        const message = (err as { message?: unknown }).message;
+        if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`)) {
+          console.error(
+            `[outbox] « ${op.type} » (id ${op.id}) rejetée par la base, mise en quarantaine :`,
+            err,
+          );
+          queue = readQueue();
+          continue;
+        }
+      }
       // Échec (réseau coupé le plus souvent) : on garde l'op et tout le reste,
       // dans l'ordre. La file persistée n'a pas bougé pour cette op → rejouée
       // telle quelle au prochain flush. Pas drainé → pas de ré-armement.
@@ -468,30 +799,27 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
       );
       return { flushed, drained: false };
     }
+    // La session a pu tomber PENDANT la requête (jeton expiré, refresh en échec) :
+    // elle est alors peut-être partie sous la clé publique et a « réussi » à vide.
+    // Dans le doute l'op n'est pas acquittée : elle reste en file, et la rejouer
+    // est sans risque (idempotente par id). Même arrêt que hors ligne.
+    if (who && (await who()) !== user) return { flushed, drained: false };
     // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
-    // retire l'op qu'on vient de traiter. Mais la tête a pu CHANGER pendant
-    // l'`await` : un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue`
-    // déclenché par une autre exécution peut avoir retiré l'op traitée, voire
-    // toute la file. On ne `shift()` que si la tête est ENCORE l'op traitée
-    // (même type + même id) : sinon un shift aveugle retirerait la MAUVAISE op
-    // (perte d'une op d'une nouvelle exécution). Si la tête a changé, l'op a déjà
-    // été purgée → on ne retire rien et on reprend la boucle sur la file courante.
-    const current = readQueue();
-    const head = current[0];
-    // Identité par `_seq` (unique, stampé à l'enqueue) : on retire la tête SEULEMENT
-    // si c'est encore l'op qu'on vient de traiter. Repli sur (type,id) pour une op
-    // héritée sans `_seq` (file d'un bundle antérieur), le temps qu'elle soit drainée.
-    const sameHead = head
-      ? op._seq !== undefined
-        ? head._seq === op._seq
-        : head.type === op.type && head.id === op.id
-      : false;
-    if (sameHead) {
-      current.shift();
-      writeQueue(current);
-      flushed += 1;
-    }
-    queue = current;
+    // retire l'op qu'on vient de traiter, OÙ QU'ELLE SOIT (des ops d'un autre
+    // compte peuvent la précéder). Mais la file a pu CHANGER pendant l'`await` :
+    // un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue` peut avoir
+    // retiré l'op traitée, voire toute la file. On ne retire que l'op ELLE-MÊME
+    // (cf. `removeFromQueue`) : si elle n'y est plus, elle a déjà été purgée → on
+    // ne retire rien (retirer la tête à l'aveugle perdrait une op d'une nouvelle
+    // exécution) et on reprend la boucle sur la file courante.
+    if (op.type === 'upsertExecution') liftExecutionBlock(op.id);
+    const removal = removeFromQueue(op);
+    // Retrait impossible à persister (quota plein) : l'op, passée en base, est
+    // encore dans la file. On arrête la passe (elle sera rejouée sans effet au
+    // prochain flush) plutôt que de la relire et de la renvoyer sans fin.
+    if (removal === 'unwritable') return { flushed, drained: false };
+    if (removal === 'removed') flushed += 1;
+    queue = readQueue();
   }
 
   return { flushed, drained: true };

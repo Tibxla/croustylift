@@ -11,6 +11,7 @@ import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
+import { signOutRefusalLabel } from './features/capture/sync-label'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
 
@@ -109,7 +110,9 @@ function AuthenticatedApp({
   // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
   // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
   const [signOutIssue, setSignOutIssue] = useState<
-    { kind: 'pending'; pending: number } | { kind: 'error'; message: string } | null
+    | { kind: 'pending'; pending: number; refused: number }
+    | { kind: 'error'; message: string }
+    | null
   >(null)
 
   useEffect(() => {
@@ -246,9 +249,10 @@ function AuthenticatedApp({
                   {signOutIssue.kind === 'pending' ? (
                     <>
                       <p className="text-sm text-ink">
-                        {signOutIssue.pending} saisie{signOutIssue.pending > 1 ? 's' : ''} pas encore
-                        synchronisée{signOutIssue.pending > 1 ? 's' : ''}. Reviens en ligne pour te
-                        déconnecter sans rien perdre.
+                        {signOutRefusalLabel({
+                          held: signOutIssue.pending,
+                          refused: signOutIssue.refused,
+                        })}
                       </p>
                       <div className="flex items-center gap-2.5">
                         <button
@@ -296,7 +300,11 @@ function AuthenticatedApp({
                       await onSignOut()
                     } catch (err) {
                       if (err instanceof PendingWritesError) {
-                        setSignOutIssue({ kind: 'pending', pending: err.pending })
+                        setSignOutIssue({
+                          kind: 'pending',
+                          pending: err.pending,
+                          refused: err.refused,
+                        })
                         return
                       }
                       setSignOutIssue({
