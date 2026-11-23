@@ -28,6 +28,13 @@
 --     seance_versions, prescriptions, executions, performed_sets, dated_notes,
 --     routine_activations, seance_archive_events)
 --
+-- RÉALIGNEMENT (relevé sur la prod le 2026-11-23) : la table `exercise_overrides`
+-- de la prod vient d'une version antérieure de 0007. Ses quatre policies y
+-- portent le suffixe `_own` (mêmes règles), l'index `exercise_overrides_exercise_id_idx`
+-- et le trigger `set_updated_at` y manquent. La section 0 les remet au nom et à
+-- l'état que donne 0007 ; sur une base conforme, elle ne fait rien. Dans le
+-- contrôle préalable, les policies `exercise_overrides_*_own` sont donc admises.
+--
 -- RISQUE : faible. Tables de quelques milliers de lignes, verrous brefs.
 
 begin;
@@ -36,6 +43,33 @@ begin;
 -- relancer) au lieu de geler l'app derrière elle.
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
+
+-- 0. Réalignement de exercise_overrides sur 0007 ------------------------------
+
+do $$
+declare
+  geste text;
+begin
+  foreach geste in array array['select', 'insert', 'update', 'delete'] loop
+    if exists (select 1 from pg_policies where schemaname = 'public'
+                 and tablename = 'exercise_overrides'
+                 and policyname = 'exercise_overrides_' || geste || '_own')
+       and not exists (select 1 from pg_policies where schemaname = 'public'
+                 and tablename = 'exercise_overrides'
+                 and policyname = 'exercise_overrides_' || geste) then
+      execute format('alter policy %I on public.exercise_overrides rename to %I',
+                     'exercise_overrides_' || geste || '_own', 'exercise_overrides_' || geste);
+    end if;
+  end loop;
+end
+$$;
+
+create index if not exists exercise_overrides_exercise_id_idx
+  on public.exercise_overrides (exercise_id);
+
+drop trigger if exists set_updated_at on public.exercise_overrides;
+create trigger set_updated_at before update on public.exercise_overrides
+  for each row execute function public.set_updated_at();
 
 -- 1. Index --------------------------------------------------------------------
 
