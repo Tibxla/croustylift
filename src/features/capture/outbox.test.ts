@@ -1754,6 +1754,8 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
 describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)', () => {
   const at = (id: string, _at?: number): OutboxOp => ({ type: 'deleteSet', id, ...(_at === undefined ? {} : { _at }) });
   const ids = (ops: OutboxOp[]) => ops.map((op) => op.id);
+  /** Op portant son identité d'enfilement (clé de `seenBefore`), avec ou sans instant. */
+  const uid = (id: string, _at?: number): OutboxOp => ({ ...at(id, _at), _uid: id });
 
   it('rien en mémoire : la file persistée telle quelle', () => {
     const persisted = [at('p1', 10), at('p2', 20)];
@@ -1782,7 +1784,7 @@ describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)
     expect(ids(merged)).toEqual(['p1', 'm2', 'm3', 'p4', 'm5']);
   });
 
-  it('ops sans instant (bundle antérieur) : persistée, tenue pour plus ancienne ; en mémoire, laissée en fin', () => {
+  it('ops sans instant, sans mémoire de la file : persistée, tenue pour plus ancienne ; en mémoire, laissée en fin', () => {
     expect(ids(mergeByEnqueueTime([at('vieille'), at('p2', 20)], [at('m1', 10)]))).toEqual(['vieille', 'm1', 'p2']);
     expect(ids(mergeByEnqueueTime([at('p1', 10), at('p2', 20)], [at('sans-instant'), at('m0', 5)]))).toEqual([
       'p1',
@@ -1790,5 +1792,24 @@ describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)
       'sans-instant',
       'm0',
     ]);
+  });
+
+  it('op persistée sans instant : plus ancienne si la file la portait déjà, plus récente si elle est apparue depuis', () => {
+    // `m` est entrée en mémoire quand la file portait `vieille` seulement.
+    const seen = new Map([['m', new Set(['vieille'])]]);
+    const merged = mergeByEnqueueTime([uid('vieille'), uid('apparue-depuis')], [uid('m', 10)], seen);
+    expect(ids(merged)).toEqual(['vieille', 'm', 'apparue-depuis']);
+  });
+
+  it('entre deux ops datées, l’instant décide toujours, même avec la mémoire de la file', () => {
+    const seen = new Map([['m', new Set<string>()]]);
+    expect(ids(mergeByEnqueueTime([uid('p', 5)], [uid('m', 10)], seen))).toEqual(['p', 'm']);
+    expect(ids(mergeByEnqueueTime([uid('p', 20)], [uid('m', 10)], seen))).toEqual(['m', 'p']);
+  });
+
+  it('op en mémoire sans instant (complétée au démarrage) : après ce que la file portait, avant ce qui est apparu depuis', () => {
+    const seen = new Map([['sans-instant', new Set(['p1'])]]);
+    const merged = mergeByEnqueueTime([uid('p1', 10), uid('p2', 20)], [uid('sans-instant')], seen);
+    expect(ids(merged)).toEqual(['p1', 'sans-instant', 'p2']);
   });
 });

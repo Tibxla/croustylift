@@ -149,6 +149,45 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     expect(persistedIds()).toEqual([]);
   });
 
+  it('pendant un déploiement : la correction d’un ANCIEN onglet (sans instant) arrivée après part après', async () => {
+    const a = await openTab(); // onglet à jour
+    const note = (body: string): OutboxOp => ({ type: 'upsertExerciseNote', id: 'bench', body });
+    /** Ce qu'écrit un onglet resté sur l'ancien bundle : ni `_at` ni `_uid`. */
+    const oldTabAppends = (op: OutboxOp, seq: number) => {
+      const queue = JSON.parse(storage.getItem('croustylift:outbox') ?? '[]') as OutboxOp[];
+      storage.store.set('croustylift:outbox', JSON.stringify([...queue, { ...op, _seq: seq }]));
+    };
+
+    // Une écriture de l'ancien onglet est DÉJÀ en file : elle est plus ancienne.
+    oldTabAppends({ type: 'deleteSet', id: 'deja-la' }, 1);
+    // Stockage plein : l'onglet à jour garde sa note en mémoire.
+    storage.full = true;
+    a.enqueue(note('gardée en mémoire'));
+    expect(a.storageFailing()).toBe(true);
+    // La place revient ; l'ancien onglet enregistre ENSUITE sa correction.
+    storage.full = false;
+    oldTabAppends(note('corrigée par l’ancien onglet'), 2);
+
+    const label = (op: OutboxOp) => (op.type === 'upsertExerciseNote' ? op.body : op.id);
+    expect(a.readQueue().map(label)).toEqual([
+      'deja-la',
+      'gardée en mémoire',
+      'corrigée par l’ancien onglet',
+    ]);
+
+    // Elles partent dans cet ordre : la correction, plus récente, est la
+    // dernière écrite. Avant, sans instant, elle passait pour plus ancienne que
+    // tout, partait d'abord, et la note gardée en mémoire l'écrasait.
+    const sent: string[] = [];
+    const fns = {
+      ...recorder().fns,
+      upsertExerciseNote: async (op: { body: string }) => void sent.push(op.body),
+    } as unknown as SyncFns;
+    await a.flush(fns);
+    expect(sent).toEqual(['gardée en mémoire', 'corrigée par l’ancien onglet']);
+    expect(persistedIds()).toEqual([]);
+  });
+
   it('un retrait tenu en mémoire par A ne réécrit pas la file : la série de B reste', async () => {
     const a = await openTab();
     const b = await openTab();

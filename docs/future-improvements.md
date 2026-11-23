@@ -117,7 +117,9 @@ perte), finition.
 - **Écriture ancienne envoyée après une correction déjà partie** (finition). Stockage
   plein, deux onglets : une écriture tenue en mémoire par l'un est désormais replacée
   dans la file à son instant d'enfilement, donc avant une correction de la même ligne
-  encore en file. Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
+  encore en file (y compris celle d'un onglet resté sur un bundle antérieur, qui
+  n'écrit pas d'instant : elle est située par ce que la file portait déjà quand
+  l'écriture est entrée en mémoire). Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
   et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
   se présente : dater les écritures d'une même ligne côté base.
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré

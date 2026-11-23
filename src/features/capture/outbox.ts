@@ -285,7 +285,18 @@ const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
 // rejouer une insertion dont la suppression n'était qu'en mémoire (cf.
 // `removeFromQueue`). `storageFailing` le dit à la bannière. Lié à l'objet
 // `localStorage` qui a refusé (il ne survit pas à son remplacement).
-let volatile: { storage: Storage; adds: OutboxOp[]; removals: Set<string> } | null = null;
+//
+// `seen` : pour chaque op tenue en mémoire, les identités que la file persistée
+// portait quand elle y est entrée. Sert à situer une op persistée SANS instant
+// d'enfilement (écrite par un onglet resté sur un bundle antérieur) : présente
+// alors, elle est plus ancienne ; apparue depuis, elle est plus récente (cf.
+// `mergeByEnqueueTime`).
+interface VolatileGap {
+  adds: OutboxOp[];
+  removals: Set<string>;
+  seen: Map<string, ReadonlySet<string>>;
+}
+let volatile: ({ storage: Storage } & VolatileGap) | null = null;
 
 /** Identité d'une op en file : son UUID d'enfilement, à défaut son contenu. */
 function opKey(op: OutboxOp): string {
@@ -293,7 +304,7 @@ function opKey(op: OutboxOp): string {
 }
 
 /** L'écart tenu en mémoire, s'il est engagé pour le stockage courant. */
-function activeVolatile(): { adds: OutboxOp[]; removals: Set<string> } | null {
+function activeVolatile(): VolatileGap | null {
   if (volatile === null || typeof localStorage === 'undefined') return null;
   return volatile.storage === localStorage ? volatile : null;
 }
@@ -361,6 +372,7 @@ export function readQueue(): OutboxOp[] {
   return mergeByEnqueueTime(
     kept,
     gap.adds.filter((op) => !keptKeys.has(opKey(op))),
+    gap.seen,
   );
 }
 
@@ -373,23 +385,35 @@ export function readQueue(): OutboxOp[] {
  *
  * Fusion stable : l'ordre de chaque liste est conservé, une écriture en mémoire
  * passe avant la première écriture persistée STRICTEMENT plus récente qu'elle
- * (à instant égal, la persistée d'abord). Une op sans `_at` (bundle antérieur)
- * ne déplace rien : persistée, elle est tenue pour plus ancienne que tout ; en
- * mémoire, elle reste en fin de file, comme avant. Pur.
+ * (à instant égal, la persistée d'abord).
+ *
+ * Quand l'une des deux n'a pas d'instant (`_at` absent : op d'un bundle
+ * antérieur), on se rabat sur `seenBefore` : pour chaque op en mémoire, les
+ * identités que la file persistée portait quand elle y est entrée. Une op
+ * persistée qui n'y figure pas est APPARUE DEPUIS, donc plus récente :
+ * l'écriture en mémoire passe avant elle. Pendant un déploiement, un onglet
+ * resté sur l'ancien bundle écrit ses corrections sans instant ; tenues pour
+ * « plus anciennes que tout », elles partaient avant la note gardée en mémoire
+ * par un onglet à jour, qui les écrasait. Sans `seenBefore`, une op sans
+ * instant ne déplace rien (persistée : avant ; en mémoire : en fin). Pur.
  */
-export function mergeByEnqueueTime(persisted: OutboxOp[], adds: OutboxOp[]): OutboxOp[] {
+export function mergeByEnqueueTime(
+  persisted: OutboxOp[],
+  adds: OutboxOp[],
+  seenBefore?: ReadonlyMap<string, ReadonlySet<string>>,
+): OutboxOp[] {
   if (adds.length === 0) return persisted;
+  const goesBefore = (add: OutboxOp, op: OutboxOp): boolean => {
+    if (add._at !== undefined && op._at !== undefined) return add._at < op._at;
+    const seen = seenBefore?.get(opKey(add));
+    return seen !== undefined && !seen.has(opKey(op));
+  };
   const out: OutboxOp[] = [];
   let next = 0;
   for (const op of persisted) {
-    const at = op._at;
-    if (at !== undefined) {
-      while (next < adds.length) {
-        const addAt = adds[next]!._at;
-        if (addAt === undefined || addAt >= at) break;
-        out.push(adds[next]!);
-        next += 1;
-      }
+    while (next < adds.length && goesBefore(adds[next]!, op)) {
+      out.push(adds[next]!);
+      next += 1;
     }
     out.push(op);
   }
@@ -452,12 +476,18 @@ function writeQueue(queue: OutboxOp[]): boolean {
   const persisted = readPersistedQueue();
   const wanted = new Map(queue.map((op) => [opKey(op), JSON.stringify(op)] as const));
   const present = new Map(persisted.map((op) => [opKey(op), JSON.stringify(op)] as const));
+  const adds = queue.filter((op) => present.get(opKey(op)) !== JSON.stringify(op));
+  // Ce que la file persistée portait à l'ENTRÉE en mémoire de chaque op : gardé
+  // d'une écriture refusée à la suivante, posé maintenant pour une op nouvelle.
+  const previous = activeVolatile()?.seen;
+  const presentKeys: ReadonlySet<string> = new Set(present.keys());
   volatile = {
     storage: localStorage,
-    adds: queue.filter((op) => present.get(opKey(op)) !== JSON.stringify(op)),
+    adds,
     removals: new Set(
       [...present.keys()].filter((key) => wanted.get(key) !== present.get(key)),
     ),
+    seen: new Map(adds.map((op) => [opKey(op), previous?.get(opKey(op)) ?? presentKeys] as const)),
   };
   return false;
 }
