@@ -1,13 +1,17 @@
 # CI : garde le code vert sur chaque push / PR. Le projet est déployé sur Vercel,
 # qui exécute `tsc -b && vite build` au déploiement (un typecheck cassé bloque le
-# déploiement) mais NE LANCE PAS les tests — d'où ce workflow : lint + tests +
-# build (qui inclut le typecheck) avant tout merge.
+# déploiement) mais NE LANCE PAS les tests, d'où ce workflow : lint + tests +
+# build (qui inclut le typecheck) + budget de taille du bundle.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+
+# Le workflow ne fait que lire le dépôt : le jeton n'a pas d'autre droit.
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -20,12 +24,17 @@ jobs:
       VITE_SUPABASE_URL: https://dummy.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_dummy_ci_not_a_secret
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Actions épinglées par SHA de commit : un tag se déplace, un SHA non.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # `--max-warnings` est dans le script `lint` (package.json) : un warning de
+      # plus que le niveau connu fait échouer la CI.
       - run: npm run lint
       - run: npm run test:run
       - run: npm run build
+      # Budget gzip par chunk (scripts/bundle-size.mjs).
+      - run: npm run size

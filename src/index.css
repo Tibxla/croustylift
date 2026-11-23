@@ -1,25 +1,21 @@
 @import "tailwindcss";
 
-/* Fonts self-hosted (cf. DESIGN.md — Readout Rule : mono tabulaire pour les chiffres mesurés).
-   Refonte « premium » : Geist (Variable) en titres/corps, Geist Mono pour TOUT chiffre
-   mesuré. Inter / JetBrains Mono restent importés comme repli robuste (PWA offline). */
-@import "@fontsource-variable/geist/index.css";
-@import "@fontsource-variable/geist-mono/index.css";
-@import "@fontsource-variable/inter/index.css";
-@import "@fontsource/jetbrains-mono/400.css";
-@import "@fontsource/jetbrains-mono/500.css";
-@import "@fontsource/jetbrains-mono/700.css";
+/* Polices auto-hébergées (cf. DESIGN.md, Readout Rule : mono tabulaire pour les
+   chiffres mesurés). Geist en titres et corps, Geist Mono pour tout chiffre mesuré,
+   Inter en second de pile. Déclarations dans fonts.css (sous-ensembles latins). */
+@import "./fonts.css";
 
 /*
   Design tokens — « L'instrument de nuit » (DESIGN.md).
   Dark par nécessité : fond mat quasi-noir teinté vers l'accent, contraste élevé.
-  Toutes les valeurs en OKLCH. Contrastes vérifiés WCAG AA (script contrast.mjs,
-  absent du dépôt) :
-    ink/surface 16.3:1 · inkMuted/surface 7.1:1 · white/accent-strong 5.3:1.
+  Toutes les valeurs en OKLCH. Contrastes WCAG mesurés par `npm run contrast`
+  (scripts/contrast.mjs), sur le fond `surface` :
+    ink 17.1:1 · ink-muted 7.3:1 · accent-ink 7.5:1 · good 10.4:1 · warn 10.5:1 ·
+    on-accent sur accent-strong 5.1:1. `ink-faint` (méta discrète) est à 3.7:1,
+    sous le seuil AA de 4.5:1 : à ne pas employer pour un texte porteur d'information.
 */
 @theme {
-  /* Refonte « premium » — fond plus profond, paliers tonals resserrés (OKLCH).
-     Contrastes vérifiés WCAG AA : ink/surface ≥16:1 · ink-muted/surface ≥7:1. */
+  /* Refonte « premium » : fond plus profond, paliers tonals resserrés (OKLCH). */
   --color-bg: oklch(0.145 0.012 286);         /* near-black violet-tinté, plus profond */
   --color-surface: oklch(0.192 0.014 286);    /* panneaux, lignes de série (palier +1) */
   --color-surface-2: oklch(0.238 0.016 286);  /* palier +2 (ligne sélectionnée, hover) */
@@ -48,7 +44,7 @@
   --color-warn: oklch(0.82 0.115 80);         /* sous-objectif / skippé (ambre, pas rouge) + ▼ */
 
   --font-sans: "Geist Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", monospace;
 
   /* Courbes de motion — ease-out exponentielles, JAMAIS de bounce/élastique
      (DESIGN.md, register product). Exposées comme `ease-*` aux utilitaires Tailwind. */
@@ -65,8 +61,14 @@
   pour positionner les barres `fixed` juste au-dessus de la nav.
 */
 :root {
+  /* Encoches du système, lues une seule fois ici : tout le calcul de hauteur
+     passe par ces deux variables (et les tests peuvent les surcharger, Chromium
+     n'ayant pas d'encoche). Nulles hors mode écran d'accueil. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
   --nav-height: 3.5rem; /* = h-14, hauteur d'un onglet */
-  --nav-offset: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+  --nav-offset: calc(var(--nav-height) + var(--safe-bottom));
 
   /* --- Système de motion (durées) --------------------------------------------
      150–250 ms sur l'essentiel (register product) ; le « slow » reste pour les
@@ -132,7 +134,53 @@ body {
      UNIFORMÉMENT tous les écrans (header, login, capture) sous la zone sûre. Nul
      hors standalone / sans encoche (env() = 0). Les éléments `fixed` (nav, barres
      d'action) sont relatifs au viewport et gèrent leur propre safe-area-inset-bottom. */
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--safe-top);
+}
+
+/*
+  Hauteur des écrans : le document ne doit PAS défiler quand le contenu tient.
+
+  `body` porte déjà l'encoche haute en padding. Un écran à `100vh` dessous donnait
+  un document plus haut que la fenêtre (100vh + encoche), donc défilable même
+  vide. Sur iPhone en mode écran d'accueil, un document défilable laisse WebKit
+  le décaler pour dégager un champ à l'ouverture du clavier, état qu'il ne
+  restaure pas toujours : les barres fixes du bas restaient alors décrochées
+  (diagnostic du 22 novembre 2026, cause 1). On retire donc l'encoche de la
+  hauteur minimale, et on mesure en `dvh` (repli `vh` pour les moteurs anciens).
+
+  Règles hors couche : elles priment sur les utilitaires Tailwind du même nom.
+  - `.min-h-screen` : écran entier (login, premier lancement, chargement, shell).
+  - `.min-h-surface` : écran d'onglet, la nav et son encoche basse en moins.
+  - la troisième cible la classe arbitraire `min-h-[calc(100vh-3.5rem)]`, écrite
+    en dur dans les écrans d'onglet avant `.min-h-surface` : même valeur.
+*/
+.min-h-screen {
+  min-height: calc(100vh - var(--safe-top));
+  min-height: calc(100dvh - var(--safe-top));
+}
+.min-h-surface,
+.min-h-\[calc\(100vh-3\.5rem\)\] {
+  min-height: calc(100vh - var(--nav-offset) - var(--safe-top));
+  min-height: calc(100dvh - var(--nav-offset) - var(--safe-top));
+}
+
+/* iOS zoome la page au focus d'un contrôle de formulaire en police < 16 px et ne
+   dézoome pas toujours : zoomée, la page décale ses barres fixes. Les champs de
+   texte sont déjà à 16 px ; les `select` (14 px) y passent, sur iOS seulement
+   (`-webkit-touch-callout` n'existe que là), pour ne rien changer ailleurs. */
+@supports (-webkit-touch-callout: none) {
+  select {
+    font-size: max(1rem, 16px);
+  }
+}
+
+/* Sous une feuille modale (`aria-modal`), le document de fond ne défile pas : au
+   tactile seulement, pour ne pas faire sauter la barre de défilement d'un
+   navigateur de bureau. */
+@media (pointer: coarse) {
+  html:has([aria-modal="true"]) {
+    overflow: hidden;
+  }
 }
 
 /* Scrim de status bar (standalone iOS). Le shell n'a plus de barre haute : sans
@@ -144,7 +192,7 @@ body {
 .safe-top-scrim {
   position: fixed;
   inset: 0 0 auto 0;
-  height: env(safe-area-inset-top, 0px);
+  height: var(--safe-top);
   background-color: var(--color-bg);
   /* Au-dessus de tout, feuilles et modales comprises (z-50) : la status bar doit
      rester lisible quel que soit l'écran ouvert. */
@@ -445,6 +493,12 @@ input:-webkit-autofill:active {
 ::view-transition-new(root) {
   animation-duration: 0.24s;
   animation-timing-function: var(--ease-out-quart);
+}
+
+/* Le calque de transition recouvre la page le temps du fondu : sans ceci il
+   avale les taps, et une transition qui tournerait mal laisserait l'app sourde. */
+::view-transition {
+  pointer-events: none;
 }
 
 /* Motion 150–250 ms ease-out ; instantané si l'utilisateur le demande. */

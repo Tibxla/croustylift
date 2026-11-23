@@ -1,0 +1,46 @@
+#!/usr/bin/env node
+// Contrôle de taille du bundle : `npm run size` (après `npm run build`), ou
+// `node scripts/bundle-size.mjs <dossier de build>`. Lancé par la CI.
+//
+// Mesure le poids gzip de chaque chunk JS et CSS et le confronte à un budget.
+// Échoue (code 1) si un chunk dépasse le sien, si un chunk budgété a disparu ou
+// si un chunk nouveau n'a pas de budget : une dérive ne passe plus inaperçue.
+//
+// Les budgets sont les tailles mesurées à leur dernière révision, plus une marge
+// d'environ 15 %. Les relever est permis, mais c'est un geste délibéré, visible
+// dans le diff.
+
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { gzipSync } from 'node:zlib'
+import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
+
+/** Octets gzip maximum par chunk. */
+const BUDGETS = {
+  // Chemin critique : chargé au lancement, Capture comprise.
+  'index.js': 66_000, // code de l'app
+  'react.js': 64_000, // react, react-dom, scheduler
+  'supabase.js': 58_000,
+  'index.css': 11_000,
+  // À la demande.
+  'AnalysisScreen.js': 19_000, // code de l'Analyse
+  'recharts.js': 113_000, // recharts et ses dépendances, avec l'Analyse seulement
+  'workbox-window.prod.es5.js': 3_000, // enregistrement du service worker
+}
+
+const dist = resolve(process.argv[2] ?? 'dist')
+const assets = join(dist, 'assets')
+const sizes = {}
+for (const file of readdirSync(assets)) {
+  if (!/\.(js|css)$/.test(file)) continue
+  const name = logicalName(file)
+  sizes[name] = (sizes[name] ?? 0) + gzipSync(readFileSync(join(assets, file)), { level: 9 }).length
+}
+
+const { rows, ok } = evaluateBudgets(sizes, BUDGETS)
+const kb = (bytes) => (bytes === null ? '-' : `${(bytes / 1000).toFixed(1)} ko`)
+console.log('chunk'.padEnd(30), 'gzip'.padStart(10), 'budget'.padStart(10), '  état')
+for (const row of rows) {
+  console.log(row.name.padEnd(30), kb(row.size).padStart(10), kb(row.max).padStart(10), ` ${row.status}`)
+}
+process.exit(ok ? 0 : 1)
