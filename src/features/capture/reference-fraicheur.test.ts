@@ -45,11 +45,14 @@ const server = vi.hoisted(() => ({
 
 vi.mock('../../lib/supabase', () => {
   const ok = { data: null, error: null };
+  // `update` et `delete` demandent les lignes touchées (`.select('id')`).
   const eqThen = (run: (value: string) => void) => ({
-    eq: (_column: string, value: string) => {
-      run(value);
-      return Promise.resolve(ok);
-    },
+    eq: (_column: string, value: string) => ({
+      select: () => {
+        run(value);
+        return Promise.resolve({ data: [{ id: value }], error: null });
+      },
+    }),
   });
   const from = (table: string) => {
     if (table === 'executions') {

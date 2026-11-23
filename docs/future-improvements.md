@@ -75,6 +75,7 @@ qui a été fait et des décisions actées.
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
   n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
-  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. La
-  garde lit la file : une clôture sortie de la file sans avoir été appliquée en base ne
-  serait plus vue.
+  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. Une
+  clôture ou une suppression sortie de la file relève les lignes qu'elle a touchées : zéro
+  ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
+  (ADR 0021, amendement du 2026-11-23).

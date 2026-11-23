@@ -1266,6 +1266,20 @@ export async function loadExecutionForEdit(
 
 // --- Écriture idempotente (rejouable par l'outbox) ----------------------------
 //
+// LIGNES TOUCHÉES : `update` et `delete` demandent les lignes qu'ils touchent
+// (`.select('id')`) et en rendent le nombre. PostgREST ne signale pas un `update`
+// ou un `delete` qui ne trouve rien ; avant, on ne pouvait donc pas distinguer
+// une écriture appliquée d'une écriture à vide. Ce que vaut « 0 ligne » :
+//   - une suppression à 0 ligne est un succès idempotent (ligne déjà absente) ;
+//   - une mise à jour d'exécution à 0 ligne est un succès sans effet, tracé. Sous
+//     l'outbox elle ne peut vouloir dire que « cette exécution n'existe pas en
+//     base » : la session est vérifiée avant et après chaque op (ADR 0019, donc
+//     pas de requête sous clé publique), la création précède dans la file (FIFO),
+//     et une création refusée emmène ses ops filles en quarantaine (ADR 0018).
+//     Une exécution absente ne peut pas non plus être reprise à tort : la lecture
+//     de reprise ne la trouvera pas davantage. Elle ne doit donc ni bloquer la
+//     file ni partir en quarantaine.
+//
 // Toutes ces fonctions sont IDEMPOTENTES par `id` (UUID client, cf. ADR 0003) :
 // l'outbox peut les rejouer sans crainte de doublon ni d'effet de bord. Elles
 // sont les `SyncFns` consommées par `flush()` ; le mapping op→fonction se fait
@@ -1341,17 +1355,25 @@ export async function upsertSet(params: {
 
 /**
  * Supprime une série par son id (« annuler »). Idempotent : supprimer une ligne
- * déjà absente ne fait rien et ne lève pas (delete par id ciblé).
+ * déjà absente ne fait rien et ne lève pas (delete par id ciblé). Rend le nombre
+ * de lignes touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès.
  */
-export async function deleteSetById(id: string): Promise<void> {
-  const { error } = await supabase.from('performed_sets').delete().eq('id', id);
+export async function deleteSetById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('performed_sets').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }
 
 /**
  * Pose les métriques de fin (BPM moyen, durée) sur l'exécution, par id. Update
  * idempotent : rejouer pose les mêmes valeurs. Un champ omis (`undefined`)
  * laisse la colonne inchangée plutôt que de l'effacer.
+ *
+ * Rend le nombre de lignes touchées. ZÉRO LIGNE reste un succès, y compris pour
+ * une clôture : cela veut dire que l'exécution n'existe pas en base pour ce
+ * compte (cf. « LIGNES TOUCHÉES »), donc qu'il n'y a rien à clore ni rien que la
+ * reprise puisse adopter. C'est le cas voulu d'une clôture sans série envoyée
+ * (cf. `handleFinish`). Le cas est tracé en console, pas avalé.
  */
 export async function updateExecution(params: {
   id: string;
@@ -1360,17 +1382,30 @@ export async function updateExecution(params: {
   /** Horodatage de clôture (ISO) : matérialise une séance « rangée » (ADR 0009) ;
    *  `loadTodayExecution` filtre dessus pour ne pas réhydrater une exécution close. */
   closedAt?: string | null;
-}): Promise<void> {
+}): Promise<number> {
   const patch: Database['public']['Tables']['executions']['Update'] = {};
   if (params.bpmAvg !== undefined) patch.bpm_avg = params.bpmAvg;
   if (params.durationMin !== undefined) patch.duration_min = params.durationMin;
   if (params.closedAt !== undefined) patch.closed_at = params.closedAt;
 
   // Rien à poser : on évite un update vide (no-op réseau).
-  if (Object.keys(patch).length === 0) return;
+  if (Object.keys(patch).length === 0) return 0;
 
-  const { error } = await supabase.from('executions').update(patch).eq('id', params.id);
+  const { data, error } = await supabase
+    .from('executions')
+    .update(patch)
+    .eq('id', params.id)
+    .select('id');
   if (error) throw error;
+  const touched = data?.length ?? 0;
+  if (touched === 0) {
+    // Voulu, pas avalé : la console dit quelle écriture n'a rien trouvé.
+    console.warn(
+      `[sync] mise à jour de l'exécution ${params.id} sans effet : la ligne n'existe pas en base` +
+        (params.closedAt ? ' (clôture sans objet).' : '.'),
+    );
+  }
+  return touched;
 }
 
 /**
@@ -1380,7 +1415,8 @@ export async function updateExecution(params: {
  * efface les séries et notes datées filles. Idempotent : supprimer une exécution
  * déjà absente ne fait rien et ne lève pas (delete par id ciblé, RLS scopé).
  */
-export async function deleteExecutionById(id: string): Promise<void> {
-  const { error } = await supabase.from('executions').delete().eq('id', id);
+export async function deleteExecutionById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('executions').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }

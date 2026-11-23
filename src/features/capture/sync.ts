@@ -141,13 +141,16 @@ export const syncFns: SyncFns = {
     await deleteSetById(op.id);
     touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
   },
-  updateExecution: (op) =>
-    updateExecution({
+  updateExecution: async (op) => {
+    // Le nombre de lignes touchées n'est pas un critère d'échec (cf. data.ts,
+    // « LIGNES TOUCHÉES ») : 0 = exécution absente de la base, rien à clore.
+    await updateExecution({
       id: op.id,
       bpmAvg: op.bpmAvg,
       durationMin: op.durationMin,
       closedAt: op.closedAt,
-    }),
+    });
+  },
   upsertDatedNote: (op) =>
     upsertDatedNoteRow({
       id: op.id,
@@ -155,7 +158,9 @@ export const syncFns: SyncFns = {
       exerciseId: op.exerciseId,
       body: op.body,
     }),
-  deleteDatedNote: (op) => deleteDatedNoteById(op.id),
+  deleteDatedNote: async (op) => {
+    await deleteDatedNoteById(op.id);
+  },
   // Note d'instructions (issue #52, blind F3) : l'`id` de l'op porte l'`exerciseId`
   // (clé idempotente, 1 note par user+exo). Le corps est déjà normalisé en amont.
   upsertExerciseNote: async (op) => {

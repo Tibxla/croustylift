@@ -170,10 +170,14 @@ export async function upsertDatedNote(params: {
   if (error) throw error;
 }
 
-/** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
-export async function deleteDatedNoteById(id: string): Promise<void> {
-  const { error } = await supabase.from('dated_notes').delete().eq('id', id);
+/**
+ * Supprime une note datée par son id (corps vidé). Idempotent (delete par id).
+ * Rend le nombre de lignes touchées : 0 (note déjà absente) reste un succès.
+ */
+export async function deleteDatedNoteById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('dated_notes').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }
 
 // =====================================================================
@@ -209,10 +213,12 @@ export async function upsertExerciseNoteRow(params: {
  * plus une ligne par exo) : delete par `exercise_id`, idempotent (sans effet si
  * aucune ligne). Consommé par l'outbox (SyncFns).
  */
-export async function deleteExerciseNoteByExercise(exerciseId: string): Promise<void> {
-  const { error } = await supabase
+export async function deleteExerciseNoteByExercise(exerciseId: string): Promise<number> {
+  const { data, error } = await supabase
     .from('exercise_notes')
     .delete()
-    .eq('exercise_id', exerciseId);
+    .eq('exercise_id', exerciseId)
+    .select('exercise_id');
   if (error) throw error;
+  return data?.length ?? 0;
 }

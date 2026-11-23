@@ -23,6 +23,10 @@ La garde sur la file répond à un décalage : Clôture, Annulation et suppressi
 - Séance retouchée pendant l'entraînement : la Capture remontée affiche le template de la nouvelle version pour la fin de la séance, la base la range sous l'ancienne. Écart d'affichage accepté, l'Analyse reste juste.
 - Sans état local (autre appareil, stockage vidé) et plan retouché entre-temps, l'exécution entamée n'est pas retrouvée : la suite ouvre une seconde exécution.
 - Un lancement réancré hors ligne sur une exécution déjà en base n'atteint plus `started_at`. Le réancrage (ADR 0011) ne vise de toute façon qu'une exécution pas encore née.
-- La garde sur la file lit la file : une clôture sortie de la file sans avoir été appliquée en base ne serait plus vue. La file est lue avant et après la lecture réseau, dont la réponse est figée à son départ.
+- La garde sur la file lit la file, avant et après la lecture réseau, dont la réponse est figée à son départ.
 - La suppression d'une exécution depuis le journal efface l'état de capture local qui la porte (`clearPersistedExecution`), comme la Clôture et l'Annulation : cet état prime à la réhydratation, et la série suivante recréait l'exécution supprimée sous le même id.
 - Précise l'ADR 0003 : pour la version, la date et le lancement d'une exécution, la règle est « la première écriture gagne ». Clôture et métriques de fin restent en last-write-wins.
+
+## Amendements du 2026-11-23 (Lot 3)
+
+- **Clôture sortie de la file sans effet.** La limite « une clôture sortie de la file sans avoir été appliquée en base ne serait plus vue » est levée. `update` et `delete` relèvent désormais les lignes qu'ils touchent. Une clôture à zéro ligne ne peut vouloir dire que « l'exécution n'existe pas en base » : la session est vérifiée avant et après chaque op (ADR 0019), la création précède dans la file, et une création refusée emmène ses ops filles en quarantaine (ADR 0018). Une exécution absente ne peut pas être reprise, la garde n'a donc rien à voir. Le cas reste un succès (c'est celui, voulu, d'une clôture sans série envoyée) et il est tracé en console. Une suppression à zéro ligne est un succès idempotent.

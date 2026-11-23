@@ -38,11 +38,14 @@ vi.mock('../../lib/supabase', () => {
         return Promise.resolve({ error: null });
       },
       delete: () => ({
-        eq: () => {
-          if (!server.online) return Promise.resolve(failure);
-          server.note = null;
-          return Promise.resolve({ error: null });
-        },
+        eq: () => ({
+          select: () => {
+            if (!server.online) return Promise.resolve(failure);
+            const touched = server.note === null ? [] : [{ exercise_id: 'exo-1' }];
+            server.note = null;
+            return Promise.resolve({ data: touched, error: null });
+          },
+        }),
       }),
     };
   };
