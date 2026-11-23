@@ -28,3 +28,8 @@ Sur un exo **unilatéral**, ces deux axes sont rétablis **par côté** : chaque
 - La Référence (« dernière fois ») se résout **par (position, côté)** en unilatéral : le repère affiché suit le côté choisi au sélecteur.
 - Le mini-récap de fin d'exo distingue toujours les deux axes (« battues/égalisées » d'un côté, « Record » de l'autre) et résume **par côté** en unilatéral.
 - L'ADR 0005 reste la référence pour le stockage (deux lignes par série, même `set_order`) et pour la convention **côté faible en analyse** — seul son périmètre « pas de comparaison par côté » est amendé ici, et uniquement pour la Capture.
+
+## Amendements du 2026-11-23
+
+- **Record e1RM : toutes les séries, pas seulement la première.** Le texte ci-dessus dit que le meilleur e1RM est pris sur la « 1ʳᵉ série de chaque exécution ». Ce n'est plus la règle : le Record personnel e1RM est pris sur **toutes les séries** de chaque exécution, quel que soit leur rang, et par côté en unilatéral (`src/domain/pr.ts`, GLOSSARY.md, « Record personnel »). Un record est une performance démontrée : une deuxième série meilleure que la première compte. La restriction à la 1ʳᵉ série ne vaut que pour la courbe e1RM de l'Analyse, où elle garantit la comparabilité d'un jour à l'autre (`src/domain/primary-curve.ts`).
+- **« Strict » se lit au centième de kg près.** Les seuils « strictement supérieur » et « strictement égal » de la Référence comparent des e1RM arrondis au centième de kilogramme, y compris entre deux couples poids/reps différents qui donnent le même e1RM : à ce grain, ils sont égalisés, pas battus. La comparaison passe par une seule fonction, `e1rmBeats` (`src/domain/e1rm.ts`).
