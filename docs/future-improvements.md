@@ -190,10 +190,6 @@ perte), finition.
   (migration 0023) est écrite et son appel aussi, derrière `REORDER_SEANCES_RPC`,
   laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
   séance, sans transaction.
-- **Banc SQL non rejoué après les dernières retouches.** Les migrations 0021 et 0024 et
-  l'ordre de déploiement ont été modifiés en fin de lot (`supabase/tests/ORDRE.md`) et
-  vérifiés par lecture seulement. À faire avant toute application :
-  `supabase/tests/banc/lancer.sh`.
 
 ### Réseau
 
