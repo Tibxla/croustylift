@@ -111,6 +111,15 @@ type LoadState =
       session: Session;
       /** Les ids du TEMPLATE seul, référence du diff de déviations (ADR 0002). */
       templateIds: string[];
+      /**
+       * L'id d'exécution posé par ce chargement. Il entre dans la clé du tableau
+       * de capture : un chargement qui adopte une AUTRE exécution (réponse
+       * tardive de la base) doit remonter le tableau, dont l'état est initialisé
+       * une seule fois. Passer par la phase « loading » ne suffit pas : quand
+       * tout se lit sur les copies locales, React regroupe les deux mises à jour
+       * et le tableau resterait monté sur l'id provisoire.
+       */
+      executionId: string;
       seanceVersionId: string;
       /** Contexte d'historique de la séance (scope Référence + repère notes), partagé avec les exos ajoutés à la volée. */
       historyCtx: SeanceHistoryContext;
@@ -344,6 +353,7 @@ export function CaptureScreen() {
         phase: 'ready',
         session,
         templateIds: templateExerciseIds(template),
+        executionId: init.executionId,
         seanceVersionId,
         historyCtx: {
           seanceVersionIds: versionIds,
@@ -529,7 +539,7 @@ export function CaptureScreen() {
 
   return (
     <CaptureBoard
-      key={load.session.id}
+      key={`${load.session.id}:${load.executionId}`}
       session={load.session}
       templateIds={load.templateIds}
       seanceVersionId={load.seanceVersionId}
