@@ -25,4 +25,4 @@ La garde sur la file répond à un décalage : Clôture, Annulation et suppressi
 - Un lancement réancré hors ligne sur une exécution déjà en base n'atteint plus `started_at`. Le réancrage (ADR 0011) ne vise de toute façon qu'une exécution pas encore née.
 - La garde sur la file lit la file : une clôture sortie de la file sans avoir été appliquée en base ne serait plus vue. La file est lue avant et après la lecture réseau, dont la réponse est figée à son départ.
 - La suppression d'une exécution depuis le journal efface l'état de capture local qui la porte (`clearPersistedExecution`), comme la Clôture et l'Annulation : cet état prime à la réhydratation, et la série suivante recréait l'exécution supprimée sous le même id.
-- Précise l'ADR 0003 : pour la ligne d'exécution, la règle est « la première écriture gagne », pas last-write-wins.
+- Précise l'ADR 0003 : pour la version, la date et le lancement d'une exécution, la règle est « la première écriture gagne ». Clôture et métriques de fin restent en last-write-wins.

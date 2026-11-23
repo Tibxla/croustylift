@@ -15,5 +15,5 @@ Le modèle élimine déjà presque tout conflit : templates versionnés (jamais 
 
 - **Rejet définitif.** La file ne s'arrête plus sur une op que la base refuse pour de bon (contrainte, RLS) : l'op part en quarantaine et la file continue (ADR 0018). L'arrêt à la première op en échec reste la règle pour tout le reste.
 - **Compte.** Chaque op porte le compte qui l'a saisie ; le flush ne tente rien sans session vérifiée et ne rejoue que les ops du compte connecté. L'ordre FIFO vaut entre les ops d'un même compte (ADR 0019).
-- **Exécution.** La ligne d'exécution fait exception au last-write-wins : elle est créée en insertion seule et sa réaffirmation ne la réécrit pas (ADR 0021).
+- **Exécution.** La version de séance, la date et le lancement d'une exécution font exception au last-write-wins : la ligne est créée en insertion seule et sa réaffirmation ne les réécrit pas (ADR 0021). Clôture et métriques de fin restent en last-write-wins.
 - **Lectures.** Les lectures d'historique sont paginées au curseur sur `id` (ADR 0022).
