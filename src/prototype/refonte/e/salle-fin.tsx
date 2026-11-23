@@ -84,8 +84,14 @@ function buildRecap(s: SeanceState): Recap {
     count[progress]++;
     // Bilan partagé avec le Sommaire et la Salle (battues, égalées, record).
     const { beaten, matched, record } = exoSummary(s, ex);
-    // kg soulevés : comme le journal, une valeur par série (côté faible en unilatéral).
-    for (const set of logged) kg += set.weightKg * set.reps;
+    // kg soulevés : tout ce qui a été soulevé, donc les DEUX côtés d'une série
+    // unilatérale (décision de l'utilisateur, 23/11) ; une valeur par série sinon.
+    const pairs = s.uni[ex.id];
+    if (pairs && pairs.length > 0) {
+      for (const p of pairs) for (const v of [p.G, p.D]) if (v) kg += v.weightKg * v.reps;
+    } else {
+      for (const set of logged) kg += set.weightKg * set.reps;
+    }
     // Par muscle : une par série (côté faible en unilatéral), pondérée par les reps.
     const w = logged.reduce((n, set) => n + setWeight(set.reps), 0);
     if (w > 0) for (const m of musclesOf(ex.id)) today[m] = (today[m] ?? 0) + w;
