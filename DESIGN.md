@@ -24,14 +24,14 @@ typography:
     lineHeight: 1.05
     letterSpacing: "-0.025em"
   hero-readout:
-    fontFamily: "Geist Mono Variable, JetBrains Mono, ui-monospace, monospace"
+    fontFamily: "Geist Mono Variable, ui-monospace, monospace"
     fontSize: "62px"
     fontWeight: 500
     lineHeight: 1
     letterSpacing: "-0.03em"
     fontFeature: "tabular-nums slashed-zero"
   metric-readout:
-    fontFamily: "Geist Mono Variable, JetBrains Mono, ui-monospace, monospace"
+    fontFamily: "Geist Mono Variable, ui-monospace, monospace"
     fontSize: "52px"
     fontWeight: 500
     fontFeature: "tabular-nums slashed-zero"
@@ -46,7 +46,7 @@ typography:
     fontWeight: 500
     letterSpacing: "0.04em"
   kicker:
-    fontFamily: "Geist Mono Variable, JetBrains Mono, ui-monospace, monospace"
+    fontFamily: "Geist Mono Variable, ui-monospace, monospace"
     fontSize: "10px"
     fontWeight: 600
     letterSpacing: "0.14em"
@@ -149,7 +149,7 @@ Palette **Restrained** : un océan de quasi-noir teinté, traversé par un seul 
 ## 3. Typography
 
 **Sans (texte/UI) :** `Geist Variable` (fallback `Inter Variable`, `system-ui`)
-**Mono (chiffres mesurés) :** `Geist Mono Variable` (fallback `JetBrains Mono`)
+**Mono (chiffres mesurés) :** `Geist Mono Variable` (fallback `ui-monospace`)
 
 **Character :** un sans technique et neutre porte tout (titres, labels, boutons, corps) en une seule famille, plusieurs graisses ; titres en 600 / `-0.025em`. Les **chiffres mesurés** basculent en mono à chasse tabulaire avec **zéro barré** : ils s'alignent en colonne et donnent l'effet « cadran d'instrument ». Échelle en rem **fixe**, jamais de `clamp` fluide.
 
