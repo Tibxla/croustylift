@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
 import { arrivalHash, supabase, supabaseAuthStorageKey } from '../lib/supabase'
-import { arrivalFromHash } from './arrival-link'
+import {
+  arrivalFromHash,
+  clearPasswordSetup,
+  passwordSetupRequired,
+  requirePasswordSetup,
+} from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
 import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
 import { arrivalBlockedBy, recognizeAccount } from './account-switch'
@@ -65,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session: Session
     /** Le lien demandait de définir un mot de passe (récupération, invitation). */
     passwordSetup: boolean
+    /** C'était une invitation : l'obligation sera persistée si l'arrivée est forcée. */
+    invited: boolean
     /** Le compte dont les saisies attendent, et combien. */
     email: string | null
     held: number
@@ -93,7 +100,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearTimeout(timer)
         if (data.session) {
           // Sous la garde d'arrivée : c'est l'événement d'auth qui tranchera.
-          if (arrivalBlockedBy(data.session.user.id) === 0) setSession(data.session)
+          if (arrivalBlockedBy(data.session.user.id) === 0) {
+            // Session restaurée d'un invité qui n'a pas encore de mot de passe :
+            // l'écran de mot de passe d'abord, dès ce premier rendu.
+            if (passwordSetupRequired(data.session.user.id)) setIsPasswordRecovery(true)
+            setSession(data.session)
+          }
         } else if (error && isAuthRetryableFetchError(error) && loadLocalAccount()) {
           // Session présente mais INVÉRIFIABLE (jeton périmé + réseau injoignable) :
           // la Session locale fait foi (ADR 0012). supabase-js garde sa session en
@@ -125,11 +137,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (nextSession?.user) {
         const held = arrivalBlockedBy(nextSession.user.id)
         if (held > 0) {
-          const passwordSetup = event === 'PASSWORD_RECOVERY' || inviteArrivalPending
+          const invited = inviteArrivalPending
+          const passwordSetup = event === 'PASSWORD_RECOVERY' || invited
           inviteArrivalPending = false
           setHeldArrival((current) => ({
             session: nextSession,
             passwordSetup: passwordSetup || (current?.passwordSetup ?? false),
+            invited: invited || (current?.invited ?? false),
             email: loadLocalAccount()?.email ?? null,
             held,
           }))
@@ -159,10 +173,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLocalAccount(account)
         setOfflineRecognized(false)
         setSession(nextSession)
+        // Arrivée par invitation : l'obligation de définir son mot de passe est
+        // ÉCRITE pour ce compte, puis relue à chaque session restaurée. Le
+        // fragment ne se lit qu'une fois : sans cela, recharger l'écran avant
+        // d'avoir enregistré le mot de passe faisait entrer sans mot de passe.
         if (inviteArrivalPending) {
           inviteArrivalPending = false
-          setIsPasswordRecovery(true)
+          requirePasswordSetup(nextSession.user.id)
         }
+        if (passwordSetupRequired(nextSession.user.id)) setIsPasswordRecovery(true)
         setLoading(false)
         return
       }
@@ -227,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     recognizeAccount(account)
     setLocalAccount(account)
     setSession(heldArrival.session)
+    if (heldArrival.invited) requirePasswordSetup(account.userId)
     if (heldArrival.passwordSetup) setIsPasswordRecovery(true)
     setHeldArrival(null)
   }, [heldArrival, forgetLocalData])
@@ -313,8 +333,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       updatePassword: async (password) => {
-        const { error } = await supabase.auth.updateUser({ password })
+        const { data, error } = await supabase.auth.updateUser({ password })
         if (error) throw error
+        // Mot de passe enregistré : l'obligation posée par l'invitation est levée.
+        const userId = data.user?.id ?? session?.user.id
+        if (userId) clearPasswordSetup(userId)
       },
       clearPasswordRecovery: () => {
         setIsPasswordRecovery(false)
