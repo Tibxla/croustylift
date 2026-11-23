@@ -8,18 +8,29 @@
 -- « Routine courante » = celle de l'activation la plus récente du compte, comme
 -- `getCurrentRoutineId` côté client.
 --
--- 1. `routines` : refus du passage de `archived_at` de null à une date quand la
---    routine est la courante. Seule cette TRANSITION est refusée : réécrire une
---    routine déjà archivée (import, upsert) ne déclenche rien.
+-- 1. `routines`, à la modification : refus du passage de `archived_at` de
+--    null à une date quand la routine est la courante. Seule cette TRANSITION
+--    est refusée : réécrire une routine déjà archivée (import, upsert) ne
+--    déclenche rien.
 --
--- 2. `routine_activations` : refus d'une insertion qui laisse pour courante une
+-- 2. `routines`, à la suppression : refus de supprimer la routine courante
+--    quand ses activations, en partant, rendraient courante une routine
+--    archivée. La règle ne vaut que pour une suppression DIRECTE : dans une
+--    cascade (suppression du compte depuis auth.users), rien n'est vérifié,
+--    tout part de toute façon.
+--
+-- 3. `routine_activations`, à l'insertion, à la modification et à la
+--    suppression directe : refus d'une écriture qui laisse pour courante une
 --    routine archivée. La vérification se fait en fin d'INSTRUCTION, sur
---    l'ensemble des lignes insérées : l'import rejoue l'historique complet des
---    activations, dont celles, passées, de routines archivées depuis.
+--    l'état résultant : l'import rejoue l'historique complet des activations
+--    (insertions et réécritures), dont celles, passées, de routines archivées
+--    depuis.
 --
--- Les deux refus sont en 23514 (classe 23, ADR 0018). Le client garde son
--- message (« La routine courante ne s'archive pas... ») : il lit avant d'écrire,
--- le trigger ne répond qu'aux courses et aux appels directs.
+-- COURSES : deux appareils pouvaient archiver et activer la même routine au
+-- même instant, chacun lisant l'état d'avant l'autre. Chaque trigger prend donc
+-- d'abord un verrou consultatif de transaction PAR COMPTE
+-- (`pg_advisory_xact_lock`) : archivage, activation et suppression d'un même
+-- compte passent l'un après l'autre, et le second voit l'écriture du premier.
 --
 -- Rejouable. Aucune donnée modifiée : un compte déjà dans l'état interdit fait
 -- échouer la migration entière.
@@ -39,19 +50,17 @@
 -- autre routine courante s'il voulait vraiment archiver celle-là. Appliquer
 -- ensuite.
 --
--- RISQUE : faible. Les deux triggers ne refusent qu'un état que le client ne
--- produit pas par ces deux écritures.
---
--- CE QUE LA BASE NE COUVRE PAS : la routine courante se DÉRIVE de la dernière
--- activation. Supprimer la routine courante (possible tant qu'elle n'a jamais
--- été exécutée) emporte ses activations, et la précédente redevient courante,
--- même archivée. La base ne peut pas refuser cette suppression sans refuser
--- aussi celle d'un compte (cascade depuis auth.users). Le remède est dans la
--- dérivation côté client : ignorer les activations des routines archivées
--- (`getCurrentRoutineId`). Tant qu'il n'est pas livré, le contrôle préalable
--- ci-dessus peut de nouveau rendre une ligne par ce chemin.
+-- RISQUE : faible. Un seul geste du client peut désormais être refusé :
+-- supprimer la routine courante (jamais exécutée) quand la précédente est
+-- archivée. Le message dit quoi faire (définir d'abord une autre routine
+-- courante) ; l'écran peut le traduire.
 
 begin;
+
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
 
 do $$
 declare
@@ -71,24 +80,70 @@ begin
 end;
 $$;
 
--- 1. La routine courante ne s'archive pas ------------------------------------
+-- Verrou par compte, partagé par tous les triggers de cette règle.
+create or replace function public.lock_current_routine(p_owner uuid)
+returns void
+language sql
+set search_path = ''  -- durcit le search_path (advisor function_search_path_mutable)
+as $$
+  select pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('croustylift.routine_courante:' || p_owner::text, 0)
+  );
+$$;
+
+revoke execute on function public.lock_current_routine(uuid) from public, anon;
+grant execute on function public.lock_current_routine(uuid) to authenticated, service_role;
+
+-- 1. et 2. `routines` : ni archiver la courante, ni la supprimer au profit
+-- d'une archivée -------------------------------------------------------------
 
 create or replace function public.refuse_archive_current_routine()
 returns trigger
 language plpgsql
 set search_path = ''  -- durcit le search_path (advisor function_search_path_mutable)
 as $$
+declare
+  v_courante uuid;
+  v_suivante_archivee boolean;
 begin
-  if old.archived_at is null and new.archived_at is not null and new.id = (
-    select a.routine_id from public.routine_activations a
-    where a.owner_id = new.owner_id
-    order by a.activated_at desc
-    limit 1
-  ) then
-    raise exception 'La routine courante ne s''archive pas. Définis d''abord une autre routine comme courante.'
-      using errcode = '23514', table = tg_table_name, column = 'archived_at';
+  if tg_op = 'UPDATE' then
+    if not (old.archived_at is null and new.archived_at is not null) then
+      return new;
+    end if;
+    perform public.lock_current_routine(new.owner_id);
+    select a.routine_id into v_courante from public.routine_activations a
+      where a.owner_id = new.owner_id
+      order by a.activated_at desc
+      limit 1;
+    if v_courante = new.id then
+      raise exception 'La routine courante ne s''archive pas. Définis d''abord une autre routine comme courante.'
+        using errcode = '23514', table = tg_table_name, column = 'archived_at';
+    end if;
+    return new;
   end if;
-  return new;
+
+  -- DELETE. Dans une cascade (compte supprimé), on ne vérifie rien.
+  if pg_catalog.pg_trigger_depth() > 1 then
+    return old;
+  end if;
+  perform public.lock_current_routine(old.owner_id);
+  select a.routine_id into v_courante from public.routine_activations a
+    where a.owner_id = old.owner_id
+    order by a.activated_at desc
+    limit 1;
+  if v_courante = old.id then
+    select r.archived_at is not null into v_suivante_archivee
+      from public.routine_activations a
+      join public.routines r on r.id = a.routine_id
+      where a.owner_id = old.owner_id and a.routine_id <> old.id
+      order by a.activated_at desc
+      limit 1;
+    if v_suivante_archivee then
+      raise exception 'Supprimer la routine courante rendrait courante une routine archivée. Définis d''abord une autre routine comme courante.'
+        using errcode = '23514', table = tg_table_name;
+    end if;
+  end if;
+  return old;
 end;
 $$;
 
@@ -96,39 +151,60 @@ drop trigger if exists refuse_archive_current_routine on public.routines;
 create trigger refuse_archive_current_routine before update of archived_at on public.routines
   for each row execute function public.refuse_archive_current_routine();
 
--- 2. Une routine archivée ne devient pas courante -----------------------------
+drop trigger if exists refuse_delete_current_routine on public.routines;
+create trigger refuse_delete_current_routine before delete on public.routines
+  for each row execute function public.refuse_archive_current_routine();
 
+-- 3. `routine_activations` : la courante résultante n'est pas archivée --------
+
+-- TG_ARGV[0] : la table de transition à lire (`touched`), commune aux trois
+-- triggers, qui la nomment chacun pour son événement.
 create or replace function public.refuse_activate_archived_routine()
 returns trigger
 language plpgsql
 set search_path = ''  -- durcit le search_path (advisor function_search_path_mutable)
 as $$
+declare
+  v_owner uuid;
 begin
-  -- Pour chaque compte touché par l'instruction : si l'activation la plus
-  -- récente vient d'être insérée et vise une routine archivée, on refuse.
-  if exists (
-    select 1
-    from (select distinct owner_id from inserted) o
-    cross join lateral (
-      select a.id, a.routine_id from public.routine_activations a
-      where a.owner_id = o.owner_id
+  -- Suppression en cascade (routine ou compte supprimé) : la règle est tenue
+  -- par le trigger de `routines`, ou sans objet.
+  if tg_op = 'DELETE' and pg_catalog.pg_trigger_depth() > 1 then
+    return null;
+  end if;
+
+  -- Comptes touchés par l'instruction, dans un ordre fixe (pas d'interblocage).
+  for v_owner in select distinct t.owner_id from touched t order by 1 loop
+    perform public.lock_current_routine(v_owner);
+    if (
+      select r.archived_at is not null
+      from public.routine_activations a
+      join public.routines r on r.id = a.routine_id
+      where a.owner_id = v_owner
       order by a.activated_at desc
       limit 1
-    ) courante
-    join public.routines r on r.id = courante.routine_id
-    where r.archived_at is not null
-      and courante.id in (select id from inserted)
-  ) then
-    raise exception 'Une routine archivée ne peut pas devenir la routine courante. Désarchive-la d''abord.'
-      using errcode = '23514', table = tg_table_name, column = 'routine_id';
-  end if;
+    ) then
+      raise exception 'Une routine archivée ne peut pas être la routine courante. Désarchive-la d''abord.'
+        using errcode = '23514', table = tg_table_name, column = 'routine_id';
+    end if;
+  end loop;
   return null;
 end;
 $$;
 
 drop trigger if exists refuse_activate_archived_routine on public.routine_activations;
 create trigger refuse_activate_archived_routine after insert on public.routine_activations
-  referencing new table as inserted
+  referencing new table as touched
+  for each statement execute function public.refuse_activate_archived_routine();
+
+drop trigger if exists refuse_activate_archived_routine_update on public.routine_activations;
+create trigger refuse_activate_archived_routine_update after update on public.routine_activations
+  referencing new table as touched
+  for each statement execute function public.refuse_activate_archived_routine();
+
+drop trigger if exists refuse_activate_archived_routine_delete on public.routine_activations;
+create trigger refuse_activate_archived_routine_delete after delete on public.routine_activations
+  referencing old table as touched
   for each statement execute function public.refuse_activate_archived_routine();
 
 commit;
