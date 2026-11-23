@@ -175,3 +175,58 @@ describe('reprise après retouche du plan en pleine séance', () => {
     expect(await loadTodayExecution('v2', DATE, 'exec-1')).toBeNull();
   });
 });
+
+// Série annulée dont la suppression attend encore (audit sync, constat 8, variante).
+//
+// L'annulation retire la série de l'état local et enfile un `deleteSet`. Tant
+// qu'il n'est pas acquitté, la base porte encore la série. La fusion garde la
+// liste la plus longue : au remontage (changement d'onglet, reprise) la série
+// annulée revenait à l'écran et faussait le rang de la suivante.
+describe('série annulée dont la suppression attend encore', () => {
+  /** L'état local après l'annulation de la 2ᵉ série : il n'en reste qu'une. */
+  function etatApresAnnulation() {
+    return captureReducer(etatLocal(), { type: 'undo-last-set', exerciseId: EXO });
+  }
+
+  async function reprise() {
+    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+    const fromBase = hydratedState(upperA, today?.progress ?? {}, {}, DATE, today?.executionId);
+    return getProgress(mergeProgress(fromBase, etatApresAnnulation()), EXO);
+  }
+
+  beforeEach(() => {
+    server.performed_sets = [serie('set-1', 1), serie('set-2', 2)];
+  });
+
+  it('la série annulée ne revient pas à l’écran, et le rang suivant est le sien', async () => {
+    enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: [EXO] });
+
+    const progress = await reprise();
+
+    expect(progress.setIds).toEqual(['set-1']);
+    expect(nextSetOrder(progress, undefined)).toBe(2);
+  });
+
+  it('sans état local (stockage vidé), la série annulée ne revient pas non plus', async () => {
+    enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: [EXO] });
+
+    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+
+    expect(today?.progress[EXO]?.setIds).toEqual(['set-1']);
+  });
+
+  it('un exo dont toutes les séries sont annulées disparaît du réalisé relu', async () => {
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    enqueue({ type: 'deleteSet', id: 'set-2' });
+
+    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+
+    expect(today?.progress[EXO]).toBeUndefined();
+  });
+
+  it('sans suppression en attente, le réalisé de la base est repris tel quel', async () => {
+    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+
+    expect(today?.progress[EXO]?.setIds).toEqual(['set-1', 'set-2']);
+  });
+});

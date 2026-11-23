@@ -1025,20 +1025,54 @@ export async function loadTodayExecution(
   // Annulation et suppression effacent l'état local dès le geste, alors que leur
   // écriture attend peut-être encore dans l'outbox. Une exécution que la file
   // clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait déjà
-  // close. On lit la file aux deux bouts de la lecture, car la réponse est figée
+  // close. Une série qu'elle supprime est de même retirée du réalisé relu
+  // (`withoutPendingDeletions`). On lit la file aux deux bouts de la lecture, car la réponse est figée
   // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
   // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
   const pendingBefore = readOwnQueue();
   try {
     const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
     if (today === null) return null;
+    const pendingAfter = readOwnQueue();
     const retired =
       isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
-      isExecutionRetiredInQueue(today.executionId, readOwnQueue());
-    return retired ? null : today;
+      isExecutionRetiredInQueue(today.executionId, pendingAfter);
+    if (retired) return null;
+    // Même décalage pour une SÉRIE annulée : elle a quitté l'état local dès le
+    // geste, son `deleteSet` attend peut-être encore, et la base la porte
+    // toujours. Rendue telle quelle, elle revenait à l'écran au remontage (la
+    // fusion garde la liste la plus longue) et faussait le rang de la suivante.
+    return withoutPendingDeletions(today, [...pendingBefore, ...pendingAfter]);
   } catch {
     return null;
   }
+}
+
+/**
+ * Le réalisé relu en base, moins les séries que la file d'écritures supprime
+ * (`deleteSet` en attente). Un exo qui n'a plus aucune série sort du réalisé.
+ * Pur : l'appelant passe la file lue avant ET après la lecture réseau.
+ */
+export function withoutPendingDeletions(
+  today: TodayExecution,
+  pendingOps: readonly OutboxOp[],
+): TodayExecution {
+  const deleted = new Set(
+    pendingOps.filter((op) => op.type === 'deleteSet').map((op) => op.id),
+  );
+  if (deleted.size === 0) return today;
+  const progress: Record<string, HydratedProgress> = {};
+  for (const [exerciseId, entry] of Object.entries(today.progress)) {
+    const kept = entry.setIds
+      .map((id, index) => ({ id, set: entry.sets[index] }))
+      .filter(
+        (row): row is { id: string; set: PerformedSet } =>
+          row.set !== undefined && !deleted.has(row.id),
+      );
+    if (kept.length === 0) continue;
+    progress[exerciseId] = { sets: kept.map((r) => r.set), setIds: kept.map((r) => r.id) };
+  }
+  return { ...today, progress };
 }
 
 /**
