@@ -18,6 +18,7 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   applyQueuedSets,
+  canAdoptLateExecution,
   reconcileDatedNotes,
   reconcileProgress,
   clearCaptureState,
@@ -1718,6 +1719,46 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
       knownAtDeparture: [],
     });
     expect(next.datedNotes).toBe(state.datedNotes);
+  });
+});
+
+// Adoption tardive d'une exécution trouvée en base : jugée sur l'état COURANT du
+// tableau. Stockage plein, sa copie enregistrée n'a pas suivi et paraissait
+// intacte : l'adoption remontait le tableau en jetant l'exo ouvert ou ajouté.
+describe('canAdoptLateExecution', () => {
+  const board = (): CaptureState => ({ ...initialState(upperA, '2026-11-24'), executionId: 'provisoire' });
+
+  it('tableau intact, rien en file : adoptable', () => {
+    expect(canAdoptLateExecution(board(), 'provisoire', [])).toBe(true);
+  });
+
+  it('exo ouvert en mémoire (jamais enregistré, stockage plein) : pas d’adoption', () => {
+    const current = captureReducer(board(), { type: 'open-exercise', exerciseId: 'bench-press' });
+    expect(canAdoptLateExecution(current, 'provisoire', [])).toBe(false);
+  });
+
+  it('exo ajouté en mémoire : pas d’adoption', () => {
+    const current = captureReducer(board(), {
+      type: 'edit-layout',
+      edit: { kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] },
+    });
+    expect(canAdoptLateExecution(current, 'provisoire', [])).toBe(false);
+  });
+
+  it('série loggée ou création déjà en file sous l’id provisoire : pas d’adoption', () => {
+    const logged = { ...board(), progress: { bench: { sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }], setIds: ['s1'], skipped: false } } };
+    expect(canAdoptLateExecution(logged, 'provisoire', [])).toBe(false);
+    const enFile = [{ type: 'upsertExecution', id: 'provisoire', seanceVersionId: 'v1', performedOn: '2026-11-24' } as const];
+    expect(canAdoptLateExecution(board(), 'provisoire', enFile)).toBe(false);
+    expect(canAdoptLateExecution(null, 'provisoire', enFile)).toBe(false);
+  });
+
+  it('le tableau tient déjà une autre exécution : pas d’adoption', () => {
+    expect(canAdoptLateExecution({ ...board(), executionId: 'autre' }, 'provisoire', [])).toBe(false);
+  });
+
+  it('tableau pas encore monté, rien en file : adoptable', () => {
+    expect(canAdoptLateExecution(null, 'provisoire', [])).toBe(true);
   });
 });
 

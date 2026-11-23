@@ -106,11 +106,6 @@ perte), finition.
   encore en file. Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
   et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
   se présente : dater les écritures d'une même ligne côté base.
-- **Adoption tardive sous stockage plein** (mineure). L'adoption de l'exécution du jour
-  juge le tableau « intact » sur sa copie enregistrée. Si le stockage a refusé
-  l'ouverture d'un exo ou un ajout, la copie paraît intacte et l'adoption remonte le
-  tableau, brouillon ou exo ajouté perdus. Piste : décider sur l'état courant du
-  tableau, pas sur sa copie (`CaptureScreen.tsx`).
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.

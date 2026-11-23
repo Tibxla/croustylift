@@ -318,6 +318,32 @@ export function isPristine(state: CaptureState): boolean {
 }
 
 /**
+ * Peut-on ADOPTER l'exécution du jour que la base vient de rendre, trop tard
+ * pour l'ouverture, à la place de l'exécution provisoire `provisionalExecutionId`
+ * sous laquelle la séance s'est ouverte ? Seulement si rien n'a été fait sous
+ * l'id provisoire : aucune saisie partie (`isExecutionStarted`), et un tableau
+ * intact (`isPristine`).
+ *
+ * `current` : l'état COURANT du tableau monté, pas sa copie enregistrée. Stockage
+ * plein, l'écriture de l'état est refusée : la copie paraissait intacte alors
+ * que l'utilisateur avait ouvert un exo ou en avait ajouté un, et l'adoption
+ * remontait le tableau en jetant ces gestes. `null` : le tableau n'est pas
+ * encore monté, rien n'a donc pu y être fait.
+ */
+export function canAdoptLateExecution(
+  current: CaptureState | null,
+  provisionalExecutionId: string,
+  pendingOps: readonly OutboxOp[],
+): boolean {
+  if (current === null) {
+    return !pendingOps.some((op) => op.type === 'upsertExecution' && op.id === provisionalExecutionId);
+  }
+  if (current.executionId !== provisionalExecutionId) return false;
+  if (isExecutionStarted(current, null, pendingOps)) return false;
+  return isPristine(current);
+}
+
+/**
  * Faut-il RÉANCRER le chrono sur le set qu'on logge (ADR 0011) ? Seulement si le
  * lancement a expiré (plus d'1 h) ET que l'exécution n'est pas encore née : un
  * lancement oublié, jamais suivi d'un set. Une séance entamée garde son
