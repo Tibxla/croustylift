@@ -23,6 +23,52 @@ export function hasPrescriptionChanges(saved: EditorRow[], current: EditorRow[])
   );
 }
 
+/**
+ * Une note d'instructions a-t-elle un brouillon non enregistré ? La note se
+ * sauve À PART des prescriptions (son propre bouton, sans nouvelle version) :
+ * son brouillon ne rend donc pas l'éditeur « modifié » au sens de
+ * `hasPrescriptionChanges`, mais le quitter le perdrait tout autant.
+ *
+ * `saved` : les notes enregistrées, par exercice ('' ou absente = aucune).
+ * `drafts` : les textes en cours de saisie, par exercice (absent = pas touché).
+ * Seuls comptent les exercices encore présents dans la séance (`exerciseIds`) :
+ * le brouillon d'un exo retiré n'est plus affiché nulle part, il ne doit pas
+ * faire demander une confirmation que rien à l'écran n'explique.
+ */
+export function hasNoteDraftChanges(
+  saved: Readonly<Record<string, string>>,
+  drafts: Readonly<Record<string, string>>,
+  exerciseIds: readonly string[],
+): boolean {
+  return exerciseIds.some((id) => {
+    const draft = drafts[id];
+    return draft !== undefined && draft !== (saved[id] ?? '');
+  });
+}
+
+/**
+ * Quitter l'éditeur ferait-il perdre une saisie ? L'UNION des deux : des
+ * prescriptions modifiées, ou le brouillon d'une note. C'est ce que lisent la
+ * garde de sortie et le blocage de rechargement. Le bouton « Enregistrer »,
+ * lui, ne regarde que les prescriptions : une note modifiée seule ne doit pas
+ * créer une version identique de la séance.
+ */
+export function hasUnsavedEdits(editor: {
+  savedRows: EditorRow[];
+  rows: EditorRow[];
+  savedNotes: Readonly<Record<string, string>>;
+  noteDrafts: Readonly<Record<string, string>>;
+}): boolean {
+  return (
+    hasPrescriptionChanges(editor.savedRows, editor.rows) ||
+    hasNoteDraftChanges(
+      editor.savedNotes,
+      editor.noteDrafts,
+      editor.rows.map((row) => row.exerciseId),
+    )
+  );
+}
+
 // --- Garde de sortie ----------------------------------------------------------
 //
 // Un écran qui porte des modifications non enregistrées pose une garde ; toute

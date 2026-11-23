@@ -47,7 +47,12 @@ import {
   rowsToPlannedExercises,
   moveRow,
 } from './prescription-edit';
-import { hasPrescriptionChanges, setLeaveGuard } from './seance-dirty';
+import {
+  hasPrescriptionChanges,
+  hasUnsavedEdits,
+  requestLeave,
+  setLeaveGuard,
+} from './seance-dirty';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets, type CountRange } from '../../domain/set-count';
 import { errorMessage } from '../../lib/error-message';
@@ -250,6 +255,14 @@ export function SeanceEditorView({
   // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même
   // exo (exercise_notes est unique par exo).
   const [notes, setNotes] = useState<Record<string, string>>(initialNotes);
+  // Brouillons des notes, par exo : tenus ICI et non dans le champ, pour que la
+  // garde de sortie et le blocage de rechargement les voient. Un brouillon
+  // survit ainsi au repli de la carte, et deux lignes du même exo partagent le
+  // même texte en cours.
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  // Quitter perdrait-il une saisie ? Prescriptions modifiées OU brouillon de
+  // note. « Enregistrer » reste sur `dirty` seul (cf. seance-dirty).
+  const unsaved = hasUnsavedEdits({ savedRows, rows, savedNotes: notes, noteDrafts });
   // Catalogue local : on y ajoute les exos perso créés à la volée, sans recharger.
   const [catalog, setCatalog] = useState<CatalogueExercise[]>(() =>
     catalogue.map((e) => ({
@@ -287,10 +300,11 @@ export function SeanceEditorView({
     };
   }, []);
 
-  // Garde de sortie (cf. seance-dirty) : tant que l'éditeur est modifié, toute
-  // navigation qui le ferait disparaître passe par la confirmation ci-dessous.
+  // Garde de sortie (cf. seance-dirty) : tant que l'éditeur porte une saisie non
+  // enregistrée (prescriptions ou note), toute navigation qui le ferait
+  // disparaître passe par la confirmation ci-dessous.
   useEffect(() => {
-    if (!dirty) return;
+    if (!unsaved) return;
     setLeaveGuard((proceed) => {
       // La confirmation vit dans l'écran principal : on referme la feuille
       // d'ajout, sinon la demande resterait en attente sans rien afficher.
@@ -298,16 +312,17 @@ export function SeanceEditorView({
       setPendingLeave(() => proceed);
     });
     return () => setLeaveGuard(null);
-  }, [dirty]);
+  }, [unsaved]);
 
-  // Tant que l'éditeur est modifié, aucun rechargement automatique (nouvelle
-  // version en attente) : la saisie ne vit qu'en mémoire. Levé dès qu'il n'est
-  // plus modifié (enregistrement) et au démontage ; `releaseDraft` le lève tout
-  // de suite à l'abandon confirmé (cf. pwa/useReloadBlockWhile).
-  const releaseDraft = useReloadBlockWhile(SEANCE_DRAFT_BLOCK, dirty);
+  // Tant que l'éditeur porte une saisie non enregistrée (prescriptions ou note),
+  // aucun rechargement automatique (nouvelle version en attente) : elle ne vit
+  // qu'en mémoire. Levé dès qu'il n'y en a plus (enregistrement) et au
+  // démontage ; `releaseDraft` le lève tout de suite à l'abandon confirmé (cf.
+  // pwa/useReloadBlockWhile).
+  const releaseDraft = useReloadBlockWhile(SEANCE_DRAFT_BLOCK, unsaved);
 
   function requestBack() {
-    if (dirty) setPendingLeave(() => onBack);
+    if (unsaved) setPendingLeave(() => onBack);
     else onBack();
   }
 
@@ -356,9 +371,10 @@ export function SeanceEditorView({
       setSavedRows(rows);
       setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
       setSave({ busy: false, error: null, done: true });
-      // Laisse la confirmation visible un instant, puis retour.
+      // Laisse la confirmation visible un instant, puis retour. Par la garde de
+      // sortie : s'il reste le brouillon d'une note, elle demande avant de partir.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
-      backTimerRef.current = setTimeout(onBack, 900);
+      backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
     } catch (err) {
       setSave({ busy: false, error: errorMessage(err), done: false });
     }
@@ -408,6 +424,10 @@ export function SeanceEditorView({
                   isFirst={index === 0}
                   isLast={index === rows.length - 1}
                   note={notes[row.exerciseId] ?? ''}
+                  noteDraft={noteDrafts[row.exerciseId] ?? notes[row.exerciseId] ?? ''}
+                  onNoteDraft={(body) =>
+                    setNoteDrafts((prev) => ({ ...prev, [row.exerciseId]: body }))
+                  }
                   onMove={(direction) => setRows((prev) => moveRow(prev, index, direction))}
                   onRemove={() => setRows((prev) => prev.filter((r) => r.rowId !== row.rowId))}
                   onField={(key, next) => updateRow(row.rowId, key, next)}
@@ -624,6 +644,8 @@ function ExerciseRowCard({
   isFirst,
   isLast,
   note,
+  noteDraft,
+  onNoteDraft,
   onMove,
   onRemove,
   onField,
@@ -635,6 +657,9 @@ function ExerciseRowCard({
   isLast: boolean;
   /** Note d'instructions de l'exo (issue #26), '' si aucune. */
   note: string;
+  /** Texte en cours de saisie de la note (égal à `note` tant qu'elle n'est pas touchée). */
+  noteDraft: string;
+  onNoteDraft: (body: string) => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
   onField: (key: FieldKey, next: FieldValue) => void;
@@ -705,6 +730,8 @@ function ExerciseRowCard({
             <ExerciseNoteEditor
               exerciseName={row.exerciseName}
               note={note}
+              draft={noteDraft}
+              onDraftChange={onNoteDraft}
               onSave={onSaveNote}
             />
           </div>
@@ -767,17 +794,23 @@ function ExerciseRowCard({
  * l'exo lui-même, pas pour cette version de séance. Vider puis enregistrer
  * efface la note. Texte libre : <textarea> légitime (le ban clavier OS ne vise
  * que les chiffres mesurés).
+ *
+ * Le texte en cours (`draft`) appartient à l'éditeur de séance, pas à ce champ :
+ * la garde de sortie et le blocage de rechargement doivent le voir.
  */
 function ExerciseNoteEditor({
   exerciseName,
   note,
+  draft,
+  onDraftChange,
   onSave,
 }: {
   exerciseName: string;
   note: string;
+  draft: string;
+  onDraftChange: (body: string) => void;
   onSave: (body: string) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(note);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -817,7 +850,7 @@ function ExerciseNoteEditor({
         value={draft}
         placeholder="Prise serrée, coudes rentrés, descente contrôlée."
         rows={3}
-        onChange={setDraft}
+        onChange={onDraftChange}
       />
       <div className="mt-2.5 flex items-center justify-end gap-2">
         {saved && !dirty && (
