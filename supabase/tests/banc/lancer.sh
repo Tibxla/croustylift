@@ -95,4 +95,55 @@ else
   echo "ECHEC archivage concurrent accepté"; exit 1
 fi
 wait
+
+echo "== courses : import croisé avec un archivage, puis avec une suppression (ordre des verrous)"
+# Sous le rôle de l'API cette fois : le verrou du compte se prend d'après
+# auth.uid(), AVANT tout verrou de ligne (triggers d'instruction de 0021).
+B=bbbbbbbb-0000-0000-0000-000000000002
+api() { # api <instruction SQL> : une instruction, comme une requête de l'API pour le compte B
+  docker exec -i "$NOM" psql -U postgres -q -v ON_ERROR_STOP=1 \
+    -c "set role authenticated" -c "set request.jwt.claim.sub = '$B'" -c "$1" 2>&1 || true
+}
+sql /dev/stdin <<'SQL'
+insert into public.routines (id, owner_id, name) values
+  ('b0000000-0000-0000-0000-0000000000a3', 'bbbbbbbb-0000-0000-0000-000000000002', 'Troisième'),
+  ('b0000000-0000-0000-0000-0000000000a4', 'bbbbbbbb-0000-0000-0000-000000000002', 'Quatrième');
+SQL
+# Session 1 : un import qui a déjà pris le verrou du compte (tenu 2 s d'avance,
+# comme un import occupé sur ses premières tables) et qui écrit ensuite la
+# routine. Session 2, entre les deux : archive (ou supprime) cette routine.
+# Verrou de ligne pris avant celui du compte, la session 2 tenait la ligne que
+# l'import attendait et attendait le verrou que l'import tenait : 40P01.
+course_import() { # course_import <id de la routine> <nom> <instruction de la session 2>
+  # Le journal de la session 1 reste dans le conteneur, supprimé avec lui.
+  docker exec -i "$NOM" sh -c 'psql -U postgres -q -v ON_ERROR_STOP=1 -f - >/tmp/course.log 2>&1' <<SQL &
+set role authenticated;
+set request.jwt.claim.sub = '$B';
+begin;
+select public.lock_current_routine('$B');
+select pg_sleep(2);
+select public.import_user_data('{"routines": [{"id": "$1", "name": "$2 importée"}]}'::jsonb);
+commit;
+SQL
+  sleep 1
+  sortie=$(api "$3")
+  wait
+  sortie="$sortie $(docker exec "$NOM" cat /tmp/course.log)"
+}
+course_import b0000000-0000-0000-0000-0000000000a3 Troisième \
+  "update public.routines set archived_at = now() where id = 'b0000000-0000-0000-0000-0000000000a3'"
+etat=$(docker exec -i "$NOM" psql -U postgres -A -t -c \
+  "select name || '/' || (archived_at is not null) from public.routines where id = 'b0000000-0000-0000-0000-0000000000a3'")
+if echo "$sortie" | grep -qi "deadlock\|ERROR" || [ "$etat" != "Troisième importée/true" ]; then
+  echo "ECHEC import croisé avec un archivage : $sortie (état : $etat)"; exit 1
+fi
+echo "OK    import croisé avec un archivage : l'archivage attend l'import, les deux passent"
+course_import b0000000-0000-0000-0000-0000000000a4 Quatrième \
+  "delete from public.routines where id = 'b0000000-0000-0000-0000-0000000000a4'"
+etat=$(docker exec -i "$NOM" psql -U postgres -A -t -c \
+  "select count(*) from public.routines where id = 'b0000000-0000-0000-0000-0000000000a4'")
+if echo "$sortie" | grep -qi "deadlock\|ERROR" || [ "$etat" != "0" ]; then
+  echo "ECHEC import croisé avec une suppression : $sortie (état : $etat)"; exit 1
+fi
+echo "OK    import croisé avec une suppression : la suppression attend l'import, les deux passent"
 echo "== banc vert"

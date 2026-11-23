@@ -33,6 +33,23 @@
 -- (`pg_advisory_xact_lock`) : archivage, activation et suppression d'un même
 -- compte passent l'un après l'autre, et le second voit l'écriture du premier.
 --
+-- ORDRE DES VERROUS : le verrou du compte d'abord, les verrous de ligne
+-- ensuite. Un trigger de ligne ou de fin d'instruction passe APRÈS que
+-- l'instruction a verrouillé ses lignes, alors que `import_user_data`
+-- (migration 0024) prend le verrou du compte avant d'écrire : un archivage (ou
+-- une suppression, ou une écriture d'activation) croisé avec un import tenait
+-- la ligne que l'import attendait et attendait le verrou que l'import tenait,
+-- et Postgres annulait l'un des deux (40P01, audit X25). Chaque instruction qui
+-- participe à la règle prend donc le verrou du compte dès son DÉBUT, par un
+-- trigger d'instruction BEFORE, avant tout verrou de ligne. Un tel trigger ne
+-- voit pas les lignes : il verrouille le compte de l'appelant (`auth.uid()`),
+-- qui est sous RLS le seul propriétaire possible des lignes écrites. Les
+-- triggers de vérification reprennent ensuite le même verrou (réentrant).
+-- LIMITE : sans appelant (`service_role`, SQL direct), le compte n'est connu
+-- qu'une fois les lignes lues ; l'ancien ordre demeure, et un geste
+-- d'administration croisé avec un import peut encore être annulé (40P01, à
+-- relancer). Aucune écriture de l'app ne passe par là.
+--
 -- ORDRE, impératif (voir supabase/tests/ORDRE.md) : cette migration s'applique
 -- APRÈS le déploiement du client qui importe par `import_user_data` (migration
 -- 0024) ET après le passage des anciens clients. L'ancien import écrivait les
@@ -110,6 +127,30 @@ $$;
 
 revoke execute on function public.lock_current_routine(uuid) from public, anon;
 grant execute on function public.lock_current_routine(uuid) to authenticated, service_role;
+
+-- Le verrou du compte AVANT les verrous de ligne (cf. « ORDRE DES VERROUS »).
+create or replace function public.lock_current_routine_first()
+returns trigger
+language plpgsql
+set search_path = ''  -- durcit le search_path (advisor function_search_path_mutable)
+as $$
+declare
+  v_owner uuid := (select auth.uid());
+begin
+  if v_owner is not null then
+    perform public.lock_current_routine(v_owner);
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists lock_current_routine_first on public.routines;
+create trigger lock_current_routine_first before update of archived_at or delete on public.routines
+  for each statement execute function public.lock_current_routine_first();
+
+drop trigger if exists lock_current_routine_first on public.routine_activations;
+create trigger lock_current_routine_first before insert or update or delete on public.routine_activations
+  for each statement execute function public.lock_current_routine_first();
 
 -- 1. `routines` : la courante ne s'archive pas ------------------------------
 

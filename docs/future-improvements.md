@@ -181,13 +181,6 @@ perte), finition.
 
 ### Base et import
 
-- **Import et archivage : verrous pris en ordre inverse** (mineure). `import_user_data`
-  prend le verrou du compte avant les verrous de ligne, le trigger d'archivage de la
-  migration 0021 fait l'inverse. Les deux gestes lancés au même instant peuvent
-  s'interbloquer ; Postgres le détecte et annule l'un des deux (`40P01`), qui se
-  relance. Déduit de la lecture, aucune course jouée au banc. Piste : une fonction
-  d'archivage qui prend le verrou du compte d'abord, et la course à deux sessions dans
-  `supabase/tests/banc/lancer.sh`.
 - **Sauvegarde dont une routine archivée a été réactivée depuis** : refusée en entier
   (mineure). L'état final laisserait pour courante une routine archivée. Le message de
   la base dit quoi faire : définir une autre routine courante, puis réimporter

@@ -22,6 +22,14 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
                    and not p.prosecdef and p.proconfig @> array['search_path=""']),
          'archivage et activation simultanés qui se croisent'
   union all
+  select 'verrou du compte pris en début d''instruction (lock_current_routine_first) sur routines et routine_activations',
+         (select count(*) from pg_trigger where tgrelid in ('public.routines'::regclass, 'public.routine_activations'::regclass)
+            and tgname = 'lock_current_routine_first' and tgenabled = 'O' and not tgisinternal
+            and tgtype & 1 = 0 and tgtype & 2 = 2) = 2
+         and exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.lock_current_routine_first()')
+                   and not p.prosecdef and p.proconfig @> array['search_path=""']),
+         'import et archivage, suppression ou activation simultanés qui s''interbloquent (40P01)'
+  union all
   select 'aucun compte dont la routine courante est archivée',
          not exists (
            select 1 from (
