@@ -1235,4 +1235,24 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(res).toEqual({ remaining: 2, flushed: 0 });
     expect(readQueue().map((o) => o.id)).toEqual(['set-refuse', 'set-2']);
   });
+
+  it('retrait de la file impossible à persister (quota) : la passe s’arrête, l’op n’est pas rejouée en boucle', async () => {
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-1', 1));
+    const fns = okFns();
+    const store = globalThis.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    const res = await flush(fns);
+
+    // L'op est passée en base mais son retrait n'a pas pu s'écrire : elle sera
+    // rejouée (sans effet, idempotente) au prochain flush, pas tout de suite.
+    expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+  });
 });

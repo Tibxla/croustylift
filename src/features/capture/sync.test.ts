@@ -127,6 +127,25 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     expect(readQueue().map((o) => o.id)).toEqual(['e1', 's1']);
   });
 
+  it('une de nos ops partie en QUARANTAINE n’est pas un succès : elle compte dans remaining', async () => {
+    // La base a refusé la série : le flush l'a sortie de la file pour la
+    // quarantaine. Rien n'est en base, l'éditeur ne doit pas se fermer.
+    (flushMock as Mock).mockImplementation(async () => {
+      const queue = readQueue();
+      const refused = queue.find((op) => op.id === 's1');
+      (globalThis.localStorage as Storage).setItem('croustylift:outbox', JSON.stringify([]));
+      (globalThis.localStorage as Storage).setItem(
+        'croustylift:outbox:quarantine',
+        JSON.stringify([{ op: refused, reason: '23503 : rejet', at: '2026-11-23T10:00:00Z' }]),
+      );
+      return { remaining: 0, flushed: 1 };
+    });
+
+    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
+
+    expect(res.remaining).toBe(1);
+  });
+
   it('ne compte QUE nos ops, pas celles d’une AUTRE exécution restée en file', async () => {
     // Une op d'une autre exécution est déjà en file (offline) et le flush n'en
     // draine aucune. flushOps ne doit compter QUE ses ids, pas l'op étrangère.

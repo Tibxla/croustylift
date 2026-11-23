@@ -255,11 +255,16 @@ function quarantineBlob(raw: string, reason: string): void {
   );
 }
 
-/** Écrit la file (dégrade en `console.warn` si quota plein / mode privé). */
-function writeQueue(queue: OutboxOp[]): void {
-  if (typeof localStorage === 'undefined') return;
+/**
+ * Écrit la file (dégrade en `console.warn` si quota plein / mode privé). Rend
+ * faux si l'écriture a été refusée : le flush s'en sert pour ne pas reprendre
+ * une file dont il n'a pas pu retirer l'op traitée.
+ */
+function writeQueue(queue: OutboxOp[]): boolean {
+  if (typeof localStorage === 'undefined') return false;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+    return true;
   } catch {
     // Quota plein / mode privé : la file en mémoire reste correcte pour la
     // session courante, on dégrade sans bloquer la capture. On le SIGNALE
@@ -269,6 +274,7 @@ function writeQueue(queue: OutboxOp[]): void {
       '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
         'la file reste en mémoire pour la session mais ne survivra pas à un reload.',
     );
+    return false;
   }
 }
 
@@ -399,12 +405,17 @@ function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean
 }
 
 /**
- * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit, et rend vrai si elle y
- * était encore. Identité par `_seq` (unique, stampé à l'enqueue), type et id à
- * l'appui. Une op héritée sans `_seq` (file d'un bundle antérieur) ne se
- * reconnaît qu'en TÊTE par (type, id), le temps qu'elle soit drainée.
+ * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_seq`
+ * (unique, stampé à l'enqueue), type et id à l'appui. Une op héritée sans `_seq`
+ * (file d'un bundle antérieur) ne se reconnaît qu'en TÊTE par (type, id), le
+ * temps qu'elle soit drainée.
+ *
+ * Rend `'removed'`, `'absent'` (elle n'y était plus : purgée entre-temps), ou
+ * `'unwritable'` : le retrait n'a pas pu être persisté (quota plein), l'op est
+ * donc TOUJOURS dans la file persistée. L'appelant doit alors arrêter sa passe,
+ * sinon il la relirait et la rejouerait sans fin.
  */
-function removeFromQueue(op: OutboxOp): boolean {
+function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
   const current = readQueue();
   const at =
     op._seq !== undefined
@@ -412,17 +423,16 @@ function removeFromQueue(op: OutboxOp): boolean {
       : current[0]?.type === op.type && current[0]?.id === op.id
         ? 0
         : -1;
-  if (at === -1) return false;
+  if (at === -1) return 'absent';
   current.splice(at, 1);
-  writeQueue(current);
-  return true;
+  return writeQueue(current) ? 'removed' : 'unwritable';
 }
 
 /**
  * Déplace `op` de la file vers la quarantaine. La quarantaine est écrite AVANT
- * le retrait de la file : si son écriture échoue (quota plein), l'op reste en
- * file et l'appelant arrête la passe (conserver plutôt que perdre). Rend faux
- * dans ce cas.
+ * le retrait de la file : si une des deux écritures échoue (quota plein), l'op
+ * reste en file et l'appelant arrête la passe (conserver plutôt que perdre).
+ * Rend faux dans ce cas.
  */
 function moveToQuarantine(op: OutboxOp, reason: string): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -432,8 +442,7 @@ function moveToQuarantine(op: OutboxOp, reason: string): boolean {
   } catch {
     return false;
   }
-  removeFromQueue(op);
-  return true;
+  return removeFromQueue(op) !== 'unwritable';
 }
 
 /**
@@ -598,9 +607,16 @@ let inFlight: Promise<FlushResult> | null = null;
  *
  * Traite DANS L'ORDRE (cf. `runFlushOnce`) : chaque op réussie est retirée et le
  * progrès persisté, on S'ARRÊTE à la première qui échoue (offline) en gardant l'op
- * + la suite. On NE saute jamais une op : l'ordre exécution→séries (et insert→delete)
- * est une dépendance, pas une préférence. Une op enfilée en cours de flush est
- * rattrapée (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
+ * + la suite. L'ordre exécution→séries (et insert→delete) est une dépendance, pas
+ * une préférence : une op n'est jamais dépassée par une op du MÊME compte qui la
+ * suit. Deux exceptions, qui ne cassent pas cette dépendance : une op REJETÉE
+ * définitivement par la base quitte la file pour la quarantaine (ses ops filles
+ * avec elle), et les ops d'un AUTRE compte que celui de `who` sont laissées en
+ * file sans être jouées. Une op enfilée en cours de flush est rattrapée
+ * (ré-armement, cf. `runFlush`) — le `FlushResult` reflète l'état réel.
+ *
+ * `who` : lecteur de la session vérifiée. Fourni, rien ne part sans compte
+ * connecté. Absent (tests de la file seule), aucun contrôle de session ni de compte.
  *
  * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
  */
@@ -642,9 +658,11 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
 
 /**
  * UNE passe : traite la file DANS L'ORDRE, retire chaque op réussie et persiste le
- * progrès, S'ARRÊTE à la première op qui échoue (offline) en gardant l'op + le reste.
- * `drained` = true si la file a été entièrement vidée, false si on s'est arrêté sur
- * un échec (la distinction pilote le ré-armement, cf. `runFlush`).
+ * progrès, S'ARRÊTE à la première op qui échoue (offline, session absente) en
+ * gardant l'op + le reste ; une op rejetée définitivement part en quarantaine et
+ * la passe continue. `drained` = true s'il ne reste plus rien à jouer pour ce
+ * compte, false si on s'est arrêté sur un échec (la distinction pilote le
+ * ré-armement, cf. `runFlush`).
  */
 async function runFlushOnce(
   fns: SyncFns,
@@ -735,7 +753,12 @@ async function runFlushOnce(
     // ne retire rien (retirer la tête à l'aveugle perdrait une op d'une nouvelle
     // exécution) et on reprend la boucle sur la file courante.
     if (op.type === 'upsertExecution') liftExecutionBlock(op.id);
-    if (removeFromQueue(op)) flushed += 1;
+    const removal = removeFromQueue(op);
+    // Retrait impossible à persister (quota plein) : l'op, passée en base, est
+    // encore dans la file. On arrête la passe (elle sera rejouée sans effet au
+    // prochain flush) plutôt que de la relire et de la renvoyer sans fin.
+    if (removal === 'unwritable') return { flushed, drained: false };
+    if (removal === 'removed') flushed += 1;
     queue = readQueue();
   }
 

@@ -22,7 +22,15 @@ import {
   upsertExerciseNoteRow,
   deleteExerciseNoteByExercise,
 } from '../notes/data';
-import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
+import {
+  enqueue,
+  flush,
+  readQuarantine,
+  readQueue,
+  type FlushResult,
+  type OutboxOp,
+  type SyncFns,
+} from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
@@ -146,12 +154,20 @@ export const syncFns: SyncFns = {
  */
 export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
   const ourIds = new Set(ops.map((op) => op.id));
+  const quarantinedBefore = readQuarantine().length;
   for (const op of ops) enqueue(op);
   // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
   // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
   const { flushed } = await flushOutbox();
   // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
-  const remaining = readQueue().filter((op) => ourIds.has(op.id)).length;
+  // Une de nos ops REJETÉE par la base a quitté la file pour la quarantaine :
+  // elle n'est pas en base non plus, ce n'est pas un succès. Elle compte donc
+  // (la quarantaine ne fait que s'allonger : les entrées d'après notre enfilement).
+  const remaining =
+    readQueue().filter((op) => ourIds.has(op.id)).length +
+    readQuarantine()
+      .slice(quarantinedBefore)
+      .filter((q) => ourIds.has(q.op.id)).length;
   return { remaining, flushed };
 }
 
