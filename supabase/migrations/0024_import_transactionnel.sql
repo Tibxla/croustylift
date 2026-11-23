@@ -26,9 +26,19 @@
 -- Pendant l'import, le trigger `log_seance_archive` se tait : l'état
 -- `archived_at` et le journal viennent tous deux du fichier. Sans cela,
 -- restaurer une sauvegarde dont l'état d'archivage différait de la base ajoutait
--- un événement daté de la restauration, donc une coupure de bloc de trop. Le
--- signal est un paramètre local à la transaction, que seule cette fonction
--- pose : l'API ne permet pas à un client de le poser lui-même.
+-- toujours un événement daté de la restauration, même quand le journal du
+-- fichier racontait déjà cet état. Le signal est un paramètre local à la
+-- transaction, que seule cette fonction pose : l'API ne permet pas à un client
+-- de le poser lui-même.
+--
+-- Le journal ne se réécrit pas : les événements déjà en base restent, ceux du
+-- fichier s'y ajoutent. Si la base a connu un archivage ou un désarchivage
+-- APRÈS la sauvegarde, le dernier événement du journal fusionné contredit
+-- l'état restauré, et l'Analyse (qui rejoue le journal) compterait une séance
+-- que le plan masque, ou l'inverse. En fin d'import, chaque séance du fichier
+-- est donc RAPPROCHÉE : si son dernier événement ne dit pas son état
+-- `archived_at`, un événement correctif daté de la restauration est ajouté. Sans
+-- divergence, rien n'est écrit.
 --
 -- Appel côté client : `supabase.rpc('import_user_data', { p_data })`.
 --
@@ -42,13 +52,24 @@
 --   where p.pronamespace = 'public'::regnamespace
 --     and p.proname in ('log_seance_archive', 'import_user_data');
 --
+-- ORDRE (voir supabase/tests/ORDRE.md) : cette migration passe AVANT le
+-- déploiement du client qui appelle la fonction, et la migration 0022 (journal
+-- en insertion seule) APRÈS ce déploiement et le passage des anciens clients.
+-- La fonction marche dans les deux états de la policy du journal : elle n'y
+-- fait que des insertions.
+--
 -- RISQUE : faible pour la base (une fonction ajoutée, un trigger qui gagne une
--- sortie anticipée). À appliquer AVANT de déployer le client qui l'appelle.
+-- sortie anticipée).
 -- Limite d'usage : tout l'import tient dans une requête, donc sous le délai
 -- d'instruction du rôle `authenticated` (8 s par défaut chez Supabase, à confirmer) ; un
 -- historique de plusieurs dizaines de milliers de séries reste loin en dessous.
 
 begin;
+
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
 
 -- 1. Le trigger d'archivage se tait pendant un import ------------------------
 
@@ -162,6 +183,25 @@ begin
       end
     ) using v_rows;
   end loop;
+
+  -- Rapprochement du journal et de l'état : un événement correctif par séance
+  -- du fichier dont le dernier événement contredit `archived_at`.
+  if jsonb_typeof(p_data -> 'seances') = 'array' then
+    insert into public.seance_archive_events (owner_id, seance_id, archived, occurred_at)
+    select s.owner_id, s.id, s.archived_at is not null, now()
+    from public.seances s
+    left join lateral (
+      select e.archived from public.seance_archive_events e
+      where e.seance_id = s.id
+      order by e.occurred_at desc, e.created_at desc
+      limit 1
+    ) dernier on true
+    where s.id in (
+        select (l.ligne ->> 'id')::uuid
+        from jsonb_array_elements(p_data -> 'seances') as l(ligne)
+      )
+      and (s.archived_at is not null) is distinct from coalesce(dernier.archived, false);
+  end if;
 
   perform set_config('croustylift.import', '', true);
 end;

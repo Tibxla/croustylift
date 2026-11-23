@@ -19,7 +19,8 @@
 // Réimporter le même fichier ne crée pas de doublon, la ligne existante est
 // remplacée. Seul le journal des archivages ne se réécrit pas (migration 0022) :
 // un événement déjà en base est laissé tel quel. Pendant l'import, le trigger
-// d'archivage se tait : l'état `archived_at` et le journal viennent du fichier.
+// d'archivage se tait : l'état `archived_at` et le journal viennent du fichier,
+// et la base ajoute un événement correctif si les deux se contredisent.
 //
 // Exos de base exclus : un fichier d'export ne contient que des exos perso
 // (owner_id non null), comme le précise docs/export-format.md.

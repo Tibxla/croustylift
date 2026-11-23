@@ -17,6 +17,11 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
                    and p.prosrc like '%croustylift.import%'),
          'événement d''archivage en double, daté de la restauration'
   union all
+  select 'import_user_data rapproche le journal de l''état des séances',
+         exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.import_user_data(jsonb)')
+                   and p.prosrc like '%is distinct from coalesce(dernier.archived, false)%'),
+         'séance masquée par le plan mais comptée par l''Analyse après une restauration, ou l''inverse'
+  union all
   select 'aucune fonction SECURITY DEFINER dans public',
          not exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
          'fonction qui contournerait la RLS'
