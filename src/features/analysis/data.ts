@@ -491,34 +491,77 @@ export async function loadBlocks(): Promise<Block[]> {
   return detectBlocks(timeline);
 }
 
+/** Une exécution candidate au rôle de « première du compte », telle que lue. */
+export interface FirstExecutionCandidate {
+  id: string;
+  performed_on: string;
+  created_at: string;
+  started_at: string | null;
+  seance_versions: { seances: { routine_id: string } | null } | null;
+  /** Au moins une série : une exécution née d'une note seule n'est pas une séance faite. */
+  performed_sets: { id: string }[] | null;
+}
+
 /**
- * La plus ancienne exécution du compte rattachée à une séance, avec la routine
- * de cette séance. Sert au seul bloc implicite : un compte qui a capturé avant
+ * La première séance réellement faite parmi des candidates : au moins une
+ * série, une séance résoluble, puis la plus ancienne par jour, par instant, par
+ * id. L'instant d'ordre est le lancement, à défaut la création : `created_at`
+ * seul rangeait une séance hors ligne (lancée à 8 h, envoyée à 14 h) derrière
+ * celle de 13 h, et le bloc implicite ne s'ouvrait pas. La création n'ordonne
+ * que les candidates ; elle n'est jamais rendue comme instant de rattachement.
+ * Pure.
+ */
+export function pickFirstExecution(
+  candidates: FirstExecutionCandidate[],
+): FirstExecutionRow | null {
+  const first = candidates
+    .filter(
+      (row) =>
+        (row.performed_sets?.length ?? 0) > 0 &&
+        Boolean(row.seance_versions?.seances?.routine_id),
+    )
+    .sort(
+      (a, b) =>
+        a.performed_on.localeCompare(b.performed_on) ||
+        Date.parse(a.started_at ?? a.created_at) - Date.parse(b.started_at ?? b.created_at) ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    )[0];
+  if (!first) return null;
+  const row: FirstExecutionRow = {
+    date: first.performed_on,
+    routineId: first.seance_versions!.seances!.routine_id,
+  };
+  if (first.started_at) row.startedAt = first.started_at;
+  return row;
+}
+
+/** Bien plus que le nombre de séances qu'on fait en un jour. */
+const FIRST_EXECUTION_CANDIDATES = 20;
+
+/**
+ * La première séance du compte rattachée à une séance, avec la routine de
+ * celle-ci. Sert au seul bloc implicite : un compte qui a capturé avant
  * d'activer une routine (la Capture se replie sur la première non archivée)
- * n'avait aucun bloc pour ces séances-là. Une ligne lue, jamais plus. `null`
- * sans exécution rattachée.
+ * n'avait aucun bloc pour ces séances-là. On lit les exécutions des tout
+ * premiers jours (quelques lignes), le choix revient à `pickFirstExecution` :
+ * l'ordre « lancement, à défaut création » ne s'écrit pas en PostgREST.
  */
 async function loadFirstExecution(): Promise<FirstExecutionRow | null> {
-  type Row = {
-    performed_on: string;
-    created_at: string;
-    started_at: string | null;
-    seance_versions: { seances: { routine_id: string } | null } | null;
-  };
   const { data, error } = await supabase
     .from('executions')
-    .select('performed_on, created_at, started_at, seance_versions ( seances ( routine_id ) )')
+    .select(
+      'id, performed_on, created_at, started_at, seance_versions ( seances ( routine_id ) ), performed_sets!inner ( id )',
+    )
     // Rattachée à une séance : une exécution dont la séance a été supprimée
     // (`seance_version_id` remis à null) n'a plus de routine à ouvrir.
     .not('seance_version_id', 'is', null)
+    // Une série suffit à prouver que la séance a été faite (jointure interne).
+    .limit(1, { referencedTable: 'performed_sets' })
     .order('performed_on')
-    .order('created_at')
-    .limit(1);
+    .order('id')
+    .limit(FIRST_EXECUTION_CANDIDATES);
   if (error) throw error;
-  const row = ((data ?? []) as unknown as Row[])[0];
-  const routineId = row?.seance_versions?.seances?.routine_id;
-  if (!row || !routineId) return null;
-  return { date: row.performed_on, at: row.started_at ?? row.created_at, routineId };
+  return pickFirstExecution((data ?? []) as unknown as FirstExecutionCandidate[]);
 }
 
 // --- Comparaison de deux blocs d'un exo (cf. issue #6) ------------------------

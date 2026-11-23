@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeExecutions,
   groupExecutionRows,
+  pickFirstExecution,
+  type FirstExecutionCandidate,
   type ExecutionSetRow,
   type SeanceInfo,
   type TrainedExercise,
@@ -311,3 +313,65 @@ describe('groupExecutionRows : toutes les séries, regroupées par exo', () => {
     expect(analysis.seanceCurves[0]!.seanceName).toBe('Upper A');
   });
 });
+
+// --- Première exécution du compte (bloc implicite, ADR 0001) -------------------
+
+describe('pickFirstExecution : la première séance réellement faite', () => {
+  const candidate = (over: Partial<FirstExecutionCandidate> & { id: string }): FirstExecutionCandidate => ({
+    performed_on: '2026-08-05',
+    created_at: '2026-08-05T08:05:00+00:00',
+    started_at: '2026-08-05T08:00:00+00:00',
+    seance_versions: { seances: { routine_id: 'R' } },
+    performed_sets: [{ id: 's1' }],
+    ...over,
+  })
+
+  it('synchronisation dans le désordre : la séance lancée à 8 h hors ligne passe avant celle de 13 h, arrivée en base la première', () => {
+    const offline = candidate({
+      id: 'b',
+      started_at: '2026-08-05T08:00:00+00:00',
+      created_at: '2026-08-05T14:00:00+00:00',
+    })
+    const online = candidate({
+      id: 'a',
+      started_at: '2026-08-05T13:00:00+00:00',
+      created_at: '2026-08-05T13:00:05+00:00',
+      seance_versions: { seances: { routine_id: 'R2' } },
+    })
+    const expected = { date: '2026-08-05', startedAt: '2026-08-05T08:00:00+00:00', routineId: 'R' }
+    expect(pickFirstExecution([online, offline])).toEqual(expected)
+    expect(pickFirstExecution([offline, online])).toEqual(expected)
+  })
+
+  it('une exécution sans série (note seule) n’ouvre pas le bloc', () => {
+    const noteOnly = candidate({
+      id: 'n',
+      started_at: '2026-08-05T07:00:00+00:00',
+      performed_sets: [],
+      seance_versions: { seances: { routine_id: 'AUTRE' } },
+    })
+    expect(pickFirstExecution([noteOnly, candidate({ id: 'x' })])?.routineId).toBe('R')
+    expect(pickFirstExecution([noteOnly])).toBeNull()
+  })
+
+  it('le jour passe avant l’instant, et sans lancement la création ordonne sans devenir un instant', () => {
+    const legacy = candidate({
+      id: 'l',
+      performed_on: '2026-08-01',
+      started_at: null,
+      created_at: '2026-08-09T10:00:00+00:00',
+    })
+    expect(pickFirstExecution([candidate({ id: 'x' }), legacy])).toEqual({
+      date: '2026-08-01',
+      routineId: 'R',
+    })
+  })
+
+  it('à égalité complète, l’id départage ; sans séance résoluble ou sans ligne, rien', () => {
+    const a = candidate({ id: 'a', seance_versions: { seances: { routine_id: 'RA' } } })
+    const b = candidate({ id: 'b', seance_versions: { seances: { routine_id: 'RB' } } })
+    expect(pickFirstExecution([b, a])?.routineId).toBe('RA')
+    expect(pickFirstExecution([candidate({ id: 'z', seance_versions: null })])).toBeNull()
+    expect(pickFirstExecution([])).toBeNull()
+  })
+})
