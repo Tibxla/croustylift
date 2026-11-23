@@ -503,39 +503,53 @@ export interface FirstExecutionCandidate {
 }
 
 /**
- * La première séance réellement faite parmi des candidates : au moins une
- * série, une séance résoluble, puis la plus ancienne par jour, par instant, par
- * id. L'instant d'ordre est le lancement, à défaut la création : `created_at`
- * seul rangeait une séance hors ligne (lancée à 8 h, envoyée à 14 h) derrière
- * celle de 13 h, et le bloc implicite ne s'ouvrait pas. La création n'ordonne
- * que les candidates ; elle n'est jamais rendue comme instant de rattachement.
- * Pure.
+ * L'ouverture du bloc implicite parmi des candidates (au moins une série, une
+ * séance résoluble). Pure.
+ *   - Toutes horodatées : le bloc s'ouvre au plus ANCIEN LANCEMENT, pas au plus
+ *     ancien jour. Les jours peuvent dire l'inverse des instants (Tokyo le 20 à
+ *     00 h 10 est avant Los Angeles le 19 à 22 h 30) : ouvert au lancement de la
+ *     séance du plus ancien jour, le bloc écartait l'autre.
+ *   - Dès qu'une candidate n'a pas de lancement (exécution d'avant la colonne) :
+ *     repli au jour, sans instant, départagé par la création puis l'id. Un bloc
+ *     ouvert au jour contient toutes les séances de ce jour-là et des suivants.
+ * Dans les deux cas le bloc est daté du plus ancien jour des candidates.
+ * `created_at` n'ordonne que le repli ; il n'est jamais rendu comme instant
+ * (c'est l'heure d'arrivée en base : une séance hors ligne lancée à 8 h et
+ * envoyée à 14 h passait derrière celle de 13 h).
  */
 export function pickFirstExecution(
   candidates: FirstExecutionCandidate[],
 ): FirstExecutionRow | null {
-  const first = candidates
-    .filter(
-      (row) =>
-        (row.performed_sets?.length ?? 0) > 0 &&
-        Boolean(row.seance_versions?.seances?.routine_id),
-    )
-    .sort(
-      (a, b) =>
-        a.performed_on.localeCompare(b.performed_on) ||
-        Date.parse(a.started_at ?? a.created_at) - Date.parse(b.started_at ?? b.created_at) ||
-        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    )[0];
+  const valid = candidates.filter(
+    (row) =>
+      (row.performed_sets?.length ?? 0) > 0 &&
+      Boolean(row.seance_versions?.seances?.routine_id),
+  );
+  const byId = (a: FirstExecutionCandidate, b: FirstExecutionCandidate) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  const allStarted = valid.every((row) => row.started_at);
+  const first = [...valid].sort(
+    allStarted
+      ? (a, b) => Date.parse(a.started_at!) - Date.parse(b.started_at!) || byId(a, b)
+      : (a, b) =>
+          a.performed_on.localeCompare(b.performed_on) ||
+          Date.parse(a.started_at ?? a.created_at) - Date.parse(b.started_at ?? b.created_at) ||
+          byId(a, b),
+  )[0];
   if (!first) return null;
   const row: FirstExecutionRow = {
-    date: first.performed_on,
+    date: valid.map((c) => c.performed_on).sort()[0]!,
     routineId: first.seance_versions!.seances!.routine_id,
   };
-  if (first.started_at) row.startedAt = first.started_at;
+  if (allStarted) row.startedAt = first.started_at!;
   return row;
 }
 
-/** Bien plus que le nombre de séances qu'on fait en un jour. */
+/**
+ * Candidates lues, par jour croissant. Le plus ancien lancement peut porter le
+ * deuxième jour (décalage de fuseau) : vingt lignes couvrent largement les deux
+ * premiers jours distincts d'un compte.
+ */
 const FIRST_EXECUTION_CANDIDATES = 20;
 
 /**

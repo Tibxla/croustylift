@@ -15,6 +15,9 @@ import {
   type TrainedExercise,
 } from './data';
 import type { ExerciseExecution } from '../../domain/types';
+import { detectBlocks } from '../../domain/block';
+import { summarizeBlockSeances } from '../../domain/block-comparison';
+import { buildConfigTimeline } from './config-timeline';
 
 const exercise: TrainedExercise = { exerciseId: 'bench', name: 'Développé couché' };
 
@@ -373,5 +376,47 @@ describe('pickFirstExecution : la première séance réellement faite', () => {
     expect(pickFirstExecution([b, a])?.routineId).toBe('RA')
     expect(pickFirstExecution([candidate({ id: 'z', seance_versions: null })])).toBeNull()
     expect(pickFirstExecution([])).toBeNull()
+  })
+
+  it('Tokyo le 20 à 00 h 10 puis Los Angeles le 19 à 22 h 30 : le bloc s’ouvre au plus ancien LANCEMENT, les deux points y restent', () => {
+    // Les jours disent l'inverse des instants : Tokyo (daté du 20) est lancé à
+    // 15:10 UTC le 19, Los Angeles (daté du 19) à 06:30 UTC le 20.
+    const tokyo = candidate({
+      id: 't',
+      performed_on: '2026-11-20',
+      started_at: '2026-11-19T15:10:00+00:00',
+      created_at: '2026-11-19T15:15:00+00:00',
+    })
+    const losAngeles = candidate({
+      id: 'l',
+      performed_on: '2026-11-19',
+      started_at: '2026-11-20T06:30:00+00:00',
+      created_at: '2026-11-20T06:35:00+00:00',
+    })
+    const first = pickFirstExecution([losAngeles, tokyo])
+    expect(first).toEqual({
+      date: '2026-11-19',
+      startedAt: '2026-11-19T15:10:00+00:00',
+      routineId: 'R',
+    })
+
+    const blocks = detectBlocks(
+      buildConfigTimeline({
+        activations: [],
+        seanceVersions: [],
+        seances: [{ id: 'A', routineId: 'R' }],
+        firstExecution: first,
+      }),
+    )
+    const ex = (c: FirstExecutionCandidate): ExerciseExecution => ({
+      date: c.performed_on,
+      exerciseId: 'bench',
+      seanceId: 'A',
+      id: c.id,
+      startedAt: c.started_at ?? undefined,
+      sets: [{ weightKg: 80, reps: 5, rir: 1, order: 1 }],
+    })
+    const options = summarizeBlockSeances([ex(tokyo), ex(losAngeles)], 'bench', blocks)
+    expect(options.map((o) => o.pointCount)).toEqual([2])
   })
 })
