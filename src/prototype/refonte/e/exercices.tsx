@@ -204,11 +204,6 @@ function Catalogue() {
           title={
             q ? `Rien pour « ${q.trim()} »` : "Aucun exo pour ce muscle"
           }
-          body={
-            q
-              ? "Vérifie l’orthographe, ou crée-le : il sera visible de toi seul."
-              : "Choisis un autre muscle, ou crée un exo perso."
-          }
           action={
             q ? (
               <SecondaryButton
@@ -334,16 +329,16 @@ function Fiche({ id }: { id: string }) {
         }}
         action={
           !e.archived && (
-            <TextLink
+            <SecondaryButton
+              size="sm"
               onClick={() => nav.push("modifier", { id: e.id })}
-              className="px-1"
             >
               {e.kind === "base"
                 ? e.overridden
                   ? "Modifier ta version"
                   : "Personnaliser"
                 : "Modifier"}
-            </TextLink>
+            </SecondaryButton>
           )
         }
       />
@@ -448,15 +443,18 @@ function Fiche({ id }: { id: string }) {
                 Aucune note. Elle s’affiche en salle sous le nom de l’exo.
               </p>
             )}
-            <TextLink
-              onClick={() => {
-                setNote(e.note);
-                setEditNote(true);
-                setFlash(null);
-              }}
-            >
-              {e.note ? "Modifier la note" : "Écrire une note"}
-            </TextLink>
+            <div className="mt-3 flex">
+              <SecondaryButton
+                size="sm"
+                onClick={() => {
+                  setNote(e.note);
+                  setEditNote(true);
+                  setFlash(null);
+                }}
+              >
+                {e.note ? "Modifier la note" : "Écrire une note"}
+              </SecondaryButton>
+            </div>
           </div>
         )}
       </section>
@@ -544,7 +542,7 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
         <p className="px-5 text-[14px] leading-[1.45] text-(--muted)">
           {seanceInfo(main.seanceId).name} · {pts.length} séance
           {pts.length > 1 ? "s" : ""} du {fmtDate(pts[0]!.date)} au{" "}
-          {fmtDate(lastPt.date)} · e1RM (max estimé sur une rep) de la 1ʳᵉ série, en kg
+          {fmtDate(lastPt.date)} · e1RM en kg de la 1ʳᵉ série
         </p>
         {curves.length > 1 && (
           <ul className="mt-2 px-5" aria-label="Autres séances">
@@ -678,9 +676,9 @@ function ExitSection({
             note et ton historique restent.
           </Notice>
         ) : (
-          <TextLink tone="muted" onClick={() => setGuard("reset")}>
+          <SecondaryButton onClick={() => setGuard("reset")}>
             Revenir à l’original
-          </TextLink>
+          </SecondaryButton>
         )}
       </section>
     );
@@ -751,10 +749,10 @@ function ExitSection({
           )
         ) : (
           <>
-            <TextLink tone="muted" onClick={() => setGuard("archive")}>
+            <SecondaryButton onClick={() => setGuard("archive")}>
               Archiver cet exo
-            </TextLink>
-            <p className="text-[14px] text-(--faint)">
+            </SecondaryButton>
+            <p className="mt-2 text-[14px] text-(--faint)">
               Il a déjà servi : il s’archive, il ne se supprime pas.
             </p>
           </>
@@ -770,16 +768,16 @@ function ExitSection({
           title={`Supprimer « ${e.shownName} » ?`}
           actions={
             <>
-              <SecondaryButton onClick={() => setGuard(null)}>
-                Garder
-              </SecondaryButton>
-              <TextLink
+              <SecondaryButton
                 onClick={() => {
                   catalogue.remove(e.id);
                   nav.back();
                 }}
               >
                 Supprimer définitivement
+              </SecondaryButton>
+              <TextLink tone="muted" onClick={() => setGuard(null)}>
+                Garder
               </TextLink>
             </>
           }
@@ -789,10 +787,10 @@ function ExitSection({
         </Notice>
       ) : (
         <>
-          <TextLink tone="muted" onClick={() => setGuard("delete")}>
+          <SecondaryButton onClick={() => setGuard("delete")}>
             Supprimer cet exo
-          </TextLink>
-          <p className="text-[14px] text-(--faint)">
+          </SecondaryButton>
+          <p className="mt-2 text-[14px] text-(--faint)">
             Jamais utilisé : il peut encore se supprimer.
           </p>
         </>

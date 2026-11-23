@@ -6,7 +6,7 @@
 // signal `--sig` (jaune par défaut, réglable dans Réglages). Il est réservé à
 // deux sens et à rien d'autre :
 //   1. l'aiguille de la règle (« c'est ici que tu es ») ;
-//   2. le ▲ « mieux que la dernière fois » (série battue, record, pente en hausse).
+//   2. le ▲ « mieux que la Référence » (série battue, record, pente en hausse).
 // Le signal n'est jamais un fond, jamais un bouton, jamais un lien, jamais un
 // interrupteur activé, jamais une sélection. Il ne touche jamais le blanc
 // cassé (1,3:1). Égalé reste blanc cassé (▬), en deçà reste gris (▼) : un
@@ -99,7 +99,10 @@ export function rootStyle(sig: string): CSSProperties {
  *    Jamais sur les gestes répétés des centaines de fois en salle (logger, règle,
  *    rangées de numéros) : là, le retour est instantané (changement de fond).
  *  - `e-sheet` / `e-veil` : la feuille monte du bas en 240 ms (courbe de tiroir
- *    iOS), le voile apparaît en fondu. Entrée par `@starting-style`.
+ *    iOS), le voile apparaît en fondu. Entrée par `@starting-style`. Sortie plus
+ *    courte (150 ms, ease-out) : voir `playSheetExit`, sur un fantôme inerte.
+ *  - Règle de poids : saut sec au toucher par défaut ; glissé de 190 ms si
+ *    `animateTap` (commande du prototype « Règle animée au toucher »).
  *  - `data-motion="reduite"` (réglage « Réduire les animations », initialisé sur
  *    prefers-reduced-motion) : plus aucun déplacement ni changement d'échelle ;
  *    restent les fondus d'opacité et de couleur, qui aident à comprendre. */
@@ -198,7 +201,10 @@ export function PrimaryButton({
   );
 }
 
-/** Bouton secondaire : contour gris, texte blanc cassé, 48 px. */
+/** Bouton secondaire : contour blanc cassé franc (1,5 px) sur un aplat à peine
+ *  levé, libellé centré en demi-gras. Il ne doit jamais se lire comme un champ
+ *  de saisie (contour gris fin, texte à gauche). `size="sm"` : 44 px, pour une
+ *  action d'en-tête ou posée dans une ligne. Avec `meta`, libellé à gauche. */
 export function SecondaryButton({
   children,
   meta,
@@ -206,6 +212,7 @@ export function SecondaryButton({
   disabled,
   press = true,
   ariaLabel,
+  size = 'md',
   className = '',
 }: {
   children: ReactNode;
@@ -215,6 +222,7 @@ export function SecondaryButton({
   /** false : pas d'enfoncement (geste répété en salle). */
   press?: boolean;
   ariaLabel?: string;
+  size?: 'md' | 'sm';
   className?: string;
 }) {
   return (
@@ -223,15 +231,19 @@ export function SecondaryButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
-      className={`flex h-12 min-w-0 items-center justify-between gap-3 rounded-(--r) border border-(--muted) px-4 text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:text-(--faint) ${press ? 'e-press' : ''} ${className}`}
+      className={`flex min-w-0 items-center gap-3 rounded-(--r) border-[1.5px] border-(--ink) bg-(--raise) text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:bg-transparent disabled:text-(--faint) ${
+        size === 'sm' ? 'h-11 px-3.5' : 'h-12 px-4'
+      } ${meta ? 'justify-between' : 'justify-center'} ${press ? 'e-press' : ''} ${className}`}
     >
-      <span className="truncate text-[16px] font-medium">{children}</span>
+      <span className={`truncate font-semibold ${size === 'sm' ? 'text-[15px]' : 'text-[16px]'}`}>{children}</span>
       {meta && <span className="flex-none text-[14px] text-(--muted)">{meta}</span>}
     </button>
   );
 }
 
-/** Lien souligné (action tertiaire ou navigation en ligne), cible 44 px. */
+/** Lien souligné, cible 44 px. Réservé à la navigation (« Voir dans l'Analyse »)
+ *  et aux actions mineures en ligne (« Annuler la série 3 », « Remettre », le
+ *  « Annuler » d'une confirmation). Une vraie action est un bouton. */
 export function TextLink({
   children,
   onClick,
@@ -453,8 +465,44 @@ export function SyncBanner({ pending, offline }: { pending: number; offline: boo
  *  `sticky bottom-0`) : les feuilles héritent des tokens et de `--sig`. */
 export const SheetSlotContext = createContext<HTMLElement | null>(null);
 
+/** Sortie d'une feuille : 150 ms, ease-out, plus courte que l'entrée (240 ms).
+ *  Elle se joue sur un FANTÔME : une copie inerte du voile et du panneau, posée
+ *  dans l'emplacement au moment où la vraie feuille est démontée. Le démontage
+ *  React reste immédiat et identique, quelle que soit la façon de fermer (open
+ *  à false, `key` qui change, montage conditionnel autour de la feuille) : le
+ *  focus, les écouteurs et le DOM réel ne changent pas. Le fantôme n'a ni rôle,
+ *  ni id, ni focus (aria-hidden + inert) et se retire par minuteur. Réduire les
+ *  animations : fondu seul, sans déplacement. */
+function playSheetExit(slot: HTMLElement, veil: HTMLElement, panel: HTMLElement, scrollTop: number) {
+  const reduce = slot.closest('[data-e-root]')?.getAttribute('data-motion') === 'reduite';
+  const ghosts = [veil, panel].map((node) => {
+    const g = node.cloneNode(true) as HTMLElement;
+    // Sans ces classes : pas d'entrée @starting-style ni de transition sur la copie.
+    g.classList.remove('e-veil', 'e-sheet');
+    for (const a of ['role', 'aria-modal', 'aria-labelledby']) g.removeAttribute(a);
+    g.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+    g.setAttribute('aria-hidden', 'true');
+    g.inert = true;
+    g.style.pointerEvents = 'none';
+    return g;
+  });
+  const [gVeil, gPanel] = ghosts as [HTMLElement, HTMLElement];
+  // En tête de l'emplacement : une feuille qui s'ouvre aussitôt passe dessus.
+  slot.prepend(gVeil, gPanel);
+  const scroller = gPanel.querySelector<HTMLElement>('[data-sheet-scroll]');
+  if (scroller) scroller.scrollTop = scrollTop;
+  const timing: KeyframeAnimationOptions = { duration: 150, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', fill: 'forwards' };
+  gVeil.animate([{ opacity: 1 }, { opacity: 0 }], timing);
+  gPanel.animate(reduce ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: 'translateY(0)' }, { transform: 'translateY(100%)' }], timing);
+  window.setTimeout(() => {
+    gVeil.remove();
+    gPanel.remove();
+  }, 170);
+}
+
 /** Feuille basse : voile plein (pas de flou) + panneau collé en bas, qui défile
- *  s'il est long. Fermeture : « Fermer », toucher le voile, Échap. */
+ *  s'il est long. Fermeture : « Fermer », toucher le voile, Échap. Entrée en
+ *  240 ms (CSS), sortie en 150 ms (`playSheetExit`). */
 export function Sheet({
   open,
   title,
@@ -472,6 +520,10 @@ export function Sheet({
   const slot = useContext(SheetSlotContext);
   const id = useId();
   const heading = useRef<HTMLHeadingElement>(null);
+  const veilRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const scrollTop = useRef(0);
+  const shown = open && !!slot;
   useEffect(() => {
     if (!open) return;
     heading.current?.focus({ preventScroll: true });
@@ -481,15 +533,30 @@ export function Sheet({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
-  if (!open || !slot) return null;
+  useLayoutEffect(() => {
+    const veil = veilRef.current;
+    const panel = panelRef.current;
+    if (!shown || !slot || !veil || !panel) return;
+    scrollTop.current = 0;
+    return () => {
+      // Après le commit : si le panneau est encore dans le document, ce n'était
+      // pas une fermeture (double montage du mode strict), rien à jouer.
+      queueMicrotask(() => {
+        if (!panel.isConnected) playSheetExit(slot, veil, panel, scrollTop.current);
+      });
+    };
+  }, [shown, slot]);
+  if (!shown) return null;
   return createPortal(
     <>
       <div
+        ref={veilRef}
         aria-hidden
         onClick={onClose}
         className="e-veil absolute inset-x-0 bottom-0 h-[100dvh] bg-black/65"
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
@@ -503,7 +570,15 @@ export function Sheet({
             Fermer
           </TextLink>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+        <div
+          data-sheet-scroll
+          onScroll={(e) => {
+            scrollTop.current = e.currentTarget.scrollTop;
+          }}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          {children}
+        </div>
         {footer && <div className="flex flex-none flex-col gap-2 px-5 pb-(--pad-bottom) pt-3">{footer}</div>}
         {!footer && <div className="h-(--pad-bottom) flex-none" />}
       </div>
@@ -650,9 +725,17 @@ export function Choice<T extends string | number>({
 /* ------------------------------------------------------------------------ */
 
 /** Règle graduée au pouce : c'est la règle qui glisse sous une aiguille fixe.
- *  Toucher sans glisser saute au cran touché ; ← → au clavier. La valeur est
- *  un index de cran entier (`steps`), à l'appelant de le convertir.
- *  Poids : `<Ruler steps={kg / 1.25} max={400} label="Poids" format={(s) => fmtKg(s * 1.25) + ' kg'} />`. */
+ *  Toucher sans glisser va au cran touché ; ← → au clavier. La valeur est un
+ *  index de cran entier (`steps`), à l'appelant de le convertir.
+ *  Poids : `<Ruler steps={kg / 1.25} max={400} label="Poids" format={(s) => fmtKg(s * 1.25) + ' kg'} />`.
+ *
+ *  Les graduations vivent sur une PISTE translatée en `transform` (la graduation
+ *  v est à v × pxPerStep du centre de la piste). Le glissé suit le doigt sans
+ *  transition. Au toucher, la piste saute au cran ; avec `animateTap`, elle y
+ *  glisse en 190 ms (ease-out fort), et un nouveau toucher ou un glissé repart
+ *  de la position affichée (interruptible). Ni le clavier ni un changement venu
+ *  de l'extérieur (autre exo) n'animent. Réduire les animations : la règle
+ *  globale de BASE_CSS retire `transform` des transitions. */
 export function Ruler({
   steps,
   onChange,
@@ -666,6 +749,7 @@ export function Ruler({
   tickColor,
   needle = 'var(--sig)',
   height = 62,
+  animateTap = false,
 }: {
   steps: number;
   onChange: (s: number) => void;
@@ -683,10 +767,15 @@ export function Ruler({
   /** Couleur de l'aiguille : le signal, sauf quand la règle porte elle-même des couleurs. */
   needle?: string;
   height?: number;
+  /** Le toucher fait glisser la règle jusqu'au cran (190 ms) au lieu d'y sauter. */
+  animateTap?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const track = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; start: number; moved: boolean; last: number } | null>(null);
+  const animTimer = useRef(0);
   const [drag, setDrag] = useState<number | null>(null);
+  const [tapAnim, setTapAnim] = useState(false);
   const [half, setHalf] = useState(14);
   const value = drag ?? steps;
   const clamp = (v: number) => Math.min(max, Math.max(0, v));
@@ -695,10 +784,26 @@ export function Ruler({
     const w = box.current?.clientWidth ?? 390;
     setHalf(Math.ceil(w / 2 / pxPerStep) - 1);
   }, [pxPerStep]);
+  useEffect(() => () => window.clearTimeout(animTimer.current), []);
 
+  /** Valeur affichée sous l'aiguille, même en plein glissé animé. */
+  const shownValue = () => {
+    const el = track.current;
+    if (!tapAnim || !el) return value;
+    const t = getComputedStyle(el).transform;
+    return t && t !== 'none' ? -new DOMMatrixReadOnly(t).m41 / pxPerStep : value;
+  };
+  const stopAnim = () => {
+    window.clearTimeout(animTimer.current);
+    setTapAnim(false);
+  };
+
+  // Fenêtre doublée : pendant le glissé animé (un toucher va jusqu'à une
+  // demi-largeur), le départ et l'arrivée restent garnis.
   const base = Math.round(value);
+  const reach = 2 * half + 2;
   const ticks: number[] = [];
-  for (let k = -half; k <= half; k++) if (base + k >= 0 && base + k <= max) ticks.push(base + k);
+  for (let k = -reach; k <= reach; k++) if (base + k >= 0 && base + k <= max) ticks.push(base + k);
 
   return (
     <div
@@ -718,12 +823,19 @@ export function Ruler({
           e.preventDefault();
           // La barre de bascule du prototype écoute ← → sur window.
           e.stopPropagation();
+          stopAnim();
           onChange(clamp(steps + (e.key === 'ArrowRight' ? 1 : -1)));
         }
       }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        gesture.current = { x: e.clientX, start: steps, moved: false, last: steps };
+        // Interrompre un glissé animé : on repart de ce qui est affiché.
+        const from = shownValue();
+        if (tapAnim) {
+          stopAnim();
+          setDrag(from);
+        }
+        gesture.current = { x: e.clientX, start: from, moved: false, last: from };
       }}
       onPointerMove={(e) => {
         const g = gesture.current;
@@ -743,7 +855,13 @@ export function Ruler({
         if (!g) return;
         if (!g.moved) {
           const r = box.current!.getBoundingClientRect();
-          onChange(clamp(Math.round(steps + (e.clientX - (r.left + r.width / 2)) / pxPerStep)));
+          const target = clamp(Math.round(g.start + (e.clientX - (r.left + r.width / 2)) / pxPerStep));
+          if (animateTap && target !== g.start) {
+            window.clearTimeout(animTimer.current);
+            setTapAnim(true);
+            animTimer.current = window.setTimeout(() => setTapAnim(false), 230);
+          }
+          onChange(target);
         } else {
           onChange(Math.round(g.last));
         }
@@ -754,34 +872,40 @@ export function Ruler({
         setDrag(null);
       }}
     >
-      {ticks.map((v) => {
-        const major = isMajor(v);
-        const mid = isMid(v);
-        const off = (v - value) * pxPerStep;
-        const color = tickColor?.(v);
-        return (
-          <div
-            key={v}
-            className="absolute top-0 flex flex-col items-center"
-            style={{
-              left: `calc(50% + ${off}px)`,
-              transform: 'translateX(-50%)',
-              // Aucune transition : la règle sert des centaines de fois par séance,
-              // elle suit le doigt et saute au cran touché sans délai.
-            }}
-          >
+      <div
+        ref={track}
+        aria-hidden
+        className="absolute inset-0"
+        style={{
+          transform: `translate3d(${-value * pxPerStep}px, 0, 0)`,
+          // Sans `animateTap`, aucune transition : la règle sert des centaines de
+          // fois par séance, elle suit le doigt et saute au cran touché.
+          transition: tapAnim ? 'transform 190ms cubic-bezier(0.23, 1, 0.32, 1)' : 'none',
+        }}
+      >
+        {ticks.map((v) => {
+          const major = isMajor(v);
+          const mid = isMid(v);
+          const color = tickColor?.(v);
+          return (
             <div
-              className={color ? '' : major ? 'bg-(--muted)' : 'bg-(--dim)'}
-              style={{
-                width: color ? Math.max(2, pxPerStep - 2) : major ? 2 : 1,
-                height: major ? 30 : mid ? 18 : 11,
-                background: color,
-              }}
-            />
-            {major && majorLabel && <span className="mt-2 whitespace-nowrap text-[13px] text-(--faint)">{majorLabel(v)}</span>}
-          </div>
-        );
-      })}
+              key={v}
+              className="absolute top-0 flex flex-col items-center"
+              style={{ left: `calc(50% + ${v * pxPerStep}px)`, transform: 'translateX(-50%)' }}
+            >
+              <div
+                className={color ? '' : major ? 'bg-(--muted)' : 'bg-(--dim)'}
+                style={{
+                  width: color ? Math.max(2, pxPerStep - 2) : major ? 2 : 1,
+                  height: major ? 30 : mid ? 18 : 11,
+                  background: color,
+                }}
+              />
+              {major && majorLabel && <span className="mt-2 whitespace-nowrap text-[13px] text-(--faint)">{majorLabel(v)}</span>}
+            </div>
+          );
+        })}
+      </div>
       {/* L'aiguille, fixe au centre ; elle s'arrête au-dessus des étiquettes. */}
       <div
         className="pointer-events-none absolute left-1/2 top-0 h-[36px] w-[3px] -translate-x-1/2"
@@ -796,12 +920,10 @@ export function Ruler({
 /* ------------------------------------------------------------------------ */
 
 /** Rangée de numéros touchables : la fourchette du plan est soulignée d'un
- *  filet, la valeur choisie d'un trait épais, la Référence d'un petit carré.
- *  À l'écran, la Référence se dit « dernière fois » (le mot de CONTEXT.md reste
- *  dans le code) : un ami comprend sans lexique. */
+ *  filet, la valeur choisie d'un trait épais, la Référence d'un petit carré
+ *  (« réf. » à l'écran). */
 export function NumberRow({
   label,
-  hint,
   values,
   value,
   presc,
@@ -811,8 +933,6 @@ export function NumberRow({
   perView,
 }: {
   label: string;
-  /** Glose courte après le libellé (« RIR · reps en réserve »). */
-  hint?: string;
   values: number[];
   value: number;
   presc: [number, number];
@@ -833,13 +953,10 @@ export function NumberRow({
   return (
     <div>
       <div className="flex items-baseline justify-between px-5">
-        <span className="text-[15px] font-semibold text-(--ink)">
-          {label}
-          {hint && <span className="ml-1.5 text-[14px] font-normal text-(--muted)">{hint}</span>}
-        </span>
+        <span className="text-[15px] font-semibold text-(--ink)">{label}</span>
         <span className="text-[14px] text-(--muted)">
           plan {range(presc)}
-          {refValue !== null && <span> · dernière fois {refValue}</span>}
+          {refValue !== null && <span> · réf. {refValue}</span>}
         </span>
       </div>
       <div

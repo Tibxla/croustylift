@@ -15,7 +15,7 @@ import {
   usePlan,
   type PlanSeance,
 } from './fixtures-seances';
-import { EmptyState, List, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sheet, TextLink } from './kit';
+import { EmptyState, List, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sheet, TextLink } from './kit';
 import { ActionNote, ActionRow, Confirm, Disclosure, NameSheet, ReorderRow } from './seances-ui';
 import { useNav } from './shell';
 
@@ -56,7 +56,11 @@ export function RoutinePage({ id }: { id: string }) {
   const status = routine.archived ? 'Archivée' : routine.current ? 'Routine courante' : null;
 
   return (
-    <Screen>
+    <Screen
+      bottom={
+        !routine.archived && !reorder ? <PrimaryButton onClick={() => setCreating(true)}>Créer une séance</PrimaryButton> : undefined
+      }
+    >
       <ScreenHeader
         title={routine.name}
         meta={
@@ -68,16 +72,15 @@ export function RoutinePage({ id }: { id: string }) {
         back={{ label: 'Routines', onClick: nav.back }}
         action={
           !routine.archived && active.length > 1 ? (
-            <TextLink
-              tone={reorder ? 'ink' : 'muted'}
-              className={`px-1 ${reorder ? 'font-semibold' : ''}`}
+            <SecondaryButton
+              size="sm"
               onClick={() => {
                 setReorder((v) => !v);
                 setMoved(null);
               }}
             >
               {reorder ? 'Terminé' : 'Réordonner'}
-            </TextLink>
+            </SecondaryButton>
           ) : undefined
         }
       />
@@ -86,11 +89,7 @@ export function RoutinePage({ id }: { id: string }) {
         routine.archived ? (
           <EmptyState title="Aucune séance active" />
         ) : (
-          <EmptyState
-            title="Aucune séance dans cette routine"
-            body="Une séance est une liste d'exos avec leur prescription. C'est elle que tu choisis en arrivant en salle."
-            action={<SecondaryButton onClick={() => setCreating(true)}>Créer une séance</SecondaryButton>}
-          />
+          <EmptyState title="Aucune séance dans cette routine" />
         )
       ) : (
         <>
@@ -131,13 +130,6 @@ export function RoutinePage({ id }: { id: string }) {
               ),
             )}
           </List>
-          {!routine.archived && !reorder && (
-            <div className="px-5 pt-4">
-              <SecondaryButton onClick={() => setCreating(true)} className="w-full">
-                Créer une séance
-              </SecondaryButton>
-            </div>
-          )}
         </>
       )}
 
@@ -196,7 +188,7 @@ export function RoutinePage({ id }: { id: string }) {
               </p>
             </Confirm>
           ) : (
-            <ul className="border-t border-(--line)">
+            <ul aria-label="Actions" className="pt-1">
               <ActionRow label="Renommer" onClick={() => setRenaming(true)} />
               {!routine.current && !routine.archived && (
                 <ActionRow
@@ -206,7 +198,7 @@ export function RoutinePage({ id }: { id: string }) {
                 />
               )}
               {routine.archived ? (
-                <ActionRow label="Désarchiver" meta="Elle revient dans ta liste, avec ses courbes et ses séries de la dernière fois à battre, là où elles s'étaient arrêtées." onClick={() => plan.unarchiveRoutine(routine.id)} />
+                <ActionRow label="Désarchiver" meta="Elle revient dans ta liste. Sa Référence et ses courbes reprennent où elles s'étaient arrêtées." onClick={() => plan.unarchiveRoutine(routine.id)} />
               ) : routine.current ? (
                 <ActionNote>La routine courante ne s'archive pas. Définis d'abord une autre routine comme courante.</ActionNote>
               ) : executed ? (
@@ -219,7 +211,7 @@ export function RoutinePage({ id }: { id: string }) {
         </section>
       )}
 
-      <div className="h-(--pad-bottom)" />
+      {(routine.archived || reorder) && <div className="h-(--pad-bottom)" />}
 
       <NameSheet
         open={renaming}
@@ -289,7 +281,7 @@ export function CreateSeanceSheet({
         intro={
           src ? (
             <>
-              Copie de {src.s.name} · {src.r.name}, dans {routine.name}. Les deux séances seront indépendantes. La copie part sans série de la dernière fois à battre ni courbe
+              Copie de {src.s.name} · {src.r.name}, dans {routine.name}. Les deux séances seront indépendantes. La copie part sans Référence ni courbe
               tant qu'elle n'a pas été faite ; tes records restent affichés.
             </>
           ) : (

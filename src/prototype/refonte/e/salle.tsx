@@ -5,8 +5,8 @@
 //   a. Le sommaire de la séance (sous-page `sommaire`), à un geste de
 //      l'instrument : bouton « Sommaire » à gauche de l'action principale.
 //      Chaque exo avec sa prescription et son état ; le toucher rouvre
-//      l'instrument dessus. Il porte Ajouter, Remplacer (ou passer) et
-//      Terminer la séance.
+//      l'instrument dessus. Il porte Ajouter, « Remplacer ou passer » et
+//      Terminer la séance (bouton secondaire au-dessus de Reprendre).
 //   b. L'enchaînement : dès le minimum de séries du plan atteint, le bloc
 //      principal devient « Exo suivant » (prochain exo ni fait ni passé), et
 //      « Logger la série n » passe en bouton secondaire juste au-dessus. Quand
@@ -266,7 +266,7 @@ function Instrument() {
           {ref ? (
             <>
               <span className="text-(--muted)">
-                Dernière fois, série {rank} · {fmtDate(ex.reference!.date)}
+                Référence série {rank} · {fmtDate(ex.reference!.date)}
               </span>
               <span className="font-medium text-(--ink)">
                 {fmtKg(ref.weightKg)} × {ref.reps} · RIR {ref.rir}
@@ -274,7 +274,7 @@ function Instrument() {
             </>
           ) : (
             <span className="text-(--muted)">
-              {ex.reference ? `Pas de série ${rank} la dernière fois, rien à battre` : `Premier passage dans ${state.seanceName}, rien à battre`}
+              {ex.reference ? `Pas de série ${rank} la dernière fois, rien à battre` : `Pas encore de Référence dans ${state.seanceName}`}
             </span>
           )}
         </div>
@@ -300,6 +300,7 @@ function Instrument() {
             majorLabel={(s) => fmtKg(s * step)}
             format={(s) => `${fmtKg(s * step)} kg`}
             onChange={(s) => update({ weightKg: s * step })}
+            animateTap={settings.rulerTapAnim && !settings.reduceMotion}
           />
         </div>
 
@@ -307,11 +308,10 @@ function Instrument() {
           <div>
             <dt className="text-[13px] text-(--muted)">e1RM</dt>
             <dd className="mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-(--ink)">{fmt1(e1)}</dd>
-            {/* Glose permanente : l'ami qui découvre l'app lit « max estimé ». */}
-            <dd className="mt-1.5 text-[13px] text-(--faint)">max estimé, kg</dd>
+            <dd className="mt-1.5 text-[13px] text-(--faint)">kg</dd>
           </div>
           <div>
-            <dt className="text-[13px] text-(--muted)">Écart</dt>
+            <dt className="text-[13px] text-(--muted)">Écart à la réf.</dt>
             {ref && v ? (
               <>
                 <dd className={`mt-1 flex items-center gap-1.5 text-[22px] font-medium leading-none tracking-[-0.01em] ${TONE[v]}`}>
@@ -321,7 +321,7 @@ function Instrument() {
                 <dd className={`mt-1.5 text-[13px] ${TONE[v]}`}>{WORDS.gap[v]}</dd>
               </>
             ) : (
-              <dd className="mt-1 text-[16px] text-(--muted)">aucun</dd>
+              <dd className="mt-1 text-[16px] text-(--muted)">aucune réf.</dd>
             )}
           </div>
           <div className="text-right">
@@ -360,7 +360,6 @@ function Instrument() {
           <NumberRow
             key={`rir-${ex.id}`}
             label="RIR"
-            hint="reps en réserve"
             values={RIRS}
             value={draft.rir}
             presc={ex.rir}
@@ -403,7 +402,7 @@ function Instrument() {
             type="button"
             onClick={() => nav.push('sommaire')}
             aria-label={`Sommaire de la séance, ${done} exos faits sur ${exercises.length}${account.offline ? `, hors ligne, ${account.pendingSync} saisies sur l'appareil` : ''}`}
-            className="e-press flex h-14 w-[104px] flex-none flex-col items-start justify-center rounded-(--r) border border-(--muted) px-3 text-left active:bg-(--line)"
+            className="e-press flex h-14 w-[104px] flex-none flex-col items-start justify-center rounded-(--r) border-[1.5px] border-(--ink) bg-(--raise) px-3 text-left active:bg-(--line)"
           >
             <span className="text-[16px] font-medium leading-tight text-(--ink)">Sommaire</span>
             {account.offline || account.pendingSync > 0 ? (
@@ -461,11 +460,7 @@ function Sommaire() {
       bottom={
         remaining ? (
           <>
-            <div className="flex justify-end">
-              <TextLink tone="muted" onClick={() => nav.push('fin-de-seance')}>
-                Terminer la séance
-              </TextLink>
-            </div>
+            <SecondaryButton onClick={() => nav.push('fin-de-seance')}>Terminer la séance</SecondaryButton>
             <PrimaryButton onClick={nav.back} over="Reprendre" ariaLabel={`Reprendre · ${current.name}`}>
               {current.name}
             </PrimaryButton>
@@ -521,9 +516,15 @@ function Sommaire() {
                   <TextLink
                     tone="muted"
                     onClick={() => setTarget({ mode: 'replace', id: ex.id, name: ex.name })}
-                    className="-mr-1 px-1 text-[15px]"
+                    ariaLabel={`Remplacer ou passer ${ex.name}`}
+                    className="-mr-1 px-1 py-1 text-right text-[15px] leading-[1.3]"
                   >
-                    Remplacer
+                    {/* Sur deux lignes : sur une seule, le lien écrase le nom de l'exo à 390 px. */}
+                    <span>
+                      Remplacer
+                      <br />
+                      ou passer
+                    </span>
                   </TextLink>
                 ) : undefined
               }
@@ -623,7 +624,6 @@ function ChoixSeance() {
   return (
     <Screen>
       <ScreenHeader title="Quelle séance ?" meta={`${routine.name} · routine courante`} />
-      <p className="px-5 pb-3 text-[15px] leading-[1.45] text-(--muted)">Touche celle du jour pour la lancer.</p>
       <List label="Séances de la routine courante">
         {routine.seances
           .filter((s) => !s.archived)

@@ -13,9 +13,10 @@
 //
 // Autres réglages, ceux que l'app a ou devrait avoir : pas de la règle de
 // poids (0,25 à 10 kg, l'app ne connaît que le kg), réduire les animations,
-// export / import des données, compte (déconnexion gardée si des saisies
-// attendent la synchro, ADR 0012), à propos et les mots de l'app (RIR, e1RM,
-// dernière fois, bloc) en une phrase chacun.
+// export / import des données (l'import ajoute et met à jour, ne supprime
+// rien), compte (déconnexion gardée si des saisies attendent la synchro, ADR
+// 0012), à propos. Pas de lexique : l'app s'adresse à des pratiquants qui
+// connaissent RIR, e1RM, Référence et bloc.
 import { useState, type ReactNode } from 'react';
 import { fmtKg } from './format';
 import {
@@ -107,7 +108,7 @@ function SignalSection() {
         <span id="sig-title">Couleur de signal</span>
       </SectionTitle>
       <p className="px-5 text-[15px] leading-[1.45] text-(--muted)">
-        La seule couleur de l'app : l'aiguille de la règle et ce qui fait mieux que la dernière fois.
+        La seule couleur de l'app : l'aiguille de la règle et ce qui fait mieux que la Référence.
       </p>
 
       <SignalPreview />
@@ -272,6 +273,7 @@ function DonneesSection() {
         <SecondaryButton onClick={() => setImportMsg("Sélecteur de fichier : non branché dans le prototype")}>
           Importer un fichier
         </SecondaryButton>
+        <p className="text-[14px] text-(--muted)">L'import ajoute et met à jour, ne supprime rien.</p>
         {importMsg && (
           <p role="status" className="text-[14px] text-(--muted)">
             {importMsg}
@@ -305,19 +307,21 @@ function CompteSection() {
               ligne pour te déconnecter sans rien perdre.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4">
-              <SecondaryButton onClick={() => setGuard(false)}>Rester connecté</SecondaryButton>
-              <TextLink
+              <SecondaryButton
                 onClick={() => {
                   setGuard(false);
                   setAccount({ phase: 'deconnecte', pendingSync: 0 });
                 }}
               >
                 Me déconnecter et perdre ces saisies
+              </SecondaryButton>
+              <TextLink tone="muted" onClick={() => setGuard(false)}>
+                Rester connecté
               </TextLink>
             </div>
           </div>
         ) : (
-          <TextLink onClick={signOut}>Se déconnecter</TextLink>
+          <SecondaryButton onClick={signOut}>Se déconnecter</SecondaryButton>
         )}
       </div>
     </section>
@@ -341,30 +345,14 @@ function AboutSection() {
         <Line label="Version" value="0.9.0" />
         <Line label="Sans réseau" value="tout marche, envoi au retour" />
       </div>
-      <SectionTitle>Les mots de l'app</SectionTitle>
-      <dl className="border-t border-(--line)">
-        {LEXIQUE.map(([term, def]) => (
-          <div key={term} className="border-b border-(--line) px-5 py-2.5">
-            <dt className="text-[16px] font-medium text-(--ink)">{term}</dt>
-            <dd className="mt-0.5 text-[14px] leading-[1.4] text-(--muted)">{def}</dd>
-          </div>
-        ))}
-      </dl>
     </section>
   );
 }
 
-/** Les termes du domaine qu'un ami ne connaît pas forcément, en une phrase. */
-const LEXIQUE: [string, string][] = [
-  ['RIR', 'Reps en réserve : combien tu aurais encore pu en faire. RIR 0 : pas une de plus.'],
-  ['e1RM', 'Ton max estimé sur une rep, calculé depuis poids, reps et RIR. Sert à comparer deux séries.'],
-  ['La dernière fois', 'Ta série au même rang, la dernière fois que tu as fait cette séance : le repère à battre.'],
-  ['Bloc', "Une période où ta routine n'a pas changé. On compare des blocs pour voir ce qui fait progresser."],
-];
-
-/** Commandes du prototype (simuler le réseau). Absentes de l'app réelle. */
+/** Commandes du prototype (simuler le réseau, comparer la règle animée ou non).
+ *  Absentes de l'app réelle. */
 function PrototypeSection() {
-  const { account, setAccount } = useProto();
+  const { account, setAccount, settings, setSettings } = useProto();
   return (
     <section className="mt-6">
       <Rule strong />
@@ -382,6 +370,16 @@ function PrototypeSection() {
           min={0}
           max={20}
           onChange={(v) => setAccount({ pendingSync: v })}
+        />
+        <Switch
+          label="Règle animée au toucher"
+          meta={
+            settings.reduceMotion
+              ? 'sans effet : Réduire les animations est activé'
+              : 'Oui : glisse jusqu’au cran touché · Non : saut sec'
+          }
+          checked={settings.rulerTapAnim}
+          onChange={(v) => setSettings({ rulerTapAnim: v })}
         />
       </div>
     </section>

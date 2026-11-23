@@ -35,6 +35,7 @@ import {
   Row,
   Screen,
   ScreenHeader,
+  SecondaryButton,
   SectionTitle,
   Sign,
   Status,
@@ -258,7 +259,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
               label="Durée"
               meta={s.elapsedMin === 0 ? `chrono lancé à ${s.startedAt}` : `chrono ${s.startedAt} à ${addMinutes(s.startedAt, s.elapsedMin)}`}
               value={fmtDur(duration)}
-              action={<TextLink tone="muted" onClick={() => setDurOpen(true)}>Corriger</TextLink>}
+              action={<SecondaryButton size="sm" onClick={() => setDurOpen(true)} ariaLabel="Corriger la durée">Corriger</SecondaryButton>}
             />
           )}
           {bpmOn ? (
@@ -280,9 +281,9 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
           ) : (
             <MeasureLine
               label="BPM moyen"
-              meta="facultatif, pouls lu sur ta montre"
+              meta="facultatif, lu sur ta montre"
               value={<span className="text-[15px] font-normal text-(--muted)">pas noté</span>}
-              action={<TextLink tone="muted" onClick={() => setBpmOn(true)}>Ajouter</TextLink>}
+              action={<SecondaryButton size="sm" onClick={() => setBpmOn(true)} ariaLabel="Ajouter le BPM moyen">Ajouter</SecondaryButton>}
             />
           )}
         </div>
@@ -369,7 +370,7 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
 /** Ligne de mesure repliée : libellé, méta, valeur, action à droite. */
 function MeasureLine({ label, meta, value, action }: { label: string; meta: string; value: ReactNode; action: ReactNode }) {
   return (
-    <div className="flex min-h-16 items-center gap-3 border-b border-(--line) py-2 pl-5 pr-4">
+    <div className="flex min-h-16 items-center gap-3 border-b border-(--line) px-5 py-2">
       <span className="min-w-0 flex-1">
         <span className="block text-[17px] font-medium text-(--ink)">{label}</span>
         <span className="mt-0.5 block text-[14px] text-(--muted)">{meta}</span>
@@ -606,7 +607,7 @@ function SansSerie() {
       <ScreenHeader title="Fin de séance" meta={`${s.seanceName} · ${s.routineName}`} back={{ label: 'Séance', onClick: nav.back }} />
       <EmptyState
         title="Aucune série loggée"
-        body="Sans série, il n’y a rien à ranger : la séance n’entre pas au journal, ni durée ni BPM. Tu peux revenir à la séance ou la quitter."
+        body="Elle n’entre pas au journal."
       />
     </Screen>
   );

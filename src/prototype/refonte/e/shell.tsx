@@ -30,7 +30,7 @@
 // ÉTAT PARTAGÉ : `const { settings, setSettings, account, setAccount, seance } = useProto();`
 //   settings.sig         couleur de signal courante (aussi en CSS : var(--sig))
 //   settings.stepKg      pas de la règle de poids, libre (0,25 à 10 kg par 0,25)
-//   settings.reduceMotion
+//   settings.reduceMotion, settings.rulerTapAnim (commande du prototype)
 //   account.phase        'connecte' | 'deconnecte' | 'premier-lancement'
 //   account.email, account.pendingSync, account.offline
 //   seance               voir e/seance.ts (Exécution en cours)
@@ -45,7 +45,7 @@ export const SURFACES: { id: Exclude<SurfaceId, 'compte'>; label: string }[] = [
   { id: 'salle', label: 'Salle' },
   { id: 'analyse', label: 'Analyse' },
   { id: 'seances', label: 'Séances' },
-  { id: 'exercices', label: 'Exercices' },
+  { id: 'exercices', label: 'Exos' },
   { id: 'reglages', label: 'Réglages' },
 ];
 
@@ -74,6 +74,9 @@ export interface Settings {
   sigHue: number | null;
   stepKg: number;
   reduceMotion: boolean;
+  /** Commande du prototype : la règle de poids glisse jusqu'au cran touché
+   *  (190 ms) au lieu d'y sauter. Désactivée par défaut, pour comparer. */
+  rulerTapAnim: boolean;
 }
 
 export interface Account {

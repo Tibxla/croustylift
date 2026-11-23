@@ -143,9 +143,8 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
         back={{ label: routine.name, onClick: tryBack }}
         action={
           items.length > 1 ? (
-            <TextLink
-              tone={reorder ? 'ink' : 'muted'}
-              className={`px-1 ${reorder ? 'font-semibold' : ''}`}
+            <SecondaryButton
+              size="sm"
               onClick={() => {
                 setReorder((v) => !v);
                 setMoved(null);
@@ -153,7 +152,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
               }}
             >
               {reorder ? 'Terminé' : 'Réordonner'}
-            </TextLink>
+            </SecondaryButton>
           ) : undefined
         }
       />
@@ -166,7 +165,6 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
       {empty ? (
         <EmptyState
           title="Séance vide"
-          body="Ajoute un premier exo. La séance s'enregistre dès qu'elle en compte un."
           action={<SecondaryButton onClick={() => setAdding(true)}>Ajouter un exo</SecondaryButton>}
         />
       ) : (
@@ -256,7 +254,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
               <p className="mt-1 text-(--muted)">Jamais faite, elle n'a aucun historique. C'est définitif.</p>
             </Confirm>
           ) : (
-            <ul className="border-t border-(--line)">
+            <ul aria-label="Actions" className="pt-1">
               <ActionRow label="Renommer" onClick={() => setRenaming(true)} />
               {seance.version > 0 && (
                 <ActionRow
@@ -418,7 +416,6 @@ function ItemBlock({
             {(['sets', 'reps', 'rir'] as const).map((k) => (
               <FieldEditor key={k} k={k} value={item[k]} onChange={(f) => onField(k, f)} />
             ))}
-            <p className="px-5 pt-2 text-[14px] leading-[1.4] text-(--faint)">RIR : reps en réserve, celles que tu aurais encore pu faire. RIR 0 : pas une de plus.</p>
           </div>
           <div className="px-5 pt-4">
             <p className="text-[15px] font-semibold text-(--ink)">Note d'instructions</p>
@@ -427,14 +424,16 @@ function ItemBlock({
             ) : (
               <p className="mt-1 text-[15px] text-(--faint)">Aucune note pour cet exo.</p>
             )}
-            <TextLink onClick={onNote} ariaLabel={`${note ? 'Modifier' : 'Ajouter'} la note de ${name}`}>
-              {note ? 'Modifier la note' : 'Ajouter une note'}
-            </TextLink>
+            <div className="mt-2 flex">
+              <SecondaryButton size="sm" onClick={onNote} ariaLabel={`${note ? 'Modifier' : 'Ajouter'} la note de ${name}`}>
+                {note ? 'Modifier la note' : 'Ajouter une note'}
+              </SecondaryButton>
+            </div>
           </div>
-          <div className="mt-1 border-t border-(--line) px-5 pt-1">
-            <TextLink tone="muted" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
+          <div className="mt-3 flex border-t border-(--line) px-5 pt-3">
+            <SecondaryButton size="sm" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
               Retirer de la séance
-            </TextLink>
+            </SecondaryButton>
           </div>
         </div>
       )}

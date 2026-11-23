@@ -47,7 +47,7 @@ export function ExoPage({ id }: { id: string }) {
     <Page>
       <ScreenHeader
         title={exoName(id)}
-        meta={total > 0 ? `e1RM de la 1ʳᵉ série, ton max estimé sur une rep · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
+        meta={total > 0 ? `e1RM de la 1ʳᵉ série · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
         back={{ label: 'Analyse', onClick: nav.back }}
       />
 

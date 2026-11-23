@@ -2,7 +2,7 @@
 //
 // NAVIGATION (elle fait partie du design)
 // Une ligne de cinq mots en haut de chaque écran : Salle · Analyse · Séances ·
-// Exercices · Réglages. Le mot actif est en gras souligné, les autres en gris.
+// Exos · Réglages. Le mot actif est en gras souligné, les autres en gris.
 // Pourquoi en haut : en salle on ne change presque jamais de surface, et le bas
 // de l'écran (la zone du pouce) appartient en entier à l'action du moment
 // (logger, exo suivant, sommaire). Pourquoi des mots : cinq surfaces tiennent
@@ -60,6 +60,7 @@ export function AppE(_props: { session?: SessionFixture }) {
     sigHue: null,
     stepKg: 1.25,
     reduceMotion: prefersReducedMotion(),
+    rulerTapAnim: false,
   }));
   const [account, setAccountState] = useState<Account>({
     phase: 'connecte',

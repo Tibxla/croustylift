@@ -2,7 +2,8 @@
 //
 // Trois niveaux, une page chacun :
 //   index    les routines : la courante en tête (trait blanc cassé + le mot),
-//            les autres, les archivées repliées ; créer une routine.
+//            les autres, les archivées repliées ; « Créer une routine » est
+//            l'action principale (bloc plein en bas).
 //   routine  une routine : ses séances dans l'ordre (Réordonner = Monter /
 //            Descendre en mots), créer une séance vierge ou copiée d'une autre
 //            (ADR 0015), séances archivées repliées, actions de la routine
@@ -17,7 +18,7 @@
 // État : fixtures-seances.ts (store au niveau module, copie des fixtures).
 import { useState } from 'react';
 import { nameError, plan, routineMeta, usePlan } from './fixtures-seances';
-import { EmptyState, List, Row, Rule, Screen, ScreenHeader, SecondaryButton, SectionTitle, Switch } from './kit';
+import { EmptyState, List, PrimaryButton, Row, Rule, Screen, ScreenHeader, SectionTitle, Switch } from './kit';
 import { Disclosure, NameSheet } from './seances-ui';
 import { SeanceEditor } from './seances-editeur';
 import { RoutinePage } from './seances-routine';
@@ -47,14 +48,10 @@ function Routines() {
   const taken = s.routines.map((r) => ({ id: r.id, name: r.name, archived: r.archived }));
 
   return (
-    <Screen>
+    <Screen bottom={<PrimaryButton onClick={() => setCreating(true)}>Créer une routine</PrimaryButton>}>
       <ScreenHeader title="Routines" />
       {s.routines.length === 0 ? (
-        <EmptyState
-          title="Aucune routine"
-          body="Une routine regroupe les séances que tu tournes en ce moment, par exemple Upper et Lower. En salle, tu choisis parmi les séances de ta routine courante."
-          action={<SecondaryButton onClick={() => setCreating(true)}>Créer une routine</SecondaryButton>}
-        />
+        <EmptyState title="Aucune routine" />
       ) : (
         <>
           {current && (
@@ -82,11 +79,6 @@ function Routines() {
               </List>
             </>
           )}
-          <div className="px-5 pt-4">
-            <SecondaryButton onClick={() => setCreating(true)} className="w-full">
-              Créer une routine
-            </SecondaryButton>
-          </div>
           {archived.length > 0 && (
             <Disclosure label="Routines archivées" count={archived.length} open={showArchived} onToggle={() => setShowArchived((v) => !v)}>
               <p className="px-5 pb-3 text-[14px] leading-[1.45] text-(--muted)">
@@ -103,7 +95,6 @@ function Routines() {
       )}
 
       <PrototypeSection />
-      <div className="h-(--pad-bottom)" />
 
       <NameSheet
         open={creating}

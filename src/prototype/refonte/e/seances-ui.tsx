@@ -226,22 +226,22 @@ export function Disclosure({ label, count, open, onToggle, children }: { label: 
   );
 }
 
-/** Rangée d'action d'objet (renommer, archiver…) : libellé souligné = action,
- *  explication dessous. Sans chevron : rien ne s'ouvre ailleurs. */
+/** Action d'objet (renommer, archiver…) : un bouton secondaire pleine largeur,
+ *  l'explication dessous. Plusieurs se suivent dans un `<ul>` sans filet. */
 export function ActionRow({ label, meta, onClick }: { label: string; meta?: ReactNode; onClick: () => void }) {
   return (
-    <li className="border-b border-(--line)">
-      <button type="button" onClick={onClick} className="flex min-h-14 w-full flex-col justify-center px-5 py-2.5 text-left active:opacity-70">
-        <span className="text-[17px] text-(--ink) underline decoration-1 underline-offset-4">{label}</span>
-        {meta && <span className="mt-1 block text-[14px] leading-[1.4] text-(--muted)">{meta}</span>}
-      </button>
+    <li className="px-5 py-2">
+      <SecondaryButton onClick={onClick} className="w-full">
+        {label}
+      </SecondaryButton>
+      {meta && <p className="mt-1.5 text-[14px] leading-[1.4] text-(--muted)">{meta}</p>}
     </li>
   );
 }
 
 /** Ligne non actionnable d'une liste d'actions : dit pourquoi une action manque. */
 export function ActionNote({ children }: { children: ReactNode }) {
-  return <li className="border-b border-(--line) px-5 py-3.5 text-[15px] leading-[1.45] text-(--muted)">{children}</li>;
+  return <li className="px-5 py-2.5 text-[15px] leading-[1.45] text-(--muted)">{children}</li>;
 }
 
 /** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), Monter
@@ -264,7 +264,7 @@ export function ReorderRow({
   onMove: (dir: -1 | 1) => void;
 }) {
   const btn =
-    'h-11 flex-none rounded-(--r) border border-(--muted) px-3 text-[15px] text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:text-(--faint)';
+    'e-press h-11 flex-none rounded-(--r) border-[1.5px] border-(--ink) bg-(--raise) px-3 text-[15px] font-semibold text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:bg-transparent disabled:text-(--faint)';
   return (
     <li className="relative flex min-h-16 items-center gap-3 border-b border-(--line) px-5 py-2">
       {moved && <span aria-hidden className="absolute bottom-3 left-0 top-3 w-[3px] bg-(--ink)" />}

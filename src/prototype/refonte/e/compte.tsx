@@ -225,9 +225,9 @@ function Connexion() {
             <Notice
               title="Session locale reconnue"
               actions={
-                <TextLink tone="muted" onClick={() => setOtherAccount(true)}>
+                <SecondaryButton onClick={() => setOtherAccount(true)}>
                   Utiliser un autre compte
-                </TextLink>
+                </SecondaryButton>
               }
             >
               <span className="text-(--ink)">{account.email}</span> est déjà
@@ -245,10 +245,7 @@ function Connexion() {
                 title={`Effacer ${plural(dev.pending, "saisie", "saisies")} ?`}
                 actions={
                   <>
-                    <SecondaryButton onClick={() => setPurge(false)}>
-                      Garder
-                    </SecondaryButton>
-                    <TextLink
+                    <SecondaryButton
                       onClick={() => {
                         setDevice({ pending: 0, localSession: false });
                         setPurge(false);
@@ -257,6 +254,9 @@ function Connexion() {
                       }}
                     >
                       Effacer et changer de compte
+                    </SecondaryButton>
+                    <TextLink tone="muted" onClick={() => setPurge(false)}>
+                      Garder
                     </TextLink>
                   </>
                 }
@@ -268,9 +268,9 @@ function Connexion() {
               <Notice
                 title={`${plural(dev.pending, "saisie attend", "saisies attendent")} l’envoi`}
                 actions={
-                  <TextLink tone="muted" onClick={() => setPurge(true)}>
+                  <SecondaryButton onClick={() => setPurge(true)}>
                     Changer de compte
-                  </TextLink>
+                  </SecondaryButton>
                 }
               >
                 Elles appartiennent à{" "}
@@ -326,9 +326,9 @@ function Connexion() {
               >
                 Mot de passe oublié
               </TextLink>
-              <TextLink onClick={() => nav.push("inscription")}>
+              <SecondaryButton size="sm" onClick={() => nav.push("inscription")}>
                 Créer un compte
-              </TextLink>
+              </SecondaryButton>
             </div>
           </>
         )}
@@ -496,8 +496,10 @@ function Verifier({ email }: { email: string }) {
           Ouvre-le sur ce téléphone : l’app reprend ici, sur ta première
           routine. Rien reçu ? Regarde dans les indésirables.
         </p>
-        <div className="mt-2 flex flex-wrap gap-x-5">
-          <TextLink onClick={() => setResent(true)}>Renvoyer l’e-mail</TextLink>
+        <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+          <SecondaryButton size="sm" onClick={() => setResent(true)}>
+            Renvoyer l’e-mail
+          </SecondaryButton>
           <TextLink tone="muted" onClick={nav.back}>
             Changer d’adresse
           </TextLink>
@@ -799,9 +801,6 @@ function PremierLancement() {
                   </span>
                 </li>
               ))}
-              <li className="pt-1.5 text-[14px] leading-[1.4] text-(--faint)">
-                Séries × reps · RIR : les reps en réserve, celles que tu aurais encore pu faire.
-              </li>
             </ol>
           )}
           {option(

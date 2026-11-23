@@ -20,7 +20,7 @@ import { ExoPage } from './analyse-exo';
 import { JournalTab, SeancePage } from './analyse-journal';
 import { CURRENT_ROUTINE, currentPlan, curvesOf, exoName, recordsOf, store, useAnalyseStore, type AnalyseTab, type Execution } from './fixtures-analyse';
 import { fmt1, fmtDate, slopeVerdict, type Verdict } from './format';
-import { Choice, EmptyState, List, Row, ScreenHeader, SectionTitle, Sign, Status, TextLink, TONE } from './kit';
+import { Choice, EmptyState, List, Row, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, TONE } from './kit';
 import { Pages, useNav } from './shell';
 
 export function Analyse() {
@@ -75,8 +75,7 @@ function NoData() {
   return (
     <EmptyState
       title="Aucune séance au journal"
-      body="Les courbes partent de la première série loggée en salle. Avant elle, il n'y a rien à tracer : pas de point à zéro, pas de pente inventée."
-      action={<TextLink onClick={() => nav.go('salle')}>Aller en salle</TextLink>}
+      action={<SecondaryButton onClick={() => nav.go('salle')}>Aller en salle</SecondaryButton>}
     />
   );
 }
@@ -135,9 +134,7 @@ function ExosTab({ journal }: { journal: Execution[] }) {
           )}
           {never.length > 0 && `${never.length} exo${never.length > 1 ? 's' : ''} du plan jamais fait${never.length > 1 ? 's' : ''}, sans courbe.`}
         </p>
-        <p className="mt-2 text-[14px] leading-[1.45] text-(--faint)">
-          Le chiffre : l'e1RM de ta 1ʳᵉ série la dernière fois, ton max estimé sur une rep. Chaque exo se suit dans sa séance.
-        </p>
+        <p className="mt-2 text-[14px] text-(--faint)">Pente de chaque exo dans sa séance, sur la 1ʳᵉ série.</p>
       </section>
 
       {plan.map((g) =>

@@ -28,7 +28,6 @@ import {
   Sheet,
   Stepper,
   Switch,
-  TextLink,
 } from './kit';
 import { useNav, useProto } from './shell';
 
@@ -186,10 +185,10 @@ export function SeancePage({ id }: { id: string }) {
         <Fact label="kg soulevés" value={fmtInt(lifted(e))} />
       </dl>
       {canEdit ? (
-        <div className="px-5">
-          <TextLink tone="muted" onClick={() => setMetricsOpen(true)}>
+        <div className="flex px-5 pt-3">
+          <SecondaryButton size="sm" onClick={() => setMetricsOpen(true)}>
             Corriger la durée ou le BPM
-          </TextLink>
+          </SecondaryButton>
         </div>
       ) : (
         <p className="px-5 pt-3 text-[15px] leading-[1.45] text-(--muted)">
@@ -218,10 +217,8 @@ export function SeancePage({ id }: { id: string }) {
         );
       })}
       {canEdit && (
-        <div className="px-5 pt-6">
-          <TextLink tone="muted" onClick={() => setConfirm(true)}>
-            Supprimer cette séance
-          </TextLink>
+        <div className="flex px-5 pt-6">
+          <SecondaryButton onClick={() => setConfirm(true)}>Supprimer cette séance</SecondaryButton>
         </div>
       )}
 
@@ -322,10 +319,10 @@ function SetEditor({
       onClose={onClose}
       footer={
         <>
-          <div className="flex min-h-11 items-center justify-between">
-            <TextLink tone="muted" onClick={onRemove}>
+          <div className="flex min-h-11 items-center justify-between gap-3">
+            <SecondaryButton size="sm" onClick={onRemove}>
               Supprimer cette série
-            </TextLink>
+            </SecondaryButton>
             <span className="text-[14px] text-(--muted)">
               avant {fmtKg(orig.weightKg)} × {orig.reps} · RIR {orig.rir}
             </span>
@@ -358,6 +355,7 @@ function SetEditor({
           majorLabel={(s) => fmtKg(s * step)}
           format={(s) => `${fmtKg(s * step)} kg`}
           onChange={(s) => setV({ ...v, weightKg: s * step })}
+          animateTap={settings.rulerTapAnim && !settings.reduceMotion}
         />
       </div>
       <div className="mt-2 flex flex-col gap-1.5 pb-2">
