@@ -9,6 +9,7 @@ import { SeancesScreen } from './features/authoring/SeancesScreen'
 import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
+import { requestLeave } from './features/authoring/seance-dirty'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
 import { signOutRefusalLabel } from './features/capture/sync-label'
@@ -25,6 +26,7 @@ import {
 } from './pwa/register'
 import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
 import { ImportRequests, type SurfaceName } from './pwa/update'
+import { switchSurface } from './surface-switch'
 import { openDiag } from './viewport/watch'
 import { APP_VERSION_LABEL } from './version'
 
@@ -438,13 +440,14 @@ function AuthenticatedApp({
       <BottomNav
         surface={surface}
         onSelect={(s) => {
-          // Une nouvelle version attend ? Le changement d'onglet est le moment
-          // de basculer (l'écran quitté est démonté de toute façon) : la page se
-          // recharge et rouvre l'onglet demandé. Refusé pendant une séance. Le
-          // changement d'onglet a lieu dans tous les cas : si le rechargement
-          // tardait ou n'arrivait pas, l'app ne doit pas rester sourde au tap.
-          if (s !== surface) requestReload('surface-change', s)
-          withViewTransition(() => setSurface(s))
+          // Garde de sortie d'abord (modifications non enregistrées), puis
+          // rechargement sur une nouvelle version si une attend, puis l'onglet :
+          // l'ordre et ses raisons sont dans surface-switch.ts.
+          switchSurface(s, surface, {
+            requestLeave,
+            requestReload,
+            show: (next) => withViewTransition(() => setSurface(next)),
+          })
         }}
       />
     </main>
