@@ -271,6 +271,28 @@ export async function refreshRead<T>(key: string, fetcher: () => Promise<T>): Pr
 }
 
 /**
+ * Écrit dans la copie une valeur que l'app SAIT être en base : celle d'une
+ * écriture qui vient d'être acquittée (note d'instructions, cf. capture/sync).
+ * Pose aussi le seuil : une lecture partie avant décrit la base d'avant cette
+ * écriture et ne peut plus écraser la copie. Réservé aux valeurs scalaires dont
+ * la forme locale EST la forme serveur (l'ADR 0014 écarte le reste).
+ *
+ * `writerId` : le compte sous lequel l'écriture est partie. La copie n'est écrite
+ * que s'il est encore celui que l'appareil reconnaît : la note d'un compte ne
+ * doit jamais atterrir dans les copies d'un autre arrivé entre-temps.
+ */
+export function seedRead(key: string, value: unknown, writerId?: string): void {
+  const account = loadLocalAccount();
+  if (!account) return;
+  if (writerId !== undefined && writerId !== account.userId) return;
+  const storageKey = fullKey(account.userId, key);
+  readSeq += 1;
+  floor.set(storageKey, readSeq);
+  lastWritten.set(storageKey, readSeq);
+  writeEntry(storageKey, value);
+}
+
+/**
  * La copie locale d'une clé, telle quelle, SANS lecture réseau ni revalidation ;
  * `null` si absente ou illisible. Pour décider d'après son contenu (ex. quelles
  * copies contiennent une ligne supprimée), pas pour servir un écran.

@@ -40,3 +40,7 @@ sens du glossaire : le jour est rejoué par-dessus, pas oublié.
 ## Amendement du 2026-11-23
 
 La fusion de l'outbox couvre une série tant qu'elle attend. Une fois acquittée, elle quitte la file, et la copie de lecture ne la contenait pas encore : la Référence retombait en retard jusqu'à la relance. La copie d'historique des exos touchés est désormais relue après tout flush qui acquitte des séries, sous gardes d'ordre (ADR 0020). La fusion ne prend que les ops du compte reconnu (ADR 0019).
+
+## Amendement du 2026-11-23 (Lot 3)
+
+Le même principe vaut désormais pour la note d'instructions d'un exo éditée en Capture : tant que son écriture attend, la Capture la lit dans la file, par-dessus la copie (`applyPendingExerciseNote`). À l'acquittement, son corps est posé dans la copie (`seedRead`), sous seuil et sous garde de compte. C'est la seule écriture directe d'une copie, que cet ADR écarte pour les lignes d'historique : une note est une chaîne, sa forme locale est sa forme serveur.

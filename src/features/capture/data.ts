@@ -249,9 +249,50 @@ export async function listExercisesForCapture(): Promise<ExerciseRow[]> {
 /**
  * Note d'instructions d'un exo, « cache d'abord » pour la CAPTURE (ADR 0012).
  * Même partage des rôles que le catalogue : les éditeurs lisent en direct.
+ *
+ * Une note éditée EN CAPTURE passe par l'outbox : tant que son écriture attend,
+ * c'est elle qui fait foi, par-dessus la copie (`applyPendingExerciseNote`).
+ * Sans cela la note corrigée revenait à son ancien texte au remontage, et la
+ * retaper depuis l'ancien texte écrasait la correction. Une fois acquittée, sa
+ * valeur est posée dans la copie (cf. sync.ts).
  */
 export async function loadExerciseNoteCached(exerciseId: string): Promise<string> {
-  return cachedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, () => loadExerciseNote(exerciseId));
+  const pending = pendingExerciseNote(readOwnQueue(), exerciseId);
+  try {
+    const body = await cachedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, () =>
+      loadExerciseNote(exerciseId),
+    );
+    // La file est relue APRÈS la lecture : une édition a pu arriver entre-temps.
+    return applyPendingExerciseNote(body, readOwnQueue(), exerciseId);
+  } catch (err) {
+    // Ni copie ni réseau, mais une édition en attente : son texte est connu.
+    if (pending !== null) return pending;
+    throw err;
+  }
+}
+
+/**
+ * Le corps que la file d'écritures donne à la note d'instructions de l'exo : sa
+ * DERNIÈRE op (`upsertExerciseNote` pose le corps, `deleteExerciseNote` le
+ * vide). `null` si aucune op ne la vise. Pur.
+ */
+export function pendingExerciseNote(ops: readonly OutboxOp[], exerciseId: string): string | null {
+  let body: string | null = null;
+  for (const op of ops) {
+    if (op.id !== exerciseId) continue;
+    if (op.type === 'upsertExerciseNote') body = op.body;
+    else if (op.type === 'deleteExerciseNote') body = '';
+  }
+  return body;
+}
+
+/** La note lue, sauf si une écriture encore en file la remplace. Pur. */
+export function applyPendingExerciseNote(
+  body: string,
+  ops: readonly OutboxOp[],
+  exerciseId: string,
+): string {
+  return pendingExerciseNote(ops, exerciseId) ?? body;
 }
 
 // --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------

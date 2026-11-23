@@ -32,6 +32,8 @@ import {
   type SyncFns,
 } from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
+import { seedRead } from '../../lib/read-cache';
+import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
 // depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
@@ -86,6 +88,27 @@ function refreshTouchedHistory(): void {
 }
 
 /**
+ * Une note d'instructions vient d'être acquittée : son corps est posé dans la
+ * copie locale de l'exo. Tant que l'op attendait, la Capture la lisait dans la
+ * file (`applyPendingExerciseNote`) ; une fois sortie de la file, sans cette
+ * écriture, la copie d'avant reprenait la main au remontage suivant. Le seuil
+ * posé avec (`seedRead`) écarte une revalidation partie avant l'acquittement.
+ *
+ * `writer` : le compte de la session, relevé AVANT la requête. La copie n'est
+ * écrite que si l'appareil reconnaît encore ce compte ; sans session lisible
+ * (`null`), rien n'est écrit. Sans lecteur posé (`undefined`, tests), la copie
+ * va au compte reconnu.
+ */
+function rememberExerciseNote(
+  exerciseId: string,
+  body: string,
+  writer: string | null | undefined,
+): void {
+  if (writer === null) return;
+  seedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, body, writer);
+}
+
+/**
  * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
  * toutes idempotentes par id (cf. data.ts). C'est l'unique point de couplage
  * entre l'outbox (logique pure) et Supabase.
@@ -135,9 +158,16 @@ export const syncFns: SyncFns = {
   deleteDatedNote: (op) => deleteDatedNoteById(op.id),
   // Note d'instructions (issue #52, blind F3) : l'`id` de l'op porte l'`exerciseId`
   // (clé idempotente, 1 note par user+exo). Le corps est déjà normalisé en amont.
-  upsertExerciseNote: (op) =>
-    upsertExerciseNoteRow({ exerciseId: op.id, body: op.body }),
-  deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
+  upsertExerciseNote: async (op) => {
+    const writer = await sessionUserId();
+    await upsertExerciseNoteRow({ exerciseId: op.id, body: op.body });
+    rememberExerciseNote(op.id, op.body, writer);
+  },
+  deleteExerciseNote: async (op) => {
+    const writer = await sessionUserId();
+    await deleteExerciseNoteByExercise(op.id);
+    rememberExerciseNote(op.id, '', writer);
+  },
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
     touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);

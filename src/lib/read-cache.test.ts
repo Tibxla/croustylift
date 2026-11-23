@@ -12,6 +12,7 @@ import {
   networkFirstRead,
   refreshRead,
   revalidateReadCache,
+  seedRead,
   stableKeyOf,
   tolerantRead,
 } from './read-cache';
@@ -447,5 +448,53 @@ describe('invalidateReads', () => {
     expect(JSON.parse(localStorage.getItem(key('exo-note:e1')) ?? '{}')).toMatchObject({
       value: 'note de l’exo',
     });
+  });
+});
+
+// Valeur d'une écriture acquittée, posée dans la copie sans relecture réseau.
+describe('seedRead', () => {
+  it('la valeur posée est servie d’abord à la lecture suivante', async () => {
+    await cachedRead('exo-note:e1', async () => 'ancienne note');
+    seedRead('exo-note:e1', 'note corrigée');
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note corrigée',
+    );
+  });
+
+  it('une lecture partie avant ne remet pas l’ancienne valeur', async () => {
+    await cachedRead('exo-note:e1', async () => 'ancienne note');
+    let answer!: (value: string) => void;
+    // Revalidation de fond partie AVANT l'écriture, qui répondra après.
+    void cachedRead('exo-note:e1', () => new Promise<string>((resolve) => (answer = resolve)));
+    seedRead('exo-note:e1', 'note corrigée');
+    answer('ancienne note');
+    await settle();
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note corrigée',
+    );
+  });
+
+  it('une lecture partie après, elle, écrit la copie', async () => {
+    seedRead('exo-note:e1', 'note corrigée');
+    await cachedRead('exo-note:e1', async () => 'note éditée ailleurs');
+    await settle();
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note éditée ailleurs',
+    );
+  });
+
+  it('n’écrit rien sous un autre compte que celui de l’écriture', () => {
+    seedRead('exo-note:e1', 'note du compte A', 'user-a');
+
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-note:e1')).toBeNull();
+  });
+
+  it('écrit sous le compte de l’écriture quand c’est bien lui qui est reconnu', () => {
+    seedRead('exo-note:e1', 'ma note', 'user-1');
+
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-note:e1')).not.toBeNull();
   });
 });
