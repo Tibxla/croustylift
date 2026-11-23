@@ -10,6 +10,7 @@
 // (« pente indispo »), pas en zéro trompeur.
 import { TrendArrow } from './TrendArrow';
 import { trendColor, trendOf } from './trend';
+import { formatRate } from './format';
 
 export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) {
   if (weeklyRate === null) {
@@ -30,13 +31,14 @@ export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) 
       : trend === 'down'
         ? 'bg-[color-mix(in_oklab,var(--color-warn),transparent_86%)]'
         : 'bg-surface-2';
-  const sign = weeklyRate > 0 ? '+' : ''; // le '−' vient déjà du nombre négatif.
+  // Chiffre en français (virgule, signe moins), signe compris : cf. `formatRate`.
+  const rate = formatRate(weeklyRate);
   const label =
     trend === 'up'
-      ? `Progression ${sign}${weeklyRate.toFixed(1)} % par semaine`
+      ? `Progression ${rate} % par semaine`
       : trend === 'down'
-        ? `Régression ${weeklyRate.toFixed(1)} % par semaine`
-        : `Stagnation, ${sign}${weeklyRate.toFixed(1)} % par semaine`;
+        ? `Régression ${rate} % par semaine`
+        : `Stagnation, ${rate} % par semaine`;
 
   return (
     <span
@@ -45,8 +47,7 @@ export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) 
     >
       <TrendArrow trend={trend} />
       <span className="readout text-xs font-medium">
-        {sign}
-        {weeklyRate.toFixed(1)}
+        {rate}
         <span className="ml-0.5 font-normal opacity-80"> %/sem</span>
       </span>
     </span>
