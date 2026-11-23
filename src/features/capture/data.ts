@@ -19,7 +19,13 @@
 // faite ailleurs ; elle se revalide en arrière-plan à chaque lecture en ligne
 // (même classe d'imprécision que le last-write-wins, ADR 0003). Les surfaces
 // d'ÉDITION (authoring, journal), elles, lisent toujours le réseau en direct.
-import { cachedRead, stableKeyOf, tolerantRead } from '../../lib/read-cache';
+import {
+  cachedKeys,
+  cachedRead,
+  refreshRead,
+  stableKeyOf,
+  tolerantRead,
+} from '../../lib/read-cache';
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows } from '../../lib/fetch-all';
 import type { Database } from '../../lib/database.types';
@@ -583,8 +589,9 @@ export function applyPendingSets(
 async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetWithExecutionRow[]> {
   // Cache d'abord (ADR 0012) : la Référence et les Records se dérivent de la
   // copie locale hors-ligne. Elle peut être en retard d'une exécution faite
-  // ailleurs (cas résiduel ADR 0003) ; la revalidation post-flush (App) la met à
-  // jour dès que la séance du jour est remontée.
+  // ailleurs (cas résiduel ADR 0003) ; ce qui est écrit d'ICI ne la laisse pas
+  // périmée : tant qu'une série attend, l'outbox la fusionne (ADR 0014), et dès
+  // qu'elle est acquittée la copie est relue (`refreshExerciseRows`).
   return cachedRead(exerciseRowsKey(exerciseId), () => fetchExerciseRows(exerciseId));
 }
 
@@ -592,6 +599,24 @@ async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetW
 const EXERCISE_ROWS_PREFIX = 'exo-execs:';
 function exerciseRowsKey(exerciseId: string): string {
   return `${EXERCISE_ROWS_PREFIX}${exerciseId}`;
+}
+
+/**
+ * Relit depuis le réseau la copie locale de l'historique des exos donnés, ou de
+ * TOUTES les copies existantes (`'all'` : une suppression ne porte que l'id de
+ * sa ligne, pas l'exo). Appelée après un flush qui a fait passer des séries
+ * (cf. sync.ts) : une fois acquittées, elles quittent l'outbox et la Référence
+ * de la séance suivante ne les verrait plus que dans une copie à jour. En échec
+ * réseau la copie reste telle quelle (la revalidation de fond rattrapera).
+ */
+export async function refreshExerciseRows(exerciseIds: readonly string[] | 'all'): Promise<void> {
+  const ids =
+    exerciseIds === 'all'
+      ? cachedKeys(EXERCISE_ROWS_PREFIX).map((key) => key.slice(EXERCISE_ROWS_PREFIX.length))
+      : exerciseIds;
+  await Promise.all(
+    ids.map((id) => refreshRead(exerciseRowsKey(id), () => fetchExerciseRows(id))),
+  );
 }
 
 /** Lecture Supabase brute de l'historique d'un exo (cf. loadExerciseExecutions). */

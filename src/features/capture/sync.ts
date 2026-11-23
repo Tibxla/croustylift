@@ -10,6 +10,7 @@
 import {
   deleteExecutionById,
   deleteSetById,
+  refreshExerciseRows,
   updateExecution,
   upsertExecution,
   upsertSet,
@@ -21,6 +22,30 @@ import {
   deleteExerciseNoteByExercise,
 } from '../notes/data';
 import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
+
+// Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
+// depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
+// chaque fonction de sync le note ici après son succès, et `flushOutbox` relit
+// les copies locales concernées une fois la passe finie. Les ops d'exécution
+// (`upsertExecution`, `updateExecution`) n'y figurent pas : la copie ne porte
+// ni clôture ni métriques de fin, et la date d'une exécution ne change jamais
+// après coup (elle arrive avec ses premières séries, qui déclenchent la relecture).
+const touchedExercises = new Set<string>();
+// Une suppression ne porte que l'id de sa ligne : on relit toutes les copies.
+let touchedAll = false;
+
+/**
+ * Relit en fond les copies d'historique que la passe vient de rendre périmées
+ * (cf. `refreshExerciseRows`). Sans attendre : la capture ne dépend pas du
+ * retour de cette lecture, et un échec réseau laisse simplement la copie.
+ */
+function refreshTouchedHistory(): void {
+  if (!touchedAll && touchedExercises.size === 0) return;
+  const target = touchedAll ? 'all' : [...touchedExercises];
+  touchedAll = false;
+  touchedExercises.clear();
+  void refreshExerciseRows(target);
+}
 
 /**
  * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
@@ -35,8 +60,8 @@ export const syncFns: SyncFns = {
       performedOn: op.performedOn,
       startedAt: op.startedAt,
     }),
-  insertSet: (op) =>
-    upsertSet({
+  insertSet: async (op) => {
+    await upsertSet({
       id: op.id,
       executionId: op.executionId,
       exerciseId: op.exerciseId,
@@ -47,8 +72,13 @@ export const syncFns: SyncFns = {
       // Côté unilatéral (ADR 0005) : porté jusqu'à la base pour ne pas écraser
       // `side` à null et dé-apparier G/D quand on édite une exécution passée.
       side: op.side,
-    }),
-  deleteSet: (op) => deleteSetById(op.id),
+    });
+    touchedExercises.add(op.exerciseId);
+  },
+  deleteSet: async (op) => {
+    await deleteSetById(op.id);
+    touchedAll = true;
+  },
   updateExecution: (op) =>
     updateExecution({
       id: op.id,
@@ -69,7 +99,10 @@ export const syncFns: SyncFns = {
   upsertExerciseNote: (op) =>
     upsertExerciseNoteRow({ exerciseId: op.id, body: op.body }),
   deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
-  deleteExecution: (op) => deleteExecutionById(op.id),
+  deleteExecution: async (op) => {
+    await deleteExecutionById(op.id);
+    touchedAll = true;
+  },
 };
 
 /**
@@ -93,7 +126,7 @@ export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
   for (const op of ops) enqueue(op);
   // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
   // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
-  const { flushed } = await flush(syncFns);
+  const { flushed } = await flushOutbox();
   // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
   const remaining = readQueue().filter((op) => ourIds.has(op.id)).length;
   return { remaining, flushed };
@@ -107,7 +140,11 @@ export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
  * un flush au montage / 'online' : une suppression faite depuis l'Analyse en
  * offline restait en file tant qu'on ne passait pas en Capture (« delete
  * zombie » au reload). Renvoie le résultat du flush (combien restent / passées).
+ *
+ * C'est aussi le point de passage de TOUS les flush (Capture, journal, App) :
+ * après la passe, même arrêtée sur un échec, les copies d'historique des séries
+ * acquittées sont relues (`refreshTouchedHistory`).
  */
 export function flushOutbox() {
-  return flush(syncFns);
+  return flush(syncFns).finally(refreshTouchedHistory);
 }

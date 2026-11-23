@@ -24,6 +24,13 @@
 // marqueur, tout passe en direct (aucun cache) — l'app n'est alors pas censée
 // être authentifiée.
 //
+// ORDRE DES RÉPONSES : plusieurs lectures d'une même clé peuvent être en vol
+// (revalidation de fond, relecture après un flush). Seule la DERNIÈRE PARTIE a
+// le droit d'écrire la copie (`guardedFetch`) : une réponse plus ancienne, qui
+// peut dater d'avant une écriture acquittée depuis, est rendue à son appelant
+// mais n'écrase rien. Même garde sur le compte : une réponse arrivée après un
+// changement de compte reconnu ne s'écrit pas.
+//
 // LIMITE ASSUMÉE (cf. docs/future-improvements.md) : la revalidation ne sait
 // rejouer que les lectures déjà VUES dans la session en cours (registre
 // mémoire). Une copie jamais revalidée depuis la dernière synchro peut servir
@@ -44,6 +51,14 @@ interface Envelope {
 
 /** Registre mémoire des revalidations connues de cette session (clé → refetch). */
 const revalidators = new Map<string, () => Promise<void>>();
+
+/**
+ * Numéro de la dernière lecture PARTIE pour chaque clé. La séquence est globale
+ * et ne repart jamais de zéro : après une purge (`clearReadCache`), une réponse
+ * encore en vol ne peut pas retrouver le numéro d'une lecture plus récente.
+ */
+const latestRead = new Map<string, number>();
+let readSeq = 0;
 
 function fullKey(userId: string, key: string): string {
   return `${PREFIX}:${userId}:${key}`;
@@ -81,6 +96,27 @@ function writeEntry(key: string, value: unknown): void {
   }
 }
 
+/**
+ * Lit le réseau et sème la copie, sous deux gardes : la réponse n'écrit que si
+ * aucune lecture de la même clé n'est partie depuis (sinon elle écraserait du
+ * plus frais avec du plus vieux), et si le compte reconnu est toujours celui du
+ * départ. Dans tous les cas la valeur est rendue à l'appelant.
+ */
+async function guardedFetch<T>(
+  userId: string,
+  storageKey: string,
+  fetcher: () => Promise<T>,
+): Promise<T> {
+  readSeq += 1;
+  const seq = readSeq;
+  latestRead.set(storageKey, seq);
+  const value = await fetcher();
+  if (latestRead.get(storageKey) === seq && loadLocalAccount()?.userId === userId) {
+    writeEntry(storageKey, value);
+  }
+  return value;
+}
+
 /** Borne une promesse : rejette après `ms` (la promesse d'origine continue). */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -113,7 +149,7 @@ export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Pro
 
   const storageKey = fullKey(account.userId, key);
   const refresh = async () => {
-    writeEntry(storageKey, await fetcher());
+    await guardedFetch(account.userId, storageKey, fetcher);
   };
   revalidators.set(storageKey, refresh);
 
@@ -125,9 +161,35 @@ export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Pro
     return cached.value;
   }
 
-  const value = await fetcher();
-  writeEntry(storageKey, value);
-  return value;
+  return guardedFetch(account.userId, storageKey, fetcher);
+}
+
+/**
+ * Relecture RÉSEAU d'une clé, qui remplace la copie locale (sous les gardes de
+ * `guardedFetch`). Pour les copies qu'une écriture qui vient d'être acquittée a
+ * rendues périmées. Ne jette jamais : en échec, la copie reste telle quelle.
+ */
+export async function refreshRead<T>(key: string, fetcher: () => Promise<T>): Promise<void> {
+  const account = loadLocalAccount();
+  if (!account) return;
+  try {
+    await guardedFetch(account.userId, fullKey(account.userId, key), fetcher);
+  } catch {
+    // Hors-ligne ou erreur serveur : la copie servie reste la vérité locale.
+  }
+}
+
+/** Les clés (sans l'étiquette de compte) des copies existantes sous `prefix`. */
+export function cachedKeys(prefix: string): string[] {
+  const account = loadLocalAccount();
+  if (!account || typeof localStorage === 'undefined') return [];
+  const scope = fullKey(account.userId, '');
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key !== null && key.startsWith(scope + prefix)) keys.push(key.slice(scope.length));
+  }
+  return keys;
 }
 
 /**
@@ -163,9 +225,9 @@ export async function networkFirstRead<T>(
   if (!account) return fetcher();
 
   const storageKey = fullKey(account.userId, key);
-  const attempt = fetcher();
   // Même si la course est perdue (délai), une réponse tardive ressème la copie.
-  void attempt.then((value) => writeEntry(storageKey, value)).catch(() => {});
+  const attempt = guardedFetch(account.userId, storageKey, fetcher);
+  void attempt.catch(() => {});
 
   try {
     return await withTimeout(attempt, timeoutMs);
@@ -191,6 +253,9 @@ export function revalidateReadCache(): void {
 /** Purge TOUTES les copies locales, tous comptes (Déconnexion / forçage). */
 export function clearReadCache(): void {
   revalidators.clear();
+  // Les lectures encore en vol ne sont plus « la dernière » de leur clé : leur
+  // réponse ne ressèmera pas une copie qu'on vient de purger.
+  latestRead.clear();
   if (typeof localStorage === 'undefined') return;
   try {
     const doomed: string[] = [];
