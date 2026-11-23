@@ -45,10 +45,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "dated_notes_execution_id_fkey"
-            columns: ["execution_id"]
+            columns: ["execution_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "executions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
           {
             foreignKeyName: "dated_notes_exercise_id_fkey"
@@ -99,10 +99,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "executions_seance_version_id_fkey"
-            columns: ["seance_version_id"]
+            columns: ["seance_version_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "seance_versions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -261,10 +261,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "performed_sets_execution_id_fkey"
-            columns: ["execution_id"]
+            columns: ["execution_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "executions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
           {
             foreignKeyName: "performed_sets_exercise_id_fkey"
@@ -331,10 +331,10 @@ export type Database = {
           },
           {
             foreignKeyName: "prescriptions_seance_version_id_fkey"
-            columns: ["seance_version_id"]
+            columns: ["seance_version_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "seance_versions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -366,10 +366,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "routine_activations_routine_id_fkey"
-            columns: ["routine_id"]
+            columns: ["routine_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "routines"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -428,10 +428,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "seance_archive_events_seance_id_fkey"
-            columns: ["seance_id"]
+            columns: ["seance_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "seances"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -460,10 +460,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "seance_versions_seance_id_fkey"
-            columns: ["seance_id"]
+            columns: ["seance_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "seances"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -501,10 +501,10 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "seances_routine_id_fkey"
-            columns: ["routine_id"]
+            columns: ["routine_id", "owner_id"]
             isOneToOne: false
             referencedRelation: "routines"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_id"]
           },
         ]
       }
@@ -513,7 +513,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      import_user_data: {
+        Args: { p_data: Json }
+        Returns: undefined
+      }
+      reorder_seances: {
+        Args: { p_routine_id: string; p_seance_ids: string[] }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
