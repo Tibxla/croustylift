@@ -420,3 +420,55 @@ describe('pickFirstExecution : la première séance réellement faite', () => {
     expect(options.map((o) => o.pointCount)).toEqual([2])
   })
 })
+
+// Constat D8 de l'audit du 2026-11-22 : un exo saisi à 0 kg avait une courbe
+// plate à 0, un chiffre héros « 0 » et une pente indisponible même sur cinq séances.
+describe('analyzeExecutions : exo saisi à 0 kg', () => {
+  const bw = (date: string, reps: number, seanceId = 's-upper'): ExerciseExecution => ({
+    date,
+    exerciseId: 'bench',
+    sets: [{ weightKg: 0, reps, rir: 0, order: 1 }],
+    createdAt: `${date}T10:00:00.000Z`,
+    id: `e-${date}-${seanceId}`,
+    seanceId,
+  });
+
+  it('jamais chargé : courbe et pente en reps effectives, unité dite', () => {
+    const analysis = analyzeExecutions(
+      exercise,
+      [
+        bw('2026-07-01', 8),
+        bw('2026-07-08', 9),
+        bw('2026-07-15', 10),
+        bw('2026-07-22', 11),
+        bw('2026-07-29', 12),
+      ],
+      names,
+    );
+    expect(analysis.unit).toBe('reps');
+    expect(analysis.zeroLoadHoles).toBe(0);
+    const curve = analysis.seanceCurves[0]!;
+    expect(curve.curve.map((p) => p.e1rm)).toEqual([8, 9, 10, 11, 12]);
+    expect(curve.weeklyRate).not.toBeNull();
+    expect(curve.weeklyRate!).toBeGreaterThan(0);
+  });
+
+  it('chargé dans une autre séance : toute la carte en kg, les séances à 0 kg comptées en trous', () => {
+    const analysis = analyzeExecutions(
+      exercise,
+      [
+        bw('2026-07-01', 8, 's-fullbody'),
+        bw('2026-07-08', 9, 's-fullbody'),
+        execution('2026-07-03', 5, 's-upper'),
+        execution('2026-07-10', 7.5, 's-upper'),
+      ],
+      names,
+    );
+    expect(analysis.unit).toBe('kg');
+    // La séance restée à 0 kg n'a plus de courbe : elle ne se superpose pas, en
+    // reps, à une courbe en kilos.
+    expect(analysis.seanceCurves.map((c) => c.seanceId)).toEqual(['s-upper']);
+    expect(analysis.zeroLoadHoles).toBe(2);
+  });
+});
+

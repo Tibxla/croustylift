@@ -14,8 +14,8 @@
 // (`RawLogSet.side`), et l'édition d'une séance passée (issue #38) le conserve
 // (chargement -> diff -> outbox -> DB), `reorderSets` recompactant par SÉRIE
 // LOGIQUE pour garder G/D appariés (cf. past-session-edit).
-import { estimateE1rm } from './e1rm'
-import type { PerformedSet, Side } from './types'
+import { comparePerformance, effectiveReps, estimateE1rm, isZeroLoad } from './e1rm'
+import type { CurveUnit, PerformedSet, Side } from './types'
 
 const SIDES: readonly Side[] = ['left', 'right']
 
@@ -75,20 +75,26 @@ export function loggedSetEquivalents(sets: PerformedSet[]): number {
   )
 }
 
-/** e1RM d'une série, ou null si elle est absente (côté manquant). */
-function e1rmOf(set: PerformedSet | null): number | null {
-  return set === null ? null : estimateE1rm(set.weightKg, set.reps, set.rir)
+/**
+ * Le CÔTÉ FAIBLE d'une paire : la ligne de moindre perf (`comparePerformance`,
+ * donc l'e1RM, ou les reps effectives quand les deux côtés sont à 0 kg). À
+ * égalité, la ligne gauche. Un côté manquant (saisie incomplète) retombe sur le
+ * côté présent ; `null` si la paire est vide.
+ */
+export function weakerSide(pair: SidePair): PerformedSet | null {
+  const { left, right } = pair
+  if (left && right) return comparePerformance(left, right) <= 0 ? left : right
+  return left ?? right
 }
 
 /**
- * e1RM représentatif de la 1ʳᵉ série d'une exécution, point de la courbe primaire :
- *   - BILATÉRAL (séries sans `side`) : l'e1RM de la 1ʳᵉ série (order min), inchangé ;
- *   - UNILATÉRAL : le CÔTÉ FAIBLE de la 1ʳᵉ série, soit l'e1RM le PLUS BAS des
- *     deux côtés appariés par `order`. Un côté manquant (saisie incomplète) tombe
- *     sur le côté présent.
+ * La ligne représentative de la 1ʳᵉ série d'une exécution, celle que suit la
+ * courbe primaire :
+ *   - BILATÉRAL (séries sans `side`) : la 1ʳᵉ série (order min) ;
+ *   - UNILATÉRAL : le CÔTÉ FAIBLE de la 1ʳᵉ série (cf. `weakerSide`).
  * `null` si l'exécution n'a aucune série.
  */
-export function weakSideE1rm(sets: PerformedSet[]): number | null {
+export function firstSeriesWeakSet(sets: PerformedSet[]): PerformedSet | null {
   if (sets.length === 0) return null
 
   const isUnilateral = sets.some((s) => s.side !== undefined)
@@ -96,26 +102,40 @@ export function weakSideE1rm(sets: PerformedSet[]): number | null {
     // Pré-condition : un exo bilatéral a UNE série par `order` (une série = un
     // rang, cf. GLOSSARY.md « Série »). Deux séries bilatérales au même order est
     // une anomalie (jamais produite par la capture). On la rend néanmoins
-    // déterministe au lieu de laisser l'ordre du tableau — non garanti côté data
-    // — trancher : à `order` égal on retient le plus petit e1RM, cohérent avec la
+    // déterministe au lieu de laisser l'ordre du tableau, non garanti côté data,
+    // trancher : à `order` égal on retient la moindre perf, cohérent avec la
     // lecture « côté faible » du module (on ne surévalue jamais la progression).
-    const first = sets.reduce((earliest, s) => {
+    return sets.reduce((earliest, s) => {
       if (s.order !== earliest.order) return s.order < earliest.order ? s : earliest
-      return estimateE1rm(s.weightKg, s.reps, s.rir) <
-        estimateE1rm(earliest.weightKg, earliest.reps, earliest.rir)
-        ? s
-        : earliest
+      return comparePerformance(s, earliest) < 0 ? s : earliest
     })
-    return estimateE1rm(first.weightKg, first.reps, first.rir)
   }
 
-  const pairs = pairSidesByOrder(sets)
-  if (pairs.length === 0) return null
-  const firstPair = pairs[0]! // déjà trié par order : le rang 1 (length > 0 garanti ci-dessus)
-  const left = e1rmOf(firstPair.left)
-  const right = e1rmOf(firstPair.right)
-  if (left !== null && right !== null) return Math.min(left, right)
-  return left ?? right
+  const firstPair = pairSidesByOrder(sets)[0] // déjà trié par order : le rang 1
+  return firstPair ? weakerSide(firstPair) : null
+}
+
+/**
+ * e1RM représentatif de la 1ʳᵉ série d'une exécution (cf. `firstSeriesWeakSet`) :
+ * l'e1RM de la 1ʳᵉ série en bilatéral, celui du CÔTÉ FAIBLE en unilatéral.
+ * `null` si l'exécution n'a aucune série.
+ */
+export function weakSideE1rm(sets: PerformedSet[]): number | null {
+  const set = firstSeriesWeakSet(sets)
+  return set === null ? null : estimateE1rm(set.weightKg, set.reps, set.rir)
+}
+
+/**
+ * La mesure d'une série sur une courbe, dans l'unité de la courbe (cf.
+ * `curveUnit`, primary-curve.ts) :
+ *   - 'reps' : ses reps effectives ;
+ *   - 'kg'   : son e1RM, ou `null` si elle est à 0 kg. Un e1RM nul n'est pas une
+ *     perf nulle : sur une courbe en kilos, une série à 0 kg est un trou.
+ */
+export function curveValue(set: PerformedSet, unit: CurveUnit): number | null {
+  if (unit === 'reps') return effectiveReps(set.reps, set.rir)
+  if (isZeroLoad(set.weightKg)) return null
+  return estimateE1rm(set.weightKg, set.reps, set.rir)
 }
 
 // --- Choix du côté & appariement agnostique de l'ordre (issue #63) -----------

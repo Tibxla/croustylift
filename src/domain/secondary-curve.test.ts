@@ -288,3 +288,43 @@ describe('buildSecondaryCurve', () => {
     expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(95, 5, 1))
   })
 })
+
+// Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23).
+describe('buildSecondaryCurve à charge nulle', () => {
+  it('en reps : moyenne des reps effectives des séries 2+', () => {
+    const curve = buildSecondaryCurve(
+      [
+        {
+          date: '2026-01-01',
+          exerciseId: 'tractions',
+          sets: [
+            { weightKg: 0, reps: 12, rir: 0, order: 1 },
+            { weightKg: 0, reps: 9, rir: 1, order: 2 },
+            { weightKg: 0, reps: 8, rir: 0, order: 3 },
+          ],
+        },
+      ],
+      'tractions',
+    )
+    expect(curve).toEqual([{ date: '2026-01-01', e1rm: 9 }])
+  })
+
+  it('en kg : une série 2+ à 0 kg ne tire pas la moyenne vers zéro', () => {
+    const curve = buildSecondaryCurve(
+      [
+        {
+          date: '2026-01-01',
+          exerciseId: 'dips',
+          sets: [
+            { weightKg: 10, reps: 5, rir: 0, order: 1 },
+            { weightKg: 10, reps: 4, rir: 0, order: 2 },
+            { weightKg: 0, reps: 15, rir: 0, order: 3 },
+          ],
+        },
+      ],
+      'dips',
+    )
+    expect(curve).toHaveLength(1)
+    expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(10, 4, 0))
+  })
+})

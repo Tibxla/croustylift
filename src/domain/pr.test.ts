@@ -4,6 +4,7 @@ import {
   personalRecord,
   personalRecordBySide,
   isE1rmRecord,
+  isRepsRecord,
   isWeightRepsRecord,
   type PersonalRecord,
 } from './pr'
@@ -54,7 +55,7 @@ describe('personalRecord', () => {
     const pr = personalRecord(executions, 'squat')
     // 6 reps effectives (5 + RIR 1) : 100 * (1 + 5/30) = 116,67 (ADR 0013)
     expect(pr.bestE1rm).toBeCloseTo(100 * (1 + 5 / 30), 6)
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 100, reps: 5 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 100, reps: 5 })
     expect(pr.bestWeightReps).toEqual({ weightKg: 100, reps: 5 })
   })
 
@@ -76,7 +77,7 @@ describe('personalRecord', () => {
     const pr = personalRecord(executions, 'squat')
     // meilleur toutes séries : 120x5@1 = 120 * (1 + 5/30) = 140 (série 2 du jour 1)
     expect(pr.bestE1rm).toBeCloseTo(120 * (1 + 5 / 30), 6)
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 120, reps: 5 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 120, reps: 5 })
   })
 
   it('e1RM : une série tardive all-out peut porter le record (fix du badge qui se rallumait)', () => {
@@ -93,7 +94,7 @@ describe('personalRecord', () => {
     ]
     const pr = personalRecord(executions, 'bench')
     expect(pr.bestE1rm).toBeCloseTo(95 * (1 + 9 / 30), 6)
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 95, reps: 10 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 95, reps: 10 })
   })
 
   it('e1RM unilatéral : chaque série vaut son CÔTÉ FAIBLE (pas le côté fort)', () => {
@@ -111,7 +112,7 @@ describe('personalRecord', () => {
     // côté faible : 80x5@1 = 80 * (1 + 5/30) = 93,33 (et NON 100x5@1 = 116,67)
     expect(pr.bestE1rm).toBeCloseTo(80 * (1 + 5 / 30), 6)
     // La perf porteuse est la LIGNE du côté faible.
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 80, reps: 5 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 80, reps: 5 })
   })
 
   it('e1RM unilatéral : insensible à l’ordre de saisie (droite saisie d’abord)', () => {
@@ -144,7 +145,7 @@ describe('personalRecord', () => {
     ]
     const pr = personalRecord(executions, 'curl')
     expect(pr.bestE1rm).toBeCloseTo(110 * (1 + 5 / 30), 6)
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 110, reps: 5 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 110, reps: 5 })
   })
 
   it('e1RM unilatéral : un côté manquant (série incomplète) retombe sur le côté présent', () => {
@@ -157,7 +158,7 @@ describe('personalRecord', () => {
     ]
     const pr = personalRecord(executions, 'curl')
     expect(pr.bestE1rm).toBeCloseTo(100 * (1 + 5 / 30), 6)
-    expect(pr.bestE1rmSet).toEqual({ weightKg: 100, reps: 5 })
+    expect(pr.bestE1rmSet).toMatchObject({ weightKg: 100, reps: 5 })
   })
 
   it('poids×reps : balaie TOUTES les séries (pas seulement la 1ʳᵉ)', () => {
@@ -282,11 +283,11 @@ describe('personalRecordBySide', () => {
     // Gauche : meilleur e1RM = 22×10 (jour 2), charge max 22×10.
     expect(left.bestWeightReps).toEqual({ weightKg: 22, reps: 10 })
     expect(left.bestE1rm).toBeCloseTo(22 * (1 + 9 / 30))
-    expect(left.bestE1rmSet).toEqual({ weightKg: 22, reps: 10 })
+    expect(left.bestE1rmSet).toMatchObject({ weightKg: 22, reps: 10 })
     // Droite : meilleur e1RM = 24×10 (jour 1), charge max 24×10.
     expect(right.bestWeightReps).toEqual({ weightKg: 24, reps: 10 })
     expect(right.bestE1rm).toBeCloseTo(24 * (1 + 9 / 30))
-    expect(right.bestE1rmSet).toEqual({ weightKg: 24, reps: 10 })
+    expect(right.bestE1rmSet).toMatchObject({ weightKg: 24, reps: 10 })
   })
 
   it('le record d’un côté balaie TOUTES les séries de ce côté (pas seulement la 1ʳᵉ)', () => {
@@ -305,7 +306,7 @@ describe('personalRecordBySide', () => {
     ]
     const { left } = personalRecordBySide(executions, 'db-press')
     expect(left.bestE1rm).toBeCloseTo(24 * (1 + 9 / 30))
-    expect(left.bestE1rmSet).toEqual({ weightKg: 24, reps: 10 })
+    expect(left.bestE1rmSet).toMatchObject({ weightKg: 24, reps: 10 })
   })
 
   it('records nuls pour un côté jamais travaillé', () => {
@@ -340,7 +341,7 @@ describe('record d’e1RM à égalité entre deux couples poids/reps', () => {
       ],
       'squat',
     )
-    expect(record.bestE1rmSet).toEqual({ weightKg: 87.5, reps: 5 })
+    expect(record.bestE1rmSet).toMatchObject({ weightKg: 87.5, reps: 5 })
   })
 
   it('même règle par côté en unilatéral', () => {
@@ -351,7 +352,7 @@ describe('record d’e1RM à égalité entre deux couples poids/reps', () => {
       ],
       'curl',
     )
-    expect(left.bestE1rmSet).toEqual({ weightKg: 87.5, reps: 5 })
+    expect(left.bestE1rmSet).toMatchObject({ weightKg: 87.5, reps: 5 })
   })
 
   it('un centième de mieux reste un record', () => {
@@ -368,5 +369,64 @@ describe('record d’e1RM à égalité entre deux couples poids/reps', () => {
       'squat',
     )
     expect(isE1rmRecord(record, set(23.25, 18, 0))).toBe(true)
+  })
+})
+
+// Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23) : le
+// record « e1RM » est celui des reps effectives tant qu'aucune série n'est chargée.
+describe('record d’un exo saisi à 0 kg', () => {
+  const history = [
+    { date: '2026-01-10', exerciseId: 'tractions', sets: [set(0, 10, 2), set(0, 11, 0)] },
+    { date: '2026-01-17', exerciseId: 'tractions', sets: [set(0, 9, 0)] },
+  ]
+
+  it('le titulaire est la série aux meilleures reps effectives, RIR compris', () => {
+    const record = personalRecord(history, 'tractions')
+    // 10 @ RIR 2 = 12 effectives, devant 11 @ RIR 0.
+    expect(record.bestE1rmSet).toEqual({ weightKg: 0, reps: 10, rir: 2 })
+    expect(record.bestE1rm).toBe(0)
+    expect(isRepsRecord(record)).toBe(true)
+    // La charge la plus lourde, reps en départage : 0 × 11.
+    expect(record.bestWeightReps).toEqual({ weightKg: 0, reps: 11 })
+  })
+
+  it('se bat strictement aux reps effectives', () => {
+    const record = personalRecord(history, 'tractions')
+    expect(isE1rmRecord(record, set(0, 12, 0))).toBe(false) // égalé
+    expect(isE1rmRecord(record, set(0, 13, 0))).toBe(true)
+    expect(isE1rmRecord(record, set(0, 11, 2))).toBe(true)
+    expect(isE1rmRecord(record, set(0, 8, 0))).toBe(false)
+  })
+
+  it('dès qu’une série est chargée, l’e1RM reprend et elle tient le record', () => {
+    const record = personalRecord(
+      [...history, { date: '2026-01-24', exerciseId: 'tractions', sets: [set(5, 3, 0)] }],
+      'tractions',
+    )
+    expect(record.bestE1rmSet).toEqual({ weightKg: 5, reps: 3, rir: 0 })
+    expect(isRepsRecord(record)).toBe(false)
+    // Plus aucune série à 0 kg ne bat un record chargé.
+    expect(isE1rmRecord(record, set(0, 40, 0))).toBe(false)
+  })
+
+  it('par côté en unilatéral, et côté faible aux reps effectives', () => {
+    const executions = [
+      {
+        date: '2026-01-10',
+        exerciseId: 'pistol',
+        sets: [sideSet('left', 0, 8, 0), sideSet('right', 0, 6, 1)],
+      },
+    ]
+    const { left, right } = personalRecordBySide(executions, 'pistol')
+    expect(left.bestE1rmSet).toEqual({ weightKg: 0, reps: 8, rir: 0 })
+    expect(right.bestE1rmSet).toEqual({ weightKg: 0, reps: 6, rir: 1 })
+    // Côté faible de la paire : la droite (7 effectives contre 8), pas « la gauche à égalité d’e1RM nul ».
+    expect(personalRecord(executions, 'pistol').bestE1rmSet).toEqual({ weightKg: 0, reps: 6, rir: 1 })
+  })
+
+  it('un record sans RIR (ancienne forme) reste lisible : RIR compté 0', () => {
+    const record = { bestE1rm: 0, bestE1rmSet: { weightKg: 0, reps: 10 }, bestWeightReps: null }
+    expect(isE1rmRecord(record, set(0, 10, 0))).toBe(false)
+    expect(isE1rmRecord(record, set(0, 10, 1))).toBe(true)
   })
 })

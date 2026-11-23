@@ -9,10 +9,10 @@
 // `buildPrimaryCurve` (courbe e1RM de la 1ʳᵉ série) et `weeklyProgressionRate`
 // (régression linéaire %/semaine). Le seul travail propre à ce module est de
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
-import { buildPrimaryCurve } from './primary-curve'
+import { buildPrimaryCurve, curveUnit } from './primary-curve'
 import { blockKey } from './block'
 import { roundRate, weeklyProgressionRate } from './progression'
-import type { ExerciseExecution, E1rmPoint, Block } from './types'
+import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from './types'
 
 /** Le côté d'une comparaison à deux blocs. */
 export type Side = 'first' | 'second'
@@ -92,14 +92,21 @@ function executionsInBlock(
   })
 }
 
+/**
+ * `unit` est l'unité de l'EXO (cf. `curveUnit`), décidée sur tout son historique
+ * et non sur la fenêtre : deux blocs d'un même exo se lisent toujours dans la
+ * même unité, on ne compare jamais une pente en reps à une pente en kilos.
+ */
 function progressionOf(
   executions: ExerciseExecution[],
   exerciseId: string,
   block: Block,
+  unit: CurveUnit,
 ): BlockProgression {
   const curve = buildPrimaryCurve(
     executionsInBlock(executions, exerciseId, block),
     exerciseId,
+    unit,
   )
   return {
     block,
@@ -135,7 +142,8 @@ export function summarizeBlocks(
   exerciseId: string,
   blocks: Block[],
 ): BlockProgression[] {
-  return blocks.map((block) => progressionOf(executions, exerciseId, block))
+  const unit = curveUnit(executions, exerciseId)
+  return blocks.map((block) => progressionOf(executions, exerciseId, block, unit))
 }
 
 /**
@@ -149,8 +157,9 @@ export function compareBlocks(
   first: Block,
   second: Block,
 ): BlockComparison {
-  const firstProgression = progressionOf(executions, exerciseId, first)
-  const secondProgression = progressionOf(executions, exerciseId, second)
+  const unit = curveUnit(executions, exerciseId)
+  const firstProgression = progressionOf(executions, exerciseId, first, unit)
+  const secondProgression = progressionOf(executions, exerciseId, second, unit)
 
   return {
     first: firstProgression,
@@ -206,6 +215,7 @@ export function summarizeBlockSeances(
     ),
   ]
 
+  const unit = curveUnit(executions, exerciseId)
   return blocks.flatMap((block) =>
     seanceIds
       .map((seanceId): BlockSeanceProgression => {
@@ -213,6 +223,7 @@ export function summarizeBlockSeances(
           executionsOfSeance(executions, seanceId),
           exerciseId,
           block,
+          unit,
         )
         return {
           ...progression,
@@ -232,15 +243,18 @@ export function compareBlockSeances(
   first: BlockSeance,
   second: BlockSeance,
 ): BlockComparison {
+  const unit = curveUnit(executions, exerciseId)
   const firstProgression = progressionOf(
     executionsOfSeance(executions, first.seanceId),
     exerciseId,
     first.block,
+    unit,
   )
   const secondProgression = progressionOf(
     executionsOfSeance(executions, second.seanceId),
     exerciseId,
     second.block,
+    unit,
   )
 
   return {

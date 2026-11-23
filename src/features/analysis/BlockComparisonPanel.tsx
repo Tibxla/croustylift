@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ExerciseExecution, Block } from '../../domain/types';
 import { blockKey } from '../../domain/block';
+import { curveUnit } from '../../domain/primary-curve';
 import {
   compareBlockSeances,
   defaultComparisonPair,
@@ -274,6 +275,9 @@ function ComparisonResult({
     () => toWeeklySeries(result.second.curve),
     [result.second.curve],
   );
+  // Un exo jamais chargé se compare en reps effectives (cf. CurveUnit) : même
+  // unité pour les deux options, elle se décide sur tout l'exo.
+  const unit = useMemo(() => curveUnit(executions, exerciseId), [executions, exerciseId]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -283,6 +287,7 @@ function ComparisonResult({
         winner={result.winner}
         firstLabel={oneLine(firstLabel)}
         secondLabel={oneLine(secondLabel)}
+        unit={unit}
       />
 
       <div className="grid grid-cols-2 gap-2">

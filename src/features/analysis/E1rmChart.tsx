@@ -30,7 +30,7 @@ import {
   YAxis,
   type TooltipContentProps,
 } from 'recharts';
-import type { E1rmPoint } from '../../domain/types';
+import type { CurveUnit, E1rmPoint } from '../../domain/types';
 
 // On lit les tokens OKLCH directement : le SVG de Recharts accepte
 // `stroke="var(--color-…)"`, donc l'accent reste la SEULE source de vérité.
@@ -114,7 +114,11 @@ function toTimed(curve: E1rmPoint[]): TimedPoint[] {
 
 // Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
 // fournit donc vides au typage statique → on les rend partielles.
-function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, string>>) {
+function E1rmTooltip({
+  active,
+  payload,
+  unit,
+}: Partial<TooltipContentProps<number, string>> & { unit: CurveUnit }) {
   if (!active || !payload || payload.length === 0) return null;
   const first = payload[0];
   if (!first) return null;
@@ -131,7 +135,7 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
               <span className="text-xs font-normal text-ink-muted">{entry.name} </span>
             )}
             {Math.round(p.e1rm)}
-            <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+            <span className="ml-1 text-xs font-normal text-ink-muted">{unit}</span>
           </p>
         );
       })}
@@ -140,27 +144,32 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
 }
 
 /** Résumé textuel des courbes pour les lecteurs d'écran (le SVG est muet). */
-function describeSeries(series: E1rmSeries[]): string {
+function describeSeries(series: E1rmSeries[], unit: CurveUnit): string {
   const populated = series.filter((s) => s.curve.length > 0);
-  if (populated.length === 0) return 'Courbe e1RM de la 1ʳᵉ série, aucune donnée.';
+  // Un exo jamais chargé se lit en reps effectives, pas en e1RM (cf. CurveUnit).
+  const measure = unit === 'reps' ? 'des reps effectives' : 'e1RM';
+  if (populated.length === 0) return `Courbe ${measure} de la 1ʳᵉ série, aucune donnée.`;
   if (populated.length === 1) {
     const only = populated[0]!;
     const values = only.curve.map((p) => p.e1rm);
     const min = Math.round(Math.min(...values));
     const max = Math.round(Math.max(...values));
-    return `Courbe e1RM de la 1ʳᵉ série sur ${only.curve.length} séances, de ${min} à ${max} kg.`;
+    return `Courbe ${measure} de la 1ʳᵉ série sur ${only.curve.length} séances, de ${min} à ${max} ${unit}.`;
   }
   const parts = populated.map((s) => {
     const values = s.curve.map((p) => p.e1rm);
-    return `${s.name} sur ${s.curve.length} exécutions, de ${Math.round(Math.min(...values))} à ${Math.round(Math.max(...values))} kg`;
+    return `${s.name} sur ${s.curve.length} exécutions, de ${Math.round(Math.min(...values))} à ${Math.round(Math.max(...values))} ${unit}`;
   });
-  return `Courbes e1RM de la 1ʳᵉ série par séance : ${parts.join(' ; ')}.`;
+  return `Courbes ${measure} de la 1ʳᵉ série par séance : ${parts.join(' ; ')}.`;
 }
 
 export function E1rmChart({
   series,
   legend,
+  unit = 'kg',
 }: {
+  /** L'unité des courbes : 'reps' pour un exo jamais chargé (axe et infobulle). */
+  unit?: CurveUnit;
   /** Les courbes AFFICHÉES, accent en tête. */
   series: E1rmSeries[];
   /** Absente, ou une seule entrée : pas de légende. */
@@ -217,7 +226,7 @@ export function E1rmChart({
 
   return (
     <div>
-      <div className="h-40 w-full" role="img" aria-label={describeSeries(series)}>
+      <div className="h-40 w-full" role="img" aria-label={describeSeries(series, unit)}>
         <ResponsiveContainer width="100%" height="100%">
           {multi ? (
             // SUPERPOSITION : axe temps numérique (dates différentes par séance),
@@ -241,7 +250,7 @@ export function E1rmChart({
               {baseline != null && (
                 <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
               )}
-              <Tooltip content={<E1rmTooltip />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
+              <Tooltip content={<E1rmTooltip unit={unit} />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
               {populated
                 .slice(1)
                 .map((s, i) => {
@@ -296,7 +305,7 @@ export function E1rmChart({
               {baseline != null && (
                 <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
               )}
-              <Tooltip content={<E1rmTooltip />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
+              <Tooltip content={<E1rmTooltip unit={unit} />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
               <Area
                 type="monotone"
                 dataKey="e1rm"

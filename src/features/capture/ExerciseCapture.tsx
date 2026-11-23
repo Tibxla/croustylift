@@ -1,14 +1,15 @@
 // Panneau de capture d'un exo. Nom = roi ; « dernière fois » = co-roi à battre ;
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { estimateE1rm } from '../../domain/e1rm';
+import { comparePerformance, effectiveReps, isZeroLoad } from '../../domain/e1rm';
+import { isRepsRecord } from '../../domain/pr';
 import {
   currentSetOrder,
   defaultSide,
   loggedSetEquivalents,
   pairSidesByOrder,
   sidesDoneAt,
-  weakSideE1rm,
+  firstSeriesWeakSet,
 } from '../../domain/unilateral';
 import { deriveDeviations } from '../../domain/deviation';
 import { isBlankNote } from '../../domain/notes';
@@ -18,7 +19,7 @@ import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
 import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
 import { seedDraft, shouldReseedDraft } from './capture-seed';
-import { draftE1rm } from './draft-e1rm';
+import { formatPerf, perfReadout } from './perf-readout';
 import { NoteField } from '../notes/NoteField';
 import { useAutosavedNote } from '../notes/useAutosavedNote';
 import { DeviationBadge } from './DeviationBadge';
@@ -124,6 +125,7 @@ export function ExerciseCapture({
   //   - RÉFÉRENCE (« dernière fois », par position et par CÔTÉ en unilatéral) :
   //     e1RM strict -> « battu » / « égalisé » / rien ;
   //   - RECORD personnel (all-time) : e1RM et/ou charge.
+  // À 0 kg (poids du corps), l'e1RM est nul : les reps effectives jugent.
   // Priorité Record > battu > égalisé, un seul badge par ligne. En unilatéral
   // chaque bras est sa propre piste (records par côté). On compare au record
   // COURANT (historique + séries du jour déjà loggées) pour qu'une seule série par
@@ -225,14 +227,13 @@ export function ExerciseCapture({
   const refToBeat = unilateral
     ? reference?.find((s) => s.order === completedSets + 1 && s.side === currentSide) ?? null
     : reference?.find((s) => s.order === loggedCount + 1) ?? null;
-  const refE1rm = refToBeat
-    ? draftE1rm(refToBeat.weightKg, refToBeat.reps, refToBeat.rir)
-    : null;
+  // Sa mesure : l'e1RM, ou les reps effectives à 0 kg (cf. perf-readout.ts).
+  const refPerf = refToBeat ? formatPerf(refToBeat) : null;
 
-  // e1RM du BROUILLON, recalculé à chaque réglage, pour viser avant la série. Un
-  // chiffre seul, jamais un verdict « battrait » : un badge qui s'allumerait à +1
-  // de RIR pousserait à gonfler l'auto-évaluation (cf. draft-e1rm.ts).
-  const liveE1rm = draftE1rm(weightKg, reps, rir);
+  // Mesure du BROUILLON, recalculée à chaque réglage, pour viser avant la série.
+  // Un chiffre seul, jamais un verdict « battrait » : un badge qui s'allumerait à
+  // +1 de RIR pousserait à gonfler l'auto-évaluation (cf. draft-e1rm.ts).
+  const livePerf = perfReadout(weightKg, reps, rir);
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
   // complètes (une série unilatérale = gauche + droite). Le badge de déviation
@@ -246,27 +247,31 @@ export function ExerciseCapture({
   const deviations = deriveDeviations(prescription, progress.sets);
   const finishVisual = deviationVisual(deviations, prescription.sets, completedSets);
 
-  // e1RM de la 1ʳᵉ série loggée (touche domaine, readout discret). Pour un exo
+  // Mesure de la 1ʳᵉ série loggée (touche domaine, readout discret). Pour un exo
   // unilatéral, c'est le CÔTÉ FAIBLE de la 1ʳᵉ série (issue #46), aligné avec le
-  // point de la courbe primaire (cf. weakSideE1rm). Bilatéral : e1RM simple.
-  const firstE1rm = weakSideE1rm(progress.sets);
+  // point de la courbe primaire (cf. firstSeriesWeakSet).
+  const firstWeakSet = firstSeriesWeakSet(progress.sets);
+  const firstPerf = firstWeakSet
+    ? perfReadout(firstWeakSet.weightKg, firstWeakSet.reps, firstWeakSet.rir)
+    : null;
+  // Toutes les séries du jour à 0 kg : la colonne de droite se lit en reps
+  // effectives, et son en-tête le dit.
+  const allZeroLoad =
+    progress.sets.length > 0 && progress.sets.every((s) => isZeroLoad(s.weightKg));
 
   // Muscles principaux (issue #33) affichés sous le nom, repli sur la cible prescrite
   // pour un exo legacy sans muscles renseignés (jamais de sous-ligne vide).
   const muscles = (exercise.primaryMuscles ?? []).filter(Boolean);
 
-  // Index de la MEILLEURE série loggée (e1RM max) : sa ligne est mise en accent dans
-  // la liste, façon « série du jour à battre » (cohérent avec le repère Analyse).
+  // Index de la MEILLEURE série loggée (e1RM max, reps effectives à 0 kg : le
+  // juge des badges, `comparePerformance`) : sa ligne est mise en accent dans la
+  // liste, façon « série du jour à battre » (cohérent avec le repère Analyse).
+  // À égalité, la première.
   const bestIndex = useMemo(() => {
-    if (progress.sets.length === 0) return -1;
-    let bi = 0;
-    let bv = -Infinity;
+    let bi = -1;
     progress.sets.forEach((s, i) => {
-      const e = estimateE1rm(s.weightKg, s.reps, s.rir);
-      if (e > bv) {
-        bv = e;
-        bi = i;
-      }
+      const best = progress.sets[bi];
+      if (best === undefined || comparePerformance(s, best) > 0) bi = i;
     });
     return bi;
   }, [progress.sets]);
@@ -342,11 +347,9 @@ export function ExerciseCapture({
           {refToBeat ? (
             <span className="readout text-[13.5px] text-ink-muted">
               <span className="whitespace-nowrap">{formatSet(refToBeat)}</span>
-              {/* Son e1RM, comme la ligne Record : le chiffre à dépasser pour
-                  battre la Référence, à lire face à l'e1RM du brouillon. */}
-              {refE1rm !== null && (
-                <span className="whitespace-nowrap"> · e1RM {formatE1rm(refE1rm)}</span>
-              )}
+              {/* Sa mesure, comme la ligne Record : le chiffre à dépasser pour
+                  battre la Référence, à lire face à celle du brouillon. */}
+              {refPerf !== null && <span className="whitespace-nowrap"> · {refPerf}</span>}
             </span>
           ) : (
             <span className="text-[13px] text-ink-faint">
@@ -363,7 +366,15 @@ export function ExerciseCapture({
             <RepereLabel>Record</RepereLabel>
             <span className="readout text-[13.5px] text-ink-muted">
               {formatWeight(displayRecord.bestE1rmSet.weightKg)} ×{' '}
-              {displayRecord.bestE1rmSet.reps} · e1RM {formatE1rm(displayRecord.bestE1rm)}
+              {displayRecord.bestE1rmSet.reps} ·{' '}
+              {/* Record tenu à 0 kg (exo jamais chargé) : il se lit en reps
+                  effectives, un « e1RM 0 » ne dirait rien. */}
+              {isRepsRecord(displayRecord)
+                ? `reps eff. ${effectiveReps(
+                    displayRecord.bestE1rmSet.reps,
+                    displayRecord.bestE1rmSet.rir ?? 0,
+                  )}`
+                : `e1RM ${formatE1rm(displayRecord.bestE1rm)}`}
             </span>
           </div>
         )}
@@ -471,17 +482,19 @@ export function ExerciseCapture({
           <div className="w-px shrink-0 bg-hair" />
           <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} max={RIR_MAX} onChange={setRir} />
         </div>
-        {liveE1rm !== null && (
+        {livePerf !== null && (
           <div
             className="mt-3.5 flex items-baseline justify-center gap-2 border-t border-hair pt-3"
             aria-live="polite"
           >
             <span className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-              e1RM
+              {livePerf.label}
             </span>
             <span className="readout text-[15px] font-medium tabular-nums text-ink">
-              {formatE1rm(liveE1rm)}
-              <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+              {livePerf.value}
+              {livePerf.unit && (
+                <span className="ml-1 text-xs font-normal text-ink-muted">{livePerf.unit}</span>
+              )}
             </span>
           </div>
         )}
@@ -497,7 +510,7 @@ export function ExerciseCapture({
               Séries loggées
             </span>
             <span className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-              e1RM
+              {allZeroLoad ? 'reps eff.' : 'e1RM'}
             </span>
           </div>
           <ol className="flex flex-col gap-[7px]">
@@ -533,7 +546,7 @@ export function ExerciseCapture({
                   >
                     {formatSet(s)}
                   </span>
-                  <SetBadgeView badge={badge} />
+                  <SetBadgeView badge={badge} zeroLoad={isZeroLoad(s.weightKg)} />
                   {isBest && (
                     <svg
                       viewBox="0 0 24 24"
@@ -555,7 +568,10 @@ export function ExerciseCapture({
                       isBest ? 'font-semibold text-accent-ink' : 'text-ink-muted'
                     }`}
                   >
-                    {formatE1rm(estimateE1rm(s.weightKg, s.reps, s.rir))}
+                    {/* Une série à 0 kg parmi des séries chargées : son chiffre
+                        est en reps, on l'écrit pour ne pas le lire en kilos. */}
+                    {perfReadout(s.weightKg, s.reps, s.rir)?.value}
+                    {isZeroLoad(s.weightKg) && !allZeroLoad && ' reps'}
                   </span>
                 </li>
               );
@@ -564,14 +580,17 @@ export function ExerciseCapture({
         </div>
       )}
 
-      {/* Statut de fin : e1RM côté faible (unilatéral) + badge de déviation
+      {/* Statut de fin : mesure du côté faible (unilatéral) + badge de déviation
           (bilatéral, issue #46). N'apparaît que s'il y a du contenu à montrer. */}
-      {((firstE1rm != null && unilateral) || (reachedMin && !unilateral)) && (
+      {((firstPerf != null && unilateral) || (reachedMin && !unilateral)) && (
         <div className="mt-3 flex items-center justify-between gap-3">
-          {firstE1rm != null && unilateral ? (
+          {firstPerf != null && unilateral ? (
             <span className="text-sm text-ink-muted">
-              e1RM côté faible{' '}
-              <span className="readout font-medium text-ink">{formatE1rm(firstE1rm)} kg</span>
+              {firstPerf.unit ? 'e1RM' : 'Reps eff.'} côté faible{' '}
+              <span className="readout font-medium text-ink">
+                {firstPerf.value}
+                {firstPerf.unit && ` ${firstPerf.unit}`}
+              </span>
             </span>
           ) : (
             <span />
@@ -759,10 +778,8 @@ function ExerciseRecapSheet({
           {/* Meilleure série du jour (trophée). */}
           {best && (
             <p className="readout mt-2 text-[13px] text-ink-faint">
-              Meilleure : <span className="text-ink-muted">{formatSet(best)}</span> · e1RM{' '}
-              <span className="text-ink-muted">
-                {formatE1rm(estimateE1rm(best.weightKg, best.reps, best.rir))}
-              </span>
+              Meilleure : <span className="text-ink-muted">{formatSet(best)}</span> ·{' '}
+              <span className="text-ink-muted">{formatPerf(best)}</span>
             </p>
           )}
 
@@ -1130,9 +1147,9 @@ function RepereLabel({ children }: { children: string }) {
  *   - axe RÉFÉRENCE (dernière fois) -> « battu » (flèche ↑) ou « égalisé » (=).
  * L'info tient toujours à la FORME + au TEXTE, jamais à la couleur seule (DESIGN.md).
  */
-function SetBadgeView({ badge }: { badge: SetBadge }) {
+function SetBadgeView({ badge, zeroLoad }: { badge: SetBadge; zeroLoad: boolean }) {
   if (!badge) return null;
-  if (badge.axis === 'record') return <RecordBadge kind={badge.record} />;
+  if (badge.axis === 'record') return <RecordBadge kind={badge.record} zeroLoad={zeroLoad} />;
   return badge.verdict === 'battu' ? <BattuBadge /> : <EgaliseBadge />;
 }
 
@@ -1194,12 +1211,23 @@ const RECORD_LABEL: Record<RecordKind, string> = {
 };
 
 /**
+ * À 0 kg (poids du corps), les deux mesures du record sont des reps : les reps
+ * effectives (reps + RIR) à la place de l'e1RM, les reps réellement faites à la
+ * place de la charge.
+ */
+const RECORD_LABEL_ZERO_LOAD: Record<RecordKind, string> = {
+  e1rm: 'Record reps eff.',
+  'weight-reps': 'Record de reps',
+  both: 'Record',
+};
+
+/**
  * Indicateur SOBRE de nouveau record (issue #34). Accent violet — rare, mérité,
  * réservé à l'état marquant — + glyphe étoile + label : l'info ne tient jamais à
  * la couleur seule (DESIGN.md). Pas de confettis, pas de ton coach : un constat.
  */
-function RecordBadge({ kind }: { kind: RecordKind }) {
-  const label = RECORD_LABEL[kind];
+function RecordBadge({ kind, zeroLoad }: { kind: RecordKind; zeroLoad: boolean }) {
+  const label = (zeroLoad ? RECORD_LABEL_ZERO_LOAD : RECORD_LABEL)[kind];
   return (
     <span
       className="inline-flex items-center gap-1 text-xs font-semibold text-accent-ink"

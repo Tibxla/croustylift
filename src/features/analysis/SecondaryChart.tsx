@@ -13,7 +13,7 @@ import {
   XAxis,
   type TooltipContentProps,
 } from 'recharts';
-import type { E1rmPoint } from '../../domain/types';
+import type { CurveUnit, E1rmPoint } from '../../domain/types';
 
 const LINE = 'var(--color-hair)';
 const INK_MUTED = 'var(--color-ink-muted)';
@@ -35,7 +35,11 @@ function formatDateTick(iso: string): string {
 
 // Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
 // fournit donc vides au typage statique → on les rend partielles.
-function SecondaryTooltip({ active, payload }: Partial<TooltipContentProps<number, string>>) {
+function SecondaryTooltip({
+  active,
+  payload,
+  unit,
+}: Partial<TooltipContentProps<number, string>> & { unit: CurveUnit }) {
   if (!active || !payload || payload.length === 0) return null;
   const first = payload[0];
   if (!first) return null;
@@ -45,24 +49,25 @@ function SecondaryTooltip({ active, payload }: Partial<TooltipContentProps<numbe
       <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
       <p className="readout text-sm font-medium text-ink-muted">
         {Math.round(point.e1rm)}
-        <span className="ml-1 text-xs font-normal text-ink-muted">kg moy.</span>
+        <span className="ml-1 text-xs font-normal text-ink-muted">{unit} moy.</span>
       </p>
     </div>
   );
 }
 
 /** Résumé textuel de la courbe pour les lecteurs d'écran (le SVG est muet). */
-function describeCurve(curve: E1rmPoint[]): string {
-  if (curve.length === 0) return 'Tendance e1RM des séries 2+, aucune donnée.';
+function describeCurve(curve: E1rmPoint[], unit: CurveUnit): string {
+  const measure = unit === 'reps' ? 'des reps effectives moyennes' : 'e1RM moyen';
+  if (curve.length === 0) return `Tendance ${measure} des séries 2+, aucune donnée.`;
   const values = curve.map((p) => p.e1rm);
   const min = Math.round(Math.min(...values));
   const max = Math.round(Math.max(...values));
-  return `Tendance e1RM moyen des séries 2+ sur ${curve.length} séances, de ${min} à ${max} kg.`;
+  return `Tendance ${measure} des séries 2+ sur ${curve.length} séances, de ${min} à ${max} ${unit}.`;
 }
 
-export function SecondaryChart({ curve }: { curve: E1rmPoint[] }) {
+export function SecondaryChart({ curve, unit = 'kg' }: { curve: E1rmPoint[]; unit?: CurveUnit }) {
   return (
-    <div className="h-24 w-full" role="img" aria-label={describeCurve(curve)}>
+    <div className="h-24 w-full" role="img" aria-label={describeCurve(curve, unit)}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={curve} margin={{ top: 6, right: 20, bottom: 2, left: -8 }}>
           <XAxis
@@ -75,7 +80,7 @@ export function SecondaryChart({ curve }: { curve: E1rmPoint[] }) {
             interval="preserveStartEnd"
           />
           <Tooltip
-            content={<SecondaryTooltip />}
+            content={<SecondaryTooltip unit={unit} />}
             cursor={{ stroke: LINE, strokeWidth: 1 }}
           />
           <Line
