@@ -27,13 +27,15 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      // Le nouveau service worker ATTEND : c'est l'app qui décide quand basculer
-      // (src/pwa/register.ts). En `autoUpdate`, il prenait la main sous la page
-      // ouverte et purgeait du précache les chunks de l'ancien build : le premier
-      // tap sur l'Analyse importait alors un fichier disparu. Aucune invite n'est
-      // affichée pour autant (pas de « Nouvelle version disponible » entre deux
-      // séries) : l'app recharge seule à un moment sans saisie en cours.
-      registerType: 'prompt',
+      // Le service worker neuf s'active dès son installation (skipWaiting et
+      // clientsClaim, posés par `autoUpdate`) : une app installée avec un ancien
+      // bundle passe ainsi sur la nouvelle version à sa prochaine ouverture, sans
+      // rien avoir à lui demander. En revanche la PAGE ouverte ne se recharge pas
+      // d'office : c'est src/pwa/register.ts (`onNeedReload`) qui choisit un
+      // moment sans saisie en cours, et qui met à l'abri le chunk paresseux de
+      // l'Analyse avant que le précache ne soit remplacé. Aucune invite : pas de
+      // « Nouvelle version disponible » entre deux séries.
+      registerType: 'autoUpdate',
       // Les icônes du manifest sont déjà prises par `globPatterns` : sans ceci
       // elles figuraient deux fois dans la liste de précache.
       includeManifestIcons: false,
@@ -44,10 +46,6 @@ export default defineConfig({
       // runtimeCaching ci-dessous.
       workbox: {
         globPatterns: ['**/*.{js,css,html,woff2,woff,ttf,svg,png,ico,webp}'],
-        // Première visite : le service worker prend la page en charge dès son
-        // activation, sans attendre un rechargement (le précache sert aussitôt).
-        // Sans effet sur une mise à jour, qui reste en attente (voir plus haut).
-        clientsClaim: true,
         // Exclure explicitement les appels Supabase du cache SW.
         // La write-queue offline (outbox.ts) gere la persistance des ecritures ;
         // le SW n'a pas a s'en meler.

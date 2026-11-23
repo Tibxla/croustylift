@@ -2,17 +2,20 @@
 // être testables. Le câblage vit dans `register.ts`.
 //
 // Le problème : après un déploiement, le service worker neuf remplace le précache.
-// S'il prend la main sous une page ouverte, celle-ci tourne sur l'ancien bundle
-// avec les fichiers du nouveau : le chunk paresseux de l'Analyse a disparu. Le
-// service worker neuf reste donc EN ATTENTE (vite.config.ts) et l'app choisit le
-// moment de basculer, c'est-à-dire de recharger. Deux règles :
-//   1. on ne recharge jamais pendant une séance en cours de saisie, ni pendant
-//      qu'un champ a le focus ;
+// Il prend la main dès son installation (`skipWaiting`, vite.config.ts), y compris
+// sous une page ouverte : sans cela, une app installée avec un ancien bundle, qui
+// ne sait pas lui demander de s'activer, resterait bloquée sur l'ancienne version.
+// La page ouverte tourne alors sur l'ancien bundle, et c'est ELLE qui choisit le
+// moment de recharger. Deux règles :
+//   1. on ne recharge jamais pendant une séance en cours de saisie, un champ
+//      focalisé, un brouillon déclaré ou une récupération de mot de passe
+//      (`reloadAllowed`, vérifiée à l'instant du rechargement) ;
 //   2. on recharge là où rien ne se perd : au lancement, tant que l'utilisateur
 //      n'a encore rien touché, ou à un changement d'onglet, qui démonte déjà
 //      l'écran quitté.
-// Tant que rien n'est décidé, l'ancien service worker sert l'ancien précache en
-// entier : l'app ouverte reste cohérente, hors ligne compris.
+// En attendant, l'ancien bundle reste utilisable : le chunk paresseux de
+// l'Analyse est chargé en mémoire dès qu'une mise à jour s'annonce, avant que le
+// précache ne soit remplacé (`register.ts`).
 
 import { LAUNCH_EXPIRY_MS } from '../features/capture/state'
 
@@ -72,23 +75,43 @@ export function isCaptureEntryInProgress(
   )
 }
 
-/** Ce qui déclenche la question « peut-on basculer maintenant ? ». */
-export type UpdateTrigger =
-  /** Le service worker neuf vient de se mettre en attente. */
-  | 'ready'
-  /** L'utilisateur change d'onglet. */
-  | 'surface-change'
-  /** Un autre onglet du navigateur a fait basculer le service worker. */
-  | 'external'
+// --- Autorisation de recharger ------------------------------------------------
 
-export interface UpdateContext {
-  trigger: UpdateTrigger
-  /** Un service worker neuf attend. */
-  updateReady: boolean
+/** Ce qui, à l'instant présent, interdit de recharger la page. */
+export interface ReloadGuards {
   /** Une séance est en cours de saisie sur cet appareil. */
   captureInProgress: boolean
   /** Un champ de saisie a le focus. */
   fieldFocused: boolean
+  /**
+   * Raisons déclarées par le reste de l'app (`blockReloads`, register.ts) : un
+   * brouillon non enregistré, un flux de récupération de mot de passe en cours.
+   */
+  blockers: readonly string[]
+}
+
+/**
+ * LA fonction d'autorisation : peut-on recharger la page maintenant sans rien
+ * faire perdre ? Tout rechargement décidé par l'app passe par elle, au moment
+ * même où il a lieu (jamais sur une réponse mise de côté plus tôt).
+ */
+export function reloadAllowed(guards: ReloadGuards): boolean {
+  return !guards.captureInProgress && !guards.fieldFocused && guards.blockers.length === 0
+}
+
+/** Le moment où la question « recharge-t-on ? » est posée. */
+export type ReloadTrigger =
+  /** Le service worker neuf vient de prendre la main (ici ou depuis un autre onglet). */
+  | 'activated'
+  /** L'utilisateur change d'onglet. */
+  | 'surface-change'
+  /** Bouton « Mettre à jour » du bloc Compte. */
+  | 'manual'
+
+export interface ReloadContext extends ReloadGuards {
+  trigger: ReloadTrigger
+  /** Une nouvelle version est active, la page tourne encore sur l'ancien bundle. */
+  reloadPending: boolean
   /** L'utilisateur a touché l'écran ou le clavier depuis le chargement de la page. */
   interactedSinceLoad: boolean
   /** Onglet visé par le changement (trigger `surface-change`). */
@@ -96,26 +119,27 @@ export interface UpdateContext {
 }
 
 /**
- * Faut-il basculer sur la nouvelle version MAINTENANT (donc recharger la page) ?
+ * Faut-il recharger MAINTENANT pour passer sur la nouvelle version ?
  *
- * - jamais sans mise à jour en attente, ni séance en cours, ni champ en saisie ;
- * - `ready` et `external` : seulement si l'utilisateur n'a encore rien touché
- *   (lancement de l'app : le rechargement passe pour la fin du démarrage). Après
- *   une interaction, un écran peut porter un brouillon que l'app ne connaît pas ;
+ * - jamais sans version en attente, ni sans l'autorisation (`reloadAllowed`) ;
+ * - `activated` : seulement si l'utilisateur n'a encore rien touché (lancement
+ *   de l'app : le rechargement passe pour la fin du démarrage). Après une
+ *   interaction, on attend un point sûr ;
  * - `surface-change` : oui, sauf vers la Capture. L'écran quitté est démonté de
- *   toute façon, et on ne retarde pas le lancement d'une séance par un
- *   rechargement.
+ *   toute façon, et on ne retarde pas le lancement d'une séance ;
+ * - `manual` : l'utilisateur le demande, l'autorisation suffit.
+ * Un refus n'est pas définitif : la version reste en attente du point sûr suivant.
  */
-export function shouldApplyUpdate(ctx: UpdateContext): boolean {
-  if (!ctx.updateReady) return false
-  if (ctx.captureInProgress) return false
-  if (ctx.fieldFocused) return false
+export function shouldReload(ctx: ReloadContext): boolean {
+  if (!ctx.reloadPending) return false
+  if (!reloadAllowed(ctx)) return false
   switch (ctx.trigger) {
-    case 'ready':
-    case 'external':
+    case 'activated':
       return !ctx.interactedSinceLoad
     case 'surface-change':
       return ctx.targetSurface !== 'capture'
+    case 'manual':
+      return true
   }
 }
 
@@ -140,8 +164,13 @@ export const CHUNK_RELOAD_COOLDOWN_MS = 5 * 60 * 1000
 export interface ChunkFailureContext {
   /** Le navigateur se dit en ligne. */
   online: boolean
-  /** Une séance est en cours de saisie. */
-  captureInProgress: boolean
+  /**
+   * La demande qui a provoqué l'import est-elle toujours d'actualité ?
+   * (l'utilisateur est encore sur l'écran dont le chunk manque)
+   */
+  requestActive: boolean
+  /** Résultat de `reloadAllowed` au moment de l'échec. */
+  allowed: boolean
   /** Horodatage du dernier rechargement automatique pour cette raison, ou null. */
   lastReloadAt: number | null
   now: number
@@ -150,12 +179,15 @@ export interface ChunkFailureContext {
 /**
  * Un chunk n'a pas pu être chargé (build remplacé sous la page, cache vidé par
  * le système) : recharger la page ramène un shell et des chunks cohérents.
- * `reload` : une seule fois, en ligne, hors séance en cours. Sinon `report` :
- * l'écran d'erreur explique et laisse l'utilisateur recharger lui-même.
+ * - `ignore` : l'utilisateur a quitté l'écran entre-temps, on ne recharge pas
+ *   sous ses pieds ; l'import sera retenté s'il y revient ;
+ * - `reload` : une seule fois, en ligne, avec l'autorisation de recharger ;
+ * - `report` : sinon, l'écran d'erreur explique et laisse recharger à la main.
  */
-export function chunkFailureAction(ctx: ChunkFailureContext): 'reload' | 'report' {
+export function chunkFailureAction(ctx: ChunkFailureContext): 'reload' | 'report' | 'ignore' {
+  if (!ctx.requestActive) return 'ignore'
   if (!ctx.online) return 'report'
-  if (ctx.captureInProgress) return 'report'
+  if (!ctx.allowed) return 'report'
   if (ctx.lastReloadAt !== null && ctx.now - ctx.lastReloadAt < CHUNK_RELOAD_COOLDOWN_MS) {
     return 'report'
   }

@@ -127,12 +127,14 @@ La CI (GitHub Actions) enchaîne lint, tests, build et budget de taille.
 
 ### Mise à jour de l'app installée
 
-Après un déploiement, le nouveau service worker **attend** : l'app ouverte garde son
-ancien bundle complet, hors ligne compris. Elle bascule (un rechargement) au lancement
-tant que rien n'a été touché, ou au changement d'onglet suivant, et jamais pendant une
-séance en cours ni pendant une saisie. Le bloc Compte (onglet Analyse) affiche la
-version qui tourne et, si une version attend, un bouton « Mettre à jour ». La logique
-est dans `src/pwa/`.
+Après un déploiement, le nouveau service worker s'active seul, mais la **page ouverte
+ne se recharge pas d'office** : elle garde son ancien bundle (l'écran d'Analyse est mis
+en mémoire avant que le cache ne soit remplacé) et choisit le moment de recharger. Au
+lancement tant que rien n'a été touché, ou au changement d'onglet suivant ; jamais
+pendant une séance en cours, une saisie, un brouillon déclaré (`blockReloads`) ou une
+récupération de mot de passe. Le bloc Compte (onglet Analyse) affiche la version qui
+tourne et, si une version attend, un bouton « Mettre à jour ». La logique est dans
+`src/pwa/`.
 
 ### Relevé de diagnostic (iPhone)
 

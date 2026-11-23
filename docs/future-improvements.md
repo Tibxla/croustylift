@@ -28,8 +28,9 @@ cause. Ce n'est pas une liste de tâches.
   build, verte), scripts `lint`/`typecheck`, `engines`, `.nvmrc`, licence MIT.
 - ✅ **PWA** : `viewport-fit=cover` + safe-area, favicon SVG, icône maskable plein-bord
   (PNG et SVG).
-- ✅ **Mise à jour de l'app installée** : le service worker neuf attend, l'app bascule au
-  lancement ou à un changement d'onglet, jamais pendant une séance ; reprise par un
+- ✅ **Mise à jour de l'app installée** : le service worker neuf s'active seul, la page
+  ouverte choisit quand recharger (lancement ou changement d'onglet), jamais pendant une
+  séance, une saisie ou une récupération de mot de passe ; reprise par un
   rechargement unique si un chunk est introuvable ; version du build affichée dans le
   bloc Compte (`src/pwa/`).
 - ✅ **Barres du bas sur iPhone** : document non défilable quand le contenu tient,

@@ -5,8 +5,10 @@ import {
   isCaptureEntryInProgress,
   isChunkLoadError,
   parseStoredSurface,
-  shouldApplyUpdate,
-  type UpdateContext,
+  reloadAllowed,
+  shouldReload,
+  type ReloadContext,
+  type ReloadGuards,
 } from './update'
 
 const TODAY = '2026-11-23'
@@ -66,54 +68,70 @@ describe('isCaptureEntryInProgress', () => {
   })
 })
 
-describe('shouldApplyUpdate', () => {
-  const base: UpdateContext = {
-    trigger: 'ready',
-    updateReady: true,
+describe('reloadAllowed', () => {
+  const libre: ReloadGuards = { captureInProgress: false, fieldFocused: false, blockers: [] }
+
+  it('rien en cours : permis', () => {
+    expect(reloadAllowed(libre)).toBe(true)
+  })
+
+  it('chaque garde suffit à interdire', () => {
+    expect(reloadAllowed({ ...libre, captureInProgress: true })).toBe(false)
+    expect(reloadAllowed({ ...libre, fieldFocused: true })).toBe(false)
+    expect(reloadAllowed({ ...libre, blockers: ['brouillon-seance'] })).toBe(false)
+    expect(reloadAllowed({ ...libre, blockers: ['recuperation-mot-de-passe'] })).toBe(false)
+  })
+})
+
+describe('shouldReload', () => {
+  const base: ReloadContext = {
+    trigger: 'activated',
+    reloadPending: true,
     captureInProgress: false,
     fieldFocused: false,
+    blockers: [],
     interactedSinceLoad: false,
   }
+  const TRIGGERS = ['activated', 'surface-change', 'manual'] as const
 
-  it("au lancement, avant toute interaction : on bascule", () => {
-    expect(shouldApplyUpdate(base)).toBe(true)
+  it('au lancement, avant toute interaction : on recharge', () => {
+    expect(shouldReload(base)).toBe(true)
   })
 
-  it('sans mise à jour en attente : jamais', () => {
-    expect(shouldApplyUpdate({ ...base, updateReady: false })).toBe(false)
-    expect(
-      shouldApplyUpdate({ ...base, updateReady: false, trigger: 'surface-change', targetSurface: 'analysis' }),
-    ).toBe(false)
-  })
-
-  it('séance en cours : jamais, quel que soit le déclencheur', () => {
-    for (const trigger of ['ready', 'external', 'surface-change'] as const) {
-      expect(
-        shouldApplyUpdate({ ...base, trigger, captureInProgress: true, targetSurface: 'analysis' }),
-      ).toBe(false)
+  it('sans version en attente : jamais', () => {
+    for (const trigger of TRIGGERS) {
+      expect(shouldReload({ ...base, trigger, reloadPending: false, targetSurface: 'analysis' })).toBe(false)
     }
   })
 
-  it('champ en cours de saisie : jamais', () => {
-    expect(shouldApplyUpdate({ ...base, fieldFocused: true })).toBe(false)
-    expect(
-      shouldApplyUpdate({ ...base, fieldFocused: true, trigger: 'surface-change', targetSurface: 'seances' }),
-    ).toBe(false)
+  it('séance en cours, champ focalisé, brouillon, récupération : jamais, quel que soit le déclencheur', () => {
+    for (const trigger of TRIGGERS) {
+      const ctx = { ...base, trigger, targetSurface: 'analysis' }
+      expect(shouldReload({ ...ctx, captureInProgress: true })).toBe(false)
+      expect(shouldReload({ ...ctx, fieldFocused: true })).toBe(false)
+      expect(shouldReload({ ...ctx, blockers: ['brouillon-seance'] })).toBe(false)
+      expect(shouldReload({ ...ctx, blockers: ['recuperation-mot-de-passe'] })).toBe(false)
+    }
   })
 
-  it("après une interaction, la mise à jour prête attend un changement d'onglet", () => {
-    const touched = { ...base, interactedSinceLoad: true }
-    expect(shouldApplyUpdate(touched)).toBe(false)
-    expect(shouldApplyUpdate({ ...touched, trigger: 'external' })).toBe(false)
-    expect(
-      shouldApplyUpdate({ ...touched, trigger: 'surface-change', targetSurface: 'analysis' }),
-    ).toBe(true)
+  it("le service worker prend la main APRÈS le début d'une saisie : on attend le point sûr suivant", () => {
+    // La page s'ouvre, l'utilisateur tape dans un champ, puis le worker s'active.
+    const enSaisie = { ...base, interactedSinceLoad: true, fieldFocused: true }
+    expect(shouldReload(enSaisie)).toBe(false)
+    // Il quitte le champ sans changer d'onglet : toujours rien de spontané.
+    expect(shouldReload({ ...enSaisie, fieldFocused: false })).toBe(false)
+    // Il change d'onglet, champ encore focalisé : refusé ; champ quitté : rechargé.
+    const versAnalyse = { ...enSaisie, trigger: 'surface-change' as const, targetSurface: 'analysis' }
+    expect(shouldReload(versAnalyse)).toBe(false)
+    expect(shouldReload({ ...versAnalyse, fieldFocused: false })).toBe(true)
   })
 
   it('un passage vers la Capture ne recharge pas', () => {
-    expect(
-      shouldApplyUpdate({ ...base, trigger: 'surface-change', targetSurface: 'capture' }),
-    ).toBe(false)
+    expect(shouldReload({ ...base, trigger: 'surface-change', targetSurface: 'capture' })).toBe(false)
+  })
+
+  it('le bouton « Mettre à jour » recharge même après interaction', () => {
+    expect(shouldReload({ ...base, trigger: 'manual', interactedSinceLoad: true })).toBe(true)
   })
 })
 
@@ -137,18 +155,24 @@ describe('isChunkLoadError', () => {
 })
 
 describe('chunkFailureAction', () => {
-  const base = { online: true, captureInProgress: false, lastReloadAt: null, now: NOW }
+  const base = { online: true, requestActive: true, allowed: true, lastReloadAt: null, now: NOW }
 
-  it('premier échec, en ligne, hors séance : on recharge', () => {
+  it("premier échec, en ligne, l'utilisateur est encore sur l'écran : on recharge", () => {
     expect(chunkFailureAction(base)).toBe('reload')
+  })
+
+  it("l'utilisateur a quitté l'écran avant l'échec : ignoré, rien ne recharge sous ses pieds", () => {
+    expect(chunkFailureAction({ ...base, requestActive: false })).toBe('ignore')
+    expect(chunkFailureAction({ ...base, requestActive: false, allowed: false })).toBe('ignore')
+    expect(chunkFailureAction({ ...base, requestActive: false, online: false })).toBe('ignore')
   })
 
   it('hors ligne : recharger ne ramènerait rien', () => {
     expect(chunkFailureAction({ ...base, online: false })).toBe('report')
   })
 
-  it('séance en cours : on ne recharge pas à sa place', () => {
-    expect(chunkFailureAction({ ...base, captureInProgress: true })).toBe('report')
+  it("rechargement non autorisé (séance, saisie, brouillon) : on ne recharge pas à sa place", () => {
+    expect(chunkFailureAction({ ...base, allowed: false })).toBe('report')
   })
 
   it('un rechargement récent pour la même raison : pas de boucle', () => {

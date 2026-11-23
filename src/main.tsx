@@ -1,3 +1,6 @@
+// PREMIER import, avant tout ce qui charge le client Supabase : lit l'adresse
+// d'arrivée tant qu'elle porte encore les jetons d'un lien de récupération.
+import './pwa/recovery'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'

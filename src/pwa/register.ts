@@ -1,18 +1,21 @@
-// Enregistrement du service worker et bascule contrôlée vers une nouvelle
-// version. Les décisions sont dans `update.ts` (pur, testé) ; ici, seulement les
-// effets : écouteurs, stockage, rechargement.
+// Enregistrement du service worker et passage contrôlé sur une nouvelle version.
+// Les décisions sont dans `update.ts` (pur, testé) ; ici, seulement les effets :
+// écouteurs, stockage, rechargement.
 
 import { useSyncExternalStore } from 'react'
 import { registerSW } from 'virtual:pwa-register'
 import { previousDayIso, todayIso } from '../features/capture/state'
+import { arrivedOnRecoveryLink, RECOVERY_BLOCK } from './recovery'
 import {
   CAPTURE_STORAGE_PREFIX,
   chunkFailureAction,
   isCaptureEntryInProgress,
   parseStoredSurface,
-  shouldApplyUpdate,
+  reloadAllowed,
+  shouldReload,
+  type ReloadGuards,
+  type ReloadTrigger,
   type SurfaceName,
-  type UpdateTrigger,
 } from './update'
 
 /** Onglet à rouvrir après un rechargement décidé par l'app (durée de l'onglet). */
@@ -21,17 +24,35 @@ const SURFACE_KEY = 'croustylift:surface-apres-rechargement'
 const CHUNK_RELOAD_KEY = 'croustylift:rechargement-chunk'
 /** Intervalle minimal entre deux recherches de mise à jour au retour au premier plan. */
 const UPDATE_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000
-/** Délai au-delà duquel on recharge soi-même après avoir demandé la bascule. */
-const RELOAD_FALLBACK_MS = 4000
 
-let updateReady = false
+/** Une nouvelle version est active, la page tourne encore sur l'ancien bundle. */
+let reloadPending = false
 let interactedSinceLoad = false
-let applyUpdate: (() => void) | null = null
-/** Vrai dès que CETTE page a demandé la bascule : son rechargement est acquis. */
-let switching = false
 /** Onglet rouvert au chargement de cette page, repris si un second rechargement suit. */
 let restoredSurface: SurfaceName | null = null
+/** Charge en mémoire les chunks paresseux de l'app (fourni par App.tsx). */
+let preloadLazyChunks: (() => void) | null = null
 const listeners = new Set<() => void>()
+
+/**
+ * Raisons qui interdisent tout rechargement automatique, déclarées par le reste
+ * de l'app. Une arrivée par lien de récupération de mot de passe bloque d'emblée.
+ */
+const blockers = new Set<string>(arrivedOnRecoveryLink ? [RECOVERY_BLOCK] : [])
+
+/**
+ * Interdit les rechargements automatiques tant que `reason` n'est pas levée par
+ * `unblockReloads(reason)`. À poser par tout écran qui porte un état que seul la
+ * mémoire tient : brouillon non enregistré, flux à usage unique. Idempotent.
+ */
+export function blockReloads(reason: string): void {
+  blockers.add(reason)
+}
+
+/** Lève une raison posée par `blockReloads`. Sans effet si elle n'est pas posée. */
+export function unblockReloads(reason: string): void {
+  blockers.delete(reason)
+}
 
 function notify(): void {
   for (const listener of listeners) listener()
@@ -55,8 +76,7 @@ export function captureInProgress(): boolean {
   return false
 }
 
-/** Un champ de saisie a-t-il le focus ? */
-export function fieldFocused(): boolean {
+function fieldFocused(): boolean {
   const el = document.activeElement
   if (!(el instanceof HTMLElement)) return false
   return (
@@ -65,6 +85,15 @@ export function fieldFocused(): boolean {
     el instanceof HTMLSelectElement ||
     el.isContentEditable
   )
+}
+
+/** L'état des gardes, relu à chaque question : jamais mis de côté. */
+function currentGuards(): ReloadGuards {
+  return {
+    captureInProgress: captureInProgress(),
+    fieldFocused: fieldFocused(),
+    blockers: [...blockers],
+  }
 }
 
 function sessionGet(key: string): string | null {
@@ -84,39 +113,26 @@ function sessionSet(key: string, value: string): void {
 }
 
 /**
- * Bascule sur la nouvelle version si le moment s'y prête. `targetSurface` :
- * l'onglet que l'utilisateur vient de demander, rouvert après le rechargement.
- * Rend vrai si la bascule est lancée (la page va se recharger).
+ * Recharge la page sur la nouvelle version si le moment s'y prête. La décision
+ * et le rechargement sont pris dans le même appel synchrone : rien ne peut
+ * commencer entre les deux. `targetSurface` : l'onglet que l'utilisateur vient
+ * de demander, rouvert après le rechargement. Rend vrai si la page recharge ;
+ * sinon la version reste en attente du point sûr suivant.
  */
-export function maybeApplyUpdate(trigger: UpdateTrigger, targetSurface?: SurfaceName): boolean {
-  if (applyUpdate === null) return false
-  const go = shouldApplyUpdate({
+export function requestReload(trigger: ReloadTrigger, targetSurface?: SurfaceName): boolean {
+  const go = shouldReload({
+    ...currentGuards(),
     trigger,
-    updateReady,
-    captureInProgress: captureInProgress(),
-    fieldFocused: fieldFocused(),
+    reloadPending,
     interactedSinceLoad,
     targetSurface,
   })
   if (!go) return false
-  // Sans onglet visé (bascule au lancement), on garde celui qu'un rechargement
-  // précédent venait de rouvrir : deux rechargements de suite ne le perdent pas.
+  // Sans onglet visé (rechargement au lancement), on garde celui qu'un
+  // rechargement précédent venait de rouvrir.
   const surface = targetSurface ?? restoredSurface
   if (surface) sessionSet(SURFACE_KEY, surface)
-  switching = true
-  applyUpdate()
-  return true
-}
-
-/**
- * Bascule demandée explicitement (bouton « Mettre à jour » du bloc Compte) : pas
- * de condition d'interaction, mais toujours aucune séance en cours.
- */
-export function applyUpdateNow(targetSurface: SurfaceName): boolean {
-  if (applyUpdate === null || !updateReady || captureInProgress()) return false
-  sessionSet(SURFACE_KEY, targetSurface)
-  switching = true
-  applyUpdate()
+  window.location.reload()
   return true
 }
 
@@ -133,33 +149,49 @@ export function takeSurfaceAfterReload(): SurfaceName | null {
 }
 
 /**
- * Un chunk n'a pas pu être chargé. Rend vrai si la page se recharge (une seule
- * fois, en ligne, hors séance en cours) ; sinon l'appelant laisse l'erreur
- * remonter à l'écran d'erreur.
+ * Un chunk n'a pas pu être chargé pour l'onglet `surface`. `requestActive` :
+ * l'utilisateur est-il encore sur cet onglet ? Rend `reload` si la page se
+ * recharge, `ignore` si la demande a été quittée (l'appelant oublie l'échec et
+ * retentera), `report` si l'erreur doit remonter à l'écran d'erreur.
  */
-export function recoverFromChunkFailure(surface?: SurfaceName): boolean {
+export function recoverFromChunkFailure(
+  surface: SurfaceName,
+  requestActive: boolean,
+): 'reload' | 'report' | 'ignore' {
   const last = Number(sessionGet(CHUNK_RELOAD_KEY))
   const action = chunkFailureAction({
     online: navigator.onLine !== false,
-    captureInProgress: captureInProgress(),
+    requestActive,
+    allowed: reloadAllowed(currentGuards()),
     lastReloadAt: Number.isFinite(last) && last > 0 ? last : null,
     now: Date.now(),
   })
-  if (action !== 'reload') return false
-  sessionSet(CHUNK_RELOAD_KEY, String(Date.now()))
-  if (surface) sessionSet(SURFACE_KEY, surface)
-  window.location.reload()
-  return true
+  if (action === 'reload') {
+    sessionSet(CHUNK_RELOAD_KEY, String(Date.now()))
+    sessionSet(SURFACE_KEY, surface)
+    window.location.reload()
+  }
+  return action
 }
 
-/** Une nouvelle version attend-elle ? (pour le bloc Compte) */
+/**
+ * Déclare comment charger en mémoire les chunks paresseux. Appelé dès qu'une
+ * mise à jour s'annonce, AVANT que le service worker neuf ne remplace le
+ * précache : l'app ouverte garde ainsi tous ses écrans, même si elle ne peut pas
+ * recharger tout de suite (séance en cours).
+ */
+export function setLazyChunkPreloader(preload: () => void): void {
+  preloadLazyChunks = preload
+}
+
+/** Une nouvelle version attend-elle un rechargement ? (pour le bloc Compte) */
 export function useUpdateReady(): boolean {
   return useSyncExternalStore(
     (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    () => updateReady,
+    () => reloadPending,
   )
 }
 
@@ -176,37 +208,27 @@ export function initServiceWorker(): void {
   window.addEventListener('keydown', markInteracted, true)
 
   // Chunk introuvable : la reprise est branchée sur le rejet de l'`import()` de
-  // l'écran paresseux (App.tsx), qui sait quel onglet rouvrir. On n'écoute pas
-  // en plus `vite:preloadError` : Vite l'émet avant ce rejet, pour le même
+  // l'écran paresseux (App.tsx), qui sait quel onglet est demandé. On n'écoute
+  // pas en plus `vite:preloadError` : Vite l'émet avant ce rejet, pour le même
   // échec, et un écouteur ici rechargerait sans connaître l'onglet visé.
 
-  const updateSW = registerSW({
+  registerSW({
     immediate: true,
-    onNeedRefresh() {
-      updateReady = true
-      notify()
-      maybeApplyUpdate('ready')
-    },
     onNeedReload() {
-      // Le service worker neuf contrôle la page. Si c'est nous qui l'avons
-      // demandé, on recharge ; sinon un autre onglet du navigateur a basculé :
-      // on ne recharge que si rien ne peut se perdre ici. À défaut la page reste
-      // sur l'ancien bundle, et la reprise sur chunk introuvable fait le reste.
-      if (
-        switching ||
-        shouldApplyUpdate({
-          trigger: 'external',
-          updateReady: true,
-          captureInProgress: captureInProgress(),
-          fieldFocused: fieldFocused(),
-          interactedSinceLoad,
-        })
-      ) {
-        window.location.reload()
-      }
+      // Le service worker neuf a pris la main (mise à jour d'ici, ou d'un autre
+      // onglet du navigateur) : la page est sur l'ancien bundle. On recharge si
+      // c'est permis maintenant, sinon au prochain point sûr.
+      reloadPending = true
+      notify()
+      requestReload('activated')
     },
     onRegisteredSW(_url, registration) {
       if (!registration) return
+      // Une mise à jour s'installe (plusieurs secondes de téléchargement avant
+      // qu'elle ne remplace le précache) : on met à l'abri les chunks paresseux.
+      registration.addEventListener('updatefound', () => {
+        if (navigator.serviceWorker.controller) preloadLazyChunks?.()
+      })
       // En mode écran d'accueil, iOS garde l'app suspendue des jours : sans
       // navigation, le navigateur ne cherche pas de nouveau service worker. On
       // le lui demande au retour au premier plan.
@@ -220,15 +242,4 @@ export function initServiceWorker(): void {
       })
     },
   })
-  applyUpdate = () => {
-    void updateSW(true)
-    // Filet : le rechargement suit normalement la prise de contrôle du service
-    // worker neuf. S'il ne vient pas (événement manqué), la page resterait sur
-    // l'ancien bundle avec le nouveau précache : on recharge nous-mêmes, sauf si
-    // une saisie a commencé entre-temps (la reprise sur chunk introuvable suffit
-    // alors).
-    window.setTimeout(() => {
-      if (!captureInProgress() && !fieldFocused()) window.location.reload()
-    }, RELOAD_FALLBACK_MS)
-  }
 }
