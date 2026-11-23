@@ -18,6 +18,9 @@
 //   - `networkFirstRead`: réseau d'abord BORNÉ (3 s), copie locale en secours.
 //     Réservé aux décisions qui exigent le frais après une écriture (le check
 //     de premier lancement : créer sa routine puis la relire doit la voir).
+//   - `invalidateReads` : une écriture faite depuis l'app (plan édité) marque
+//     des copies PÉRIMÉES. Elles ne sont plus servies d'abord : la lecture
+//     suivante passe par le réseau, borné, la copie restant le secours.
 //
 // Étiquetage : chaque entrée est scoppée au `userId` du marqueur local
 // (local-account) et purgée par `clearReadCache` à la Déconnexion. Sans
@@ -49,6 +52,11 @@ export const NETWORK_FIRST_TIMEOUT_MS = 3000;
 interface Envelope {
   v: 1;
   value: unknown;
+  /**
+   * Copie PÉRIMÉE par une écriture faite depuis l'app (`invalidateReads`) : elle
+   * n'est plus servie d'abord, seulement en secours quand le réseau ne répond pas.
+   */
+  stale?: true;
 }
 
 /** Registre mémoire des revalidations connues de cette session (clé → refetch). */
@@ -78,8 +86,24 @@ function fullKey(userId: string, key: string): string {
   return `${PREFIX}:${userId}:${key}`;
 }
 
+/**
+ * Invalidations ciblées (`invalidateReads`) : préfixe complet (compte compris)
+ * → numéro de la dernière lecture partie AVANT l'invalidation. Une réponse de
+ * numéro inférieur ou égal, sur une clé de ce préfixe, décrit la base d'avant
+ * l'écriture : elle n'écrit pas la copie. Les autres clés ne sont pas touchées.
+ */
+const invalidatedAt = new Map<string, number>();
+
+/** La lecture `seq` de `storageKey` est-elle partie avant une invalidation de sa clé ? */
+function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
+  for (const [prefix, at] of invalidatedAt) {
+    if (seq <= at && storageKey.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /** Lit une entrée. `null` = absente ou illisible (jamais « valeur null »). */
-function readEntry<T>(key: string): { value: T } | null {
+function readEntry<T>(key: string): { value: T; stale: boolean } | null {
   if (typeof localStorage === 'undefined') return null;
   const raw = localStorage.getItem(key);
   if (!raw) return null;
@@ -91,7 +115,7 @@ function readEntry<T>(key: string): { value: T } | null {
       (parsed as Envelope).v === 1 &&
       'value' in (parsed as Envelope)
     ) {
-      return { value: (parsed as Envelope).value as T };
+      return { value: (parsed as Envelope).value as T, stale: (parsed as Envelope).stale === true };
     }
     return null;
   } catch {
@@ -111,10 +135,11 @@ function writeEntry(key: string, value: unknown): void {
 }
 
 /**
- * Lit le réseau et sème la copie, sous trois gardes : la réponse n'écrit que si
- * elle est partie après la dernière réponse écrite pour cette clé (sinon elle
- * écraserait du plus frais avec du plus vieux), si aucune purge n'a eu lieu
- * depuis son départ, et si le compte reconnu est toujours celui du départ.
+ * Lit le réseau et sème la copie, sous gardes : la réponse n'écrit que si elle
+ * est partie après la dernière réponse écrite pour cette clé (sinon elle
+ * écraserait du plus frais avec du plus vieux), si aucune purge ni invalidation
+ * de sa clé n'a eu lieu depuis son départ, et si le compte reconnu est toujours
+ * celui du départ.
  * Dans tous les cas la valeur est rendue à l'appelant.
  */
 async function guardedFetch<T>(
@@ -132,6 +157,7 @@ async function guardedFetch<T>(
     gen === purgeGen &&
     seq >= (floor.get(storageKey) ?? 0) &&
     seq > (lastWritten.get(storageKey) ?? 0) &&
+    !departedBeforeInvalidation(storageKey, seq) &&
     loadLocalAccount()?.userId === userId
   ) {
     writeEntry(storageKey, value);
@@ -177,14 +203,56 @@ export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Pro
   revalidators.set(storageKey, refresh);
 
   const cached = readEntry<T>(storageKey);
-  if (cached !== null) {
+  if (cached !== null && !cached.stale) {
     // Revalidation en arrière-plan : hors-ligne elle échoue en silence, la
     // copie servie reste la vérité locale jusqu'au prochain passage en ligne.
     void refresh().catch(() => {});
     return cached.value;
   }
 
-  return guardedFetch(account.userId, storageKey, fetcher);
+  const attempt = guardedFetch(account.userId, storageKey, fetcher);
+  if (cached === null) return attempt;
+  // Copie PÉRIMÉE par une écriture faite d'ici (`invalidateReads`) : réseau
+  // d'abord, borné ; la copie ne sert qu'en secours (hors ligne, wifi zombie).
+  // Une réponse tardive la remettra à neuf pour la lecture suivante.
+  void attempt.catch(() => {});
+  try {
+    return await withTimeout(attempt, NETWORK_FIRST_TIMEOUT_MS);
+  } catch {
+    return cached.value;
+  }
+}
+
+/**
+ * Marque PÉRIMÉES les copies dont la clé commence par un des préfixes : une
+ * écriture faite depuis l'app (plan édité, exo renommé) vient de les rendre
+ * fausses. Elles ne sont pas retirées, hors ligne la Capture doit toujours
+ * s'ouvrir : la prochaine lecture passe par le réseau et ne retombe sur la copie
+ * qu'en échec (cf. `cachedRead`). Le marquage est écrit dans la copie, il survit
+ * au rechargement. Les lectures de ces clés encore en vol sont parties avant
+ * l'écriture : leur réponse n'écrit rien. Les clés hors préfixes ne sont pas
+ * concernées, leurs lectures en vol sèment leur copie comme d'habitude.
+ */
+export function invalidateReads(prefixes: readonly string[]): void {
+  const account = loadLocalAccount();
+  if (!account || typeof localStorage === 'undefined') return;
+  for (const prefix of prefixes) invalidatedAt.set(fullKey(account.userId, prefix), readSeq);
+  for (const prefix of prefixes) {
+    for (const key of cachedKeys(prefix)) {
+      const storageKey = fullKey(account.userId, key);
+      const entry = readEntry<unknown>(storageKey);
+      if (entry === null || entry.stale) continue;
+      try {
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({ v: 1, value: entry.value, stale: true } satisfies Envelope),
+        );
+      } catch {
+        // Quota plein : faute de pouvoir la marquer, la copie fausse est retirée.
+        localStorage.removeItem(storageKey);
+      }
+    }
+  }
 }
 
 /**
@@ -308,6 +376,7 @@ export function clearReadCache(): void {
   // ressèmera pas une copie qu'on vient de purger.
   lastWritten.clear();
   floor.clear();
+  invalidatedAt.clear();
   purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {

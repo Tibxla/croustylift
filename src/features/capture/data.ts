@@ -27,6 +27,14 @@ import {
   peekRead,
   refreshRead,
 } from '../../lib/read-cache';
+import {
+  CAPTURE_SOURCE_KEY,
+  EXERCISE_NOTE_PREFIX,
+  EXERCISES_KEY,
+  SEANCE_TEMPLATE_PREFIX,
+  SEANCE_VERSION_IDS_PREFIX,
+  SEANCE_VERSION_PREFIX,
+} from './plan-copies';
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows } from '../../lib/fetch-all';
 import type { Database } from '../../lib/database.types';
@@ -90,10 +98,6 @@ export interface LoadedSeance {
 // plus rien en silence. Un user totalement neuf ne passe d'ailleurs pas par ici,
 // App l'envoie d'abord sur l'écran de premier lancement.
 
-/** Préfixes des copies locales du plan lues par la Capture (cf. `pruneCaptureCopies`). */
-const SEANCE_VERSION_PREFIX = 'seance-version:';
-const SEANCE_TEMPLATE_PREFIX = 'seance-template:';
-
 /** Une séance proposée au choix en Capture : juste de quoi l'afficher et la résoudre. */
 export interface SeanceChoice {
   id: string;
@@ -149,7 +153,7 @@ export function resolveCaptureRoutineId(
  */
 export async function loadCaptureSource(): Promise<CaptureSource> {
   // Cache d'abord (ADR 0012) : l'arrivée en salle ne dépend pas du réseau.
-  return cachedRead('capture-source', async () => {
+  return cachedRead(CAPTURE_SOURCE_KEY, async () => {
     const [currentRoutineId, routines] = await Promise.all([
       getCurrentRoutineId(),
       listRoutines(),
@@ -192,7 +196,7 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
  * des retouches du même template, l'historique de l'exo les traverse toutes.
  */
 export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
-  return cachedRead(`seance-version-ids:${seanceId}`, async () => {
+  return cachedRead(`${SEANCE_VERSION_IDS_PREFIX}${seanceId}`, async () => {
     // Append-only (une version par édition) : lu en entier, page par page (cf.
     // lib/fetch-all) — une version manquante sortirait ses exécutions du
     // périmètre de la Référence.
@@ -239,7 +243,7 @@ export async function listExercises(): Promise<ExerciseRow[]> {
  * d'AVANT leur propre modification.
  */
 export async function listExercisesForCapture(): Promise<ExerciseRow[]> {
-  return cachedRead('exercises', listExercises);
+  return cachedRead(EXERCISES_KEY, listExercises);
 }
 
 /**
@@ -247,7 +251,7 @@ export async function listExercisesForCapture(): Promise<ExerciseRow[]> {
  * Même partage des rôles que le catalogue : les éditeurs lisent en direct.
  */
 export async function loadExerciseNoteCached(exerciseId: string): Promise<string> {
-  return cachedRead(`exo-note:${exerciseId}`, () => loadExerciseNote(exerciseId));
+  return cachedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, () => loadExerciseNote(exerciseId));
 }
 
 // --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------

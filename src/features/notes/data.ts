@@ -17,6 +17,7 @@
 import { supabase } from '../../lib/supabase';
 import { isBlankNote, normalizeNoteBody } from '../../domain/notes';
 import type { OutboxOp } from '../capture/outbox';
+import { invalidateExerciseNoteCopy } from '../capture/plan-copies';
 
 // =====================================================================
 // Helper pur (testé) — cf. data.test.ts
@@ -95,6 +96,15 @@ export async function loadExerciseNote(exerciseId: string): Promise<string> {
  * default auth.uid() ; le corps est normalisé (domain/notes).
  */
 export async function saveExerciseNote(exerciseId: string, body: string): Promise<void> {
+  try {
+    await writeExerciseNote(exerciseId, body);
+  } finally {
+    // La copie servie à la Capture est périmée (cf. capture/plan-copies).
+    invalidateExerciseNoteCopy(exerciseId);
+  }
+}
+
+async function writeExerciseNote(exerciseId: string, body: string): Promise<void> {
   if (isBlankNote(body)) {
     const { error } = await supabase
       .from('exercise_notes')
