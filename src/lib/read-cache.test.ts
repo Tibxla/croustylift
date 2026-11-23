@@ -245,9 +245,10 @@ describe('ordre des réponses et garde de compte', () => {
     // l'utilisateur relance, la relance échoue, puis la première répond.
     const lente = deferred<string>();
     const premiere = cachedRead('k', () => lente.promise);
-    await refreshRead('k', async () => {
+    // « Réessayer » passe par networkFirstRead (App.tsx) : réseau d'abord, en échec.
+    await networkFirstRead('k', async () => {
       throw new Error('réseau coupé');
-    });
+    }).catch(() => {});
     lente.resolve('routine');
     await premiere;
 
@@ -257,6 +258,25 @@ describe('ordre des réponses et garde de compte', () => {
         throw new Error('hors ligne');
       }),
     ).resolves.toBe('routine');
+  });
+
+  it('relecture après acquittement qui ÉCHOUE : une réponse partie AVANT ne réécrit pas la copie', async () => {
+    await cachedRead('k', async () => 'copie');
+    const avant = deferred<string>();
+    // Revalidation partie avant l'acquittement d'une suppression…
+    await cachedRead('k', () => avant.promise);
+    // … relecture lancée après l'acquittement, qui échoue.
+    await refreshRead('k', async () => {
+      throw new Error('réseau coupé');
+    });
+    avant.resolve('avec la séance supprimée');
+    await settle();
+
+    await expect(
+      cachedRead('k', async () => {
+        throw new Error('hors ligne');
+      }),
+    ).resolves.toBe('copie');
   });
 
   it('la réponse dépassée est quand même rendue à son appelant', async () => {

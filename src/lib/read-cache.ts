@@ -64,6 +64,13 @@ const lastWritten = new Map<string, number>();
 let readSeq = 0;
 /** Incrémenté à chaque purge : une réponse partie avant ne ressème rien. */
 let purgeGen = 0;
+/**
+ * Seuil par clé, posé par une relecture qui suit une écriture ACQUITTÉE
+ * (`refreshRead`) : toute réponse partie avant ce seuil décrit la base d'avant
+ * l'écriture et ne peut plus écrire la copie, MÊME si la relecture échoue
+ * (sinon une série ou une séance supprimée reviendrait dans la Référence).
+ */
+const floor = new Map<string, number>();
 
 function fullKey(userId: string, key: string): string {
   return `${PREFIX}:${userId}:${key}`;
@@ -112,13 +119,16 @@ async function guardedFetch<T>(
   userId: string,
   storageKey: string,
   fetcher: () => Promise<T>,
+  raisesFloor = false,
 ): Promise<T> {
   readSeq += 1;
   const seq = readSeq;
   const gen = purgeGen;
+  if (raisesFloor) floor.set(storageKey, seq);
   const value = await fetcher();
   if (
     gen === purgeGen &&
+    seq >= (floor.get(storageKey) ?? 0) &&
     seq > (lastWritten.get(storageKey) ?? 0) &&
     loadLocalAccount()?.userId === userId
   ) {
@@ -184,7 +194,7 @@ export async function refreshRead<T>(key: string, fetcher: () => Promise<T>): Pr
   const account = loadLocalAccount();
   if (!account) return;
   try {
-    await guardedFetch(account.userId, fullKey(account.userId, key), fetcher);
+    await guardedFetch(account.userId, fullKey(account.userId, key), fetcher, true);
   } catch {
     // Hors-ligne ou erreur serveur : la copie servie reste la vérité locale.
   }
@@ -267,6 +277,7 @@ export function clearReadCache(): void {
   // Les lectures encore en vol sont parties avant la purge : leur réponse ne
   // ressèmera pas une copie qu'on vient de purger.
   lastWritten.clear();
+  floor.clear();
   purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {
