@@ -75,6 +75,7 @@ import {
 // passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
 import { flushOutbox } from './sync';
 import { syncBannerLabel, type SyncTone } from './sync-label';
+import { boundSetValues } from './stepper-utils';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
@@ -661,8 +662,11 @@ function CaptureBoard({
   const handleLog = useCallback(
     (
       exerciseId: string,
-      set: { weightKg: number; reps: number; rir: number; side?: Side },
+      rawSet: { weightKg: number; reps: number; rir: number; side?: Side },
     ) => {
+      // Bornes de la base (cf. stepper-utils) : une valeur hors bornes serait
+      // refusée (22003) et la série finirait en quarantaine.
+      const set = boundSetValues(rawSet);
       // On part de l'état PROJETÉ (stateRef), pas du `state` capturé : deux taps
       // rapprochés voient ainsi la 1ʳᵉ série déjà posée (bug M6).
       const current = stateRef.current;

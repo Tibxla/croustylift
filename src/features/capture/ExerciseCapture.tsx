@@ -16,6 +16,7 @@ import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
+import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
 import { seedDraft } from './capture-seed';
 import { draftE1rm } from './draft-e1rm';
 import { NoteField } from '../notes/NoteField';
@@ -420,14 +421,15 @@ export function ExerciseCapture({
           step={WEIGHT_STEP}
           fineStep={WEIGHT_FINE}
           min={0}
+          max={WEIGHT_MAX_KG}
           format={formatWeight}
           onChange={setWeightKg}
         />
         <div className="my-4 h-px bg-hair" />
         <div className="flex items-stretch gap-3">
-          <ClusterStepper label="Reps" variant="compact" value={reps} step={1} min={1} onChange={setReps} />
+          <ClusterStepper label="Reps" variant="compact" value={reps} step={1} min={1} max={REPS_MAX} onChange={setReps} />
           <div className="w-px shrink-0 bg-hair" />
-          <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} onChange={setRir} />
+          <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} max={RIR_MAX} onChange={setRir} />
         </div>
         {liveE1rm !== null && (
           <div

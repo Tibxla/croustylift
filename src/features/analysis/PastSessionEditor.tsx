@@ -10,6 +10,7 @@
 // exécution.
 import { useEffect, useMemo, useState } from 'react';
 import { Stepper } from '../capture/Stepper';
+import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from '../capture/stepper-utils';
 import { MetricRow } from '../capture/MetricRow';
 import { formatWeight } from '../capture/format';
 import { clearPersistedExecution, newId } from '../capture/state';
@@ -793,6 +794,7 @@ function SetFields({
         step={WEIGHT_STEP}
         fineStep={WEIGHT_FINE}
         min={0}
+        max={WEIGHT_MAX_KG}
         format={formatWeight}
         onChange={(weightKg) =>
           onUpdateSet(set.id, { weightKg, reps: set.reps, rir: set.rir })
@@ -804,6 +806,7 @@ function SetFields({
           value={set.reps}
           step={1}
           min={1}
+          max={REPS_MAX}
           onChange={(reps) =>
             onUpdateSet(set.id, { weightKg: set.weightKg, reps, rir: set.rir })
           }
@@ -813,6 +816,7 @@ function SetFields({
           value={set.rir}
           step={1}
           min={0}
+          max={RIR_MAX}
           onChange={(rir) =>
             onUpdateSet(set.id, { weightKg: set.weightKg, reps: set.reps, rir })
           }

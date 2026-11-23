@@ -2,7 +2,7 @@
 // Toutes les fonctions sont pures — testables sans DOM (environment: 'node').
 
 import { describe, expect, it } from 'vitest';
-import { parseTypedValue } from './stepper-utils';
+import { boundSetValues, parseTypedValue, REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
 
 describe('parseTypedValue — saisie à précision libre (poids, allowDecimals=true)', () => {
   const fallback = 80;
@@ -83,5 +83,33 @@ describe('parseTypedValue — saisie entière (reps / RIR, allowDecimals=false)'
 
   it('retombe sur le fallback pour une saisie invalide', () => {
     expect(parseTypedValue('abc', 1, 50, fallback, false)).toBe(fallback);
+  });
+});
+
+describe('plafonds de saisie alignés sur la base', () => {
+  it('un poids tapé au-delà de numeric(6,2) est ramené au plafond', () => {
+    expect(parseTypedValue('10000', 0, WEIGHT_MAX_KG, 80, true)).toBe(9999.99);
+  });
+
+  it('boundSetValues ramène poids, reps et RIR dans les bornes de la base', () => {
+    expect(boundSetValues({ weightKg: 10000, reps: 100000, rir: 500, side: 'left' })).toEqual({
+      weightKg: WEIGHT_MAX_KG,
+      reps: REPS_MAX,
+      rir: RIR_MAX,
+      side: 'left',
+    });
+    expect(boundSetValues({ weightKg: -5, reps: 0, rir: -1 })).toEqual({
+      weightKg: 0,
+      reps: 1,
+      rir: 0,
+    });
+  });
+
+  it('boundSetValues laisse intacte une série dans les bornes', () => {
+    expect(boundSetValues({ weightKg: 82.5, reps: 8, rir: 1 })).toEqual({
+      weightKg: 82.5,
+      reps: 8,
+      rir: 1,
+    });
   });
 });

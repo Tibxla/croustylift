@@ -2,6 +2,33 @@
 // Séparée du composant pour rester testable sans DOM.
 
 /**
+ * Plafonds de saisie, alignés sur les colonnes de `performed_sets` : `weight_kg`
+ * est un `numeric(6,2)` (9999,99 au plus), `reps` et `rir` des entiers. Au-delà
+ * la base refuse la ligne (22003) et la série part en quarantaine : la borne se
+ * pose donc à la saisie. Les plafonds des compteurs sont larges mais finis.
+ */
+export const WEIGHT_MAX_KG = 9999.99;
+export const REPS_MAX = 999;
+export const RIR_MAX = 99;
+
+/**
+ * Ramène une série dans les bornes que la base accepte (cf. plafonds ci-dessus).
+ * Dernier filet avant l'enfilement : une valeur hors bornes venue d'un état
+ * restauré ou d'un composant sans `max` ne part pas en file telle quelle.
+ */
+export function boundSetValues<T extends { weightKg: number; reps: number; rir: number }>(
+  set: T,
+): T {
+  const within = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+  return {
+    ...set,
+    weightKg: within(set.weightKg, 0, WEIGHT_MAX_KG),
+    reps: within(Math.round(set.reps), 1, REPS_MAX),
+    rir: within(Math.round(set.rir), 0, RIR_MAX),
+  };
+}
+
+/**
  * Parse une valeur TAPÉE au pavé numérique et la borne à [min, max].
  *
  * Contrairement au pas des boutons +/− (incrément/décrément fixe, ex. 2,5 kg),
