@@ -65,6 +65,7 @@ import {
 import {
   enqueue,
   pendingCount,
+  quarantineCount,
   purgeByExecution,
   readQueue,
 } from './outbox';
@@ -73,6 +74,7 @@ import {
 // `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces. On
 // passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
 import { flushOutbox } from './sync';
+import { syncBannerLabel, type SyncTone } from './sync-label';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
@@ -949,31 +951,30 @@ function CaptureBoard({
  *   - vide      → « Synchronisé » (vert, discret) ;
  *   - en ligne  → « N en attente » (info, sync en cours) ;
  *   - hors ligne→ « Hors ligne » (warn).
+ * Et par la QUARANTAINE (ops rejetées par la base) : tant qu'elle n'est pas vide,
+ * jamais « Synchronisé », une ligne ambre le dit (cf. `syncBannerLabel`). Elle
+ * est lue ici, pas par les appelants : la bannière la signale partout où elle
+ * s'affiche.
  * Couleur ET texte portent toujours l'info (jamais la couleur seule). « Synchronisé »
  * reste rendu pour stabiliser la mise en page et confirmer la reprise après coup.
  */
 export function SyncBanner({ status, pending }: { status: SyncStatus; pending: number }) {
-  const variants: Record<
-    SyncStatus,
-    { dot: string; text: string; label: string }
-  > = {
-    synced: {
-      dot: 'bg-good shadow-[0_0_8px_var(--color-good)]',
-      text: 'text-ink-muted',
-      label: 'Synchronisé. Tout est en base.',
-    },
-    pending: {
-      dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]',
-      text: 'text-ink-muted',
-      label: `Synchronisation… ${pending} en attente.`,
-    },
-    offline: {
-      dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]',
-      text: 'text-warn',
-      label: `Hors ligne. ${pending} en attente, gardé sur l’appareil.`,
-    },
+  const quarantined = useSyncExternalStore(
+    subscribeSync,
+    () => quarantineCount(),
+    () => 0,
+  );
+  const { tone, label } = syncBannerLabel({
+    pending,
+    quarantined,
+    online: status !== 'offline',
+  });
+  const tones: Record<SyncTone, { dot: string; text: string }> = {
+    good: { dot: 'bg-good shadow-[0_0_8px_var(--color-good)]', text: 'text-ink-muted' },
+    info: { dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]', text: 'text-ink-muted' },
+    warn: { dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]', text: 'text-warn' },
   };
-  const v = variants[status];
+  const v = { ...tones[tone], label };
 
   return (
     <div
