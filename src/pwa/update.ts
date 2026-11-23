@@ -19,9 +19,6 @@
 
 import { LAUNCH_EXPIRY_MS } from '../features/capture/state'
 
-/** Préfixe des états de Capture persistés (`storageKey`, features/capture/state.ts). */
-export const CAPTURE_STORAGE_PREFIX = 'croustylift:capture:'
-
 /**
  * Cet état de Capture persisté décrit-il une séance EN COURS ? Lu tel quel dans
  * le stockage, donc tolérant : une entrée illisible ne bloque pas la mise à jour

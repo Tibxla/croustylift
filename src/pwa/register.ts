@@ -4,10 +4,9 @@
 
 import { useSyncExternalStore } from 'react'
 import { registerSW } from 'virtual:pwa-register'
-import { previousDayIso, todayIso } from '../features/capture/state'
+import { STORAGE_PREFIX, previousDayIso, todayIso } from '../features/capture/state'
 import { activeBlockers } from './blockers'
 import {
-  CAPTURE_STORAGE_PREFIX,
   chunkFailureAction,
   isControllerReplacement,
   isCaptureEntryInProgress,
@@ -49,7 +48,7 @@ export function captureInProgress(): boolean {
     const now = Date.now()
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i)
-      if (key === null || !key.startsWith(CAPTURE_STORAGE_PREFIX)) continue
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue
       if (isCaptureEntryInProgress(localStorage.getItem(key), today, yesterday, now)) return true
     }
   } catch {
