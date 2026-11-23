@@ -13,6 +13,7 @@ import { useState } from 'react';
 import {
   createFirstRoutine,
   DEFAULT_ROUTINE_NAME,
+  FIRST_NAME_MAX_LENGTH,
   STARTER_TEMPLATE,
   type FirstRoutineResult,
 } from './data';
@@ -190,6 +191,7 @@ function Field({
         placeholder={placeholder}
         autoFocus={autoFocus}
         enterKeyHint="next"
+        maxLength={FIRST_NAME_MAX_LENGTH}
         onChange={(e) => onChange(e.target.value)}
         className="field h-[54px] w-full rounded-[14px] px-4 text-[17px] font-medium"
       />
