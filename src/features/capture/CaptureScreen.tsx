@@ -15,6 +15,7 @@ import {
   type Dispatch,
 } from 'react';
 import {
+  catalogExerciseToSession,
   listExercisesForCapture,
   listSeanceVersionIds,
   loadCaptureSource,
@@ -36,6 +37,8 @@ import {
 } from './data';
 import {
   addExercise,
+  layoutEditOf,
+  replayLayout,
   swapExercise,
   templateExerciseIds,
 } from './session-edit';
@@ -98,7 +101,10 @@ type LoadState =
   | { phase: 'empty' }
   | {
       phase: 'ready';
+      /** La séance du jour : le template de l'exécution, disposition rejouée. */
       session: Session;
+      /** Les ids du TEMPLATE seul, référence du diff de déviations (ADR 0002). */
+      templateIds: string[];
       seanceVersionId: string;
       /** Contexte d'historique de la séance (scope Référence + repère notes), partagé avec les exos ajoutés à la volée. */
       historyCtx: SeanceHistoryContext;
@@ -249,15 +255,29 @@ export function CaptureScreen() {
       // Par exo : dérivées d'historique (Référence scopée séance, repli de
       // préremplissage, records all-time : UNE lecture par exo) et note
       // d'instructions (issue #26). Tout sur copies locales.
-      const [withRows, versionIds, previousDatedNotes] = await Promise.all([
+      const withHistory = async (ex: SessionExercise) => {
+        const [rows, perExerciseNote] = await Promise.all([
+          loadExerciseRows(ex.exerciseId),
+          loadExerciseNoteCached(ex.exerciseId),
+        ]);
+        return { ...ex, rows, perExerciseNote };
+      };
+      // DISPOSITION (exos ajoutés ou remplacés pendant la séance) : celle que
+      // porte l'état local, donc celle de SON exécution, jamais reconstruite depuis
+      // les séries en base. Chaque exo du journal se relit comme un exo du plan ;
+      // ses copies existent (l'ajout les a semées sur ce téléphone). Si une
+      // lecture échoue malgré tout, la séance s'ouvre sans lui à ce montage,
+      // plutôt que de ne pas s'ouvrir, et jamais avec une note vide éditable.
+      const layout = restored?.layout ?? [];
+      const [withRows, extras, versionIds, previousDatedNotes] = await Promise.all([
+        Promise.all(base.exercises.map(withHistory)),
         Promise.all(
-          base.exercises.map(async (ex) => {
-            const [rows, perExerciseNote] = await Promise.all([
-              loadExerciseRows(ex.exerciseId),
-              loadExerciseNoteCached(ex.exerciseId),
-            ]);
-            return { ...ex, rows, perExerciseNote };
-          }),
+          layout.map((edit) => withHistory(catalogExerciseToSession({
+            id: edit.exerciseId,
+            name: edit.name,
+            unilateral: edit.unilateral,
+            primary_muscles: edit.primaryMuscles,
+          })).catch(() => null)),
         ),
         versionIdsRead,
         notesRead,
@@ -271,20 +291,24 @@ export function CaptureScreen() {
       // « aucune exécution ».
       const currentExecutionId = restored?.executionId ?? today?.executionId ?? null;
 
-      const session: Session = {
-        ...base,
-        exercises: withRows.map(({ rows, ...ex }) => ({
-          ...ex,
-          ...deriveExerciseHistory(
-            rows,
-            ex.exerciseId,
-            versionIds,
-            ex.unilateral ?? false,
-            currentExecutionId,
-          ),
-          previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
-        })),
-      };
+      const derived = ({ rows, ...ex }: Awaited<ReturnType<typeof withHistory>>): SessionExercise => ({
+        ...ex,
+        ...deriveExerciseHistory(
+          rows,
+          ex.exerciseId,
+          versionIds,
+          ex.unilateral ?? false,
+          currentExecutionId,
+        ),
+        previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
+      });
+      // Le TEMPLATE de l'exécution, puis la séance du jour : le template sur
+      // lequel la disposition est rejouée (cf. `replayLayout`).
+      const template: Session = { ...base, exercises: withRows.map(derived) };
+      const session = replayLayout(template, layout, (_edit, index) => {
+        const extra = extras[index];
+        return extra ? derived(extra) : null;
+      });
       // On transporte l'init vers le reducer via une ref, posée AVANT le passage
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
@@ -305,6 +329,7 @@ export function CaptureScreen() {
       setLoad({
         phase: 'ready',
         session,
+        templateIds: templateExerciseIds(template),
         seanceVersionId,
         historyCtx: {
           seanceVersionIds: versionIds,
@@ -492,6 +517,7 @@ export function CaptureScreen() {
     <CaptureBoard
       key={load.session.id}
       session={load.session}
+      templateIds={load.templateIds}
       seanceVersionId={load.seanceVersionId}
       historyCtx={load.historyCtx}
       // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
@@ -642,12 +668,15 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 
 function CaptureBoard({
   session: initialSession,
+  templateIds,
   seanceVersionId,
   historyCtx,
   init,
   onExitToLaunch,
 }: {
   session: Session;
+  /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
+  templateIds: string[];
   seanceVersionId: string;
   /** Contexte d'historique de la séance (scope Référence + repère notes) pour les exos ajoutés à la volée. */
   historyCtx: SeanceHistoryContext;
@@ -667,10 +696,11 @@ function CaptureBoard({
   const [date] = useState(() => init.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
-  // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
-  // diff de déviations — il n'est JAMAIS modifié (le versionné en base non plus).
+  // (issue #36). Elle arrive ici disposition DÉJÀ rejouée (exos ajoutés ou
+  // remplacés avant ce montage, cf. `loadSeance`). Le TEMPLATE d'origine reste la
+  // référence du diff de déviations : ses ids sont passés à part (`templateIds`),
+  // il n'est JAMAIS modifié (le versionné en base non plus).
   const [session, setSession] = useState(initialSession);
-  const templateIdsRef = useRef(templateExerciseIds(initialSession));
 
   // Restauration au montage : Supabase fait foi, localStorage est un filet
   // (survie au background / écriture offline non encore synchronisée). On fusionne
@@ -903,13 +933,20 @@ function CaptureBoard({
   // est dérivée par diff (ADR 0002). Le réalisé loggé dessus remontera comme
   // n'importe quelle série (l'outbox upsert par exerciseId), donc l'exo ajouté
   // apparaît dans le log brut et le récap.
+  //
+  // Chaque geste est aussi JOURNALISÉ dans l'état de capture (`layout`), donc
+  // persisté avec lui : au changement d'onglet ou au rechargement, la séance est
+  // reconstruite du template plus ce journal (`replayLayout`). Sans cela l'exo
+  // ajouté disparaissait du sélecteur et ses séries sortaient du récap.
   const handleAddExercise = useCallback((exercise: SessionExercise) => {
     setSession((s) => addExercise(s, exercise));
+    dispatch({ type: 'edit-layout', edit: layoutEditOf(exercise) });
   }, []);
 
   const handleSwapExercise = useCallback(
     (targetExerciseId: string, replacement: SessionExercise) => {
       setSession((s) => swapExercise(s, targetExerciseId, replacement));
+      dispatch({ type: 'edit-layout', edit: layoutEditOf(replacement, targetExerciseId) });
     },
     [],
   );
@@ -1085,7 +1122,7 @@ function CaptureBoard({
           )}
           <ExercisePicker
             session={session}
-            templateExerciseIds={templateIdsRef.current}
+            templateExerciseIds={templateIds}
             state={state}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
             loadCatalog={listExercisesForCapture}

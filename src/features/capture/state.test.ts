@@ -1380,3 +1380,75 @@ describe('pruneStaleCaptureStates (séance oubliée sans clôture)', () => {
     expect(has('2026-10-02')).toBe(true);
   });
 });
+
+// Exo ajouté ou remplacé en cours de séance (signalement utilisateur 3) : la
+// disposition est un journal de gestes, persisté avec l'état, donc lié à son
+// exécution. Sans lui, l'exo disparaissait au changement d'onglet.
+describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const curl = { exerciseId: 'curl', name: 'Curl', unilateral: true, primaryMuscles: ['biceps'] };
+  const dips = { exerciseId: 'dips', name: 'Dips', unilateral: false, primaryMuscles: ['triceps'] };
+  const edited = () => {
+    let state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
+    state = captureReducer(state, { type: 'edit-layout', edit: { kind: 'added', ...curl } });
+    state = captureReducer(state, {
+      type: 'edit-layout',
+      edit: { kind: 'swapped', replaces: 'bench-press', ...dips },
+    });
+    return state;
+  };
+
+  it('le reducer enregistre les gestes dans l’ordre', () => {
+    expect(edited().layout).toEqual([
+      { kind: 'added', ...curl },
+      { kind: 'swapped', replaces: 'bench-press', ...dips },
+    ]);
+  });
+
+  it('la disposition survit à la sauvegarde et à la restauration', () => {
+    persist(edited());
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toEqual(edited().layout);
+  });
+
+  it('à la fusion avec la base, c’est la disposition de l’état local qui est gardée', () => {
+    const fromBase = hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1');
+    expect(mergeProgress(fromBase, edited()).layout).toEqual(edited().layout);
+    // L'état hydraté de la base seule n'en porte aucune.
+    expect(fromBase.layout).toBeUndefined();
+  });
+
+  it('une nouvelle exécution (reset) repart sans disposition', () => {
+    expect(captureReducer(edited(), { type: 'reset', executionId: 'exec-2' }).layout).toBeUndefined();
+  });
+
+  it('les entrées mal formées d’un état persisté sont écartées', () => {
+    const key = 'croustylift:capture:' + upperA.id + ':2026-11-23';
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        ...edited(),
+        layout: [
+          { kind: 'added', ...curl },
+          { kind: 'added', name: 'Sans id' },
+          { kind: 'inconnu', ...dips },
+          { kind: 'swapped', ...dips },
+          'pas un objet',
+        ],
+      }),
+    );
+
+    // Un remplacement sans cible (`replaces`) n'est pas rejouable : écarté.
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toEqual([{ kind: 'added', ...curl }]);
+  });
+
+  it('un état persisté avant ce champ se restaure sans disposition', () => {
+    const state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
+    persist(state);
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toBeUndefined();
+  });
+});

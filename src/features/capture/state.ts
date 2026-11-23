@@ -41,6 +41,22 @@ export interface ExerciseProgress {
   skipped: boolean;
 }
 
+/**
+ * Un geste d'édition de la séance en cours (issue #36) : un exo AJOUTÉ à la fin,
+ * ou un exo du plan REMPLACÉ par un autre (`replaces`). Il porte ce qu'il faut du
+ * catalogue pour reconstruire l'exo sans le relire (nom, unilatéral, muscles) :
+ * la séance s'ouvre sur les copies locales, sans dépendre du catalogue.
+ */
+export interface LayoutEdit {
+  kind: 'added' | 'swapped';
+  exerciseId: string;
+  name: string;
+  unilateral: boolean;
+  primaryMuscles: string[];
+  /** Pour un remplacement : l'exo du plan dont celui-ci prend la place. */
+  replaces?: string;
+}
+
 export interface CaptureState {
   sessionId: string;
   /**
@@ -63,6 +79,21 @@ export interface CaptureState {
    * `adoptedVersionId`).
    */
   seanceVersionId?: string;
+  /**
+   * DISPOSITION de la séance : le journal des exos ajoutés ou remplacés en cours
+   * de séance, dans l'ordre des gestes. La séance affichée vaut le template plus
+   * ce journal, rien d'autre (`replayLayout`, session-edit.ts). Avant, ces gestes
+   * ne vivaient que dans l'état React de l'écran : au changement d'onglet ou au
+   * rechargement, la séance était reconstruite depuis le seul template, l'exo
+   * ajouté disparaissait du sélecteur et ses séries sortaient du récap.
+   *
+   * Persistée AVEC l'état, donc liée à l'id d'exécution qu'il porte : elle ne se
+   * rejoue jamais sur une autre exécution (la fusion garde celle de l'état local,
+   * un état abandonné l'emporte avec lui). MÊME TÉLÉPHONE seulement : un autre
+   * appareil qui reprend la séance n'a pas ce journal et ne montre que le
+   * template ; on ne reconstruit pas la disposition depuis les séries en base.
+   */
+  layout?: LayoutEdit[];
   /**
    * Horodatage du LANCEMENT de la session de capture (epoch ms, `Date.now()`).
    * Sert à chronométrer la durée auto : `durationMin = round((Date.now() - startedAt) / 60000)`
@@ -107,6 +138,8 @@ export type CaptureAction =
   | { type: 'set-dated-note'; exerciseId: string; noteId: string; body: string }
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
+  // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
+  | { type: 'edit-layout'; edit: LayoutEdit }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
   | { type: 'reset'; executionId: string }
   // Réancre le chrono (ADR 0011) : pose `startedAt` (epoch ms fourni par le
@@ -500,6 +533,8 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     executionId: b.executionId,
     // La version suit l'exécution : celle de l'état local, comme son id.
     seanceVersionId: b.seanceVersionId ?? a.seanceVersionId,
+    // La disposition aussi : seul l'état local la connaît (cf. `layout`).
+    layout: b.layout,
     startedAt: b.startedAt,
     progress,
     datedNotes,
@@ -613,6 +648,9 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'edit-layout':
+      return { ...state, layout: [...(state.layout ?? []), action.edit] };
+
     case 'close':
       // Fige la clôture EN MÉMOIRE. Tout le reste (réalisé, ids) est conservé : le
       // récap de fin se lit dans la foulée immédiate. Au remontage, rien ne
@@ -635,6 +673,8 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         activeExerciseId: null,
         progress: {},
         datedNotes: {},
+        // La disposition appartient à l'exécution abandonnée.
+        layout: undefined,
         closedAt: null,
       };
 
@@ -692,6 +732,33 @@ function normalizeDatedNotes(raw: unknown): Record<string, DatedNoteDraft> {
   return out;
 }
 
+/**
+ * Normalise la disposition lue du cache : ne garde que les gestes bien formés
+ * (un remplacement sans cible n'est pas rejouable). Absente ou vide : pas de champ.
+ */
+function normalizeLayout(raw: unknown): { layout?: LayoutEdit[] } {
+  if (!Array.isArray(raw)) return {};
+  const layout: LayoutEdit[] = [];
+  for (const value of raw) {
+    if (!value || typeof value !== 'object') continue;
+    const e = value as Partial<LayoutEdit>;
+    if (e.kind !== 'added' && e.kind !== 'swapped') continue;
+    if (typeof e.exerciseId !== 'string' || typeof e.name !== 'string') continue;
+    if (e.kind === 'swapped' && typeof e.replaces !== 'string') continue;
+    layout.push({
+      kind: e.kind,
+      exerciseId: e.exerciseId,
+      name: e.name,
+      unilateral: e.unilateral === true,
+      primaryMuscles: Array.isArray(e.primaryMuscles)
+        ? e.primaryMuscles.filter((m): m is string => typeof m === 'string')
+        : [],
+      ...(e.kind === 'swapped' ? { replaces: e.replaces } : {}),
+    });
+  }
+  return layout.length > 0 ? { layout } : {};
+}
+
 /** Charge l'exécution persistée pour cette séance/jour, ou null si rien/invalide. */
 export function loadPersisted(session: Session, date: string): CaptureState | null {
   if (typeof localStorage === 'undefined') return null;
@@ -727,6 +794,7 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: normalizeProgress(parsed.progress),
       datedNotes: normalizeDatedNotes(parsed.datedNotes),
+      ...normalizeLayout(parsed.layout),
       // NE RESTAURE JAMAIS la clôture (ADR 0009 : clôture transitoire). On ne
       // restaure que l'état d'une séance EN COURS (offline : ne pas perdre les
       // séries loggées sur un reload). Le câblage de persistance nettoie d'ailleurs

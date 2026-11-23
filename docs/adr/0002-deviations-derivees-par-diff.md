@@ -11,3 +11,7 @@ Le brainstorm parlait de « déviation = événement loggé », ce qui suggère 
 - Pas de journal d'événements à maintenir ni à rejouer.
 - Le motif d'une déviation (fatigue, blessure) n'est pas typé : il vit en texte libre dans la **note datée**.
 - Corriger un mis-tap = éditer/supprimer une série (une correction de saisie, pas un événement métier).
+
+## Amendement du 2026-11-23 (Lot 3)
+
+Les déviations d'exo restent dérivées par diff, sans écriture en base. Mais la liste réelle ne vivait que dans l'état de l'écran : un exo ajouté ou remplacé disparaissait au changement d'onglet ou au rechargement, et ses séries sortaient du récap. Les gestes d'ajout et de remplacement sont désormais journalisés dans l'état de capture persisté (`layout`), donc liés à l'id de l'exécution, et rejoués sur le template au remontage (`replayLayout`). Portée : le téléphone qui a fait les gestes. Un autre appareil qui reprend la séance ne voit que le template ; la disposition n'est pas reconstruite depuis les séries en base.
