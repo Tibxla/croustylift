@@ -3,7 +3,7 @@
 // Le record « avance » au fil des séries du jour : on part du record historique,
 // chaque série qui le dépasse le remplace, donc une SEULE série par mesure porte
 // le marqueur (la première à dépasser), pas toutes celles qui battent l'ancien.
-import { estimateE1rm } from '../../domain/e1rm';
+import { e1rmBeats, estimateE1rm } from '../../domain/e1rm';
 import {
   isE1rmRecord,
   isWeightRepsRecord,
@@ -91,7 +91,8 @@ export function computeRecordFlagsBySide(
 /** Intègre une série dans un record courant (pour faire avancer la comparaison). */
 function absorb(record: PersonalRecord, s: PerformedSet): PersonalRecord {
   const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir);
-  const improvesE1rm = record.bestE1rm === null || e1rm > record.bestE1rm;
+  // Même juge exact que `isE1rmRecord` : une égalité ne déplace pas le record.
+  const improvesE1rm = record.bestE1rm === null || e1rmBeats(e1rm, record.bestE1rm);
   const bestWeightReps = isWeightRepsRecord(record, s)
     ? { weightKg: s.weightKg, reps: s.reps }
     : record.bestWeightReps;

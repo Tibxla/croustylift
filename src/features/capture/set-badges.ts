@@ -5,12 +5,13 @@
 //   - RÉFÉRENCE (« dernière fois ») : la série à la MÊME position (et le même côté
 //     en unilatéral) lors de la dernière exécution. Juge = e1RM, seuils STRICTS :
 //     e1RM strictement supérieur -> « battu », strictement égal -> « égalisé »,
-//     inférieur -> rien. (Fini le `>=` qui criait « battu » sur une égalité.)
+//     inférieur -> rien. Comparaison exacte (`e1rmBeats` / `e1rmEquals`), comme
+//     pour le Record : 87,5 × 5 et 85 × 6 s'égalisent, aucun ne bat l'autre.
 //   - RECORD personnel (all-time) : e1RM et/ou charge, géré par record-flags.
 //
 // Un seul badge par ligne, hiérarchie RECORD > battu > égalisé : si une série bat
 // son record, on montre « Record » (pas aussi « battu », redondant).
-import { estimateE1rm } from '../../domain/e1rm';
+import { e1rmBeats, e1rmEquals, estimateE1rm } from '../../domain/e1rm';
 import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 import type { PerformedSet } from '../../domain/types';
 import {
@@ -28,11 +29,6 @@ export type SetBadge =
   | { axis: 'reference'; verdict: 'battu' | 'egalise' }
   | null;
 
-/** e1RM arrondi à 0,01 kg : compare sans bruit flottant (l'égalité doit pouvoir tomber). */
-function e1rmRounded(set: PerformedSet): number {
-  return Math.round(estimateE1rm(set.weightKg, set.reps, set.rir) * 100) / 100;
-}
-
 /**
  * Verdict d'une série face à la référence, à sa position (`order`) ET son côté
  * (`side`, pour l'unilatéral — chaque bras vs sa propre dernière fois). Aucune
@@ -45,10 +41,13 @@ export function referenceVerdict(
   if (!reference) return null;
   const ref = reference.find((r) => r.order === set.order && r.side === set.side);
   if (!ref) return null;
-  const here = e1rmRounded(set);
-  const there = e1rmRounded(ref);
-  if (here > there) return 'battu';
-  if (here === there) return 'egalise';
+  // Comparaison EXACTE (cf. domain/e1rm.ts) : ni flottants bruts, qui séparent
+  // d'un bit deux e1RM égaux, ni arrondi au centième, qui confond deux e1RM
+  // distincts.
+  const here = estimateE1rm(set.weightKg, set.reps, set.rir);
+  const there = estimateE1rm(ref.weightKg, ref.reps, ref.rir);
+  if (e1rmBeats(here, there)) return 'battu';
+  if (e1rmEquals(here, there)) return 'egalise';
   return null;
 }
 
