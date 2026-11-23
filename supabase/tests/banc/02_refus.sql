@@ -56,6 +56,15 @@ begin
 end;
 $$;
 
+-- Le banc tient en une transaction : now() y est figé. Pour que le journal
+-- garde un ordre, on recule d'une heure les événements déjà écrits avant d'en
+-- provoquer un nouveau (sous le rôle propriétaire : l'API ne le peut pas).
+create function banc.vieillir_journal() returns void
+language sql security definer as $$
+  update public.seance_archive_events
+    set occurred_at = occurred_at - interval '1 hour', created_at = created_at - interval '1 hour'
+$$;
+
 create function banc.compte(p_user uuid) returns void
 language sql as $$ select set_config('request.jwt.claim.sub', p_user::text, true) $$;
 
@@ -109,17 +118,13 @@ select banc.vrai('exo d''avant 0005 sans muscle : rempli depuis son groupe par l
 select banc.compte(:A);
 
 -- ===================== 0018 : une note datée par couple =====================
-select banc.refuse('seconde note du même couple sous un autre id, insérée par id seul', '23505',
+select banc.refuse('seconde note du même couple sous un autre id (ancien client, id aléatoire)', '23505',
   'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''refusée'') on conflict (id) do update set body = excluded.body');
-select banc.accepte('seconde note du même couple, upsert par le couple (client) : elle remplace, id compris',
-  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''nouvelle note'') on conflict (execution_id, exercise_id, owner_id) do update set id = excluded.id, body = excluded.body');
-select banc.vrai('une seule note reste pour le couple, la dernière écrite',
-  (select count(*) = 1 and min(body) = 'nouvelle note' and min(id::text) = 'a0000000-0000-0000-0000-000000000032'
+select banc.accepte('même note écrite par un second appareil sous le même id (id déterministe) : l''upsert par id converge',
+  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000031'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''rejouée'') on conflict (id) do update set body = excluded.body');
+select banc.vrai('une seule note pour le couple, corps mis à jour',
+  (select count(*) = 1 and min(body) = 'rejouée' and min(id::text) = 'a0000000-0000-0000-0000-000000000031'
    from public.dated_notes where execution_id = 'a0000000-0000-0000-0000-000000000011'));
-select banc.accepte('rejouer la même note (même id, même couple)',
-  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''rejouée'') on conflict (execution_id, exercise_id, owner_id) do update set id = excluded.id, body = excluded.body');
-select banc.vrai('toujours une seule note, corps mis à jour',
-  (select count(*) = 1 and min(body) = 'rejouée' from public.dated_notes where execution_id = 'a0000000-0000-0000-0000-000000000011'));
 select banc.accepte('note d''un autre exo dans la même exécution',
   'insert into public.dated_notes (execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e2'', ''autre exo'')');
 select banc.refuse('déplacer une note sur un couple déjà pris', '23505',
@@ -193,6 +198,24 @@ select banc.accepte('A archive l''ancienne courante, qui ne l''est plus',
 select banc.accepte('retour à l''état de départ',
   'update public.routines set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000a1''; insert into public.routine_activations (routine_id, activated_at) values (''a0000000-0000-0000-0000-0000000000a1'', now() + interval ''1 second'')');
 
+-- Suppression de la routine courante, réécriture et retrait d'activations.
+select banc.accepte('A crée une routine jamais exécutée et la définit comme courante',
+  'insert into public.routines (id, name) values (''a0000000-0000-0000-0000-0000000000a3'', ''Essai''); insert into public.routine_activations (id, routine_id, activated_at) values (''a0000000-0000-0000-0000-0000000000c3'', ''a0000000-0000-0000-0000-0000000000a3'', now() + interval ''2 seconds'')');
+select banc.accepte('A archive l''ancienne courante (PPL), qui ne l''est plus',
+  'update public.routines set archived_at = now() where id = ''a0000000-0000-0000-0000-0000000000a1''');
+select banc.refuse('A supprime la routine courante alors que la précédente est archivée', '23514',
+  'delete from public.routines where id = ''a0000000-0000-0000-0000-0000000000a3''');
+select banc.refuse('A recule l''activation courante : la routine archivée redeviendrait courante', '23514',
+  'update public.routine_activations set activated_at = ''2020-01-01'' where id = ''a0000000-0000-0000-0000-0000000000c3''');
+select banc.refuse('A retire l''activation courante : la routine archivée redeviendrait courante', '23514',
+  'delete from public.routine_activations where id = ''a0000000-0000-0000-0000-0000000000c3''');
+select banc.accepte('A réécrit une activation sans changer la courante (upsert de l''import)',
+  'update public.routine_activations set activated_at = activated_at where owner_id = ''aaaaaaaa-0000-0000-0000-000000000001''');
+select banc.accepte('A désarchive PPL, puis supprime la routine courante : PPL redevient courante',
+  'update public.routines set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000a1''; delete from public.routines where id = ''a0000000-0000-0000-0000-0000000000a3''');
+select banc.vrai('PPL est de nouveau la routine courante, non archivée',
+  (select a.routine_id = 'a0000000-0000-0000-0000-0000000000a1' from public.routine_activations a order by a.activated_at desc limit 1));
+
 -- ===================== 0022 : journal en insertion seule =====================
 select banc.accepte('A archive une séance : le trigger écrit l''événement',
   'update public.seances set archived_at = now() where id = ''a0000000-0000-0000-0000-0000000000b2''');
@@ -262,13 +285,15 @@ select banc.vrai('réimport sans doublon ni événement d''archivage en plus',
       and a.routines = (select count(*) from public.routines) from avant a));
 
 -- Le compte change après la sauvegarde, puis on la restaure.
+select banc.vieillir_journal();
 update public.seances set archived_at = null where id = 'a0000000-0000-0000-0000-0000000000b2';
+select banc.vieillir_journal();
 update public.performed_sets set reps = 99 where id = 'a0000000-0000-0000-0000-000000000021';
 delete from public.performed_sets where id <> 'a0000000-0000-0000-0000-000000000021';
 select banc.vrai('le désarchivage hors import écrit bien son événement',
   (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'));
 -- La note du couple a été recréée sous un autre id depuis la sauvegarde.
-delete from public.dated_notes where id = 'a0000000-0000-0000-0000-000000000032';
+delete from public.dated_notes where id = 'a0000000-0000-0000-0000-000000000031';
 insert into public.dated_notes (id, execution_id, exercise_id, body) values
   ('a0000000-0000-0000-0000-000000000033', 'a0000000-0000-0000-0000-000000000011', 'a0000000-0000-0000-0000-0000000000e1', 'recréée depuis');
 select banc.accepte('restaurer la sauvegarde sur un compte modifié',
@@ -277,15 +302,41 @@ select banc.vrai('série modifiée rendue à sa valeur, série supprimée revenu
   (select (select reps from public.performed_sets where id = 'a0000000-0000-0000-0000-000000000021') = 10
       and (select count(*) from public.performed_sets) = (select series from avant)));
 select banc.vrai('note recréée sous un autre id depuis : celle du fichier la remplace',
-  (select count(*) = 1 and min(id::text) = 'a0000000-0000-0000-0000-000000000032' and min(body) = 'rejouée'
+  (select count(*) = 1 and min(id::text) = 'a0000000-0000-0000-0000-000000000031' and min(body) = 'rejouée'
    from public.dated_notes where exercise_id = 'a0000000-0000-0000-0000-0000000000e1'));
-select banc.vrai('état d''archivage rendu par le fichier, sans événement daté de la restauration',
+select banc.vrai('séance désarchivée après la sauvegarde : état archivé rendu, et un événement correctif d''archivage',
   (select (select archived_at is not null from public.seances where id = 'a0000000-0000-0000-0000-0000000000b2')
-      and (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')));
-select banc.accepte('après l''import, le trigger d''archivage a repris',
+      and (select count(*) = 3 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')
+      and (select archived from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'
+           order by occurred_at desc, created_at desc limit 1)));
+select banc.accepte('réimporter aussitôt : plus de divergence',
+  format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde)));
+select banc.vrai('aucun événement correctif de plus',
+  (select count(*) = 3 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'));
+
+-- L'inverse : sauvegarde prise séance active, archivée ensuite, puis restaurée.
+select banc.vieillir_journal();
+select banc.accepte('après l''import, le trigger d''archivage a repris (désarchivage)',
   'update public.seances set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000b2''');
 select banc.vrai('événement écrit de nouveau hors import',
-  (select count(*) = 3 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'));
+  (select count(*) = 4 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'));
+create temp table sauvegarde_active on commit drop as
+select jsonb_build_object(
+  'seances', (select jsonb_agg(to_jsonb(t)) from public.seances t),
+  'seance_archive_events', (select jsonb_agg(to_jsonb(t)) from public.seance_archive_events t)
+) as data;
+select banc.vieillir_journal();
+update public.seances set archived_at = now() where id = 'a0000000-0000-0000-0000-0000000000b2';
+select banc.vieillir_journal();
+select banc.accepte('restaurer la sauvegarde prise séance active',
+  format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde_active)));
+select banc.vrai('séance archivée après la sauvegarde : état actif rendu, et un événement correctif de désarchivage',
+  (select (select archived_at is null from public.seances where id = 'a0000000-0000-0000-0000-0000000000b2')
+      and (select count(*) = 6 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')
+      and (select not archived from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'
+           order by occurred_at desc, created_at desc limit 1)));
+select banc.vrai('les autres séances du fichier, sans divergence, n''ont reçu aucun événement',
+  (select count(*) = 0 from public.seance_archive_events where seance_id <> 'a0000000-0000-0000-0000-0000000000b2'));
 
 -- Atomicité : la dernière table échoue, les premières ne doivent pas rester.
 select banc.refuse('import dont une série pointe une exécution absente', '23503',

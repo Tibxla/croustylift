@@ -10,7 +10,7 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
          not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'dated_notes_execution_id_idx'),
          'index en double'
   union all
-  select 'aucun trigger de remplacement sur dated_notes (le client upserte par le couple)',
+  select 'aucun trigger de remplacement sur dated_notes (l''id de la note se déduit du couple)',
          not exists (select 1 from pg_trigger where tgrelid = 'public.dated_notes'::regclass
                    and tgname = 'replace_dated_note' and not tgisinternal),
          'suppression en base à l''insertion, décidée hors du client'

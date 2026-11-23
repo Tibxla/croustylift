@@ -14,11 +14,15 @@
 -- Le journal continue de partir avec sa séance ou son compte : les cascades de
 -- clé étrangère ne passent pas par la RLS.
 --
--- DÉPENDANCE : l'import du client doit insérer ce journal sans le réécrire
--- (`on conflict do nothing`), ce que fait la fonction `import_user_data` de la
--- migration 0024. L'ancien import (upsert table par table) échoue sur ce journal
--- dès qu'une ligne du fichier existe déjà en base : appliquer 0022 et 0024
--- ensemble, juste avant de déployer le client qui appelle la fonction.
+-- ORDRE, impératif (voir supabase/tests/ORDRE.md) : cette migration s'applique
+-- APRÈS la 0024, APRÈS le déploiement du client qui importe par
+-- `import_user_data`, et APRÈS le passage des anciens clients (PWA restées
+-- ouvertes ou hors ligne). Son numéro ne dit pas son rang.
+-- L'ancien import upserte les tables l'une après l'autre, journal compris. Sous
+-- cette policy, il échoue sur le journal (42501) dès qu'un événement du fichier
+-- existe déjà en base, APRÈS avoir écrit les six tables précédentes : un compte
+-- à moitié restauré. Le nouvel import n'insère ce journal que sans réécriture
+-- (`on conflict do nothing`) et tient en une transaction.
 --
 -- Rejouable. Aucune donnée touchée, rien à contrôler dans les lignes.
 --
@@ -28,9 +32,14 @@
 --   select policyname, cmd, roles, qual, with_check
 --   from pg_policies where schemaname = 'public' and tablename = 'seance_archive_events';
 --
--- RISQUE : faible, à condition de respecter la dépendance ci-dessus.
+-- RISQUE : faible, à condition de respecter l'ordre ci-dessus.
 
 begin;
+
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
 
 drop policy if exists seance_archive_events_all on public.seance_archive_events;
 

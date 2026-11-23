@@ -16,9 +16,12 @@
 --   primary_muscles                      15 muscles au plus  30 éléments,
 --                                                            1500 caractères
 --
--- Le premier lancement (`FirstLaunchScreen`) est le seul écran dont les champs
--- de nom n'ont pas de `maxLength` : un nom de plus de 200 caractères y serait
--- refusé par la base (23514). Aucun nom réel n'approche cette longueur.
+-- ORDRE (voir supabase/tests/ORDRE.md) : cette migration s'applique APRÈS le
+-- déploiement du client dont le premier lancement valide ses deux noms avant
+-- toute écriture. L'écran déployé (`FirstLaunchScreen`) n'a pas de `maxLength`
+-- et crée la routine, l'active, puis crée la séance : un nom de séance de plus
+-- de 200 caractères, refusé ici (23514), laisserait une routine courante vide,
+-- et un nouvel essai buterait sur le nom de routine déjà pris.
 --
 -- `char_length` compte des caractères, `maxLength` des unités UTF-16 : un texte
 -- accepté par le navigateur ne dépasse jamais sa borne en caractères.
@@ -50,6 +53,11 @@
 -- borne partirait en quarantaine (classe 23, ADR 0018) sans bloquer la file.
 
 begin;
+
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
 
 alter table public.exercises drop constraint if exists exercises_name_taille_check;
 alter table public.exercises add constraint exercises_name_taille_check
