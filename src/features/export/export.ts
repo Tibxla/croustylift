@@ -6,7 +6,9 @@
 //   1. `collectUserData(client)` : un `select *` par table, scopé par RLS côté
 //      serveur (pas de filtre owner_id explicite, cf. capture/data.ts), lu en
 //      ENTIER page par page (cf. lib/fetch-all : sans pagination, PostgREST
-//      tronquait la sauvegarde à 1000 lignes par table, en silence).
+//      tronquait la sauvegarde à 1000 lignes par table, en silence). Les lignes
+//      dont un parent manque (exécution, version, exercice...) sont écartées :
+//      la sauvegarde rendue est toujours restaurable.
 //   2. `buildExport(collected, exportedAt)` : enveloppe versionnée { version,
 //      exportedAt, data } (pure).
 //   3. `serializeExport(export)` : JSON indenté, lisible et diffable (pur).
@@ -32,7 +34,7 @@
 //   }
 //
 // Les lignes sont la forme BRUTE des tables Supabase (snake_case, ids inclus) :
-// un import futur réinsère telles quelles. Les exos de BASE (catalogue commun,
+// l'import les réinsère telles quelles. Les exos de BASE (catalogue commun,
 // owner_id null) sont VOLONTAIREMENT exclus : ils ne sont pas « les données de
 // l'utilisateur » et seront présents chez celui qui réimporte.
 
@@ -112,12 +114,15 @@ export interface ExportClient {
  * Les tables se lisent en parallèle, chacune PAGE PAR PAGE jusqu'au bout (curseur
  * sur `id`, clé unique de toutes les tables exportées : aucune ligne sautée ni
  * doublée entre deux pages, même si une écriture arrive pendant l'export). Ce
- * n'est PAS un instantané transactionnel : les tables sont lues l'une après
- * l'autre côté serveur ; les lignes écrites entre la lecture de leur parent et
- * la leur sont écartées (`withoutRowsNewerThanTheirParent`). Une erreur Supabase sur n'importe quelle table
- * fait échouer la collecte (pas d'export partiel).
+ * n'est PAS un instantané transactionnel : chaque table est lue à part ; les
+ * lignes dont le parent manque à la lecture sont écartées
+ * (`withoutRowsNewerThanTheirParent`). Une erreur Supabase sur n'importe quelle
+ * table fait échouer la collecte (pas d'export partiel).
  *
  * Les exos de BASE (owner_id null) sont filtrés : seuls les exos perso sortent.
+ * Ils sont lus quand même, et leurs ids servent à vérifier les liens vers
+ * `exercises` AVANT ce filtre : une série sur un exo de base a bien son parent,
+ * une série sur un exo perso disparu pendant la lecture ne l'a plus.
  */
 export async function collectUserData(client: ExportClient): Promise<CollectedData> {
   const entries = await Promise.all(
@@ -130,17 +135,24 @@ export async function collectUserData(client: ExportClient): Promise<CollectedDa
         // Même message qu'avant la pagination : l'erreur Supabase, en `Error`.
         return { data, error: error ? new Error(error.message) : null };
       });
-      return [table, table === 'exercises' ? rows.filter(isPersonalExercise) : rows] as const;
+      return [table, rows] as const;
     }),
   );
 
-  return withoutRowsNewerThanTheirParent(Object.fromEntries(entries) as CollectedData);
+  const read = Object.fromEntries(entries) as CollectedData;
+  // Tout le catalogue lu, exos de base compris : les parents des liens `exercise_id`.
+  const catalogueIds = new Set(read.exercises.map((row) => row.id));
+  return withoutRowsNewerThanTheirParent(
+    { ...read, exercises: read.exercises.filter(isPersonalExercise) },
+    catalogueIds,
+  );
 }
 
 /**
- * Liens enfant → parent entre tables EXPORTÉES (les exos de base, non exportés,
- * n'y figurent pas). Colonne nullable (`executions.seance_version_id`) : une
- * valeur nulle n'a pas de parent à vérifier.
+ * Liens enfant → parent entre tables EXPORTÉES. Colonne nullable
+ * (`executions.seance_version_id`) : une valeur nulle n'a pas de parent à
+ * vérifier. Les liens vers `exercises` sont à part (`EXERCISE_LINKS`) : leur
+ * parent peut être un exo de base, lu mais pas exporté.
  */
 const PARENT_LINKS: readonly { child: ExportTable; column: string; parent: ExportTable }[] = [
   { child: 'routine_activations', column: 'routine_id', parent: 'routines' },
@@ -153,17 +165,37 @@ const PARENT_LINKS: readonly { child: ExportTable; column: string; parent: Expor
   { child: 'dated_notes', column: 'execution_id', parent: 'executions' },
 ];
 
+/** Tables qui pointent un exercice par `exercise_id` (exo de base ou perso). */
+const EXERCISE_LINKS: readonly ExportTable[] = [
+  'exercise_notes',
+  'exercise_overrides',
+  'prescriptions',
+  'performed_sets',
+  'dated_notes',
+];
+
 /**
  * Écarte les lignes dont le parent manque à la sauvegarde (logique PURE, testée).
- * Les tables se lisent l'une après l'autre : une séance synchronisée PENDANT
- * l'export peut faire entrer ses séries alors que son exécution, lue avant,
- * n'y est pas. Une telle sauvegarde échouerait à la restauration (clé étrangère).
- * Ces lignes sont postérieures à la lecture de leur parent : les écarter rend
- * une sauvegarde cohérente, prise juste avant leur écriture. Répété jusqu'à
- * stabilité, l'écart d'un parent pouvant en orpheliner d'autres.
+ * Chaque table est lue à part : une séance synchronisée PENDANT l'export peut
+ * faire entrer ses séries alors que son exécution, lue avant, n'y est pas ; un
+ * exo perso supprimé pendant la lecture laisse derrière lui une note lue juste
+ * avant. Une telle sauvegarde échouerait à la restauration (clé étrangère).
+ * Écarter ces lignes rend une sauvegarde cohérente. Répété jusqu'à stabilité,
+ * l'écart d'un parent pouvant en orpheliner d'autres.
+ *
+ * `catalogueIds` : les ids de TOUS les exercices lus, exos de base compris (ils
+ * ne figurent pas dans `data.exercises`, qui ne garde que les exos perso).
  */
-export function withoutRowsNewerThanTheirParent(data: CollectedData): CollectedData {
+export function withoutRowsNewerThanTheirParent(
+  data: CollectedData,
+  catalogueIds: ReadonlySet<unknown>,
+): CollectedData {
   const out = { ...data };
+  for (const table of EXERCISE_LINKS) {
+    out[table] = out[table].filter(
+      (row) => row.exercise_id == null || catalogueIds.has(row.exercise_id),
+    );
+  }
   for (let changed = true; changed; ) {
     changed = false;
     for (const { child, column, parent } of PARENT_LINKS) {
