@@ -23,3 +23,7 @@ Pour que ce « repart vierge » soit FIABLE — et pas seulement tributaire du n
 - Le récap de fin n'est visible que dans la foulée immédiate de la clôture (état mémoire) et, ensuite, dans le journal.
 - Après clôture, re-logger la même séance le même jour ouvre une **nouvelle exécution** (l'ancienne est exclue de la réhydratation) — plus de doublon orphelin sous un id fantôme.
 - **À ne pas confondre** : on n'exclut que les exécutions *closes* ; l'état d'une séance *en cours* (non clôturée) reste réhydraté, indispensable à l'offline (ne pas perdre les séries loggées sur un reload).
+
+## Amendement du 2026-11-23
+
+Le `closed_at` en base ne suffit pas tant que la clôture attend dans l'outbox : l'état local est nettoyé dès le geste, et la base montre encore l'exécution ouverte. Rouverte le même jour avant l'envoi, la Capture l'adoptait et la série suivante rouvrait la séance rangée. `loadTodayExecution` n'adopte donc pas une exécution que la file clôt ou supprime (`isExecutionRetiredInQueue`), lue avant et après la lecture réseau. Détail et limites dans l'ADR 0021.

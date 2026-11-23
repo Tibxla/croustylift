@@ -36,3 +36,7 @@ sens du CONTEXT : le jour est rejoué par-dessus, pas oublié.
 - La dérivation reste pure et testable sans réseau : la fusion produit des lignes de la
   même forme que celles du serveur, `deriveExerciseHistory` ne change pas de signature.
 - Supersède la limite assumée de l'ADR 0012 sur la « Référence en retard d'une exécution ».
+
+## Amendement du 2026-11-23
+
+La fusion de l'outbox couvre une série tant qu'elle attend. Une fois acquittée, elle quitte la file, et la copie de lecture ne la contenait pas encore : la Référence retombait en retard jusqu'à la relance. La copie d'historique des exos touchés est désormais relue après tout flush qui acquitte des séries, sous gardes d'ordre (ADR 0020). La fusion ne prend que les ops du compte reconnu (ADR 0019).

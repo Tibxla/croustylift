@@ -29,3 +29,11 @@ Un lancement **expire au bout d'1 h sans aucun set** : à la réouverture on rep
 - L'écran de lancement (`SeancePicker`) devient le passage **obligé**, y compris pour une routine à une seule séance ; il ne s'affiche pas pour reprendre une séance en cours.
 - L'état de capture porte un `startedAt` posé au lancement, persisté ; l'expiration (> 1 h sans set) le réancre au premier set ou repropose le lancement.
 - `elapsedMinutesSince` reste la source de la durée (lancement → clôture), inchangée dans son calcul.
+
+## Amendement du 2026-11-23
+
+Une exécution déjà née n'est jamais réancrée. Le réancrage ne vise que le lancement expiré d'une exécution qui n'existe pas encore (`shouldReanchorLaunch`). « Déjà née » se lit sur trois sources : l'état porte une série ou une note datée, l'exécution du jour a été réhydratée de la base sous le même id, ou son `upsertExecution` attend en file (`isExecutionStarted`).
+
+La garde précédente était une ref de montage, remise à zéro à chaque changement d'onglet. Sur une séance de plus d'1 h, la série suivante réancrait le lancement et l'upsert réécrivait `started_at` en base : 1 h 30 de séance devenaient 25 min.
+
+La phrase « recopié tel quel via l'`upsertExecution` » reste vraie à la naissance de la ligne seulement. L'op est désormais une insertion seule (ADR 0021) : sa réaffirmation ne touche plus `started_at`.
