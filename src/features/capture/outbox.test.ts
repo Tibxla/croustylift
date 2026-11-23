@@ -1489,7 +1489,11 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     Object.defineProperty(store, 'length', { get: () => sizes.size, configurable: true });
     (store as unknown as { key: (i: number) => string | null }).key = (i) =>
       [...sizes.keys()][i] ?? null;
-    localStorage.setItem('croustylift:readcache:user-1:exo-execs:e1', 'x'.repeat(950));
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    localStorage.setItem(
+      'croustylift:readcache:user-1:exo-execs:e1',
+      JSON.stringify({ v: 1, value: 'x'.repeat(850) }),
+    );
 
     enqueue(execOp());
 

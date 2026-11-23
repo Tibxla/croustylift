@@ -27,7 +27,7 @@
 // client) pour rester idempotente. Discriminées par `type`.
 import type { Side } from '../../domain/types';
 import { loadLocalAccount } from '../../lib/local-account';
-import { clearReadCache } from '../../lib/read-cache';
+import { writeMakingRoom } from './cache-eviction';
 
 /** Crée l'exécution du jour. Insertion seule par id : la réaffirmer ne réécrit rien. */
 export interface UpsertExecutionOp {
@@ -246,50 +246,60 @@ const STORAGE_KEY = 'croustylift:outbox';
 // diagnostiquer voire récupérer à la main (issue F11).
 const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
 
-// MIROIR MÉMOIRE de la file, engagé quand le stockage refuse de l'écrire (quota
+// REPLI MÉMOIRE de la file, engagé quand le stockage refuse de l'écrire (quota
 // plein, mode privé). Avant, l'écriture refusée était seulement signalée en
 // console : l'op enfilée n'existait nulle part (chaque lecture repartait du
 // stockage, resté à l'état d'avant), elle était perdue sur-le-champ, et la
-// bannière disait « Synchronisé ». Tant que le miroir existe, c'est LUI la file :
-// lectures et retraits passent par lui, le flush envoie ce qu'il contient, et
-// chaque écriture retente le stockage (un retrait raccourcit la file, il finit
-// par passer). Dès qu'une écriture passe, le miroir est rendu.
+// bannière disait « Synchronisé ».
 //
-// Ce que le miroir ne sauve pas : la page fermée avant le retour du stockage, ce
-// qui n'y a pas été écrit est perdu, et la file persistée, en retard sur le
-// miroir, peut rejouer une insertion dont la suppression n'était qu'en mémoire
-// (cf. `removeFromQueue`). `storageFailing` le dit à la bannière.
-// Lié à l'objet `localStorage` qui l'a refusé (il ne survit pas à son remplacement).
-let volatileQueue: { storage: Storage; queue: OutboxOp[] } | null = null;
+// Le repli ne tient PAS une copie de la file : la file est commune aux onglets,
+// et réécrire le stockage depuis une copie en mémoire effaçait ce qu'un autre
+// onglet y avait écrit entre-temps (sa série n'était jamais envoyée). Il tient
+// seulement l'ÉCART entre la file voulue et la file persistée, par identité
+// d'enfilement : les ops ajoutées qui n'ont pas pu être écrites (`adds`) et
+// celles retirées dont le retrait n'a pas pu l'être (`removals`). La file LUE
+// est toujours la file persistée, relue à l'instant, sur laquelle cet écart est
+// rejoué : ce qu'un autre onglet a écrit ou retiré y est donc toujours. Chaque
+// écriture retente le stockage ; dès qu'une passe, l'écart est résorbé et rendu.
+//
+// Ce que le repli ne sauve pas : la page fermée avant le retour du stockage, ce
+// qui n'y a pas été écrit est perdu, et la file persistée, en retard, peut
+// rejouer une insertion dont la suppression n'était qu'en mémoire (cf.
+// `removeFromQueue`). `storageFailing` le dit à la bannière. Lié à l'objet
+// `localStorage` qui a refusé (il ne survit pas à son remplacement).
+let volatile: { storage: Storage; adds: OutboxOp[]; removals: Set<string> } | null = null;
 
-/** Le miroir mémoire de la file, s'il est engagé pour le stockage courant. */
-function mirroredQueue(): OutboxOp[] | null {
-  if (volatileQueue === null || typeof localStorage === 'undefined') return null;
-  return volatileQueue.storage === localStorage ? volatileQueue.queue : null;
+/** Identité d'une op en file : son UUID d'enfilement, à défaut son contenu. */
+function opKey(op: OutboxOp): string {
+  return op._uid ?? JSON.stringify(op);
+}
+
+/** L'écart tenu en mémoire, s'il est engagé pour le stockage courant. */
+function activeVolatile(): { adds: OutboxOp[]; removals: Set<string> } | null {
+  if (volatile === null || typeof localStorage === 'undefined') return null;
+  return volatile.storage === localStorage ? volatile : null;
 }
 
 /**
- * Vrai tant que la file ne tient qu'en mémoire : le stockage de l'appareil a
- * refusé sa dernière écriture. Les saisies en attente ne survivraient pas à la
- * fermeture de l'app.
+ * Vrai tant qu'une partie de la file ne tient qu'en mémoire : le stockage de
+ * l'appareil a refusé sa dernière écriture. Les saisies en attente ne
+ * survivraient pas à la fermeture de l'app.
  */
 export function storageFailing(): boolean {
-  return mirroredQueue() !== null;
+  return activeVolatile() !== null;
 }
 
 /**
- * Lit la file (vide si rien / illisible) : le miroir mémoire s'il est engagé
- * (cf. `volatileQueue`), sinon la file persistée.
+ * Lit la file persistée, telle qu'elle est dans le stockage à l'instant (vide si
+ * rien / illisible).
  *
  * Si le blob est présent mais ILLISIBLE (JSON cassé) ou de forme invalide (pas un
  * tableau), on le SAUVEGARDE sous `CORRUPT_KEY` et on `console.warn` une fois avant
- * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu — la
+ * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu, la
  * prochaine écriture l'aurait sinon écrasé sans laisser de trace.
  */
-export function readQueue(): OutboxOp[] {
+function readPersistedQueue(): OutboxOp[] {
   if (typeof localStorage === 'undefined') return [];
-  const mirrored = mirroredQueue();
-  if (mirrored !== null) return [...mirrored];
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return [];
   try {
@@ -301,6 +311,22 @@ export function readQueue(): OutboxOp[] {
     quarantineBlob(raw, 'JSON illisible');
     return [];
   }
+}
+
+/**
+ * Lit la file : la file persistée, relue à l'instant, sur laquelle est rejoué
+ * l'écart tenu en mémoire quand le stockage a refusé une écriture (cf.
+ * `volatile`). Les écritures d'un autre onglet y figurent donc toujours.
+ */
+export function readQueue(): OutboxOp[] {
+  const persisted = readPersistedQueue();
+  const gap = activeVolatile();
+  if (gap === null) return persisted;
+  const present = new Set(persisted.map(opKey));
+  return [
+    ...persisted.filter((op) => !gap.removals.has(opKey(op))),
+    ...gap.adds.filter((op) => !present.has(opKey(op))),
+  ];
 }
 
 /** Met le blob fautif de côté (clé de quarantaine) et prévient une fois. */
@@ -318,13 +344,16 @@ function quarantineBlob(raw: string, reason: string): void {
 }
 
 /**
- * Écrit la file. Si le stockage refuse (quota plein / mode privé), le cache de
- * LECTURE cède d'abord la place : ses copies se relisent sur le réseau, pas une
- * saisie. Si l'écriture ne passe toujours pas, la file est tenue en MÉMOIRE
- * (cf. `volatileQueue`) et le refus est signalé (console, bannière).
+ * Écrit la file. `queue` vient d'une lecture faite à l'instant (`readQueue`),
+ * donc de la file persistée du moment : ce n'est jamais une réécriture depuis
+ * une copie ancienne. Si le stockage refuse (quota plein / mode privé), les
+ * copies de lecture NON ESSENTIELLES cèdent d'abord la place (cf.
+ * cache-eviction : jamais celles du chemin d'ouverture de la Capture). Si
+ * l'écriture ne passe toujours pas, l'ÉCART avec la file persistée est tenu en
+ * mémoire (cf. `volatile`) et le refus est signalé (console, bannière).
  *
  * Rend faux quand la file n'a pas pu être PERSISTÉE : elle n'en est pas moins à
- * jour pour la page en cours, par le miroir.
+ * jour pour la page en cours, par l'écart tenu en mémoire.
  */
 function writeQueue(queue: OutboxOp[]): boolean {
   if (typeof localStorage === 'undefined') return false;
@@ -337,23 +366,25 @@ function writeQueue(queue: OutboxOp[]): boolean {
       return false;
     }
   };
-  if (persist()) {
-    volatileQueue = null;
-    return true;
-  }
-  // Les copies de lecture partagent le quota : elles partent, puis nouvel essai.
-  clearReadCache();
-  if (persist()) {
-    volatileQueue = null;
+  if (writeMakingRoom(persist)) {
+    volatile = null;
     return true;
   }
   if (!storageFailing()) {
     console.warn(
       '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
-        'la file est tenue en mémoire pour la session mais ne survivra pas à un reload.',
+        'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
     );
   }
-  volatileQueue = { storage: localStorage, queue: [...queue] };
+  // L'écart entre la file voulue et la file persistée, par identité.
+  const persisted = readPersistedQueue();
+  const wanted = new Set(queue.map(opKey));
+  const present = new Set(persisted.map(opKey));
+  volatile = {
+    storage: localStorage,
+    adds: queue.filter((op) => !present.has(opKey(op))),
+    removals: new Set(persisted.map(opKey).filter((key) => !wanted.has(key))),
+  };
   return false;
 }
 
@@ -567,8 +598,8 @@ function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
   const at = indexInQueue(current, op);
   if (at === -1) return 'absent';
   current.splice(at, 1);
-  // Retrait non persisté mais tenu par le miroir mémoire : pour la page en cours
-  // l'op n'est plus en file, la passe peut continuer sans la relire.
+  // Retrait non persisté mais tenu en mémoire : pour la page en cours l'op
+  // n'est plus en file, la passe peut continuer sans la relire.
   return writeQueue(current) || storageFailing() ? 'removed' : 'unwritable';
 }
 
@@ -698,7 +729,7 @@ function writeQuarantine(entries: QuarantinedOp[]): boolean {
  * raison pour les ops en quarantaine (`QUARANTINE_KEY`).
  */
 export function clearQueue(): void {
-  volatileQueue = null;
+  volatile = null;
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);

@@ -4,7 +4,7 @@ import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
 import { loadLocalAccount } from '../../lib/local-account';
-import { clearReadCache } from '../../lib/read-cache';
+import { writeMakingRoom } from './cache-eviction';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -952,16 +952,11 @@ export function persist(state: CaptureState): void {
       return false;
     }
   };
-  if (write()) {
-    persistFailing = false;
-    return;
-  }
-  // Quota plein : les copies de lecture cèdent la place (elles se relisent sur
-  // le réseau, pas une séance en cours), puis nouvel essai. Si rien n'y fait,
-  // la capture reste en mémoire et le refus est signalé (bannière), au lieu de
-  // l'ancienne dégradation muette.
-  clearReadCache();
-  persistFailing = !write();
+  // Quota plein : les copies de lecture NON ESSENTIELLES cèdent la place (cf.
+  // cache-eviction : jamais celles du chemin d'ouverture de la Capture), puis
+  // nouvel essai. Si rien n'y fait, la capture reste en mémoire et le refus est
+  // signalé (bannière), au lieu de l'ancienne dégradation muette.
+  persistFailing = !writeMakingRoom(write);
 }
 
 export function clearPersisted(session: Session, date: string): void {
