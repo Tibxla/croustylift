@@ -22,7 +22,8 @@ export function elapsedMinutesSince(startedAt: number | undefined): number | nul
 }
 
 /**
- * Construit le récap sobre de l'exécution courante : exos faits / total + le
+ * Construit le récap sobre de l'exécution courante : exos faits / total (les exos
+ * passés comptés à part) + le
  * décompte RÉEL des séries (total + par muscle), pondéré par reps (issue #60,
  * affine #37). Le décompte applique la règle exacte via le domaine pur
  * `countPerformedSets` : chaque série logique (un set_order ; unilatéral G+D au
@@ -37,8 +38,13 @@ export function buildSummary(session: Session, state: CaptureState): SessionSumm
     // deux lignes par série (G + D), donc `sets.length` le déclarerait « fait »
     // à mi-chemin du prescrit. `countLogicalSetsDone` vaut `sets.length` en
     // bilatéral (1 ligne = 1 order) et reste juste en unilatéral.
-    return p.skipped || countLogicalSetsDone(p.sets) >= ex.prescription.sets.min;
+    // Un exo PASSÉ n'est pas un exo fait : il est compté à part, pour que
+    // « Exercices faits 3/3 » ne couvre pas une séance où l'on en a sauté un.
+    return !p.skipped && countLogicalSetsDone(p.sets) >= ex.prescription.sets.min;
   }).length;
+  const exercisesSkipped = session.exercises.filter(
+    (ex) => getProgress(state, ex.exerciseId).skipped,
+  ).length;
 
   const count = countPerformedSets(
     session.exercises.map((ex) => ({
@@ -51,6 +57,7 @@ export function buildSummary(session: Session, state: CaptureState): SessionSumm
   return {
     sessionName: session.name,
     exercisesDone,
+    exercisesSkipped,
     exercisesTotal: session.exercises.length,
     totalSets: count.total,
     setsByMuscle: count.byMuscle,

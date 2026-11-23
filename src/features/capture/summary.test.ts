@@ -105,9 +105,22 @@ describe('buildSummary', () => {
     expect(buildSummary(upperA, state).exercisesDone).toBe(1);
   });
 
-  it('un exo passé (skipped) compte comme "fait"', () => {
+  it("un exo passé n'est pas compté comme fait : il est compté à part", () => {
     const state = captureReducer(mkState(), { type: 'skip-exercise', exerciseId: 'bench-press' });
-    expect(buildSummary(upperA, state).exercisesDone).toBe(1);
+    const s = buildSummary(upperA, state);
+    expect(s.exercisesDone).toBe(0);
+    expect(s.exercisesSkipped).toBe(1);
+  });
+
+  it('un exo passé après avoir atteint son minimum reste compté passé, pas fait', () => {
+    let state = mkState();
+    for (const setId of ['s1', 's2', 's3']) {
+      state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId, set: set1 });
+    }
+    state = captureReducer(state, { type: 'skip-exercise', exerciseId: 'bench-press' });
+    const s = buildSummary(upperA, state);
+    expect(s.exercisesDone).toBe(0);
+    expect(s.exercisesSkipped).toBe(1);
   });
 
   it('totalSets compte toutes les séries de tous les exercices', () => {
