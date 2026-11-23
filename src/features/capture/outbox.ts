@@ -342,8 +342,10 @@ export function pendingCount(): number {
 // derrière elle, sans autre issue que la purge totale (audit sync, constat 6).
 // Elle est mise de côté ici : conservée telle quelle avec la raison du rejet,
 // JAMAIS rejouée automatiquement, comptée à part (`quarantineCount`) pour que
-// l'UI puisse la signaler. Elle ne part qu'avec `clearQueue` (Déconnexion
-// forcée, forçage de purge) : les gardes d'auth la comptent via `heldCount`.
+// l'UI puisse la signaler. Elle n'en sort que par un geste : renvoi ou abandon
+// de la saisie (`retryRefused`, `abandonRefused`), annulation de sa séance
+// (`purgeByExecution`), ou `clearQueue` (Déconnexion forcée, forçage de purge).
+// Les gardes d'auth la comptent via `heldCount`.
 
 const QUARANTINE_KEY = `${STORAGE_KEY}:quarantine`;
 
@@ -502,6 +504,82 @@ function liftExecutionBlock(executionId: string): void {
   } catch {
     // Quota plein : le blocage reste, les ops filles iront en quarantaine au lieu
     // de passer. Rien n'est perdu.
+  }
+}
+
+// --- Saisies refusées : lister, renvoyer, abandonner --------------------------
+//
+// La quarantaine n'avait qu'une sortie, la purge. Ces trois fonctions donnent à
+// l'utilisateur la main sur CHAQUE saisie refusée : la voir avec sa raison, la
+// renvoyer (la cause a pu être levée : contrainte relâchée, exo recréé), ou
+// l'abandonner. Elles ne portent que sur les saisies du compte reconnu (ou sans
+// compte) : celles d'un autre compte ne se voient ni ne se touchent d'ici.
+// L'écran qui les appelle se pose avec la refonte ; la logique est là.
+
+/** Une saisie refusée, avec l'identité par laquelle la renvoyer ou l'abandonner. */
+export interface RefusedWrite extends QuarantinedOp {
+  /** Identité stable de l'entrée (l'UUID d'enfilement de l'op quand elle en a un). */
+  refusalId: string;
+}
+
+function refusalIdOf(entry: QuarantinedOp): string {
+  return entry.op._uid ?? `${entry.at}:${entry.op.type}:${entry.op.id}:${entry.op._seq ?? ''}`;
+}
+
+/** L'entrée est-elle au compte reconnu (ou sans compte, bundle antérieur) ? */
+function isOwnEntry(entry: QuarantinedOp): boolean {
+  return entry.op._owner === undefined || entry.op._owner === loadLocalAccount()?.userId;
+}
+
+/** Les saisies refusées du compte reconnu, dans l'ordre de leur refus. */
+export function listRefused(): RefusedWrite[] {
+  return readQuarantine()
+    .filter(isOwnEntry)
+    .map((entry) => ({ ...entry, refusalId: refusalIdOf(entry) }));
+}
+
+/**
+ * Remet une saisie refusée en fin de file : elle sera retentée au prochain flush
+ * (et reviendra en quarantaine si la base la refuse encore). Renvoyer la création
+ * d'une exécution renvoie avec elle, à sa suite et dans leur ordre, les saisies
+ * qui n'avaient été retenues que parce qu'elles en dépendaient. Rend faux si
+ * l'entrée est introuvable ou si le stockage refuse l'écriture (rien ne bouge).
+ */
+export function retryRefused(refusalId: string): boolean {
+  const quarantine = readQuarantine();
+  const target = quarantine.find((q) => isOwnEntry(q) && refusalIdOf(q) === refusalId);
+  if (!target) return false;
+  const leaves = (q: QuarantinedOp): boolean =>
+    q === target ||
+    (target.op.type === 'upsertExecution' &&
+      isOwnEntry(q) &&
+      requiredExecution(q.op) === target.op.id);
+  const resent = quarantine.filter(leaves).map((q) => q.op);
+  // La file d'abord : si la seconde écriture échoue, l'op est à deux endroits
+  // (renvoyée ET listée), jamais nulle part.
+  if (!writeQueue([...readQueue(), ...resent])) return false;
+  return writeQuarantine(quarantine.filter((q) => !leaves(q)));
+}
+
+/**
+ * Abandonne une saisie refusée : elle quitte la quarantaine et ne sera jamais
+ * envoyée. Geste explicite de l'utilisateur, sur UNE saisie (ADR 0012). Rend
+ * faux si l'entrée est introuvable ou si le stockage refuse l'écriture.
+ */
+export function abandonRefused(refusalId: string): boolean {
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter((q) => !(isOwnEntry(q) && refusalIdOf(q) === refusalId));
+  if (kept.length === quarantine.length) return false;
+  return writeQuarantine(kept);
+}
+
+function writeQuarantine(entries: QuarantinedOp[]): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify(entries));
+    return true;
+  } catch {
+    return false;
   }
 }
 

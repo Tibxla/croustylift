@@ -6,8 +6,11 @@
 // reste en file après échec.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  abandonRefused,
   enqueueTracked,
+  listRefused,
   pendingAmong,
+  retryRefused,
   refusedAmong,
   enqueue,
   flush,
@@ -1449,3 +1452,114 @@ describe('purgeByExecution et quarantaine', () => {
   });
 });
 
+
+// --- Saisies refusées : lister, renvoyer, abandonner --------------------------
+
+describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () => {
+  const rejection = { code: '23514', message: 'rejet de la base', details: '', hint: '' };
+
+  beforeEach(() => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** Une série refusée par la base, puis une série acceptée derrière elle. */
+  async function refuseOneSet(): Promise<SyncFns & { calls: () => OutboxOp[] }> {
+    enqueue(execOp());
+    enqueue(setOp('set-refuse', 1));
+    enqueue(setOp('set-ok', 2));
+    const fns = okFns();
+    (fns.insertSet as ReturnType<typeof vi.fn>).mockImplementation(async (op: InsertSetOp) => {
+      if (op.id === 'set-refuse') throw rejection;
+    });
+    await flush(fns);
+    return fns;
+  }
+
+  it('liste les saisies refusées avec leur raison et une identité', async () => {
+    await refuseOneSet();
+
+    const refused = listRefused();
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ reason: '23514 : rejet de la base' });
+    expect(refused[0]?.op).toMatchObject({ type: 'insertSet', id: 'set-refuse' });
+    expect(typeof refused[0]?.refusalId).toBe('string');
+  });
+
+  it('renvoyer : la saisie repart en file et passe si la base l’accepte', async () => {
+    await refuseOneSet();
+    const [refused] = listRefused();
+
+    expect(retryRefused(refused!.refusalId)).toBe(true);
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue().map((op) => op.id)).toEqual(['set-refuse']);
+
+    const fns = okFns();
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(fns.calls().map((op) => op.id)).toEqual(['set-refuse']);
+  });
+
+  it('renvoyer une saisie que la base refuse encore : elle revient en quarantaine', async () => {
+    const fns = await refuseOneSet();
+
+    retryRefused(listRefused()[0]!.refusalId);
+    await flush(fns);
+
+    expect(readQueue()).toEqual([]);
+    expect(listRefused().map((q) => q.op.id)).toEqual(['set-refuse']);
+  });
+
+  it('abandonner : la saisie quitte la quarantaine sans jamais partir', async () => {
+    await refuseOneSet();
+
+    expect(abandonRefused(listRefused()[0]!.refusalId)).toBe(true);
+
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+    expect(heldCount()).toBe(0);
+  });
+
+  it('identité inconnue : rien ne bouge', async () => {
+    await refuseOneSet();
+
+    expect(retryRefused('inconnue')).toBe(false);
+    expect(abandonRefused('inconnue')).toBe(false);
+    expect(quarantineCount()).toBe(1);
+  });
+
+  it('renvoyer une exécution refusée renvoie avec elle les saisies qui en dépendaient, dans l’ordre', async () => {
+    enqueue(execOp('exec-refusee'));
+    enqueue(setOp('s1', 1, 'exec-refusee'));
+    enqueue(setOp('s2', 2, 'exec-refusee'));
+    enqueue({ type: 'updateExecution', id: 'exec-refusee', closedAt: '2026-11-23T10:00:00Z' });
+    const fns = okFns();
+    (fns.upsertExecution as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      throw rejection;
+    });
+    await flush(fns);
+    expect(quarantineCount()).toBe(4);
+    const parent = listRefused().find((q) => q.op.type === 'upsertExecution')!;
+
+    expect(retryRefused(parent.refusalId)).toBe(true);
+
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
+      'upsertExecution:exec-refusee',
+      'insertSet:s1',
+      'insertSet:s2',
+      'updateExecution:exec-refusee',
+    ]);
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 4 });
+  });
+
+  it('les saisies refusées d’un autre compte ne sont ni listées, ni renvoyées, ni abandonnées', async () => {
+    await refuseOneSet();
+    const id = listRefused()[0]!.refusalId;
+    saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
+
+    expect(listRefused()).toEqual([]);
+    expect(retryRefused(id)).toBe(false);
+    expect(abandonRefused(id)).toBe(false);
+    expect(quarantineCount()).toBe(1);
+  });
+});

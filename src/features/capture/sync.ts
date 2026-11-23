@@ -190,13 +190,13 @@ export interface OpsFlushResult extends FlushResult {
 /**
  * Enfile un lot d'ops (dans l'ordre) puis tente un flush immédiat. Les ops sont
  * durables dès l'enqueue (localStorage) : même si le flush échoue (offline),
- * elles remonteront au prochain flush — comme la capture du jour.
+ * elles remonteront au prochain flush, comme la capture du jour.
  *
  * Le résultat ne compte QUE NOS ops, retrouvées par leur identité d'enfilement
  * (`_uid`), PAS le `remaining` GLOBAL du `FlushResult` (BUG M4). Pourquoi :
  * `flush` est mémoïsé (un seul flush à la fois, cf. outbox). Si une passe est
  * déjà en vol, `flush(syncFns)` renvoie SA promesse, dont le `remaining` reflète
- * l'état AU LANCEMENT de cette passe — avant qu'on enfile nos ops. Il pourrait
+ * l'état AU LANCEMENT de cette passe, avant qu'on enfile nos ops. Il pourrait
  * donc valoir `0` alors que NOS ops dorment encore en file (faux succès →
  * l'éditeur de séance se fermerait à tort).
  *
