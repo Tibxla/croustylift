@@ -35,7 +35,7 @@ sql tests/banc/01_jeu_d_essai.sql
 
 # Ordre de DÉPLOIEMENT (supabase/tests/ORDRE.md), pas l'ordre des numéros : les
 # migrations qui attendent le nouveau client passent en dernier.
-ORDRE="0015 0017 0019a 0019b 0020 0021 0023 0024 0016 0018 0022"
+ORDRE="0015 0017 0019a 0019b 0019c 0020 0021 0023 0024 0016 0018 0022"
 [ "$(echo $ORDRE | wc -w)" = "$(ls migrations | awk '$0 > "0015"' | wc -l)" ] || { echo "ORDRE ne couvre pas toutes les migrations"; exit 1; }
 
 for n in $ORDRE; do
@@ -44,7 +44,7 @@ for n in $ORDRE; do
   sql "$f" >/dev/null
   sql "$f" >/dev/null
   t=$(ls tests/"$n"_*.sql 2>/dev/null || true)
-  [ "$n" = 0019b ] && t=$(ls tests/0019_*.sql)
+  [ "$n" = 0019c ] && t=$(ls tests/0019_*.sql)
   if [ -n "$t" ]; then
     echo "-- $(basename "$t")"
     sql "$t" -A -t | tee /dev/stderr | { ! grep -q 'ECHEC'; }

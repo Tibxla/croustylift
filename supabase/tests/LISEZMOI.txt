@@ -5,7 +5,7 @@ clients). Les numéros des migrations ne le donnent pas.
 
 00NN_*.sql : test de CONTRÔLE de la migration du même numéro. Lecture seule
 (catalogue Postgres et comptages), à lancer sur la base après la migration
-(0019 : après 0019b).
+(0019 : après 0019c).
 Chaque ligne rendue commence par OK ou ECHEC ; une seule ligne ECHEC et la
 migration n'a pas tenu sa promesse. La colonne « empeche » dit ce que la
 contrainte refuse désormais.

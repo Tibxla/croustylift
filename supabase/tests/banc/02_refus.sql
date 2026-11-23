@@ -216,6 +216,22 @@ select banc.accepte('A désarchive PPL, puis supprime la routine courante : PPL 
 select banc.vrai('PPL est de nouveau la routine courante, non archivée',
   (select a.routine_id = 'a0000000-0000-0000-0000-0000000000a1' from public.routine_activations a order by a.activated_at desc limit 1));
 
+-- Suppression groupée : jugée sur son résultat, après les cascades.
+select banc.accepte('A crée deux routines jamais exécutées, la seconde courante',
+  'insert into public.routines (id, name) values (''a0000000-0000-0000-0000-0000000000a4'', ''Essai 1''), (''a0000000-0000-0000-0000-0000000000a5'', ''Essai 2''); insert into public.routine_activations (routine_id, activated_at) values (''a0000000-0000-0000-0000-0000000000a4'', now() + interval ''5 seconds''), (''a0000000-0000-0000-0000-0000000000a5'', now() + interval ''6 seconds'')');
+select banc.accepte('A archive PPL, qui n''est plus la courante',
+  'update public.routines set archived_at = now() where id = ''a0000000-0000-0000-0000-0000000000a1''');
+select banc.accepte('A supprime une routine non courante',
+  'insert into public.routines (id, name) values (''a0000000-0000-0000-0000-0000000000a6'', ''Jamais activée''); delete from public.routines where id = ''a0000000-0000-0000-0000-0000000000a6''');
+select banc.refuse('A supprime d''un coup la courante et sa remplaçante active : PPL, archivée, redeviendrait courante', '23514',
+  'delete from public.routines where id in (''a0000000-0000-0000-0000-0000000000a4'', ''a0000000-0000-0000-0000-0000000000a5'')');
+select banc.vrai('après le refus, les deux routines et leurs activations sont toujours là',
+  (select count(*) = 2 from public.routine_activations where routine_id in ('a0000000-0000-0000-0000-0000000000a4', 'a0000000-0000-0000-0000-0000000000a5')));
+select banc.accepte('A désarchive PPL, puis supprime les deux d''un coup : PPL redevient courante',
+  'update public.routines set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000a1''; delete from public.routines where id in (''a0000000-0000-0000-0000-0000000000a4'', ''a0000000-0000-0000-0000-0000000000a5'')');
+select banc.vrai('PPL est la routine courante, non archivée',
+  (select a.routine_id = 'a0000000-0000-0000-0000-0000000000a1' from public.routine_activations a order by a.activated_at desc limit 1));
+
 -- ===================== 0022 : journal en insertion seule =====================
 select banc.accepte('A archive une séance : le trigger écrit l''événement',
   'update public.seances set archived_at = now() where id = ''a0000000-0000-0000-0000-0000000000b2''');
@@ -308,7 +324,7 @@ select banc.vrai('séance désarchivée après la sauvegarde : état archivé re
   (select (select archived_at is not null from public.seances where id = 'a0000000-0000-0000-0000-0000000000b2')
       and (select count(*) = 3 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')
       and (select archived from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'
-           order by occurred_at desc, created_at desc limit 1)));
+           order by occurred_at desc, id desc limit 1)));
 select banc.accepte('réimporter aussitôt : plus de divergence',
   format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde)));
 select banc.vrai('aucun événement correctif de plus',
@@ -334,9 +350,30 @@ select banc.vrai('séance archivée après la sauvegarde : état actif rendu, et
   (select (select archived_at is null from public.seances where id = 'a0000000-0000-0000-0000-0000000000b2')
       and (select count(*) = 6 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')
       and (select not archived from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'
-           order by occurred_at desc, created_at desc limit 1)));
+           order by occurred_at desc, id desc limit 1)));
 select banc.vrai('les autres séances du fichier, sans divergence, n''ont reçu aucun événement',
   (select count(*) = 0 from public.seance_archive_events where seance_id <> 'a0000000-0000-0000-0000-0000000000b2'));
+
+-- Événement daté dans le futur par un fichier retouché : ramené à maintenant.
+select banc.accepte('import d''un événement d''archivage daté de 2099',
+  format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
+    'seances', (select jsonb_agg(to_jsonb(t)) from public.seances t where id = 'a0000000-0000-0000-0000-0000000000b3'),
+    'seance_archive_events', jsonb_build_array(jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000f9',
+      'owner_id', 'aaaaaaaa-0000-0000-0000-000000000001', 'seance_id', 'a0000000-0000-0000-0000-0000000000b3',
+      'archived', true, 'occurred_at', '2099-01-01T00:00:00Z')))));
+select banc.vrai('aucun événement du journal n''est dans le futur',
+  (select count(*) = 0 from public.seance_archive_events where occurred_at > clock_timestamp()));
+select banc.vrai('la séance, active, a reçu son correctif : le dernier événement dit son état',
+  (select count(*) = 2 and (select not archived from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b3'
+      order by occurred_at desc, id desc limit 1) from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b3'));
+select banc.accepte('rejouer ce même fichier',
+  format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
+    'seances', (select jsonb_agg(to_jsonb(t)) from public.seances t where id = 'a0000000-0000-0000-0000-0000000000b3'),
+    'seance_archive_events', jsonb_build_array(jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000f9',
+      'owner_id', 'aaaaaaaa-0000-0000-0000-000000000001', 'seance_id', 'a0000000-0000-0000-0000-0000000000b3',
+      'archived', true, 'occurred_at', '2099-01-01T00:00:00Z')))));
+select banc.vrai('rejeu : aucun événement de plus',
+  (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b3'));
 
 -- Atomicité : la dernière table échoue, les premières ne doivent pas rester.
 select banc.refuse('import dont une série pointe une exécution absente', '23503',
@@ -380,6 +417,9 @@ select banc.vrai('aucun compte créé par le fichier', (select count(*) = 2 from
 
 -- ===================== suppression de compte =====================
 reset role;
+-- Le compte part avec une routine archivée sous sa courante : la cascade ne
+-- doit pas être prise pour une suppression qui la rendrait courante.
+update public.routines set archived_at = now() where id = 'a0000000-0000-0000-0000-0000000000a2';
 delete from auth.users where id = 'aaaaaaaa-0000-0000-0000-000000000001';
 select banc.vrai('supprimer le compte A emporte toutes ses lignes, rien de B',
   (select count(*) = 0 from public.routines where owner_id = 'aaaaaaaa-0000-0000-0000-000000000001')
