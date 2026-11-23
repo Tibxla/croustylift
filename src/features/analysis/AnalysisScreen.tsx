@@ -78,7 +78,7 @@ export function AnalysisScreen() {
 
   if (load.phase === 'error') {
     return (
-      <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-sm text-ink-muted">Impossible de charger ton analyse.</p>
         <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
         <button
@@ -502,7 +502,7 @@ function AnalysisSkeleton() {
 
 function EmptyState() {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-3 px-8 text-center">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-3 px-8 text-center">
       <div
         className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2"
         aria-hidden="true"

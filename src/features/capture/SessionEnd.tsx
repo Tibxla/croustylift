@@ -334,7 +334,7 @@ function SessionDone({
   const hasBpm = typeof values.bpmAvg === 'number';
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-12 pt-10">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-12 pt-10">
       <div className="flex flex-col items-center text-center">
         <span
           className="flex h-14 w-14 items-center justify-center rounded-full border text-good"

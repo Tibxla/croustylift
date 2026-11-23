@@ -930,7 +930,7 @@ function ScreenError({
   onRetry: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
       <p className="text-sm text-ink-muted">{intro}</p>
       <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
       <button

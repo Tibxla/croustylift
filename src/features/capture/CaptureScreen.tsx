@@ -557,7 +557,7 @@ export function CaptureScreen() {
 
   if (load.phase === 'loading') {
     return (
-      <div className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center">
+      <div className="flex min-h-surface items-center justify-center">
         <div
           className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
           role="status"
@@ -569,7 +569,7 @@ export function CaptureScreen() {
 
   if (load.phase === 'empty') {
     return (
-      <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-sm text-ink-muted">
           Rien à logger pour l'instant. Va dans l'onglet Séances pour choisir ta
           routine courante et lui ajouter une séance.
@@ -580,7 +580,7 @@ export function CaptureScreen() {
 
   if (load.phase === 'error') {
     return (
-      <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="text-sm text-ink-muted">
           Impossible de charger ta séance.
         </p>
@@ -1216,7 +1216,7 @@ function CaptureBoard({
 
   if (phase === 'finishing') {
     return (
-      <div className="min-h-[calc(100vh-3.5rem)]">
+      <div className="min-h-surface">
         <SyncBanner status={status} pending={pending} />
         <SessionEnd
           summary={summary}
@@ -1236,7 +1236,7 @@ function CaptureBoard({
   // retombe directement sur le picker / la capture vierge ci-dessous.
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)]">
+    <div className="min-h-surface">
       <SyncBanner status={status} pending={pending} />
       {activeExercise ? (
         <CapturePanel

@@ -150,16 +150,15 @@ body {
 
   Règles hors couche : elles priment sur les utilitaires Tailwind du même nom.
   - `.min-h-screen` : écran entier (login, premier lancement, chargement, shell).
-  - `.min-h-surface` : écran d'onglet, la nav et son encoche basse en moins.
-  - la troisième cible la classe arbitraire `min-h-[calc(100vh-3.5rem)]`, écrite
-    en dur dans les écrans d'onglet avant `.min-h-surface` : même valeur.
+  - `.min-h-surface` : écran d'onglet, la nav et son encoche basse en moins. Les
+    écrans d'onglet n'écrivent plus la hauteur en dur (`calc(100vh - 3.5rem)`),
+    qui ignorait les deux encoches.
 */
 .min-h-screen {
   min-height: calc(100vh - var(--safe-top));
   min-height: calc(100dvh - var(--safe-top));
 }
-.min-h-surface,
-.min-h-\[calc\(100vh-3\.5rem\)\] {
+.min-h-surface {
   min-height: calc(100vh - var(--nav-offset) - var(--safe-top));
   min-height: calc(100dvh - var(--nav-offset) - var(--safe-top));
 }

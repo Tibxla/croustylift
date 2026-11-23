@@ -380,7 +380,7 @@ export function SeanceEditorView({
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-40 pt-3">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-40 pt-3">
       <BackButton label="Retour aux séances" onClick={requestBack} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
@@ -993,7 +993,7 @@ function AddExerciseSheet({
   }, [catalogue, query, muscle]);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-8 pt-3">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-8 pt-3">
       <BackButton label="Retour à la séance" onClick={onCancel} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
@@ -1276,7 +1276,7 @@ function ScreenError({
   onRetry: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
       <p className="text-sm text-ink-muted">{intro}</p>
       <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
       <button
