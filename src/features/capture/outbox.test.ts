@@ -7,6 +7,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   abandonRefused,
+  clearOwnQueue,
+  heldCounts,
   enqueueTracked,
   listRefused,
   pendingAmong,
@@ -1581,5 +1583,56 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
     expect(retryRefused(id)).toBe(false);
     expect(abandonRefused(id)).toBe(false);
     expect(quarantineCount()).toBe(1);
+  });
+});
+
+// --- Ce que l'appareil retient, par compte ------------------------------------
+
+describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
+  const foreignOp = { type: 'deleteSet', id: 'serie-de-b', _owner: 'user-b', _uid: 'uid-b' };
+  const foreignRefused = {
+    op: { type: 'deleteSet', id: 'refus-de-b', _owner: 'user-b', _uid: 'uid-b2' },
+    reason: '23503 : rejet',
+    at: '2026-11-22T10:00:00Z',
+  };
+
+  beforeEach(() => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    // Le compte B a laissé une saisie en file et une saisie refusée.
+    localStorage.setItem('croustylift:outbox', JSON.stringify([foreignOp]));
+    localStorage.setItem('croustylift:outbox:quarantine', JSON.stringify([foreignRefused]));
+  });
+
+  it('sépare ce qui est au compte reconnu de ce qui est à un autre', () => {
+    enqueue(execOp());
+
+    expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
+    // Le compteur global, lui, compte toujours tout.
+    expect(heldCount()).toBe(3);
+  });
+
+  it('une op sans compte (bundle antérieur) est tenue pour celle du compte reconnu', () => {
+    localStorage.setItem(
+      'croustylift:outbox',
+      JSON.stringify([foreignOp, { type: 'deleteSet', id: 'heritee', _seq: 1 }]),
+    );
+
+    expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
+  });
+
+  it('la purge de la Déconnexion ne jette que ses propres écritures, jamais celles d’un autre', () => {
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+
+    clearOwnQueue();
+
+    expect(readQueue()).toEqual([foreignOp]);
+    expect(readQuarantine()).toEqual([foreignRefused]);
+    expect(heldCounts()).toEqual({ own: 0, ownRefused: 0, foreign: 2 });
+  });
+
+  it('seul le forçage (clearQueue) jette tout', () => {
+    clearQueue();
+    expect(heldCount()).toBe(0);
   });
 });

@@ -6,7 +6,7 @@
 // (marqueur local-account). Un AUTRE compte ne s'installe pas par-dessus : seul
 // le forçage explicite peut les jeter.
 import { loadLocalAccount } from '../lib/local-account';
-import { heldCount } from '../features/capture/outbox';
+import { heldCounts } from '../features/capture/outbox';
 
 /**
  * Nombre d'écritures retenues sur l'appareil (file et quarantaine) qui interdisent à `email` de s'installer sur
@@ -16,7 +16,9 @@ import { heldCount } from '../features/capture/outbox';
 export function foreignPendingWrites(email: string): number {
   const account = loadLocalAccount();
   if (!account) return 0;
-  const pending = heldCount();
+  // Les écritures du compte RECONNU seulement : celles d'un tiers encore sur
+  // l'appareil ne s'opposent à personne (elles ne partent que sous leur compte).
+  const pending = heldCounts().own;
   if (pending === 0) return 0;
   return (account.email ?? '').toLowerCase() === email.trim().toLowerCase() ? 0 : pending;
 }

@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { PendingWritesError } from './auth-context'
-import { heldCount } from '../features/capture/outbox'
+import { heldCounts } from '../features/capture/outbox'
+import { heldWritesNotice } from '../features/capture/sync-label'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
 import { arrivalHash } from '../lib/supabase'
@@ -54,7 +55,14 @@ export function LoginScreen() {
   // compte les remontera, un autre compte exige le forçage (ADR 0012).
   // Ops en quarantaine comprises : la garde d'un autre compte les compte aussi,
   // et la purge proposée ici est leur seule sortie.
-  const pendingWrites = localAccount ? heldCount() : 0
+  // Elles sont dites PAR COMPTE (ADR 0019) : celles du compte reconnu, et celles
+  // d'un autre compte passé sur l'appareil, que sa Déconnexion n'a pas jetées.
+  const counts = heldCounts()
+  const pendingNotice = heldWritesNotice({
+    own: counts.own,
+    foreign: counts.foreign,
+    email: localAccount?.email ?? null,
+  })
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -81,14 +89,9 @@ export function LoginScreen() {
       title="Bon retour."
       subtitle="Capture en salle. Progresse au calme."
     >
-      {pendingWrites > 0 && (
+      {pendingNotice && (
         <div className="surface-card mb-6 rounded-[14px] px-4 py-3.5 text-left">
-          <p className="text-sm text-ink">
-            {pendingWrites} saisie{pendingWrites > 1 ? 's' : ''} de{' '}
-            <span className="font-medium">{localAccount?.email ?? 'ton compte'}</span> attend
-            {pendingWrites > 1 ? 'ent' : ''} encore la synchronisation. Connecte-toi avec ce
-            compte pour les envoyer.
-          </p>
+          <p className="text-sm text-ink">{pendingNotice}</p>
           {confirmPurge ? (
             <div className="mt-3 flex flex-col gap-2">
               <p className="text-xs text-warn">

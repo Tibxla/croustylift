@@ -90,3 +90,49 @@ export function unsavedWritesLabel(input: { pending: number; refused: number }):
   }
   return parts.join(' ');
 }
+
+/**
+ * Texte de la garde d'arrivée (ADR 0019) : un autre compte s'ouvre par lien
+ * alors que l'appareil retient les saisies du précédent. Dit à QUI sont les
+ * saisies et ce que chacun peut faire.
+ */
+export function arrivalGuardLabel(input: {
+  held: number;
+  heldEmail: string | null;
+  arrivingEmail: string | null;
+}): string {
+  const { held } = input;
+  const owner = input.heldEmail ?? 'un autre compte';
+  const arriving = input.arrivingEmail ? ` (${input.arrivingEmail})` : '';
+  return (
+    `${held} saisie${held > 1 ? 's' : ''} de ${owner} attend${held > 1 ? 'ent' : ''} encore ` +
+    `la synchronisation sur cet appareil, et ce lien ouvre un autre compte${arriving}. ` +
+    `Reviens à la connexion et connecte-toi avec ${owner} pour les envoyer.`
+  );
+}
+
+/**
+ * Avis de l'écran de connexion quand l'appareil retient des saisies (ADR 0012,
+ * 0019). `own` : celles du compte reconnu (`email`) ; `foreign` : celles d'un
+ * autre compte, dont l'appareil ne connaît que l'identifiant. `null` si rien
+ * n'est retenu.
+ */
+export function heldWritesNotice(input: {
+  own: number;
+  foreign: number;
+  email: string | null;
+}): string | null {
+  const count = (n: number) =>
+    `${n} saisie${n > 1 ? 's' : ''} ${n > 1 ? 'attendent' : 'attend'} encore la synchronisation`;
+  const parts: string[] = [];
+  if (input.own > 0) {
+    parts.push(`${count(input.own)} pour ${input.email ?? 'ton compte'}.`);
+  }
+  if (input.foreign > 0) {
+    parts.push(
+      `${count(input.foreign)} pour ${input.own > 0 ? 'un autre compte' : 'un compte déjà passé sur cet appareil'}.`,
+    );
+  }
+  if (parts.length === 0) return null;
+  return `${parts.join(' ')} Connecte-toi avec le compte concerné pour les envoyer.`;
+}

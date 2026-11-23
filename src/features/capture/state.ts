@@ -738,3 +738,32 @@ export function clearCaptureState(): void {
     /* no-op */
   }
 }
+
+/**
+ * Purge l'état de capture du compte reconnu (et les états sans compte, d'un
+ * ancien format), et eux seuls : la capture en cours d'un AUTRE compte, dont les
+ * écritures attendent encore sur l'appareil, reste pour son retour. C'est la
+ * purge de la Déconnexion ; `clearCaptureState` reste celle du forçage.
+ */
+export function clearOwnCaptureState(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const owner = loadLocalAccount()?.userId;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      let ownerId: unknown;
+      try {
+        ownerId = (JSON.parse(localStorage.getItem(key) ?? 'null') as { ownerId?: unknown } | null)
+          ?.ownerId;
+      } catch {
+        ownerId = undefined; // État illisible : à personne, il part.
+      }
+      if (typeof ownerId !== 'string' || ownerId === owner) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* no-op */
+  }
+}

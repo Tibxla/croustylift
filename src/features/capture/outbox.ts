@@ -390,6 +390,53 @@ export function heldCount(): number {
 }
 
 /**
+ * Ce que l'appareil retient, PAR COMPTE (ADR 0019) : la file est commune, mais
+ * les écritures d'un compte absent ne sont pas celles du compte présent. `own` :
+ * file et quarantaine du compte reconnu (une op sans compte, d'un bundle
+ * antérieur, est tenue pour la sienne) ; `ownRefused` : la part en quarantaine ;
+ * `foreign` : ce que retiennent d'autres comptes. Avant, `heldCount` comptait
+ * tout ensemble : le compte présent ne pouvait se déconnecter qu'en forçant, ce
+ * qui jetait les saisies de l'autre.
+ */
+export function heldCounts(): { own: number; ownRefused: number; foreign: number } {
+  const owner = loadLocalAccount()?.userId;
+  const isOwn = (op: OutboxOp) => op._owner === undefined || op._owner === owner;
+  const queue = readQueue();
+  const quarantine = readQuarantine();
+  const ownPending = queue.filter(isOwn).length;
+  const ownRefused = quarantine.filter((q) => isOwn(q.op)).length;
+  return {
+    own: ownPending + ownRefused,
+    ownRefused,
+    foreign: queue.length + quarantine.length - ownPending - ownRefused,
+  };
+}
+
+/**
+ * Retire de la file et de la quarantaine les écritures du compte reconnu (et
+ * celles sans compte), et elles seules : celles d'un AUTRE compte restent, à
+ * leur place, pour remonter quand il reviendra. C'est la purge de la
+ * Déconnexion : on n'y jette que ce qui est à soi. Le blob de file illisible
+ * (`CORRUPT_KEY`), dont on ne sait pas l'auteur, part avec elle.
+ */
+export function clearOwnQueue(): void {
+  if (typeof localStorage === 'undefined') return;
+  const owner = loadLocalAccount()?.userId;
+  const isForeign = (op: OutboxOp) => op._owner !== undefined && op._owner !== owner;
+  const queue = readQueue().filter(isForeign);
+  const quarantine = readQuarantine().filter((q) => isForeign(q.op));
+  try {
+    if (queue.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+    else localStorage.removeItem(STORAGE_KEY);
+    if (quarantine.length > 0) localStorage.setItem(QUARANTINE_KEY, JSON.stringify(quarantine));
+    else localStorage.removeItem(QUARANTINE_KEY);
+    localStorage.removeItem(CORRUPT_KEY);
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
  * Vrai si l'erreur est un REJET DÉFINITIF de la base : rejouer l'op telle quelle
  * échouera à l'identique. Les fonctions de sync relancent l'objet d'erreur de
  * PostgREST, sans statut HTTP ; seul son `code` (SQLSTATE) est fiable. Liste

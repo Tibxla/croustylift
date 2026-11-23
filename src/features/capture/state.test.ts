@@ -13,6 +13,7 @@ import {
   LAUNCH_EXPIRY_MS,
   shouldReanchorLaunch,
   clearCaptureState,
+  clearOwnCaptureState,
   hydratedState,
   mergeProgress,
   loadPersisted,
@@ -1159,5 +1160,33 @@ describe('resolveCaptureDate', () => {
     const { date, restored } = resolveCaptureDate(upperA, TODAY);
     expect(date).toBe(TODAY);
     expect(restored).toBeNull();
+  });
+});
+
+describe('clearOwnCaptureState (purge de la Déconnexion)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  it('retire la capture du compte reconnu et les états sans compte, garde celle d’un autre', () => {
+    const put = (key: string, ownerId?: string) =>
+      localStorage.setItem(
+        `croustylift:capture:${key}`,
+        JSON.stringify({ sessionId: key, ...(ownerId ? { ownerId } : {}) }),
+      );
+    put('seance-a:2026-11-23', 'user-a');
+    put('seance-b:2026-11-22', 'user-b');
+    put('seance-ancienne:2026-11-01');
+    localStorage.setItem('croustylift:outbox', '[]');
+
+    clearOwnCaptureState();
+
+    expect(localStorage.getItem('croustylift:capture:seance-a:2026-11-23')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:seance-ancienne:2026-11-01')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:seance-b:2026-11-22')).not.toBeNull();
+    // Rien d'autre que le préfixe capture n'est touché.
+    expect(localStorage.getItem('croustylift:outbox')).toBe('[]');
   });
 });

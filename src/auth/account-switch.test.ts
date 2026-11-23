@@ -2,7 +2,7 @@
 // lecture et l'état de capture d'un AUTRE compte ne restent pas en clair, sauf
 // s'il a encore des écritures retenues (la garde d'ADR 0012 prime alors).
 import { describe, it, expect, beforeEach } from 'vitest';
-import { recognizeAccount } from './account-switch';
+import { arrivalBlockedBy, recognizeAccount } from './account-switch';
 import { loadLocalAccount, saveLocalAccount } from '../lib/local-account';
 import { cachedRead, clearReadCache, revalidateReadCache } from '../lib/read-cache';
 import { clearQueue, enqueue } from '../features/capture/outbox';
@@ -139,5 +139,34 @@ describe('recognizeAccount', () => {
 
     expect(lectures).toBe(avant);
     expect(localStorage.getItem('croustylift:readcache:user-a:seances')).toBeNull();
+  });
+});
+
+describe('arrivalBlockedBy (garde d’arrivée par lien ou session restaurée)', () => {
+  it('un autre compte arrive alors que le précédent a des saisies retenues : bloqué', () => {
+    enqueue({ type: 'deleteSet', id: 'serie-1' });
+    enqueue({ type: 'deleteSet', id: 'serie-2' });
+
+    expect(arrivalBlockedBy('user-b')).toBe(2);
+  });
+
+  it('le même compte revient : jamais bloqué', () => {
+    enqueue({ type: 'deleteSet', id: 'serie-1' });
+
+    expect(arrivalBlockedBy('user-a')).toBe(0);
+  });
+
+  it('un autre compte arrive, rien de retenu : libre', () => {
+    expect(arrivalBlockedBy('user-b')).toBe(0);
+  });
+
+  it('seules les saisies du compte reconnu s’y opposent, pas celles d’un tiers', () => {
+    // Le compte C a laissé une saisie ; A, reconnu, n'a rien : B peut arriver.
+    localStorage.setItem(
+      'croustylift:outbox',
+      JSON.stringify([{ type: 'deleteSet', id: 'serie-c', _owner: 'user-c', _uid: 'u1' }]),
+    );
+
+    expect(arrivalBlockedBy('user-b')).toBe(0);
   });
 });
