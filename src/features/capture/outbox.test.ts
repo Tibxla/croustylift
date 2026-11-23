@@ -27,7 +27,7 @@ import {
   type OutboxOp,
   type InsertSetOp,
 } from './outbox';
-import { saveLocalAccount } from '../../lib/local-account';
+import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
@@ -304,6 +304,26 @@ describe('flush (succès)', () => {
     await flush(fns);
 
     expect(fns.calls()).toEqual([{ type: 'deleteSet', id: 's1' }]);
+  });
+});
+
+describe('enqueue : étiquette de compte quand le marqueur n’a pas pu être écrit', () => {
+  it('l’op porte le compte reconnu en mémoire, et part sous lui', async () => {
+    // Quota plein au moment de la Connexion : le marqueur n'est pas persisté.
+    const storage = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = storage.setItem.bind(localStorage);
+    storage.setItem = (k, v) => {
+      if (k === 'croustylift:account') throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+
+    enqueue(execOp());
+
+    expect(readQueue()[0]?._owner).toBe('user-a');
+    const fns = okFns();
+    expect(await flush(fns, async () => 'user-a')).toEqual({ remaining: 0, flushed: 1 });
+    clearLocalAccount();
   });
 });
 

@@ -60,3 +60,37 @@ describe('local-account', () => {
     expect(loadLocalAccount()).toBeNull();
   });
 });
+
+// Stockage qui refuse l'écriture du marqueur (quota plein, mode privé).
+describe('marqueur quand le stockage refuse', () => {
+  const refuseWrites = () => {
+    (localStorage as unknown as { setItem: () => void }).setItem = () => {
+      throw new Error('QuotaExceededError');
+    };
+  };
+
+  it('le compte reste reconnu en mémoire', () => {
+    refuseWrites();
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+
+    expect(loadLocalAccount()).toEqual({ userId: 'user-b', email: 'b@exemple.com' });
+    clearLocalAccount();
+  });
+
+  it('le marqueur d’un compte précédent resté dans le stockage ne prime pas', () => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    refuseWrites();
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+
+    expect(loadLocalAccount()?.userId).toBe('user-b');
+    clearLocalAccount();
+  });
+
+  it('la Déconnexion retire aussi le marqueur en mémoire', () => {
+    refuseWrites();
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+    clearLocalAccount();
+
+    expect(loadLocalAccount()).toBeNull();
+  });
+});

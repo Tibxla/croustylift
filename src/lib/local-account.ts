@@ -20,20 +20,34 @@ export interface LocalAccount {
   email: string | null;
 }
 
-/** Pose (ou ré-affirme) le marqueur. Dégrade en silence si le stockage refuse. */
+/**
+ * Marqueur tenu EN MÉMOIRE quand le stockage a refusé de l'écrire (quota plein,
+ * mode privé). Sans lui, l'app tournait connectée mais sans compte reconnu :
+ * chaque écriture enfilée partait sans étiquette de compte et ne remontait
+ * jamais (l'outbox ne joue que les ops du compte connecté, ADR 0019), et le
+ * marqueur d'un compte PRÉCÉDENT, resté dans le stockage, continuait d'être lu.
+ * Il prime donc sur le stockage tant qu'il existe, et vit le temps de la page.
+ */
+let volatileAccount: LocalAccount | null = null;
+
+/** Pose (ou ré-affirme) le marqueur. Si le stockage refuse, il tient en mémoire. */
 export function saveLocalAccount(account: LocalAccount): void {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(account));
+    volatileAccount = null;
   } catch {
     // Quota plein / mode privé : sans marqueur persisté, l'appareil ne sera pas
-    // reconnu hors-ligne — mais rien ne casse en ligne. On ne bloque pas la Connexion.
+    // reconnu hors-ligne après un rechargement. Pour la page en cours, le compte
+    // reste reconnu en mémoire (cf. `volatileAccount`).
+    volatileAccount = { ...account };
   }
 }
 
 /** Lit le marqueur, ou `null` si absent / illisible / de forme inattendue. */
 export function loadLocalAccount(): LocalAccount | null {
   if (typeof localStorage === 'undefined') return null;
+  if (volatileAccount) return { ...volatileAccount };
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return null;
   try {
@@ -57,6 +71,7 @@ export function loadLocalAccount(): LocalAccount | null {
 
 /** Retire le marqueur (Déconnexion, ou forçage de purge). */
 export function clearLocalAccount(): void {
+  volatileAccount = null;
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
