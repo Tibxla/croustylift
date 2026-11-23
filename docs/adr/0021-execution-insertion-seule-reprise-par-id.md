@@ -2,7 +2,7 @@
 
 L'op `upsertExecution` ne fait plus que créer. En base c'est un `insert ... on conflict (id) do nothing` (`ignoreDuplicates`) : rejouer l'op, ou la réaffirmer à chaque remontage de la Capture, ne touche jamais une ligne existante. Une exécution garde donc la version de séance, la date et le lancement sous lesquels elle est née. Clôture et métriques de fin passent par `updateExecution`, seule op qui modifie une exécution.
 
-En conséquence, l'appareil qui tient une séance en cours la relit **par son id** (celui de son état de capture restauré), quelle que soit la version de séance courante. Sans état local, la recherche reste « l'exécution ouverte du jour pour la version courante ». Dans les deux cas, une exécution que la file clôt ou supprime n'est pas adoptée, même si la base la montre encore ouverte.
+En conséquence, l'appareil qui tient une séance en cours la relit **par son id** (celui de son état de capture restauré), quelle que soit la version de séance courante. Sans état local, la recherche était « l'exécution ouverte du jour pour la version courante » ; elle se fait désormais par séance (amendement du 2026-11-23). Dans les deux cas, une exécution que la file clôt ou supprime n'est pas adoptée, même si la base la montre encore ouverte.
 
 ## Pourquoi
 
@@ -21,7 +21,7 @@ La garde sur la file répond à un décalage : Clôture, Annulation et suppressi
 ## Conséquences
 
 - Séance retouchée pendant l'entraînement : la Capture remontée affiche le template de la nouvelle version pour la fin de la séance, la base la range sous l'ancienne. Écart d'affichage accepté, l'Analyse reste juste.
-- Sans état local (autre appareil, stockage vidé) et plan retouché entre-temps, l'exécution entamée n'est pas retrouvée : la suite ouvre une seconde exécution.
+- Sans état local (autre appareil, stockage vidé), l'exécution ouverte du jour se cherche par séance, toutes versions confondues (amendement du 2026-11-23, « Recherche par séance ») : un plan retouché entre-temps ne la cache plus.
 - Un lancement réancré hors ligne sur une exécution déjà en base n'atteint plus `started_at`. Le réancrage (ADR 0011) ne vise de toute façon qu'une exécution pas encore née.
 - La garde sur la file lit la file, avant et après la lecture réseau, dont la réponse est figée à son départ.
 - La suppression d'une exécution depuis le journal efface l'état de capture local qui la porte (`clearPersistedExecution`), comme la Clôture et l'Annulation : cet état prime à la réhydratation, et la série suivante recréait l'exécution supprimée sous le même id.
@@ -31,3 +31,4 @@ La garde sur la file répond à un décalage : Clôture, Annulation et suppressi
 
 - **Clôture sortie de la file sans effet.** La limite « une clôture sortie de la file sans avoir été appliquée en base ne serait plus vue » est levée. `update` et `delete` relèvent désormais les lignes qu'ils touchent. Une clôture à zéro ligne ne peut vouloir dire que « l'exécution n'existe pas en base » : la session est vérifiée avant et après chaque op (ADR 0019), la création précède dans la file, et une création refusée emmène ses ops filles en quarantaine (ADR 0018). Une exécution absente ne peut pas être reprise, la garde n'a donc rien à voir. Le cas reste un succès (c'est celui, voulu, d'une clôture sans série envoyée) et il est tracé en console. Une suppression à zéro ligne est un succès idempotent.
 - **Série annulée en attente.** La même garde vaut pour une série : tant que son `deleteSet` attend en file, la base la porte encore et la fusion, qui garde la liste la plus longue, la ramenait à l'écran au remontage. Le réalisé relu est désormais purgé des séries que la file supprime, avec les mêmes deux lectures de la file (avant et après la lecture réseau).
+- **Recherche par séance.** Sans état local, l'exécution ouverte du jour se cherche pour la séance, toutes versions confondues, par une jointure côté serveur sur `seance_versions` (`seance_versions!inner(seance_id)`). La limite « exécution entamée non retrouvée après une retouche du plan, seconde exécution ouverte » est levée, et aucune liste d'ids de versions ne passe plus dans l'URL (le repère « tu notais » suit la même jointure).

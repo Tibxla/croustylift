@@ -77,6 +77,7 @@ class MemoryStorage {
 }
 
 const DATE = '2026-11-23';
+const SEANCE = 'seance-1';
 const EXO = upperA.exercises[0]!.exerciseId;
 
 const serie = (id: string, order: number): Row => ({
@@ -107,7 +108,7 @@ function etatLocal() {
 /** Le rang que prendrait la prochaine série, comme la Capture le dérive au montage. */
 async function rangSuivant(localExecutionId: string | null): Promise<number> {
   const restored = etatLocal();
-  const today = await loadTodayExecution('v2', DATE, localExecutionId);
+  const today = await loadTodayExecution(SEANCE, DATE, localExecutionId);
   const fromBase = hydratedState(
     upperA,
     today?.progress ?? {},
@@ -131,6 +132,8 @@ beforeEach(() => {
     {
       id: 'exec-1',
       seance_version_id: 'v1',
+      // Colonne de la jointure `seance_versions!inner(seance_id)`, à plat ici.
+      'seance_versions.seance_id': SEANCE,
       performed_on: DATE,
       started_at: '2026-11-23T18:00:00.000Z',
       created_at: '2026-11-23T18:01:00.000Z',
@@ -147,32 +150,46 @@ describe('reprise après retouche du plan en pleine séance', () => {
     expect(server.executions[0]?.seance_version_id).toBe('v1');
   });
 
-  it('sans id local, la recherche reste par version : rien sous v2', async () => {
-    expect(await loadTodayExecution('v2', DATE)).toBeNull();
-    expect((await loadTodayExecution('v1', DATE))?.executionId).toBe('exec-1');
+  it('sans état local (autre appareil), l’exécution ouverte du jour est retrouvée par SÉANCE, même restée en v1', async () => {
+    // Avant : recherche par version courante (v2), rien de trouvé, et la suite de
+    // la séance ouvrait une seconde exécution.
+    const today = await loadTodayExecution(SEANCE, DATE);
+
+    expect(today?.executionId).toBe('exec-1');
+    expect(today?.seanceVersionId).toBe('v1');
+    expect(today?.progress[EXO]?.setIds).toEqual(['set-1', 'set-2', 'set-journal']);
+  });
+
+  it('sans état local, l’exécution d’une AUTRE séance du même jour n’est pas reprise', async () => {
+    expect(await loadTodayExecution('seance-2', DATE)).toBeNull();
+  });
+
+  it('sans état local, l’exécution d’un autre jour n’est pas reprise', async () => {
+    expect(await loadTodayExecution(SEANCE, '2026-11-24')).toBeNull();
   });
 
   it('l’id local prime sur une autre exécution ouverte du jour sous la version courante', async () => {
     server.executions.push({
       id: 'exec-autre',
       seance_version_id: 'v2',
+      'seance_versions.seance_id': SEANCE,
       performed_on: DATE,
       started_at: null,
       created_at: '2026-11-23T19:00:00.000Z',
       closed_at: null,
       duration_min: null,
     });
-    expect((await loadTodayExecution('v2', DATE, 'exec-1'))?.executionId).toBe('exec-1');
+    expect((await loadTodayExecution(SEANCE, DATE, 'exec-1'))?.executionId).toBe('exec-1');
   });
 
   it('exécution locale déjà close en base : pas reprise', async () => {
     server.executions[0]!.closed_at = '2026-11-23T19:02:00.000Z';
-    expect(await loadTodayExecution('v2', DATE, 'exec-1')).toBeNull();
+    expect(await loadTodayExecution(SEANCE, DATE, 'exec-1')).toBeNull();
   });
 
   it('exécution locale que la file clôt ou supprime : pas reprise (même garde)', async () => {
     enqueue({ type: 'deleteExecution', id: 'exec-1' });
-    expect(await loadTodayExecution('v2', DATE, 'exec-1')).toBeNull();
+    expect(await loadTodayExecution(SEANCE, DATE, 'exec-1')).toBeNull();
   });
 });
 
@@ -189,7 +206,7 @@ describe('série annulée dont la suppression attend encore', () => {
   }
 
   async function reprise() {
-    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
     const fromBase = hydratedState(upperA, today?.progress ?? {}, {}, DATE, today?.executionId);
     return getProgress(mergeProgress(fromBase, etatApresAnnulation()), EXO);
   }
@@ -210,7 +227,7 @@ describe('série annulée dont la suppression attend encore', () => {
   it('sans état local (stockage vidé), la série annulée ne revient pas non plus', async () => {
     enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: [EXO] });
 
-    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
 
     expect(today?.progress[EXO]?.setIds).toEqual(['set-1']);
   });
@@ -219,13 +236,13 @@ describe('série annulée dont la suppression attend encore', () => {
     enqueue({ type: 'deleteSet', id: 'set-1' });
     enqueue({ type: 'deleteSet', id: 'set-2' });
 
-    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
 
     expect(today?.progress[EXO]).toBeUndefined();
   });
 
   it('sans suppression en attente, le réalisé de la base est repris tel quel', async () => {
-    const today = await loadTodayExecution('v1', DATE, 'exec-1');
+    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
 
     expect(today?.progress[EXO]?.setIds).toEqual(['set-1', 'set-2']);
   });

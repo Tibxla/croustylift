@@ -35,7 +35,12 @@ vi.mock('../../lib/supabase', () => {
           server.duringRead?.();
           return {
             data: id
-              ? { id, started_at: '2026-11-23T18:00:00.000Z', created_at: '2026-11-23T18:01:00.000Z' }
+              ? {
+                  id,
+                  seance_version_id: 'v1',
+                  started_at: '2026-11-23T18:00:00.000Z',
+                  created_at: '2026-11-23T18:01:00.000Z',
+                }
               : null,
             error: null,
           };
@@ -133,23 +138,23 @@ describe('isExecutionRetiredInQueue', () => {
 
 describe('loadTodayExecution et les écritures en attente', () => {
   it('exécution ouverte, rien en attente : adoptée (cas nominal)', async () => {
-    const today = await loadTodayExecution('v1', '2026-11-23');
+    const today = await loadTodayExecution('seance-1', '2026-11-23');
     expect(today?.executionId).toBe('exec-1');
   });
 
   it('clôture pas encore envoyée : la séance close n’est pas reprise', async () => {
     enqueue(cloture('exec-1'));
-    expect(await loadTodayExecution('v1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
   });
 
   it('annulation ou suppression pas encore envoyée : l’exécution n’est pas reprise', async () => {
     enqueue(suppression('exec-1'));
-    expect(await loadTodayExecution('v1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
   });
 
   it('clôture enfilée PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
     server.duringRead = () => void enqueue(cloture('exec-1'));
-    expect(await loadTodayExecution('v1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
   });
 
   it('clôture acquittée PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
@@ -157,12 +162,12 @@ describe('loadTodayExecution et les écritures en attente', () => {
     // Le flush lancé au même montage vide la file avant le retour de la lecture,
     // dont la réponse montre encore l'exécution ouverte.
     server.duringRead = () => clearQueue();
-    expect(await loadTodayExecution('v1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
   });
 
   it('clôture en attente d’une autre exécution : celle du jour reste adoptée', async () => {
     enqueue(cloture('exec-hier'));
-    const today = await loadTodayExecution('v1', '2026-11-23');
+    const today = await loadTodayExecution('seance-1', '2026-11-23');
     expect(today?.executionId).toBe('exec-1');
   });
 });

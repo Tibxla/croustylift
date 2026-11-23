@@ -978,6 +978,13 @@ export function pruneCaptureCopies(keepVersionIds: readonly string[] = []): void
 export interface TodayExecution {
   executionId: string;
   /**
+   * La version de séance sous laquelle l'exécution est NÉE (elle n'en change
+   * jamais, ADR 0021). Peut différer de la version courante si le plan a été
+   * retouché depuis : c'est son template que la Capture doit afficher. `null`
+   * pour une ligne héritée sans version.
+   */
+  seanceVersionId: string | null;
+  /**
    * Lancement (epoch ms) pour reprendre le chrono (ADR 0011), borné par `created_at`
    * (le lancement ne peut être postérieur au 1er log). Toujours défini : à défaut de
    * `started_at` en base (legacy / valeur dérivée), retombe sur `created_at`.
@@ -998,16 +1005,17 @@ export interface TodayExecution {
  * base (annulation, idempotence). `null` si aucune exécution ce jour-là.
  */
 export async function loadTodayExecution(
-  seanceVersionId: string,
+  seanceId: string,
   date: string,
   /**
    * L'exécution que l'appareil tient DÉJÀ en cours (état de capture restauré), ou
-   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : elle garde
-   * la version de séance sous laquelle elle est née (`upsertExecution` est une
-   * insertion seule), donc une recherche par version courante ne la retrouverait
-   * plus après une retouche du plan en pleine séance, et ses séries écrites
-   * ailleurs (journal) manqueraient à la reprise. Sans état local, on cherche
-   * l'exécution ouverte du jour pour cette version.
+   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : ses séries
+   * écrites ailleurs (journal) manqueraient sinon à la reprise. Sans état local
+   * (autre appareil, stockage vidé), on cherche l'exécution ouverte du jour pour
+   * la SÉANCE, toutes versions confondues : une exécution garde la version sous
+   * laquelle elle est née (`upsertExecution` est une insertion seule), donc une
+   * recherche par version courante ne la retrouvait plus après une retouche du
+   * plan, et la suite de la séance ouvrait une seconde exécution.
    */
   localExecutionId: string | null = null,
 ): Promise<TodayExecution | null> {
@@ -1031,7 +1039,7 @@ export async function loadTodayExecution(
   // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
   const pendingBefore = readOwnQueue();
   try {
-    const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
+    const today = await fetchTodayExecution(seanceId, date, localExecutionId);
     if (today === null) return null;
     const pendingAfter = readOwnQueue();
     const retired =
@@ -1094,18 +1102,27 @@ export function isExecutionRetiredInQueue(
 
 /** Lecture Supabase brute de l'exécution du jour (cf. loadTodayExecution). */
 async function fetchTodayExecution(
-  seanceVersionId: string,
+  seanceId: string,
   date: string,
   localExecutionId: string | null,
 ): Promise<TodayExecution | null> {
-  const base = supabase.from('executions').select('id, started_at, created_at');
-  // L'exécution tenue par l'appareil se relit par son id, sans filtre de version
-  // (cf. loadTodayExecution) ; sinon, l'exécution du jour de la version courante.
-  // Les gardes « en cours » ci-dessous valent pour les deux lectures.
+  // La séance se filtre CÔTÉ SERVEUR, par jointure sur `seance_versions` : toutes
+  // ses versions d'un coup, sans liste d'ids dans l'URL (une séance très
+  // versionnée dépassait la taille d'URL admise et la lecture échouait).
+  // L'exécution tenue par l'appareil se relit par son id (cf. loadTodayExecution),
+  // sans jointure ; sinon, l'exécution ouverte du jour de la séance, quelle que
+  // soit sa version. Les gardes « en cours » ci-dessous valent pour les deux.
   const scoped =
     localExecutionId !== null
-      ? base.eq('id', localExecutionId)
-      : base.eq('seance_version_id', seanceVersionId).eq('performed_on', date);
+      ? supabase
+          .from('executions')
+          .select('id, started_at, created_at, seance_version_id')
+          .eq('id', localExecutionId)
+      : supabase
+          .from('executions')
+          .select('id, started_at, created_at, seance_version_id, seance_versions!inner(seance_id)')
+          .eq('seance_versions.seance_id', seanceId)
+          .eq('performed_on', date);
   const { data: exec, error: execErr } = await scoped
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
     // `closed_at` en base (ADR 0009), donc une séance déjà RANGÉE ce jour-là est
@@ -1199,6 +1216,7 @@ async function fetchTodayExecution(
   const startedMs = exec.started_at ? new Date(exec.started_at).getTime() : null;
   return {
     executionId: exec.id,
+    seanceVersionId: exec.seance_version_id,
     startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,

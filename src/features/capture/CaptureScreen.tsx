@@ -200,9 +200,10 @@ export function CaptureScreen() {
             return { ...ex, rows, perExerciseNote };
           }),
         ),
-        // L'exécution déjà tenue par l'appareil se relit par son id : elle a pu
-        // rester sur une version antérieure de la séance (plan retouché en cours).
-        loadTodayExecution(seanceVersionId, date, restored?.executionId ?? null),
+        // L'exécution déjà tenue par l'appareil se relit par son id ; sinon c'est
+        // l'exécution ouverte du jour de la SÉANCE, quelle que soit sa version
+        // (plan retouché entre-temps, autre appareil).
+        loadTodayExecution(seance.id, date, restored?.executionId ?? null),
         loadLastSeanceExecution(seance.id, date).then((last) =>
           loadPreviousDatedNotes(seance.id, last),
         ),
