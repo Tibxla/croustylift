@@ -3,10 +3,9 @@ import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
 import { arrivalHash, supabase, supabaseAuthStorageKey } from '../lib/supabase'
 import {
   arrivalFromHash,
-  clearPasswordSetup,
+  definePassword,
   hasPasswordProof,
   offlineStartSetupOwed,
-  PASSWORD_SET_KEY,
   syncPasswordSetup,
 } from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
@@ -362,17 +361,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       updatePassword: async (password) => {
-        // Le marqueur part DANS LA MÊME REQUÊTE que le mot de passe (une seule
-        // transaction côté serveur) : l'obligation de l'invité n'est levée, sur
-        // tous les appareils, que si le mot de passe est enregistré.
-        const { data, error } = await supabase.auth.updateUser({
-          password,
-          data: { [PASSWORD_SET_KEY]: true },
-        })
-        if (error) throw error
-        // Mot de passe enregistré : la copie de l'obligation sur l'appareil tombe.
-        const userId = data.user?.id ?? session?.user.id
-        if (userId) clearPasswordSetup(userId)
+        // Enregistré, puis prouvé par une session ouverte AVEC lui : c'est elle
+        // (SIGNED_IN, `amr: password`) qui lève l'obligation de l'invité et sa
+        // copie sur l'appareil (cf. arrival-link, `definePassword`).
+        await definePassword(supabase.auth, session?.user.email, password)
       },
       clearPasswordRecovery: () => {
         setIsPasswordRecovery(false)
