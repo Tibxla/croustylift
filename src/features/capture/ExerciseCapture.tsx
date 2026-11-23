@@ -585,7 +585,7 @@ export function ExerciseCapture({
           onClick={() => setRecapOpen(true)}
           className="btn btn-secondary text-ink-muted mt-4 h-11 w-full rounded-xl text-sm font-medium"
         >
-          Exo terminé — voir le récap
+          Exo terminé, voir le récap
         </button>
       )}
 
