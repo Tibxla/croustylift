@@ -156,13 +156,13 @@ perte), finition.
 
 ### Comptes
 
-- **Invitation : entrer sans avoir défini son mot de passe** (importante, parcours
-  rares). L'obligation de définir un mot de passe est écrite sur l'appareil. Elle tient
-  au rechargement de l'écran, mais pas partout : forçage de la garde d'arrivée sur un
-  appareil qui retient les saisies d'un autre compte, stockage plein à l'arrivée,
-  démarrage en session locale. Piste : poser l'obligation avant la branche de la garde,
-  et la tenir côté serveur pour qu'elle survive à tout rechargement
-  (`auth/AuthProvider.tsx`, `auth/arrival-link`).
+- **Invité hors ligne après un stockage plein** (finition). L'obligation de définir son
+  mot de passe est tenue par le serveur et relue sur la session (ADR 0019). Sans
+  session (démarrage en session locale), seule la copie de l'appareil la porte : si le
+  stockage était plein à l'arrivée, l'invité entre hors ligne, jusqu'à la première
+  session validée, qui le renvoie à l'écran de mot de passe. À faire avant de s'y
+  fier : une invitation réelle de bout en bout (le mécanisme est vérifié dans la source
+  du serveur d'auth et par tests, pas sur le projet).
 
 ### Base et import
 
