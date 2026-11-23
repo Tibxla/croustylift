@@ -21,6 +21,8 @@ const SURFACE_KEY = 'croustylift:surface-apres-rechargement'
 const CHUNK_RELOAD_KEY = 'croustylift:rechargement-chunk'
 /** Intervalle minimal entre deux recherches de mise à jour au retour au premier plan. */
 const UPDATE_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000
+/** Délai au-delà duquel on recharge soi-même après avoir demandé la bascule. */
+const RELOAD_FALLBACK_MS = 4000
 
 let updateReady = false
 let interactedSinceLoad = false
@@ -220,5 +222,13 @@ export function initServiceWorker(): void {
   })
   applyUpdate = () => {
     void updateSW(true)
+    // Filet : le rechargement suit normalement la prise de contrôle du service
+    // worker neuf. S'il ne vient pas (événement manqué), la page resterait sur
+    // l'ancien bundle avec le nouveau précache : on recharge nous-mêmes, sauf si
+    // une saisie a commencé entre-temps (la reprise sur chunk introuvable suffit
+    // alors).
+    window.setTimeout(() => {
+      if (!captureInProgress() && !fieldFocused()) window.location.reload()
+    }, RELOAD_FALLBACK_MS)
   }
 }

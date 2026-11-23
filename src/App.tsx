@@ -392,8 +392,10 @@ function AuthenticatedApp({
         onSelect={(s) => {
           // Une nouvelle version attend ? Le changement d'onglet est le moment
           // de basculer (l'écran quitté est démonté de toute façon) : la page se
-          // recharge et rouvre l'onglet demandé. Refusé pendant une séance.
-          if (s !== surface && maybeApplyUpdate('surface-change', s)) return
+          // recharge et rouvre l'onglet demandé. Refusé pendant une séance. Le
+          // changement d'onglet a lieu dans tous les cas : si le rechargement
+          // tardait ou n'arrivait pas, l'app ne doit pas rester sourde au tap.
+          if (s !== surface) maybeApplyUpdate('surface-change', s)
           withViewTransition(() => setSurface(s))
         }}
       />
