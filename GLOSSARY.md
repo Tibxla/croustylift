@@ -113,7 +113,7 @@ La charge maximale estimée pour une seule répétition, dérivée d'une série 
 _Avoid_: 1RM (le vrai maximal, réellement soulevé), max, PR
 
 **Note datée**:
-Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante). En **repère lecture seule** (« Dernière fois tu notais : … », toujours daté), ressort uniquement la note que la **dernière exécution de cette séance** porte pour cet exo ; si elle n'en porte pas, rien ne ressort — on ne repêche jamais une note plus ancienne. Sans changer sa nature : on en saisit toujours une fraîche chaque jour.
+Note libre attachée à une exécution (un exo un jour donné) : contexte d'une perf ou d'une déviation (fatigue, blessure, machine prise). Distincte de la note d'instructions (persistante). En **repère lecture seule** (« Dernière fois tu notais : … », toujours daté), ressort uniquement la note que la **dernière exécution de cette séance** porte pour cet exo ; si elle n'en porte pas, rien ne ressort : on ne repêche jamais une note plus ancienne. Sans changer sa nature : on en saisit toujours une fraîche chaque jour. Une exécution porte au plus une note datée par exo : une seconde écriture, même venue d'un autre appareil, remplace la première.
 _Avoid_: Commentaire, log
 
 **Décompte de séries**:
