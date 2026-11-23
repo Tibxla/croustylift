@@ -31,7 +31,7 @@ Croustylift sépare radicalement **deux moments** :
 
 | 🏋️ Capture *(en salle)* | 📈 Analyse *(au calme)* |
 |---|---|
-| Minimale et increvable. Un tap, au pouce, **jamais de clavier**. Offline d'abord. | Riche et posée. Courbe e1RM façon Apple Fitness, décompte par muscle, comparaison de blocs. |
+| Minimale et increvable. Un tap, au pouce, **sans clavier obligatoire**. Offline d'abord. | Riche et posée. Courbe e1RM façon Apple Fitness, décompte par muscle, comparaison de blocs. |
 
 Projet perso (et quelques potes). PWA installable, **offline-first**, **0 € d'infra**.
 
