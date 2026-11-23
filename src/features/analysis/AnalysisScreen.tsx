@@ -4,8 +4,8 @@
 //
 // Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
 // secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
-// Plus, repliée par exo, la comparaison de deux blocs (cf. issue #6) : quel
-// volume fait le plus progresser. Elle reste secondaire (un dépliant discret
+// Plus, repliée par exo, la comparaison de deux blocs (cf. issue #6) : quelle
+// configuration fait le plus progresser. Elle reste secondaire (un dépliant discret
 // sous la carte), la courbe primaire restant le héros.
 //
 // L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `CurvesTab`

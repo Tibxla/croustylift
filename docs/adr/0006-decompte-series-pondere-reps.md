@@ -17,3 +17,7 @@ Toutes les séries ne se valent pas : une série lourde de 3 reps n'apporte pas 
 - Les valeurs sont **fractionnaires** : à afficher avec une décimale (« 1,8–2,4 séries »).
 - Le prévu se lit en fourchette (séries prescrites min–max), reps figées à la borne basse.
 - Une série unilatérale pleine (≥5 reps des deux côtés) vaut 2 au total et 1 par muscle.
+
+## Amendement du 2026-11-23
+
+Le récap d'une séance dans le journal affichait un autre nombre sous le même mot « séries » : les séries logiques, entières, une paire gauche/droite comptée pour 1. Deux séries unilatérales de 10 reps et trois séries de 3 reps donnaient 5 au journal et 5,8 en fin de séance. Le journal passe désormais par le même décompte que la Clôture, avec une décimale : une séance affiche le même nombre de séries aux deux endroits. Le journal ne connaît pas le drapeau unilatéral de l'exercice, il le lit sur les lignes (une ligne qui porte un côté est unilatérale), ce qui donne le même total.

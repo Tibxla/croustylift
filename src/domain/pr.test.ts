@@ -316,3 +316,57 @@ describe('personalRecordBySide', () => {
     expect(right).toEqual({ bestE1rm: null, bestE1rmSet: null, bestWeightReps: null })
   })
 })
+
+// Égalité mathématique d'e1RM entre deux couples poids/reps DIFFÉRENTS :
+// 87,5 × 5 et 85 × 6 valent tous deux 99,1666… kg, mais leurs flottants diffèrent
+// d'un bit (…67 contre …66). Un record égalé n'est pas un nouveau record.
+describe('record d’e1RM à égalité entre deux couples poids/reps', () => {
+  const holder = set(87.5, 5, 0)
+  const equal = set(85, 6, 0) // flottant un bit AU-DESSUS de celui du titulaire
+
+  it('une série de même e1RM que le record ne le bat pas', () => {
+    const record = personalRecord(
+      [{ date: '2026-01-10', exerciseId: 'squat', sets: [holder] }],
+      'squat',
+    )
+    expect(isE1rmRecord(record, equal)).toBe(false)
+  })
+
+  it('le titulaire du record ne change pas sur une égalité', () => {
+    const record = personalRecord(
+      [
+        { date: '2026-01-10', exerciseId: 'squat', sets: [holder] },
+        { date: '2026-01-17', exerciseId: 'squat', sets: [equal] },
+      ],
+      'squat',
+    )
+    expect(record.bestE1rmSet).toEqual({ weightKg: 87.5, reps: 5 })
+  })
+
+  it('même règle par côté en unilatéral', () => {
+    const { left } = personalRecordBySide(
+      [
+        { date: '2026-01-10', exerciseId: 'curl', sets: [sideSet('left', 87.5, 5, 0)] },
+        { date: '2026-01-17', exerciseId: 'curl', sets: [sideSet('left', 85, 6, 0)] },
+      ],
+      'curl',
+    )
+    expect(left.bestE1rmSet).toEqual({ weightKg: 87.5, reps: 5 })
+  })
+
+  it('un centième de mieux reste un record', () => {
+    const record = personalRecord(
+      [{ date: '2026-01-10', exerciseId: 'squat', sets: [set(100, 1, 0)] }],
+      'squat',
+    )
+    expect(isE1rmRecord(record, set(100.01, 1, 0))).toBe(true)
+  })
+
+  it('un dépassement réel sous le centième est un record (23,25 × 18 après 28,75 × 9)', () => {
+    const record = personalRecord(
+      [{ date: '2026-01-10', exerciseId: 'squat', sets: [set(28.75, 9, 0)] }],
+      'squat',
+    )
+    expect(isE1rmRecord(record, set(23.25, 18, 0))).toBe(true)
+  })
+})

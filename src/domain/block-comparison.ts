@@ -1,6 +1,6 @@
 // Comparaison de DEUX blocs d'un même exercice (cf. issue #6).
 //
-// But produit : « quel volume me fait le plus progresser ? ». On superpose les
+// But produit : « quelle configuration me fait le plus progresser ? ». On superpose les
 // pentes de progression e1RM (%/semaine) de deux blocs et on désigne le plus
 // rapide. Un bloc est une période continue de configuration de template
 // inchangée (cf. ADR 0001 + `detectBlocks`).
@@ -10,7 +10,8 @@
 // (régression linéaire %/semaine). Le seul travail propre à ce module est de
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
 import { buildPrimaryCurve } from './primary-curve'
-import { weeklyProgressionRate } from './progression'
+import { blockKey } from './block'
+import { roundRate, weeklyProgressionRate } from './progression'
 import type { ExerciseExecution, E1rmPoint, Block } from './types'
 
 /** Le côté d'une comparaison à deux blocs. */
@@ -35,21 +36,46 @@ export interface BlockComparison {
   first: BlockProgression
   second: BlockProgression
   /**
-   * Le bloc à la pente la plus raide, `'tie'` si les pentes sont égales, ou
+   * Le bloc à la meilleure pente (la plus haute : celle qui monte le plus, ou
+   * qui recule le moins), `'tie'` si les pentes affichées sont égales, ou
    * `null` si l'un des deux n'a pas de pente mesurable (pas de verdict trompeur).
    */
   winner: Winner
 }
 
-/** Égalité de pente sous ce seuil (en points de %/semaine) : départage indécis. */
-const TIE_EPSILON = 0.05
+/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
+function instantMs(ts: string | undefined): number | null {
+  if (ts === undefined) return null
+  const ms = Date.parse(ts)
+  return Number.isNaN(ms) ? null : ms
+}
 
 /**
- * Garde les exécutions de cet exo dont la date tombe dans la fenêtre du bloc.
- * Fenêtre demi-ouverte `[start, end)` : `end` est le start du bloc suivant, donc
- * une exécution à cette date appartient déjà au bloc suivant. Un bloc en cours
- * (`end === null`) capte toute date depuis son start. Les dates ISO 'YYYY-MM-DD'
- * se comparent lexicographiquement.
+ * L'exécution a-t-elle eu lieu AVANT la frontière (son jour, son instant) ?
+ *   - Lancement horodaté ET frontière horodatée : on compare les INSTANTS, rien
+ *     d'autre (ADR 0001 : une séance faite avant l'édition du plan reste dans
+ *     l'ancien bloc). Le résultat ne dépend pas du fuseau où on relit les données.
+ *   - Sinon (exécution d'avant `started_at`, ou frontière sans instant) : règle
+ *     au jour d'origine, le jour de la coupure appartient au bloc qui s'ouvre.
+ * `createdAt` ne remplace JAMAIS le lancement : c'est l'heure d'arrivée de la
+ * ligne en base, fausse après une séance hors ligne.
+ */
+function isBeforeBoundary(
+  execution: ExerciseExecution,
+  day: string,
+  at: string | undefined,
+): boolean {
+  const started = instantMs(execution.startedAt)
+  const boundary = instantMs(at)
+  if (started !== null && boundary !== null) return started < boundary
+  return execution.date < day
+}
+
+/**
+ * Garde les exécutions de cet exo qui tombent dans la fenêtre du bloc. Fenêtre
+ * demi-ouverte `[début, fin)` : la fin est le début du bloc suivant, donc une
+ * exécution lancée à cet instant appartient déjà au bloc suivant. Un bloc en
+ * cours (`end === null`) capte tout depuis son début.
  */
 function executionsInBlock(
   executions: ExerciseExecution[],
@@ -58,8 +84,10 @@ function executionsInBlock(
 ): ExerciseExecution[] {
   return executions.filter((execution) => {
     if (execution.exerciseId !== exerciseId) return false
-    if (execution.date < block.start) return false
-    if (block.end !== null && execution.date >= block.end) return false
+    if (isBeforeBoundary(execution, block.start, block.startAt)) return false
+    if (block.end !== null && !isBeforeBoundary(execution, block.end, block.endAt)) {
+      return false
+    }
     return true
   })
 }
@@ -88,8 +116,12 @@ function decideWinner(
 ): Winner {
   // Sans deux pentes mesurables, aucun verdict (cf. issue #6 : pas trompeur).
   if (first === null || second === null) return null
-  if (Math.abs(first - second) < TIE_EPSILON) return 'tie'
-  return first > second ? 'first' : 'second'
+  // Égalité décidée sur les pentes ARRONDIES comme à l'écran (0,1 point) : deux
+  // cartes « +2,3 » ne désignent pas de gagnant, « +2,2 » contre « +2,3 » si.
+  const a = roundRate(first)
+  const b = roundRate(second)
+  if (a === b) return 'tie'
+  return a > b ? 'first' : 'second'
 }
 
 /**
@@ -229,9 +261,9 @@ export function defaultComparisonPair(
 ): [number, number] | null {
   if (options.length < 2) return null
   const second = options.length - 1
-  const latestBlock = options[second]!.block
+  const latestBlock = blockKey(options[second]!.block)
   for (let i = second - 1; i >= 0; i--) {
-    if (options[i]!.block.start !== latestBlock.start) return [i, second]
+    if (blockKey(options[i]!.block) !== latestBlock) return [i, second]
   }
   return [second - 1, second]
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { E1rmPoint } from './types'
-import { weeklyProgressionRate } from './progression'
+import { roundRate, weeklyProgressionRate } from './progression'
 
 describe('weeklyProgressionRate', () => {
   it('renvoie null en deçà de minPoints points (défaut 3)', () => {
@@ -80,5 +80,38 @@ describe('weeklyProgressionRate', () => {
       { date: '2026-01-15', e1rm: 0 },
     ]
     expect(weeklyProgressionRate(points)).toBeNull()
+  })
+
+  it('renvoie null pour trois points sur deux dates (reprise le même jour puis lendemain)', () => {
+    // Une pente par semaine ne se lit pas sur 24 h : sans cette garde, ce jeu
+    // affichait « +13,9 %/sem ».
+    const points: E1rmPoint[] = [
+      { date: '2026-09-01', e1rm: 100 },
+      { date: '2026-09-01', e1rm: 100 },
+      { date: '2026-09-02', e1rm: 102 },
+    ]
+    expect(weeklyProgressionRate(points)).toBeNull()
+  })
+
+  it('mesure une pente dès trois dates distinctes, même avec un doublon de date', () => {
+    const points: E1rmPoint[] = [
+      { date: '2026-09-01', e1rm: 100 },
+      { date: '2026-09-01', e1rm: 100 },
+      { date: '2026-09-08', e1rm: 102 },
+      { date: '2026-09-15', e1rm: 104 },
+    ]
+    expect(weeklyProgressionRate(points)).not.toBeNull()
+  })
+})
+
+describe('roundRate', () => {
+  it('arrondit à 0,1 point, comme l’affichage', () => {
+    expect(roundRate(2.26)).toBe(2.3)
+    expect(roundRate(2.24)).toBe(2.2)
+    expect(roundRate(-1.04)).toBe(-1)
+  })
+
+  it('ramène un zéro négatif à zéro (jamais de « −0,0 »)', () => {
+    expect(Object.is(roundRate(-0.04), 0)).toBe(true)
   })
 })

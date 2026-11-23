@@ -52,6 +52,12 @@ export interface RawLogRow extends RawLogExecutionMeta {
   executionId: string
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   date: string
+  /**
+   * Timestamp ISO de création de l'exécution : départage deux exécutions du même
+   * jour (seconde séance après Clôture), la plus récente en tête. Optionnel : sans
+   * lui, le départage retombe sur l'id.
+   */
+  createdAt?: string
   exerciseId: string
   exerciseName: string
   set: RawLogSet
@@ -85,12 +91,14 @@ function sideRank(side: RawLogSet['side']): number {
 
 /**
  * Regroupe des lignes plates `(exécution, exo, série)` en log brut consultable :
- * exécutions triées par date DÉCROISSANTE (la plus récente en tête), exos triés
+ * exécutions triées par date DÉCROISSANTE (la plus récente en tête ; le même
+ * jour, la plus récemment créée d'abord, puis l'id), exos triés
  * par nom (locale fr), séries triées par order croissant (et, à order égal pour
  * une série unilatérale, gauche avant droite). Pure.
  */
 export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
   const byExecution = new Map<string, RawLogEntry>()
+  const createdAtOf = new Map<string, string>()
 
   for (const row of rows) {
     let entry = byExecution.get(row.executionId)
@@ -107,6 +115,7 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
         exercises: [],
       }
       byExecution.set(row.executionId, entry)
+      createdAtOf.set(row.executionId, row.createdAt ?? '')
     }
 
     let exercise = entry.exercises.find((e) => e.exerciseId === row.exerciseId)
@@ -129,8 +138,16 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
   }
 
   // Dates ISO 'YYYY-MM-DD' : l'ordre lexicographique est l'ordre chronologique.
-  // On veut la plus récente en tête → comparaison inversée.
-  entries.sort((a, b) => b.date.localeCompare(a.date))
+  // On veut la plus récente en tête → comparaison inversée. À date égale, même
+  // sens : la dernière créée d'abord, sinon l'ordre dépendait de l'arrivée des
+  // lignes et l'entrée dépliée par défaut pouvait être celle du matin. L'id
+  // rend le tri total.
+  entries.sort(
+    (a, b) =>
+      b.date.localeCompare(a.date) ||
+      createdAtOf.get(b.executionId)!.localeCompare(createdAtOf.get(a.executionId)!) ||
+      b.executionId.localeCompare(a.executionId),
+  )
 
   return entries
 }

@@ -21,7 +21,7 @@ import {
   type TooltipContentProps,
 } from 'recharts';
 import type { Side } from '../../domain/block-comparison';
-import type { WeeklyPoint } from './comparison-series';
+import { weekLabel, type WeeklyPoint } from './comparison-series';
 
 const ACCENT = 'var(--color-accent)';
 const LINE = 'var(--color-line)';
@@ -51,15 +51,6 @@ function colorFor(side: Side, winner: ComparisonChartProps['winner']): string {
   return winner === side ? ACCENT : INK_MUTED;
 }
 
-/**
- * Tick de l'axe X : la 1ʳᵉ semaine est S1, pas « S0 » (on compte les semaines
- * de muscu à partir de 1). `toWeeklySeries` ancre le 1er point à `week:0` pour
- * garder l'écart en semaines exact ; le +1 ne vit que dans l'affichage.
- */
-function formatWeekTick(week: number): string {
-  return `S${Math.round(week) + 1}`;
-}
-
 // Tooltip de comparaison : composant STABLE au niveau module (pas une fabrique
 // appelée au render, qui recréerait un composant à chaque rendu — static-components).
 // Recharts injecte active/payload à l'exécution (typage partiel) ; les labels sont
@@ -77,7 +68,7 @@ function ComparisonTooltip({ active, payload, firstLabel, secondLabel }: Compari
   const point = first.payload as WeeklyPoint;
   return (
     <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{formatWeekTick(point.week)}</p>
+      <p className="readout text-[11px] text-ink-muted">{weekLabel(point.week)}</p>
       {payload.map((entry) => {
         const p = entry.payload as WeeklyPoint;
         const label = entry.name === 'first' ? firstLabel : secondLabel;
@@ -119,7 +110,7 @@ export function ComparisonChart({
               tick={READOUT_TICK}
               tickLine={false}
               axisLine={{ stroke: LINE }}
-              tickFormatter={formatWeekTick}
+              tickFormatter={weekLabel}
               domain={[0, 'dataMax']}
               allowDecimals={false}
             />
