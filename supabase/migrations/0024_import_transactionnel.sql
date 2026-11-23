@@ -45,8 +45,15 @@
 --     compte dans l'état interdit (routine courante archivée) qui fait échouer
 --     le contrôle préalable de 0021. La règle est donc tenue ici, que 0021
 --     soit appliquée ou non.
---     Reste refusé en entier, une fois 0021 appliquée : un fichier invalide par
---     lui-même, qui CRÉE une routine déjà archivée et en fait la courante.
+--     Reste refusé en entier (23514) : un fichier invalide par lui-même, qui
+--     CRÉE une routine déjà archivée et en fait la courante. L'import le
+--     vérifie lui-même, routines, activations et archivages écrits : la
+--     dernière activation de chaque compte touché doit désigner une routine
+--     active. Sans ce contrôle, un tel fichier passait tant que 0021 n'était
+--     pas appliquée (elle l'est APRÈS le client qui importe) et laissait le
+--     compte dans l'état qui fait échouer son contrôle préalable. Conséquence
+--     assumée : un compte déjà dans cet état ne restaure rien tant qu'il n'est
+--     pas réparé, le message dit comment.
 --   - Verrou du compte : celui de la migration 0021, pris d'emblée et sous la
 --     même clé, pour qu'un archivage ou une activation venu d'un autre appareil
 --     passe avant ou après l'import, jamais au milieu. Il est écrit ici en
@@ -161,6 +168,7 @@ declare
   v_set text;
   v_has_id boolean;
   v_owner uuid;
+  v_owners uuid[] := '{}';
 begin
   if p_data is null or jsonb_typeof(p_data) <> 'object' then
     raise exception 'import_user_data : un objet JSON est attendu (une clé par table).'
@@ -190,6 +198,7 @@ begin
     perform pg_catalog.pg_advisory_xact_lock(
       pg_catalog.hashtextextended('croustylift.routine_courante:' || v_owner::text, 0)
     );
+    v_owners := v_owners || v_owner;
   end loop;
 
   foreach v_table in array v_tables loop
@@ -212,6 +221,25 @@ begin
             order by a.activated_at desc
             limit 1
           );
+    end if;
+
+    -- Routines, activations et archivages sont écrits : la routine courante de
+    -- chaque compte touché doit être active. Tenu ici, sous le verrou du
+    -- compte, que la migration 0021 soit appliquée ou non.
+    if v_table = 'seances' then
+      foreach v_owner in array v_owners loop
+        if (
+          select r.archived_at is not null
+          from public.routine_activations a
+          join public.routines r on r.id = a.routine_id
+          where a.owner_id = v_owner
+          order by a.activated_at desc
+          limit 1
+        ) then
+          raise exception 'Import refusé : la routine courante du compte serait une routine archivée. Désarchive-la, ou définis une autre routine comme courante, puis réimporte.'
+            using errcode = '23514', table = 'routines', column = 'archived_at';
+        end if;
+      end loop;
     end if;
 
     v_rows := p_data -> v_table;

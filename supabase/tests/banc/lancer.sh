@@ -40,6 +40,11 @@ ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0016 0018 0021 0022"
 
 for n in $ORDRE; do
   f=$(ls migrations/"$n"_*.sql)
+  if [ "$n" = 0021 ]; then
+    # L'import est ouvert au client AVANT 0021 : il doit tenir seul la règle.
+    echo "== import avant 0021 : la routine courante reste active sans les triggers"
+    sql tests/banc/03_import_avant_0021.sql -A -t | grep -v '^$'
+  fi
   echo "== $(basename "$f") (deux passes)"
   sql "$f" >/dev/null
   sql "$f" >/dev/null

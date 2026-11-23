@@ -34,6 +34,11 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
                    and p.prosrc like '%and r.archived_at is null%and r.id is distinct from (%order by a.activated_at desc%'),
          'restauration refusée en entier (routine archivée dans le fichier, réactivée depuis), routine courante archivée avant 0021'
   union all
+  select 'import_user_data vérifie lui-même que la routine courante de chaque compte touché est active',
+         exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.import_user_data(jsonb)')
+                   and p.prosrc like '%foreach v_owner in array v_owners loop%r.archived_at is not null%Import refusé%'),
+         'fichier qui crée une routine archivée et la rend courante, accepté tant que 0021 n''est pas appliquée'
+  union all
   select 'aucune fonction SECURITY DEFINER dans public',
          not exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
          'fonction qui contournerait la RLS'
