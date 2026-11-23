@@ -29,7 +29,7 @@
 //
 // ÉTAT PARTAGÉ : `const { settings, setSettings, account, setAccount, seance } = useProto();`
 //   settings.sig         couleur de signal courante (aussi en CSS : var(--sig))
-//   settings.stepKg      pas de la règle de poids (1,25 ou 2,5 kg)
+//   settings.stepKg      pas de la règle de poids, libre (0,25 à 10 kg par 0,25)
 //   settings.reduceMotion
 //   account.phase        'connecte' | 'deconnecte' | 'premier-lancement'
 //   account.email, account.pendingSync, account.offline
@@ -72,7 +72,7 @@ export interface Settings {
   sigName: string;
   /** Teinte OKLCH si teinte libre, null pour une prédéfinie. */
   sigHue: number | null;
-  stepKg: 1.25 | 2.5;
+  stepKg: number;
   reduceMotion: boolean;
 }
 

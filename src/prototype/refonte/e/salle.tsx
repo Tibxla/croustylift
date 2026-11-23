@@ -247,7 +247,16 @@ function Instrument() {
     <div className="flex flex-1 flex-col">
       <div className="flex-1">
         <ExerciseIndex state={state} onPick={seance.setIdx} />
-        <ExerciseHeader ex={ex} next={exercises[idx + 1] ?? null} onSwipe={(d) => seance.setIdx(idx + d)} />
+        {/* Le fantôme, le balayage vers l'avant et « Exo suivant » désignent le même
+            exo : le prochain à faire. Vers l'arrière, le balayage suit l'ordre. */}
+        <ExerciseHeader
+          ex={ex}
+          next={nextEx}
+          onSwipe={(d) => {
+            if (d === -1) seance.setIdx(idx - 1);
+            else if (nextI !== null) seance.setIdx(nextI);
+          }}
+        />
 
         <div className="mt-3">
           <SetBand ex={ex} logged={sets} draft={draft} />
@@ -285,7 +294,7 @@ function Instrument() {
             label="Poids"
             steps={draft.weightKg / step /* fractionnaire si le pas a changé : l'aiguille tombe entre deux crans */}
             max={Math.round(500 / step)}
-            pxPerStep={11.2 * step}
+            pxPerStep={Math.max(8, 11.2 * step) /* un petit pas reste lisible : 8 px minimum entre deux crans */}
             isMajor={(s) => (s * step) % 5 === 0}
             isMid={(s) => (s * step) % 2.5 === 0}
             majorLabel={(s) => fmtKg(s * step)}

@@ -13,7 +13,7 @@
 // export / import des données, compte (déconnexion gardée si des saisies
 // attendent la synchro, ADR 0012), à propos.
 import { useState, type ReactNode } from 'react';
-import { fmt1 } from './format';
+import { fmt1, fmtKg } from './format';
 import {
   Choice,
   Rule,
@@ -240,9 +240,21 @@ function SalleSection() {
             options={[
               { value: 1.25, label: '1,25 kg' },
               { value: 2.5, label: '2,5 kg' },
+              { value: 5, label: '5 kg' },
             ]}
           />
         </div>
+        {/* Pas libre : ta salle a des disques de 0,5 kg, des haltères de 2 en 2… */}
+        <Stepper
+          label="Pas libre"
+          meta="par 0,25 kg, de 0,25 à 10 kg"
+          value={settings.stepKg}
+          min={0.25}
+          max={10}
+          step={0.25}
+          format={(v) => `${fmtKg(v)} kg`}
+          onChange={(v) => setSettings({ stepKg: v })}
+        />
         <Switch
           label="Réduire les animations"
           meta="la règle et les feuilles bougent sans transition"
