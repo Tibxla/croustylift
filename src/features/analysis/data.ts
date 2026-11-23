@@ -91,51 +91,6 @@ export interface ExerciseAnalysis extends TrainedExercise {
   seanceCurves: SeanceCurve[];
 }
 
-// --- Exercices entraînés ------------------------------------------------------
-
-/**
- * Les exercices pour lesquels l'user a au moins une série loggée.
- *
- * On part de `performed_sets` (jointe au nom de l'exo) plutôt que de `exercises`
- * pour ne garder QUE les exos réellement travaillés (un exo du catalogue jamais
- * loggé n'a rien à analyser). On dédoublonne côté client : un même exercise_id
- * revient une fois par série, on n'en garde qu'un. Lecture PAGINÉE (cf.
- * lib/fetch-all) : au-delà du plafond de 1000 lignes, un exo dont aucune série
- * ne tombait dans la première page disparaissait de l'Analyse.
- */
-export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
-  type Row = { id: string; exercise_id: string; exercises: { name: string } | null };
-  const [rows, overrides] = await Promise.all([
-    fetchAllRows<Row>((after, limit) =>
-      afterId(
-        supabase
-          .from('performed_sets')
-          .select('id, exercise_id, exercises ( name )')
-          .order('id')
-          .limit(limit),
-        after,
-      ),
-    ),
-    // Nom personnalisé per-user (issue #50) : l'analyse affiche le même nom que
-    // partout ailleurs (catalogue, Capture, log brut).
-    loadExerciseOverrides(),
-  ]);
-
-  const byId = new Map<string, TrainedExercise>();
-  for (const row of rows) {
-    if (byId.has(row.exercise_id)) continue;
-    byId.set(row.exercise_id, {
-      exerciseId: row.exercise_id,
-      name: overriddenName(
-        row.exercises?.name ?? '(exercice inconnu)',
-        overrides.get(row.exercise_id),
-      ),
-    });
-  }
-
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-}
-
 // --- Exécutions passées d'un exo ----------------------------------------------
 
 /** Ce qu'il faut savoir d'une séance pour la libeller : son nom et sa routine. */
@@ -153,76 +108,81 @@ export interface LoadedExecutions {
 }
 
 /**
- * Les exécutions passées de l'user pour cet exo, dans la forme du domaine
- * (`ExerciseExecution[]`, une par jour, séries triées par order), chacune
- * portant sa SÉANCE (`seanceId`, via executions → seance_versions → seance_id :
- * les versions sont des retouches du même template) — le scope des courbes par
- * séance (issue #67). Porte aussi `createdAt`/`id` : sans eux le tie-break de
- * `compareCurvePoints` (deux exécutions le même jour) était inopérant côté
- * Analyse. Les noms de séances remontent à part (le domaine reste sans nom).
+ * Une ligne `performed_sets` jointe à son exécution, sa séance et son exo : la
+ * forme lue par l'Analyse, que la lecture porte sur un exo ou sur tous.
  */
-export async function loadExerciseExecutions(
-  exerciseId: string,
-): Promise<LoadedExecutions> {
-  type SetRow = {
-    id: string;
+export interface ExecutionSetRow {
+  id: string;
+  created_at: string;
+  weight_kg: number;
+  reps: number;
+  rir: number;
+  set_order: number;
+  side: string | null;
+  execution_id: string;
+  exercise_id: string;
+  exercises: { name: string } | null;
+  executions: {
+    performed_on: string;
     created_at: string;
-    weight_kg: number;
-    reps: number;
-    rir: number;
-    set_order: number;
-    side: string | null;
-    execution_id: string;
-    executions: {
-      performed_on: string;
-      created_at: string;
-      started_at: string | null;
-      seance_versions: {
-        seance_id: string;
-        seances: {
-          name: string;
-          routine_id: string;
-          routines: { name: string } | null;
-        } | null;
+    started_at: string | null;
+    seance_versions: {
+      seance_id: string;
+      seances: {
+        name: string;
+        routine_id: string;
+        routines: { name: string } | null;
       } | null;
     } | null;
-  };
-  // Lecture paginée (cf. lib/fetch-all), dans l'ordre de saisie (`created_at`,
-  // départagé par `id` pour un tri total) : un exo très pratiqué dépasse le
-  // plafond de 1000 lignes, et la courbe perdait alors des exécutions.
-  const rows = await fetchAllRows<SetRow>((after, limit) =>
-    afterId(
-      supabase
-        .from('performed_sets')
-        .select(
-          'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
-        )
-        .eq('exercise_id', exerciseId)
-        .order('id')
-        .limit(limit),
-      after,
-    ),
-  );
+  } | null;
+}
 
+const EXECUTION_SET_SELECT =
+  'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )';
+
+/** Les exécutions d'un exo, avec son nom de catalogue (`null` si l'exo a disparu). */
+export interface ExerciseExecutions extends LoadedExecutions {
+  name: string | null;
+}
+
+/**
+ * Répartit des séries lues PAR EXO, dans la forme du domaine : pour chaque exo,
+ * ses `ExerciseExecution[]` (une par exécution, séries dans l'ordre de saisie),
+ * chacune portant sa SÉANCE (`seanceId`, via executions → seance_versions →
+ * seance_id : les versions sont des retouches du même template), le scope des
+ * courbes par séance (issue #67). Porte aussi `createdAt`/`id` (départage de
+ * deux exécutions le même jour, `compareCurvePoints`) et `startedAt` (l'instant
+ * qui rattache l'exécution à son bloc, ADR 0001). Les noms de séances remontent
+ * à part (le domaine reste sans nom). Pure : les lignes peuvent arriver dans
+ * n'importe quel ordre (la pagination trie par id).
+ */
+export function groupExecutionRows(rows: ExecutionSetRow[]): Map<string, ExerciseExecutions> {
+  const byExercise = new Map<string, ExerciseExecutions>();
+  // Une exécution couvre plusieurs exos : la clé est (exo, exécution).
   const byExecution = new Map<string, ExerciseExecution>();
-  const seances = new Map<string, SeanceInfo>();
   for (const row of inCreationOrder(rows)) {
     const execution = row.executions;
-    if (!execution) continue; // garde-fou : exécution orpheline.
+    if (!execution) continue; // garde-fou : série orpheline d'exécution.
+    let exercise = byExercise.get(row.exercise_id);
+    if (!exercise) {
+      exercise = { name: row.exercises?.name ?? null, executions: [], seances: new Map() };
+      byExercise.set(row.exercise_id, exercise);
+    }
     const seanceId = execution.seance_versions?.seance_id;
-    if (seanceId && !seances.has(seanceId)) {
+    if (seanceId && !exercise.seances.has(seanceId)) {
       const seance = execution.seance_versions?.seances;
-      seances.set(seanceId, {
+      exercise.seances.set(seanceId, {
         name: seance?.name ?? '(séance inconnue)',
         routineId: seance?.routine_id ?? null,
         routineName: seance?.routines?.name ?? null,
       });
     }
-    let exec = byExecution.get(row.execution_id);
+    const key = `${row.exercise_id}:${row.execution_id}`;
+    let exec = byExecution.get(key);
     if (!exec) {
       exec = {
         date: execution.performed_on,
-        exerciseId,
+        exerciseId: row.exercise_id,
         sets: [],
         createdAt: execution.created_at,
         id: row.execution_id,
@@ -231,7 +191,8 @@ export async function loadExerciseExecutions(
       // Lancement horodaté (ADR 0011) : l'instant qui rattache l'exécution à son
       // bloc. `null` sur les exécutions d'avant la colonne -> repli `createdAt`.
       if (execution.started_at) exec.startedAt = execution.started_at;
-      byExecution.set(row.execution_id, exec);
+      byExecution.set(key, exec);
+      exercise.executions.push(exec);
     }
     exec.sets.push({
       weightKg: Number(row.weight_kg),
@@ -243,8 +204,31 @@ export async function loadExerciseExecutions(
       side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
     });
   }
+  return byExercise;
+}
 
-  return { executions: [...byExecution.values()], seances };
+/**
+ * Les exécutions passées de l'user pour UN exo (cf. `groupExecutionRows`), pour
+ * la comparaison de blocs d'une carte. Lecture paginée (cf. lib/fetch-all) : un
+ * exo très pratiqué dépasse le plafond de 1000 lignes, et la courbe perdait
+ * alors des exécutions.
+ */
+export async function loadExerciseExecutions(
+  exerciseId: string,
+): Promise<LoadedExecutions> {
+  const rows = await fetchAllRows<ExecutionSetRow>((after, limit) =>
+    afterId(
+      supabase
+        .from('performed_sets')
+        .select(EXECUTION_SET_SELECT)
+        .eq('exercise_id', exerciseId)
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
+  const grouped = groupExecutionRows(rows).get(exerciseId);
+  return { executions: grouped?.executions ?? [], seances: grouped?.seances ?? new Map() };
 }
 
 // --- Composition domaine ------------------------------------------------------
@@ -363,15 +347,28 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
   );
   if (seanceOfVersion.size === 0) return [];
 
-  const prescriptionsRes = await supabase
-    .from('prescriptions')
-    .select('seance_version_id, exercise_id, position')
-    .in('seance_version_id', [...seanceOfVersion.keys()]);
-  if (prescriptionsRes.error) throw prescriptionsRes.error;
+  // Paginé comme les versions : passé 1000 prescriptions sur les versions
+  // courantes, l'ordre du plan perdait des exos en silence.
+  const prescriptions = await fetchAllRows<{
+    id: string;
+    seance_version_id: string;
+    exercise_id: string;
+    position: number;
+  }>((after, limit) =>
+    afterId(
+      supabase
+        .from('prescriptions')
+        .select('id, seance_version_id, exercise_id, position')
+        .in('seance_version_id', [...seanceOfVersion.keys()])
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
 
   return planExerciseOrder(
     seances,
-    (prescriptionsRes.data ?? []).flatMap((p) => {
+    prescriptions.flatMap((p) => {
       const seanceId = seanceOfVersion.get(p.seance_version_id);
       return seanceId ? [{ seanceId, exerciseId: p.exercise_id, position: p.position }] : [];
     }),
@@ -381,24 +378,38 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
 /**
  * Charge tous les exos entraînés et calcule leur analyse en une passe, dans
  * l'ordre du plan de la routine courante puis par nom (décision du 2026-09-13).
- * Une requête pour la liste, puis une par exo (les requêtes par exo tournent en
- * parallèle). L'UI consomme directement le tableau d'`ExerciseAnalysis`.
+ *
+ * UNE lecture paginée de toutes les séries, regroupée par exo côté client
+ * (`groupExecutionRows`). À ne pas refaire : une requête par exo. Trente exos
+ * coûtaient une trentaine d'allers-retours en parallèle, après une première
+ * lecture de toutes les séries qui ne servait qu'à lister les exos.
+ *
+ * Un exo n'apparaît que s'il a au moins une série loggée (un exo du catalogue
+ * jamais travaillé n'a rien à analyser), sous son nom personnalisé per-user
+ * (issue #50), le même que partout ailleurs.
  */
 export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
-  const [trainedByName, planOrder] = await Promise.all([
-    loadTrainedExercises(),
+  const [rows, overrides, planOrder] = await Promise.all([
+    fetchAllRows<ExecutionSetRow>((after, limit) =>
+      afterId(
+        supabase.from('performed_sets').select(EXECUTION_SET_SELECT).order('id').limit(limit),
+        after,
+      ),
+    ),
+    loadExerciseOverrides(),
     loadPlanExerciseOrder(),
   ]);
-  const trained = orderByPlan(trainedByName, planOrder);
 
-  const analyses = await Promise.all(
-    trained.map(async (exercise) => {
-      const { executions, seances } = await loadExerciseExecutions(exercise.exerciseId);
-      return analyzeExecutions(exercise, executions, seances);
-    }),
-  );
+  const grouped = groupExecutionRows(rows);
+  const trainedByName: TrainedExercise[] = [...grouped].map(([exerciseId, exercise]) => ({
+    exerciseId,
+    name: overriddenName(exercise.name ?? '(exercice inconnu)', overrides.get(exerciseId)),
+  }));
 
-  return analyses;
+  return orderByPlan(trainedByName, planOrder).map((exercise) => {
+    const { executions, seances } = grouped.get(exercise.exerciseId)!;
+    return analyzeExecutions(exercise, executions, seances);
+  });
 }
 
 // --- Blocs (config de template inchangée, cf. ADR 0001) -----------------------

@@ -5,7 +5,13 @@
 // La requête Supabase reste dans la couche d'accès ; seul le groupement/tri est
 // testé ici, les courbes elles-mêmes étant couvertes par le domaine.
 import { describe, expect, it } from 'vitest';
-import { analyzeExecutions, type SeanceInfo, type TrainedExercise } from './data';
+import {
+  analyzeExecutions,
+  groupExecutionRows,
+  type ExecutionSetRow,
+  type SeanceInfo,
+  type TrainedExercise,
+} from './data';
 import type { ExerciseExecution } from '../../domain/types';
 
 const exercise: TrainedExercise = { exerciseId: 'bench', name: 'Développé couché' };
@@ -193,5 +199,115 @@ describe('analyzeExecutions — libellé « séance · routine » (ADR 0016)', (
       across,
     );
     expect(seanceCurves[0]?.label).toBe('Push');
+  });
+});
+
+// --- Lecture groupée de l'Analyse (une lecture pour toutes les cartes) ---------
+//
+// `loadAnalyses` lisait une requête par exo (environ 40 pour 30 exos). Il lit
+// désormais toutes les séries en une lecture paginée, que `groupExecutionRows`
+// répartit par exo. Les lignes arrivent triées par id (pagination), donc dans le
+// désordre : le regroupement ne doit pas en dépendre.
+
+describe('groupExecutionRows — toutes les séries, regroupées par exo', () => {
+  const setRow = (over: Partial<ExecutionSetRow> & { id: string }): ExecutionSetRow => ({
+    created_at: '2026-07-01T10:00:00+00:00',
+    weight_kg: 80,
+    reps: 5,
+    rir: 1,
+    set_order: 1,
+    side: null,
+    execution_id: 'x1',
+    exercise_id: 'bench',
+    exercises: { name: 'Développé couché' },
+    executions: {
+      performed_on: '2026-07-01',
+      created_at: '2026-07-01T09:59:00+00:00',
+      started_at: '2026-07-01T09:30:00+00:00',
+      seance_versions: {
+        seance_id: 's-upper',
+        seances: { name: 'Upper A', routine_id: 'r-ul', routines: { name: 'Upper/Lower' } },
+      },
+    },
+    ...over,
+  });
+
+  const rows: ExecutionSetRow[] = [
+    // Désordre volontaire : la série 2 du bench arrive avant la série 1.
+    setRow({ id: 'a', set_order: 2, weight_kg: 77.5, created_at: '2026-07-01T10:05:00+00:00' }),
+    setRow({ id: 'b', exercise_id: 'squat', exercises: { name: 'Squat' }, weight_kg: 120 }),
+    setRow({ id: 'c', set_order: 1, created_at: '2026-07-01T10:00:00+00:00' }),
+  ];
+
+  it('rend une entrée par exo, avec son nom et ses exécutions', () => {
+    const grouped = groupExecutionRows(rows);
+    expect([...grouped.keys()].sort()).toEqual(['bench', 'squat']);
+    expect(grouped.get('bench')!.name).toBe('Développé couché');
+    expect(grouped.get('squat')!.executions).toHaveLength(1);
+    expect(grouped.get('squat')!.executions[0]!.sets[0]!.weightKg).toBe(120);
+  });
+
+  it('les deux exos d’une même séance gardent chacun leur exécution (même id d’exécution)', () => {
+    const grouped = groupExecutionRows(rows);
+    const bench = grouped.get('bench')!.executions[0]!;
+    const squat = grouped.get('squat')!.executions[0]!;
+    expect(bench.id).toBe('x1');
+    expect(squat.id).toBe('x1');
+    expect(bench.exerciseId).toBe('bench');
+    expect(squat.exerciseId).toBe('squat');
+    expect(bench.sets).toHaveLength(2);
+  });
+
+  it('remet les séries dans l’ordre de saisie, quel que soit l’ordre d’arrivée', () => {
+    const bench = groupExecutionRows(rows).get('bench')!.executions[0]!;
+    expect(bench.sets.map((s) => s.order)).toEqual([1, 2]);
+  });
+
+  it('porte date, création, lancement et séance de l’exécution', () => {
+    const { executions, seances } = groupExecutionRows(rows).get('bench')!;
+    expect(executions[0]).toMatchObject({
+      date: '2026-07-01',
+      createdAt: '2026-07-01T09:59:00+00:00',
+      startedAt: '2026-07-01T09:30:00+00:00',
+      seanceId: 's-upper',
+    });
+    expect(seances.get('s-upper')).toEqual({
+      name: 'Upper A',
+      routineId: 'r-ul',
+      routineName: 'Upper/Lower',
+    });
+  });
+
+  it('sans lancement horodaté ni séance : champs absents, rien d’inventé', () => {
+    const grouped = groupExecutionRows([
+      setRow({
+        id: 'z',
+        executions: {
+          performed_on: '2026-07-01',
+          created_at: '2026-07-01T09:59:00+00:00',
+          started_at: null,
+          seance_versions: null,
+        },
+      }),
+    ]);
+    const execution = grouped.get('bench')!.executions[0]!;
+    expect(execution.startedAt).toBeUndefined();
+    expect(execution.seanceId).toBeUndefined();
+    expect(grouped.get('bench')!.seances.size).toBe(0);
+  });
+
+  it('une série orpheline d’exécution est écartée', () => {
+    expect(groupExecutionRows([setRow({ id: 'o', executions: null })]).size).toBe(0);
+  });
+
+  it('même résultat que la lecture par exo pour l’analyse d’une carte', () => {
+    const { executions, seances } = groupExecutionRows(rows).get('bench')!;
+    const analysis = analyzeExecutions(
+      { exerciseId: 'bench', name: 'Développé couché' },
+      executions,
+      seances,
+    );
+    expect(analysis.seanceCurves).toHaveLength(1);
+    expect(analysis.seanceCurves[0]!.seanceName).toBe('Upper A');
   });
 });
