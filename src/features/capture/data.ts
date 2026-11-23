@@ -1056,6 +1056,38 @@ export async function loadTodayExecution(
   }
 }
 
+/** Budget d'attente de l'exécution du jour à l'ouverture d'une séance (ADR 0012). */
+export const TODAY_READ_BUDGET_MS = 3000;
+
+/**
+ * `loadTodayExecution`, BORNÉE : au-delà de `budgetMs` la séance s'ouvre sans
+ * attendre la base. C'est la seule lecture sans copie locale du chemin
+ * d'ouverture ; hors ligne avec un jeton expiré elle tenait l'écran une
+ * vingtaine de secondes (le temps que supabase-js renonce à rafraîchir le
+ * jeton), et sans fin sur un wifi zombie.
+ *
+ * Un délai dépassé N'EST PAS une absence : `today` vaut alors `null` faute de
+ * réponse, et `late` porte la lecture toujours en vol, pour que l'appelant
+ * puisse appliquer sa réponse quand elle arrive. `late` est `null` quand la
+ * lecture a répondu dans le budget (`today` est alors la vraie réponse).
+ */
+export async function loadTodayExecutionWithin(
+  seanceId: string,
+  date: string,
+  localExecutionId: string | null,
+  budgetMs: number = TODAY_READ_BUDGET_MS,
+): Promise<{ today: TodayExecution | null; late: Promise<TodayExecution | null> | null }> {
+  const read = loadTodayExecution(seanceId, date, localExecutionId);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Symbol('délai dépassé');
+  const budget = new Promise<typeof timedOut>((resolve) => {
+    timer = setTimeout(() => resolve(timedOut), budgetMs);
+  });
+  const first = await Promise.race([read, budget]);
+  clearTimeout(timer);
+  return first === timedOut ? { today: null, late: read } : { today: first, late: null };
+}
+
 /**
  * Le réalisé relu en base, moins les séries que la file d'écritures supprime
  * (`deleteSet` en attente). Un exo qui n'a plus aucune série sort du réalisé.

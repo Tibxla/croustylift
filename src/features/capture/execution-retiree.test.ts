@@ -62,7 +62,7 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from } };
 });
 
-import { isExecutionRetiredInQueue, loadTodayExecution } from './data';
+import { isExecutionRetiredInQueue, loadTodayExecution, loadTodayExecutionWithin } from './data';
 import { clearQueue, enqueue, type OutboxOp } from './outbox';
 import { saveLocalAccount } from '../../lib/local-account';
 
@@ -169,5 +169,55 @@ describe('loadTodayExecution et les écritures en attente', () => {
     enqueue(cloture('exec-hier'));
     const today = await loadTodayExecution('seance-1', '2026-11-23');
     expect(today?.executionId).toBe('exec-1');
+  });
+});
+
+// Lecture BORNÉE de l'exécution du jour (audit sync, constat 5) : hors ligne avec
+// un jeton expiré, ou sur un wifi zombie, elle tenait l'ouverture de la séance.
+describe('loadTodayExecutionWithin', () => {
+  it('réponse dans le budget : c’est la vraie réponse, rien de tardif', async () => {
+    server.openExecutionId = 'exec-1';
+
+    const { today, late } = await loadTodayExecutionWithin('seance-1', '2026-11-23', null, 50);
+
+    expect(today?.executionId).toBe('exec-1');
+    expect(late).toBeNull();
+  });
+
+  it('absence confirmée dans le budget : null, et rien de tardif', async () => {
+    server.openExecutionId = null;
+
+    expect(await loadTodayExecutionWithin('seance-1', '2026-11-23', null, 50)).toEqual({
+      today: null,
+      late: null,
+    });
+  });
+
+  it('délai dépassé : la séance n’attend pas, mais ce n’est pas une absence, la réponse tardive est rendue', async () => {
+    server.openExecutionId = 'exec-1';
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { supabase } = await import('../../lib/supabase');
+    const from = supabase.from.bind(supabase);
+    // La première requête (l'exécution) pend jusqu'à l'ouverture de la vanne.
+    const spy = vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
+      const query = from(table as never) as unknown as { maybeSingle?: () => Promise<unknown> };
+      if (table === 'executions' && query.maybeSingle) {
+        const answer = query.maybeSingle.bind(query);
+        query.maybeSingle = async () => {
+          await gate;
+          return answer();
+        };
+      }
+      return query;
+    }) as never);
+
+    const { today, late } = await loadTodayExecutionWithin('seance-1', '2026-11-23', null, 20);
+    expect(today).toBeNull();
+    expect(late).not.toBeNull();
+
+    release();
+    expect((await late)?.executionId).toBe('exec-1');
+    spy.mockRestore();
   });
 });

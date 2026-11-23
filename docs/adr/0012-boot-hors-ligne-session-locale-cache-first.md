@@ -26,3 +26,9 @@ Capture seule (choisir sa séance, saisir avec Références, clôturer). Le jour
 - **Purge.** Le forçage reste la seule porte par laquelle des écritures non synchronisées disparaissent. Les copies de lecture et l'état de capture, eux, partent aussi quand une session validée arrive pour un autre compte et que le précédent n'a plus aucune écriture retenue (ADR 0019).
 - **Saisies refusées.** La Déconnexion est refusée tant que l'appareil retient des écritures, en file ou en quarantaine (ADR 0018).
 - **Copie de lecture.** Plusieurs lectures d'une même clé peuvent être en vol : la copie n'est écrite que sous gardes d'ordre, et l'historique d'un exo est relu après tout flush qui acquitte ses séries (ADR 0020).
+
+## Amendements du 2026-11-23 (Lot 3)
+
+- **Ouverture d'une séance bornée.** La seule lecture sans copie du chemin d'ouverture, l'exécution du jour, est bornée à 3 s (`loadTodayExecutionWithin`) : hors ligne avec un jeton expiré elle tenait l'écran une vingtaine de secondes, et sans fin sur un wifi zombie. Un délai dépassé n'est pas une absence : sans état local, la réponse tardive est appliquée si rien n'a encore été saisi sous l'id provisoire. Toute requête du client a par ailleurs un délai maximal de 20 s (`lib/fetch-timeout`).
+- **Copies périmées par une écriture locale.** Une écriture du plan faite depuis l'app marque ses copies périmées (`invalidateReads`) : la lecture suivante passe par le réseau, borné à 3 s, la copie restant le secours hors ligne.
+- **Stockage plein.** Quand le stockage refuse une écriture, le cache de lecture cède la place à la file et à la séance en cours ; si cela ne suffit pas, la file tient en mémoire et la bannière le dit (ADR 0018).

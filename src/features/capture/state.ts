@@ -55,6 +55,15 @@ export interface CaptureState {
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   date: string;
   /**
+   * La version de séance sous laquelle l'exécution est NÉE. Une exécution n'en
+   * change jamais (ADR 0021), alors que la séance peut être retouchée en plein
+   * entraînement : la Capture remontée doit recharger le template de CETTE
+   * version, pas celui de la version courante, sinon l'écran montre un plan que
+   * l'exécution ne suit pas. Absent d'un état persisté avant ce champ (repli :
+   * `adoptedVersionId`).
+   */
+  seanceVersionId?: string;
+  /**
    * Horodatage du LANCEMENT de la session de capture (epoch ms, `Date.now()`).
    * Sert à chronométrer la durée auto : `durationMin = round((Date.now() - startedAt) / 60000)`
    * à la clôture (cf. SessionEnd). Posé une fois au démarrage, persisté en
@@ -264,6 +273,66 @@ export function shouldReanchorLaunch(
 }
 
 /**
+ * La version de séance dont la Capture doit charger le template : celle de
+ * l'exécution ADOPTÉE, pas forcément la version courante (ADR 0021 : une
+ * exécution garde sa version de naissance, même si la séance est retouchée en
+ * plein entraînement). L'identité et la version se résolvent ensemble, dans
+ * l'ordre de priorité de la fusion (`mergeProgress`) :
+ *   1. un état local existe : c'est SON exécution qui est adoptée. Sa version
+ *      est celle qu'il porte ; à défaut (état persisté avant ce champ), celle de
+ *      son `upsertExecution` encore en file ; à défaut, celle de la base si elle
+ *      a rendu la MÊME exécution ;
+ *   2. pas d'état local : l'exécution ouverte que la base a rendue, donc sa version ;
+ *   3. rien de tout cela (séance neuve, ou version inconnue) : la version courante.
+ * `pendingOps` : la file d'écritures (seuls `type`, `id` et `seanceVersionId` lus).
+ */
+export function adoptedVersionId(input: {
+  restored: CaptureState | null;
+  pendingOps: readonly { type: string; id: string; seanceVersionId?: string }[];
+  today: { executionId: string; seanceVersionId: string | null } | null;
+  currentVersionId: string;
+}): string {
+  const { restored, pendingOps, today, currentVersionId } = input;
+  if (restored) {
+    if (restored.seanceVersionId) return restored.seanceVersionId;
+    const queued = pendingOps.find(
+      (op) => op.type === 'upsertExecution' && op.id === restored.executionId,
+    );
+    if (queued?.seanceVersionId) return queued.seanceVersionId;
+    if (today && today.executionId === restored.executionId && today.seanceVersionId) {
+      return today.seanceVersionId;
+    }
+    return currentVersionId;
+  }
+  return today?.seanceVersionId ?? currentVersionId;
+}
+
+/**
+ * Les versions de séance que portent les états de capture persistés (séances en
+ * cours sur l'appareil) : leurs templates ne doivent pas être évincés du cache
+ * de lecture, même s'ils ne sont plus ceux de la version courante.
+ */
+export function persistedVersionIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  const ids = new Set<string>();
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<CaptureState> | null;
+        if (typeof parsed?.seanceVersionId === 'string') ids.add(parsed.seanceVersionId);
+      } catch {
+        // État illisible : rien à en tirer.
+      }
+    }
+  } catch {
+    /* no-op */
+  }
+  return [...ids];
+}
+
+/**
  * Résout la séance de capture à reprendre au montage, gérant la FRONTIÈRE MINUIT
  * (bug F10) : une séance ENTAMÉE la veille et NON CLÔTURÉE doit pouvoir être
  * reprise après minuit, sinon elle « disparaît » de l'écran (la clé de cache
@@ -429,6 +498,8 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   return {
     ...a,
     executionId: b.executionId,
+    // La version suit l'exécution : celle de l'état local, comme son id.
+    seanceVersionId: b.seanceVersionId ?? a.seanceVersionId,
     startedAt: b.startedAt,
     progress,
     datedNotes,
@@ -641,6 +712,9 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
       // doivent garder le même id à la restauration. Cache pré-executionId (ancien
       // format) : on en forge un neuf pour ne pas casser la session restaurée.
       executionId: typeof parsed.executionId === 'string' ? parsed.executionId : newId(),
+      ...(typeof parsed.seanceVersionId === 'string'
+        ? { seanceVersionId: parsed.seanceVersionId }
+        : {}),
       date,
       // CONSERVE le startedAt persisté (la durée survit au background). Si une
       // session pré-startedAt traînait en cache, on retombe sur « maintenant ».

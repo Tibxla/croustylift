@@ -26,12 +26,13 @@ import {
   loadLastSeanceExecution,
   loadPreviousDatedNotes,
   loadSeanceForCapture,
-  loadTodayExecution,
+  loadTodayExecutionWithin,
   pruneCaptureCopies,
   type LoadedSeance,
   type SeanceChoice,
   type SeanceHistoryContext,
   type Session,
+  type TodayExecution,
 } from './data';
 import {
   addExercise,
@@ -43,6 +44,7 @@ import {
   exerciseNoteOutboxOp,
 } from '../notes/data';
 import {
+  adoptedVersionId,
   capturePersistFailing,
   captureReducer,
   clearPersisted,
@@ -57,6 +59,7 @@ import {
   nextSetOrder,
   pendingSide,
   persist,
+  persistedVersionIds,
   previousDayIso,
   resolveCaptureDate,
   shouldReanchorLaunch,
@@ -165,32 +168,86 @@ export function CaptureScreen() {
   // 1ᵉʳ render. Une seule ref : séries, notes et id décrivent la même exécution.
   const initRef = useRef<CaptureInit | null>(null);
 
-  // Charge une séance résolue (sa version courante) vers la phase « ready » :
-  // template -> références par exo -> réhydratation du réalisé du jour. Le drapeau
-  // `active` évite de poser l'état si le composant s'est démonté entre-temps
-  // (changement d'onglet pendant le chargement). Partagé entre la séance unique
-  // chargée direct et la séance choisie dans la routine courante.
+  // Numéro du chargement en cours : incrémenté à chaque ouverture demandée
+  // (montage, choix d'une séance, retour au lancement). Une réponse tardive ne
+  // s'applique qu'au chargement qui l'a demandée.
+  const loadGenRef = useRef(0);
+
+  // Charge une séance résolue vers la phase « ready » : identité et version de
+  // l'exécution adoptée -> template de CETTE version -> références par exo ->
+  // réhydratation du réalisé du jour. Le drapeau `active` évite de poser l'état si
+  // le composant s'est démonté entre-temps (changement d'onglet pendant le
+  // chargement). Partagé entre la reprise directe et la séance choisie.
+  //
+  // CHEMIN D'OUVERTURE ET RÉSEAU (ADR 0012). Tout se lit sur les copies locales,
+  // sauf UNE lecture : l'exécution du jour, qui n'a pas de copie (une copie
+  // d'avant la Clôture ressusciterait une séance rangée). Elle est attendue en
+  // premier, parce qu'elle dit quelle exécution et quelle version adopter, mais
+  // BORNÉE à 3 s (`loadTodayExecutionWithin`) : au-delà la séance s'ouvre sur
+  // l'état local. Le repère « tu notais » est borné de même dans sa couche.
+  //
+  // `adopt` : réponse TARDIVE de cette lecture, appliquée après coup (cf. plus
+  // bas). Elle remplace alors la lecture, et l'état local provisoire est ignoré.
   const loadSeance = useCallback(
-    async ({ seance, seanceVersionId }: LoadedSeance, active: () => boolean) => {
-      const base = await loadSeanceForCapture(seance, seanceVersionId);
+    async (
+      loaded: LoadedSeance,
+      active: () => boolean,
+      adopt?: { today: TodayExecution; date: string },
+    ) => {
+      const { seance, seanceVersionId: currentVersionId } = loaded;
+      // `resolveCaptureDate` et la persistance ne lisent que l'id de la séance.
+      const shell: Session = { id: seance.id, name: seance.name, exercises: [] };
 
       // Date ADOPTÉE résolue AVANT d'interroger Supabase (frontière minuit, bug
       // H1/F10) : on réhydrate le jour réellement repris, pas un `todayIso()` figé
-      // qui basculerait après minuit. `resolveCaptureDate` ne dépend que de
-      // l'id de séance (clé localStorage) — la séance est déjà connue ici.
-      const { date, restored } = resolveCaptureDate(base);
+      // qui basculerait après minuit.
+      const { date, restored } = adopt
+        ? { date: adopt.date, restored: null }
+        : resolveCaptureDate(shell);
 
       // Le scope de la Référence (cf. GLOSSARY.md) : TOUTES les versions de la
-      // séance — l'historique de l'exo traverse les retouches du template.
-      const versionIds = await listSeanceVersionIds(seance.id);
+      // séance, l'historique de l'exo traverse les retouches du template. Et les
+      // notes datées de la DERNIÈRE exécution passée (repère « tu notais », une
+      // requête pour tous les exos, bornée par la date adoptée). Lancées tout de
+      // suite, attendues plus bas.
+      const versionIdsRead = listSeanceVersionIds(seance.id);
+      void versionIdsRead.catch(() => {});
+      const notesRead = loadLastSeanceExecution(seance.id, date).then((last) =>
+        loadPreviousDatedNotes(seance.id, last),
+      );
+
+      // L'exécution du jour ADOPTÉ. Celle que l'appareil tient déjà se relit par
+      // son id ; sinon c'est l'exécution ouverte du jour de la SÉANCE, quelle que
+      // soit sa version (plan retouché entre-temps, autre appareil).
+      const { today, late } = adopt
+        ? { today: adopt.today, late: null }
+        : await loadTodayExecutionWithin(seance.id, date, restored?.executionId ?? null);
+
+      // La VERSION suit l'exécution adoptée (ADR 0021) : une séance retouchée en
+      // plein entraînement n'emmène pas l'exécution entamée sous son nouveau
+      // plan, donc l'écran recharge le template sous lequel elle est née.
+      const versionId = adoptedVersionId({
+        restored,
+        pendingOps: readQueue(),
+        today,
+        currentVersionId,
+      });
+      let seanceVersionId = versionId;
+      let base: Session;
+      try {
+        base = await loadSeanceForCapture(seance, versionId);
+      } catch (err) {
+        // Template d'une version antérieure illisible (ni copie ni réseau) : on
+        // retombe sur celui de la version courante plutôt que de fermer la séance.
+        if (versionId === currentVersionId) throw err;
+        seanceVersionId = currentVersionId;
+        base = await loadSeanceForCapture(seance, currentVersionId);
+      }
 
       // Par exo : dérivées d'historique (Référence scopée séance, repli de
-      // préremplissage, records all-time — UNE lecture par exo) et note
-      // d'instructions (issue #26). En parallèle : l'exécution du jour ADOPTÉ
-      // (réhydratation au montage) et les notes datées de la DERNIÈRE exécution
-      // passée de la séance (repère « tu notais », une requête pour tous les exos,
-      // bornée par la date adoptée).
-      const [withRows, today, previousDatedNotes] = await Promise.all([
+      // préremplissage, records all-time : UNE lecture par exo) et note
+      // d'instructions (issue #26). Tout sur copies locales.
+      const [withRows, versionIds, previousDatedNotes] = await Promise.all([
         Promise.all(
           base.exercises.map(async (ex) => {
             const [rows, perExerciseNote] = await Promise.all([
@@ -200,23 +257,16 @@ export function CaptureScreen() {
             return { ...ex, rows, perExerciseNote };
           }),
         ),
-        // L'exécution déjà tenue par l'appareil se relit par son id ; sinon c'est
-        // l'exécution ouverte du jour de la SÉANCE, quelle que soit sa version
-        // (plan retouché entre-temps, autre appareil).
-        loadTodayExecution(seance.id, date, restored?.executionId ?? null),
-        loadLastSeanceExecution(seance.id, date).then((last) =>
-          loadPreviousDatedNotes(seance.id, last),
-        ),
+        versionIdsRead,
+        notesRead,
       ]);
 
       if (!active()) return;
 
       // L'exécution du jour ADOPTÉE, écartée du repère « dernière fois » (ADR
-      // 0014). Elle n'est connue qu'ICI, après les lectures : d'où la dérivation
-      // en aval plutôt qu'un chargement séquentiel — mettre une lecture réseau
-      // sur le chemin d'ouverture d'une séance irait contre l'ADR 0012. Ordre de
-      // priorité identique à celui du reducer : le cache local (`restored`) prime
-      // sur la base (cf. mergeProgress), qui prime sur « aucune exécution ».
+      // 0014). Ordre de priorité identique à celui du reducer : le cache local
+      // (`restored`) prime sur la base (cf. mergeProgress), qui prime sur
+      // « aucune exécution ».
       const currentExecutionId = restored?.executionId ?? today?.executionId ?? null;
 
       const session: Session = {
@@ -237,7 +287,7 @@ export function CaptureScreen() {
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
       // réalisé/notes vides. Sinon on ADOPTE l'id réel de l'exécution du jour.
-      initRef.current = {
+      const init: CaptureInit = {
         date,
         executionId: today?.executionId ?? newId(),
         executionInBase: today !== null,
@@ -249,6 +299,7 @@ export function CaptureScreen() {
         datedNotes: today?.datedNotes ?? {},
         restored,
       };
+      initRef.current = init;
       setLoad({
         phase: 'ready',
         session,
@@ -256,11 +307,45 @@ export function CaptureScreen() {
         historyCtx: {
           seanceVersionIds: versionIds,
           previousDatedNotes,
-          // L'id ADOPTÉ par le reducer : `initRef` pose `newId()` quand rien
+          // L'id ADOPTÉ par le reducer : `init` pose `newId()` quand rien
           // n'existe, et c'est bien lui que porteront les séries du jour.
-          currentExecutionId: currentExecutionId ?? initRef.current.executionId,
+          currentExecutionId: currentExecutionId ?? init.executionId,
         },
       });
+
+      // DÉLAI DÉPASSÉ, sans état local : la séance vient de s'ouvrir sous un id
+      // PROVISOIRE, alors que la base tient peut-être une exécution ouverte
+      // (séance entamée sur un autre appareil). Un délai n'est pas une absence :
+      // quand la réponse arrive, si elle rend une exécution et que RIEN n'a encore
+      // été saisi sous l'id provisoire, on l'adopte en rechargeant la séance avec
+      // elle (la lecture n'est pas relancée). Si une saisie est déjà partie sous
+      // l'id provisoire, il est trop tard : la séance garde ses deux exécutions,
+      // comme hors ligne. Avec un état local, rien à rattraper ici : son id prime
+      // de toute façon, et le remontage suivant relira la base.
+      if (late && restored === null) {
+        const gen = loadGenRef.current;
+        void late.then((lateToday) => {
+          if (!lateToday || !active() || loadGenRef.current !== gen) return;
+          const provisional = loadPersisted(shell, date);
+          if (provisional && provisional.executionId !== init.executionId) return;
+          const queue = readQueue();
+          const started = provisional
+            ? isExecutionStarted(provisional, null, queue)
+            : queue.some((op) => op.type === 'upsertExecution' && op.id === init.executionId);
+          if (started) return;
+          // L'état provisoire primerait à la fusion : il est retiré, et l'écran
+          // repasse par le chargement (aucune saisie possible pendant l'adoption).
+          clearPersisted(shell, date);
+          setLoad({ phase: 'loading' });
+          loadSeance(loaded, active, { today: lateToday, date }).catch((err: unknown) => {
+            if (!active() || loadGenRef.current !== gen) return;
+            setLoad({
+              phase: 'error',
+              message: err instanceof Error ? err.message : String(err),
+            });
+          });
+        });
+      }
     },
     [],
   );
@@ -274,6 +359,7 @@ export function CaptureScreen() {
   useEffect(() => {
     let alive = true;
     const active = () => alive;
+    loadGenRef.current += 1;
     setLoad({ phase: 'loading' });
 
     // Flush de l'outbox dès l'ARRIVÉE sur l'écran, quelle que soit la phase
@@ -287,7 +373,8 @@ export function CaptureScreen() {
     // Ménage des copies de lecture qui ne seront plus lues (une fois par lancement).
     if (!copiesPruned) {
       copiesPruned = true;
-      pruneCaptureCopies();
+      // Les séances en cours gardent le template de leur version de naissance.
+      pruneCaptureCopies(persistedVersionIds());
     }
 
     void (async () => {
@@ -334,6 +421,7 @@ export function CaptureScreen() {
     (seance: SeanceChoice) => {
       const alive = true;
       const active = () => alive;
+      loadGenRef.current += 1;
       setLoad({ phase: 'loading' });
       void (async () => {
         try {
@@ -600,8 +688,11 @@ function CaptureBoard({
       // neuve), ADR 0011. Le cache (restored) le surcharge à la fusion ci-dessous.
       startedAt,
     );
-    if (!restored) return fromSupabase;
-    return mergeProgress(fromSupabase, restored);
+    // L'exécution porte la version de séance adoptée au chargement ; un état
+    // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
+    const versioned = { ...fromSupabase, seanceVersionId };
+    if (!restored) return versioned;
+    return mergeProgress(versioned, restored);
   });
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`

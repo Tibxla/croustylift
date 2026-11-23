@@ -12,7 +12,9 @@ import {
   isResumable,
   LAUNCH_EXPIRY_MS,
   shouldReanchorLaunch,
+  adoptedVersionId,
   capturePersistFailing,
+  persistedVersionIds,
   clearCaptureState,
   clearOwnCaptureState,
   hydratedState,
@@ -1235,5 +1237,108 @@ describe('persist, stockage plein', () => {
     expect(capturePersistFailing()).toBe(false);
     expect(localStorage.getItem(COPY)).toBeNull();
     expect(loadPersisted(upperA, '2026-11-23')?.executionId).toBe(state.executionId);
+  });
+});
+
+// Séance retouchée en plein entraînement : l'exécution garde sa version de
+// naissance (ADR 0021), la Capture doit recharger le template de CETTE version.
+describe('version de séance de l’exécution adoptée', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const local = (extra: Partial<CaptureState> = {}): CaptureState => ({
+    ...initialState(upperA, '2026-11-23'),
+    executionId: 'exec-1',
+    ...extra,
+  });
+
+  it('la version survit à la sauvegarde, à la restauration et à la fusion avec la base', () => {
+    persist(local({ seanceVersionId: 'v1' }));
+    const restored = loadPersisted(upperA, '2026-11-23');
+    expect(restored?.seanceVersionId).toBe('v1');
+
+    // La base hydrate sous la version courante que l'écran vient de charger.
+    const fromBase = { ...hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1'), seanceVersionId: 'v2' };
+    expect(mergeProgress(fromBase, restored!).seanceVersionId).toBe('v1');
+  });
+
+  it('fusion avec un état local d’avant ce champ : la version de la base est gardée', () => {
+    const fromBase = { ...hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1'), seanceVersionId: 'v1' };
+    expect(mergeProgress(fromBase, local()).seanceVersionId).toBe('v1');
+  });
+
+  it('état local qui porte sa version : c’est elle, même si le plan est passé en v2', () => {
+    expect(
+      adoptedVersionId({
+        restored: local({ seanceVersionId: 'v1' }),
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('état local d’avant ce champ : la version de sa création encore en file', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [
+          { type: 'upsertExecution', id: 'autre', seanceVersionId: 'v9' },
+          { type: 'upsertExecution', id: 'exec-1', seanceVersionId: 'v1' },
+        ],
+        today: null,
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('état local d’avant ce champ, création déjà partie : la version lue en base pour la même exécution', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('la version d’une AUTRE exécution rendue par la base ne s’applique pas à l’état local', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [],
+        today: { executionId: 'exec-autre', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v2');
+  });
+
+  it('sans état local : la version de l’exécution ouverte trouvée en base', () => {
+    expect(
+      adoptedVersionId({
+        restored: null,
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('séance neuve : la version courante', () => {
+    expect(
+      adoptedVersionId({ restored: null, pendingOps: [], today: null, currentVersionId: 'v2' }),
+    ).toBe('v2');
+  });
+
+  it('persistedVersionIds liste les versions des séances en cours sur l’appareil', () => {
+    persist(local({ seanceVersionId: 'v1' }));
+    persist({ ...local({ seanceVersionId: 'v7' }), sessionId: 'autre-seance' });
+    persist({ ...local(), sessionId: 'sans-version' });
+
+    expect(persistedVersionIds().sort()).toEqual(['v1', 'v7']);
   });
 });

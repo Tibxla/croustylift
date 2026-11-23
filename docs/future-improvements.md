@@ -63,15 +63,12 @@ qui a été fait et des décisions actées.
 
 - **Séance retouchée en plein entraînement** : une exécution garde la version de séance
   sous laquelle elle est née (`upsertExecution` est une insertion seule, sa réaffirmation
-  ne réécrit ni version, ni date, ni lancement). Si la séance est retouchée pendant
-  l'entraînement, la Capture remontée affiche le template de la nouvelle version pour la
-  fin de la séance entamée, alors que la base la range sous l'ancienne : écart d'affichage
-  accepté, l'Analyse reste juste. L'appareil qui tient la séance relit son exécution par
-  son id (`loadTodayExecution`, id de l'état local), quelle que soit sa version. Deux
-  conséquences assumées : sans état local (autre appareil, stockage vidé), l'exécution
-  entamée n'est pas retrouvée sous la nouvelle version (recherche par version) et la
-  suite de la séance ouvre une seconde exécution ; un lancement réancré hors ligne sur
-  une exécution déjà en base n'atteint plus `started_at`.
+  ne réécrit ni version, ni date, ni lancement). La Capture remontée recharge le template
+  de cette version-là (`adoptedVersionId`), et l'appareil qui tient la séance relit son
+  exécution par son id. Sans état local (autre appareil, stockage vidé), l'exécution
+  ouverte du jour se retrouve par séance, toutes versions confondues. Reste, sans effet
+  démontré : un lancement réancré hors ligne sur une exécution déjà en base n'atteint plus
+  `started_at` (le réancrage ne vise qu'une exécution pas encore née, ADR 0011).
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
   n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
