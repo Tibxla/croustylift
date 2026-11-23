@@ -380,7 +380,7 @@ function Verdict({
   if (winner === 'tie') {
     return (
       <p className="text-xs text-ink-muted">
-        Progression équivalente des deux côtés.
+        Pentes équivalentes des deux côtés.
       </p>
     );
   }

@@ -507,9 +507,10 @@ async function loadFirstExecution(): Promise<FirstExecutionRow | null> {
   };
   const { data, error } = await supabase
     .from('executions')
-    .select(
-      'performed_on, created_at, started_at, seance_versions!inner ( seances!inner ( routine_id ) )',
-    )
+    .select('performed_on, created_at, started_at, seance_versions ( seances ( routine_id ) )')
+    // Rattachée à une séance : une exécution dont la séance a été supprimée
+    // (`seance_version_id` remis à null) n'a plus de routine à ouvrir.
+    .not('seance_version_id', 'is', null)
     .order('performed_on')
     .order('created_at')
     .limit(1);
