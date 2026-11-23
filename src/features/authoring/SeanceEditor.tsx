@@ -285,7 +285,12 @@ export function SeanceEditorView({
   // navigation qui le ferait disparaître passe par la confirmation ci-dessous.
   useEffect(() => {
     if (!dirty) return;
-    setLeaveGuard((proceed) => setPendingLeave(() => proceed));
+    setLeaveGuard((proceed) => {
+      // La confirmation vit dans l'écran principal : on referme la feuille
+      // d'ajout, sinon la demande resterait en attente sans rien afficher.
+      setAdding(false);
+      setPendingLeave(() => proceed);
+    });
     return () => setLeaveGuard(null);
   }, [dirty]);
 
@@ -337,6 +342,7 @@ export function SeanceEditorView({
     try {
       await onSave(rows);
       setSavedRows(rows);
+      setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
       setSave({ busy: false, error: null, done: true });
       // Laisse la confirmation visible un instant, puis retour.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
