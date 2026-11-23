@@ -2,12 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
 import { supabase, supabaseAuthStorageKey } from '../lib/supabase'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
-import {
-  clearLocalAccount,
-  loadLocalAccount,
-  saveLocalAccount,
-  type LocalAccount,
-} from '../lib/local-account'
+import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
+import { recognizeAccount } from './account-switch'
 import { clearReadCache } from '../lib/read-cache'
 import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
@@ -111,7 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           userId: nextSession.user.id,
           email: nextSession.user.email ?? null,
         }
-        saveLocalAccount(account)
+        // Un compte DIFFÉRENT du précédent : ses copies locales sont d'abord
+        // purgées, sauf écritures encore retenues (cf. account-switch).
+        recognizeAccount(account)
         setLocalAccount(account)
         setOfflineRecognized(false)
         setSession(nextSession)
