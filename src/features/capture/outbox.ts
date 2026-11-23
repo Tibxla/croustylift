@@ -65,6 +65,15 @@ export interface InsertSetOp {
 export interface DeleteSetOp {
   type: 'deleteSet';
   id: string;
+  /**
+   * Exos dont l'historique est touché par cette suppression, quand l'émetteur
+   * les connaît (annulation en Capture, éditeur de séance passée). L'op ne porte
+   * sinon que l'id de sa ligne : ce champ dit quelles copies locales relire à
+   * l'acquittement (cf. sync.ts), même si la ligne n'y figure pas encore. Jamais
+   * envoyé en base (le delete ne prend que l'id). Absent sur une op ancienne :
+   * seules les copies qui contiennent la ligne sont alors relues.
+   */
+  exerciseIds?: string[];
 }
 
 /** Pose les métriques de fin (BPM, durée) sur l'exécution. Update par id. */
@@ -146,6 +155,15 @@ export interface DeleteExerciseNoteOp {
 export interface DeleteExecutionOp {
   type: 'deleteExecution';
   id: string;
+  /**
+   * Exos dont l'historique est touché par cette suppression, quand l'émetteur
+   * les connaît (annulation en Capture, éditeur de séance passée). L'op ne porte
+   * sinon que l'id de sa ligne : ce champ dit quelles copies locales relire à
+   * l'acquittement (cf. sync.ts), même si la ligne n'y figure pas encore. Jamais
+   * envoyé en base (le delete ne prend que l'id). Absent sur une op ancienne :
+   * seules les copies qui contiennent la ligne sont alors relues.
+   */
+  exerciseIds?: string[];
 }
 
 // `_seq` : identité interne UNIQUE d'une op en file, stampée par `enqueue`. Sert à
@@ -404,6 +422,19 @@ function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean
   );
 }
 
+/** Position de l'op `op` ELLE-MÊME dans `queue` (cf. `removeFromQueue`), -1 si absente. */
+function indexInQueue(queue: OutboxOp[], op: OutboxOp): number {
+  if (op._seq !== undefined) {
+    return queue.findIndex((o) => o._seq === op._seq && o.type === op.type && o.id === op.id);
+  }
+  return queue[0]?.type === op.type && queue[0]?.id === op.id ? 0 : -1;
+}
+
+/** L'op est-elle encore dans la file persistée ? */
+function isQueued(op: OutboxOp): boolean {
+  return indexInQueue(readQueue(), op) !== -1;
+}
+
 /**
  * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_seq`
  * (unique, stampé à l'enqueue), type et id à l'appui. Une op héritée sans `_seq`
@@ -417,12 +448,7 @@ function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean
  */
 function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
   const current = readQueue();
-  const at =
-    op._seq !== undefined
-      ? current.findIndex((o) => o._seq === op._seq && o.type === op.type && o.id === op.id)
-      : current[0]?.type === op.type && current[0]?.id === op.id
-        ? 0
-        : -1;
+  const at = indexInQueue(current, op);
   if (at === -1) return 'absent';
   current.splice(at, 1);
   return writeQueue(current) ? 'removed' : 'unwritable';
@@ -436,6 +462,10 @@ function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
  */
 function moveToQuarantine(op: OutboxOp, reason: string): boolean {
   if (typeof localStorage === 'undefined') return false;
+  // L'op a pu être retirée de la file pendant sa requête (« Annuler la séance »,
+  // `purgeByExecution`) : l'utilisateur l'a abandonnée, la réponse tardive de la
+  // base ne la remet pas en quarantaine. Rien à déplacer, la passe continue.
+  if (!isQueued(op)) return true;
   try {
     const entry: QuarantinedOp = { op, reason, at: new Date().toISOString() };
     localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...readQuarantine(), entry]));
@@ -508,26 +538,56 @@ export function clearQueue(): void {
  */
 export function purgeByExecution(executionId: string): void {
   const queue = readQueue();
-  const kept = queue.filter((op) => {
-    switch (op.type) {
-      case 'upsertExecution':
-      case 'updateExecution':
-        return op.id !== executionId;
-      case 'insertSet':
-      case 'upsertDatedNote':
-        return op.executionId !== executionId;
-      default:
-        // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
-        // la ligne (pas d'executionId rattachable) et sont idempotents par id
-        // (sans effet si la ligne n'existe pas) → on les laisse.
-        // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
-        // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
-        // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
-        // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
-        return true;
-    }
-  });
+  const kept = queue.filter((op) => !belongsToExecution(op, executionId));
   if (kept.length !== queue.length) writeQueue(kept);
+  purgeQuarantineByExecution(executionId);
+}
+
+/**
+ * L'op crée-t-elle ou ré-affirme-t-elle l'exécution `executionId` ou une de ses
+ * lignes filles ? (Critère de `purgeByExecution`, cf. son en-tête.)
+ */
+function belongsToExecution(op: OutboxOp, executionId: string): boolean {
+  switch (op.type) {
+    case 'upsertExecution':
+    case 'updateExecution':
+      return op.id === executionId;
+    case 'insertSet':
+    case 'upsertDatedNote':
+      return op.executionId === executionId;
+    default:
+      // deleteSet / deleteDatedNote / deleteExecution : ne portent que l'id de
+      // la ligne (pas d'executionId rattachable) et sont idempotents par id
+      // (sans effet si la ligne n'existe pas) → on les laisse.
+      // upsertExerciseNote / deleteExerciseNote : la note d'instructions vit sur
+      // la DÉFINITION de l'exo, jamais sur l'exécution abandonnée → elle survit
+      // au « Réinitialiser » (sinon une instruction tapée juste avant le reset
+      // serait perdue). Pas d'executionId, donc rien à rattacher de toute façon.
+      return false;
+  }
+}
+
+/**
+ * Pendant de `purgeByExecution` côté QUARANTAINE : les ops refusées de
+ * l'exécution abandonnée n'ont plus d'objet, et les garder bloquerait la
+ * Déconnexion (`heldCount`) pour une séance que l'utilisateur a lui-même
+ * annulée. Seulement celles du compte reconnu (ou sans compte) : la quarantaine
+ * d'un autre compte ne se purge pas d'ici.
+ */
+function purgeQuarantineByExecution(executionId: string): void {
+  const owner = loadLocalAccount()?.userId;
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter(
+    (q) =>
+      !belongsToExecution(q.op, executionId) ||
+      (q.op._owner !== undefined && q.op._owner !== owner),
+  );
+  if (kept.length === quarantine.length) return;
+  try {
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify(kept));
+  } catch {
+    // Quota plein : les entrées restent, rien n'est perdu ni faussé.
+  }
 }
 
 // --- Enfilement ---------------------------------------------------------------

@@ -1256,3 +1256,76 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(res).toEqual({ remaining: 2, flushed: 0 });
   });
 });
+
+// --- « Annuler la séance » et quarantaine (relecture Codex du lot 2) --------
+//
+// La purge ciblée d'une exécution abandonnée retire aussi ses entrées de
+// quarantaine (pour le compte reconnu) : elles n'ont plus d'objet et
+// bloqueraient la Déconnexion. Et une réponse de flush encore en vol ne remet
+// pas en quarantaine une op que l'annulation vient de retirer de la file.
+
+describe('purgeByExecution et quarantaine', () => {
+  const compteA = { userId: 'user-a', email: 'a@exemple.com' };
+  const compteB = { userId: 'user-b', email: 'b@exemple.com' };
+
+  it('retire les entrées de quarantaine de l’exécution abandonnée, pas les autres', async () => {
+    saveLocalAccount(compteA);
+    enqueue(execOp('exec-abandon'));
+    enqueue(setOp('set-1', 1, 'exec-abandon'));
+    enqueue({ type: 'updateExecution', id: 'exec-abandon', closedAt: '2026-06-18T10:00:00Z' });
+    enqueue(setOp('set-autre', 1, 'exec-autre'));
+    const fns = okFns();
+    fns.upsertExecution = vi.fn(async () => {
+      throw rejet('23503');
+    });
+    fns.insertSet = vi.fn(async (op: InsertSetOp) => {
+      if (op.id === 'set-autre') throw rejet('23503');
+    });
+    await flush(fns, async () => 'user-a');
+    expect(readQuarantine().map((q) => q.op.id)).toEqual([
+      'exec-abandon',
+      'set-1',
+      'exec-abandon',
+      'set-autre',
+    ]);
+
+    purgeByExecution('exec-abandon');
+
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['set-autre']);
+    expect(heldCount()).toBe(1);
+  });
+
+  it('ne touche pas la quarantaine d’un AUTRE compte pour la même exécution', async () => {
+    saveLocalAccount(compteB);
+    enqueue(setOp('set-b', 1, 'exec-1'));
+    const fns = okFns();
+    fns.insertSet = vi.fn(async () => {
+      throw rejet('23503');
+    });
+    await flush(fns, async () => 'user-b');
+    saveLocalAccount(compteA);
+
+    purgeByExecution('exec-1');
+
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['set-b']);
+  });
+
+  it('rejet reçu APRÈS l’annulation de la séance : l’op retirée de la file ne part pas en quarantaine', async () => {
+    enqueue(setOp('set-1', 1, 'exec-abandon'));
+    enqueue({ type: 'deleteSet', id: 'set-9' });
+    const fns = okFns();
+    fns.insertSet = vi.fn(async () => {
+      // Pendant la requête, l'utilisateur annule la séance.
+      purgeByExecution('exec-abandon');
+      throw rejet('23503');
+    });
+
+    const res = await flush(fns);
+
+    expect(quarantineCount()).toBe(0);
+    // La passe continue sur ce qui reste.
+    expect(fns.deleteSet).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ remaining: 0, flushed: 1 });
+  });
+});
+
