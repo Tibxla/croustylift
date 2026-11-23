@@ -860,11 +860,42 @@ export async function loadTodayExecution(
   // repli en échec NON-réseau : une exécution du jour en base peut être ignorée
   // et doublée — même classe résiduelle que le multi-appareil (ADR 0003), la
   // capture ne bloque jamais.
+  //
+  // La base ne suffit pas à dire qu'une exécution est encore EN COURS : Clôture,
+  // Annulation et suppression effacent l'état local dès le geste, alors que leur
+  // écriture attend peut-être encore dans l'outbox. Une exécution que la file
+  // clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait déjà
+  // close. On lit la file aux deux bouts de la lecture, car la réponse est figée
+  // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
+  // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
+  const pendingBefore = readQueue();
   try {
-    return await fetchTodayExecution(seanceVersionId, date);
+    const today = await fetchTodayExecution(seanceVersionId, date);
+    if (today === null) return null;
+    const retired =
+      isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
+      isExecutionRetiredInQueue(today.executionId, readQueue());
+    return retired ? null : today;
   } catch {
     return null;
   }
+}
+
+/**
+ * La file d'écritures en attente RETIRE-t-elle cette exécution : une clôture
+ * (`updateExecution` portant un `closedAt`) ou une suppression (`deleteExecution`,
+ * posée par l'Annulation comme par le journal) qui la vise ? Une correction de
+ * métriques sans clôture, ou une op visant une autre exécution, ne compte pas.
+ */
+export function isExecutionRetiredInQueue(
+  executionId: string,
+  pendingOps: readonly OutboxOp[],
+): boolean {
+  return pendingOps.some((op) => {
+    if (op.id !== executionId) return false;
+    if (op.type === 'deleteExecution') return true;
+    return op.type === 'updateExecution' && typeof op.closedAt === 'string';
+  });
 }
 
 /** Lecture Supabase brute de l'exécution du jour (cf. loadTodayExecution). */
