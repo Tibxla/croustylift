@@ -192,10 +192,6 @@ perte), finition.
 
 ### Messages, tests, build
 
-- **Erreurs encore affichées telles quelles** (mineure) : un refus de droits (42501) et
-  une erreur réseau (`TypeError: Failed to fetch`) ne sont pas traduits, et la feuille
-  du catalogue n'a pas de « Réessayer ». Seuls les refus de contrainte (23503, 23514)
-  et de nom (23505) le sont (`lib/db-errors.ts`).
 - **Aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM. La
   logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
   `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de

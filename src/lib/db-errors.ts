@@ -17,11 +17,34 @@
 // Les écritures de la Capture ne passent pas par ici : la file d'attente lit le
 // code SQLSTATE brut pour décider d'un rejet définitif (`isPermanentRejection`,
 // features/capture/outbox.ts).
+//
+// Le refus de DROITS (42501) n'est traduit qu'à l'affichage (`errorMessage`,
+// lib/error-message.ts), jamais en réemballant l'objet relancé : la file y lit
+// ce code pour mettre l'écriture en quarantaine.
 
 /** Clé étrangère : la ligne visée n'existe plus, ou est encore référencée. */
 const FOREIGN_KEY_VIOLATION = '23503'
 /** Contrainte `check` : valeur hors des bornes que la base accepte. */
 const CHECK_VIOLATION = '23514'
+
+/** Droits insuffisants : policy RLS qui refuse la ligne, privilège absent. */
+const INSUFFICIENT_PRIVILEGE = '42501'
+
+/**
+ * Le message français d'un refus de droits INTÉGRÉ de Postgres (42501 : « new
+ * row violates row-level security policy for table "x" », « permission denied
+ * for table x »), ou `null`. Comme pour les contraintes, un motif écrit par la
+ * base sous ce code garderait son texte.
+ */
+export function permissionErrorMessage(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null
+  const { code, message } = error as { code?: unknown; message?: unknown }
+  if (code !== INSUFFICIENT_PRIVILEGE || typeof message !== 'string') return null
+  if (!message.includes('row-level security policy') && !message.includes('permission denied')) {
+    return null
+  }
+  return 'Action refusée : ce compte n’a pas le droit de modifier cet élément. Recharge l’écran ; si le refus persiste, déconnecte-toi puis reconnecte-toi.'
+}
 
 /**
  * Quel refus de contrainte INTÉGRÉ de Postgres cette erreur porte-t-elle ?
