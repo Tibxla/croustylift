@@ -55,7 +55,15 @@ const ackedSets = new Map<string, { exerciseId: string; executionId: string }>()
  * autres copies ne sont ni relues ni marquées d'un seuil : la réponse tardive
  * d'un exo sans rapport reste valide.
  */
-function touchDeleted(deleted: { setIds: string[]; executionIds: string[] }): void {
+function touchDeleted(
+  deleted: { setIds: string[]; executionIds: string[] },
+  named: readonly string[] = [],
+): void {
+  // Les exos que l'émetteur de l'op a nommés (`exerciseIds`) : la ligne peut
+  // n'être dans aucune copie ni dans la mémoire de session (série faite
+  // ailleurs, copie en retard) alors qu'une revalidation partie avant la
+  // suppression la ramènerait. Le seuil posé par la relecture l'en empêche.
+  for (const exerciseId of named) touchedExercises.add(exerciseId);
   for (const exerciseId of exercisesHoldingRows(deleted)) touchedExercises.add(exerciseId);
   for (const [setId, acked] of ackedSets) {
     if (deleted.setIds.includes(setId) || deleted.executionIds.includes(acked.executionId)) {
@@ -108,7 +116,7 @@ export const syncFns: SyncFns = {
   },
   deleteSet: async (op) => {
     await deleteSetById(op.id);
-    touchDeleted({ setIds: [op.id], executionIds: [] });
+    touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
   },
   updateExecution: (op) =>
     updateExecution({
@@ -132,7 +140,7 @@ export const syncFns: SyncFns = {
   deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
-    touchDeleted({ setIds: [], executionIds: [op.id] });
+    touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
   },
 };
 

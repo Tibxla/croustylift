@@ -277,7 +277,13 @@ export function PastSessionEditor({
       // signaler honnêtement (« partira au retour du réseau ») plutôt que de
       // fermer en laissant croire à une synchro immédiate. Sinon, fermeture
       // optimiste : l'éditeur se referme sur l'exécution supprimée.
-      const result = await flushOps([{ type: 'deleteExecution', id: executionId }]);
+      // Les exos de la séance sont connus ici : l'op les porte pour que leurs
+      // copies locales d'historique soient relues à l'acquittement.
+      const exerciseIds =
+        load.phase === 'ready' ? load.exercises.map((ex) => ex.exerciseId) : undefined;
+      const result = await flushOps([
+        { type: 'deleteExecution', id: executionId, ...(exerciseIds ? { exerciseIds } : {}) },
+      ]);
       if (result.remaining > 0) {
         setDel({ phase: 'error', message: 'Pas de réseau pour le moment.' });
         return;

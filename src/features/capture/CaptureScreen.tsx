@@ -726,7 +726,8 @@ function CaptureBoard({
       // cache d'ANCIEN format (série sans id) : rien à enfiler (le delete par id ne
       // saurait quoi viser), on annule en local seulement (rare, assumé).
       if (lastId) {
-        enqueueAndFlush({ type: 'deleteSet', id: lastId });
+        // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
+        enqueueAndFlush({ type: 'deleteSet', id: lastId, exerciseIds: [exerciseId] });
       }
     },
     [],
@@ -815,7 +816,12 @@ function CaptureBoard({
     // flushés) : purgeByExecution ne défait rien en base. On enfile un
     // deleteExecution (idempotent, cascade DB) pour ne pas laisser d'orpheline que
     // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
-    enqueueAndFlush({ type: 'deleteExecution', id: state.executionId });
+    enqueueAndFlush({
+      type: 'deleteExecution',
+      id: state.executionId,
+      // Les exos déjà saisis : leurs copies locales seront relues à l'acquittement.
+      exerciseIds: Object.keys(stateRef.current.progress),
+    });
     executionEnqueuedRef.current = false;
     executionStartedRef.current = false;
     // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution

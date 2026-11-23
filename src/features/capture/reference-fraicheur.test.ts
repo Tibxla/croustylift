@@ -410,4 +410,64 @@ describe('Référence après un flush acquitté', () => {
 
     expect(copie(BENCH)).toEqual(['set-1']);
   });
+
+  // --- suppression qui NOMME ses exos (relecture Codex du lot 2) --------------
+  //
+  // Une série faite ailleurs, absente de la copie et inconnue de la session,
+  // n'est désignée ni par les copies ni par la mémoire de session. L'émetteur de
+  // la suppression connaît l'exo : l'op le porte, et la relecture avec seuil le
+  // vise, sinon une revalidation partie avant remettrait la série supprimée.
+
+  /** Une série de développé faite depuis un autre appareil (exécution exec-9). */
+  function serieFaiteAilleurs(setId: string) {
+    server.executions.set('exec-9', {
+      id: 'exec-9',
+      performed_on: '2026-11-10',
+      seance_version_id: VERSION,
+      created_at: '2026-01-01T00:00:59Z',
+    });
+    server.sets.set(setId, {
+      id: setId,
+      execution_id: 'exec-9',
+      exercise_id: BENCH,
+      set_order: 1,
+      weight_kg: 50,
+      reps: 5,
+      rir: 1,
+      side: null,
+    });
+  }
+
+  it('série supprimée absente de la copie, exo porté par l’op : une revalidation partie avant ne la remet pas', async () => {
+    serieFaiteAilleurs('set-x');
+    // La revalidation de fond part (elle contient set-x) et tarde.
+    const ouvrir = retenirLesLectures();
+    await loadExerciseRows(BENCH);
+    await settle();
+    expect(copie(BENCH)).toEqual(['set-1']);
+
+    enqueue({ type: 'deleteSet', id: 'set-x', exerciseIds: [BENCH] });
+    await flushOutbox();
+    await settle();
+    ouvrir();
+    await settle();
+
+    expect(copie(BENCH)).toEqual(['set-1']);
+  });
+
+  it('exécution supprimée absente de la copie, exos portés par l’op : ses séries ne reviennent pas', async () => {
+    serieFaiteAilleurs('set-x');
+    const ouvrir = retenirLesLectures();
+    await loadExerciseRows(BENCH);
+    await settle();
+
+    enqueue({ type: 'deleteExecution', id: 'exec-9', exerciseIds: [BENCH] });
+    await flushOutbox();
+    await settle();
+    ouvrir();
+    await settle();
+
+    expect(copie(BENCH)).toEqual(['set-1']);
+  });
 });
+
