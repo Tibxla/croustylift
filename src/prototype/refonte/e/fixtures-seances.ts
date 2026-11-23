@@ -1,5 +1,6 @@
 // PROTOTYPE JETABLE · surface Séances. Store en mémoire du plan (routines,
-// séances, versions, brouillons d'édition, notes d'instructions).
+// séances, versions, brouillons d'édition). La note d'instructions vit dans
+// la fiche de l'exo (fixtures-exercices.ts, `catalogue.setNote`), source unique.
 //
 // Pourquoi un store au niveau module : `Pages` remonte chaque page à chaque
 // changement de route, et App démonte la surface dès qu'on en change. Le
@@ -21,7 +22,7 @@
 import { useSyncExternalStore } from 'react';
 import { countPlannedSets, type CountRange } from '../../../domain/set-count';
 import { nameKey } from '../../../domain/unique-name';
-import { catalog, catalogById, MUSCLES, routines as fixtureRoutines, type Prescription } from './fixtures-e';
+import { catalogById, MUSCLES, routines as fixtureRoutines, type Prescription } from './fixtures-e';
 import { fmtDate as fmtDateRaw } from './format';
 
 /** Date insécable : « 20 nov. » ne se coupe pas en fin de ligne. */
@@ -73,8 +74,6 @@ export interface PlanState {
   routines: PlanRoutine[];
   /** Brouillons d'édition par séance (absents = pas d'édition en cours). */
   drafts: Record<string, PlanItem[]>;
-  /** Notes d'instructions par exo (hors version). */
-  notes: Record<string, string>;
   /** Commande du prototype : compte sans aucune routine. */
   simulateEmpty: boolean;
   backup: PlanRoutine[] | null;
@@ -163,14 +162,6 @@ function initialRoutines(): PlanRoutine[] {
   return base;
 }
 
-function initialNotes(): Record<string, string> {
-  const notes: Record<string, string> = {
-    bench: "Prise un doigt plus serrée que l'anneau, omoplates serrées, descente en deux secondes.",
-  };
-  for (const c of catalog) if (c.note) notes[c.id] = c.note;
-  return notes;
-}
-
 /* ------------------------------------------------------------------------ */
 /* Store                                                                      */
 /* ------------------------------------------------------------------------ */
@@ -178,7 +169,6 @@ function initialNotes(): Record<string, string> {
 let state: PlanState = {
   routines: initialRoutines(),
   drafts: {},
-  notes: initialNotes(),
   simulateEmpty: false,
   backup: null,
 };
@@ -302,13 +292,6 @@ export const plan = {
       reps: { mode: 'fourchette', min: 8, max: 12 },
       rir: { mode: 'fourchette', min: 1, max: 2 },
     };
-  },
-
-  setNote(exerciseId: string, body: string) {
-    const notes = { ...state.notes };
-    if (body.trim() === '') delete notes[exerciseId];
-    else notes[exerciseId] = body.trim();
-    commit({ ...state, notes });
   },
 
   setSimulateEmpty(on: boolean) {

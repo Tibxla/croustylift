@@ -39,6 +39,7 @@ import { Choice, EmptyState, List, PrimaryButton, Row, Screen, ScreenHeader, Sec
 import { CreateSeanceSheet } from './seances-routine';
 import { ActionRow, Confirm, NameSheet, ReorderRow, TextArea, TextField } from './seances-ui';
 import { Icon, IconButton } from './icons';
+import { catalogue, useCatalogue } from './fixtures-exercices';
 import { useNav } from './shell';
 
 const LABEL: Record<FieldKey, string> = { sets: 'Séries', reps: 'Reps', rir: 'RIR' };
@@ -61,6 +62,10 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
   const [moved, setMoved] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [noteFor, setNoteFor] = useState<string | null>(null);
+  // Note d'instructions : UNE source, la fiche de l'exo (catalogue des Exos), lue
+  // aussi par la Salle. Pas de copie dans le plan des séances.
+  const exos = useCatalogue();
+  const noteOf = (id: string) => exos.find((e) => e.id === id)?.note ?? '';
   const [changes, setChanges] = useState<null | 'guard' | 'review'>(null);
   const [savedV, setSavedV] = useState<number | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -212,7 +217,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
                   rank={i + 1}
                   name={name}
                   state={state}
-                  note={st.notes[it.exerciseId] ?? ''}
+                  note={noteOf(it.exerciseId)}
                   open={open === it.rowId}
                   onToggle={() => setOpen(open === it.rowId ? null : it.rowId)}
                   onField={(k, f) => update(it.rowId, k, f)}
@@ -304,7 +309,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
           setScrollTo(it.rowId);
         }}
       />
-      {noteFor && <NoteSheet exerciseId={noteFor} note={st.notes[noteFor] ?? ''} onClose={() => setNoteFor(null)} />}
+      {noteFor && <NoteSheet exerciseId={noteFor} note={noteOf(noteFor)} onClose={() => setNoteFor(null)} />}
       <Sheet
         open={changes !== null}
         title={changes === 'guard' ? 'Modifications non enregistrées' : 'Changements non enregistrés'}
@@ -616,7 +621,7 @@ function NoteSheet({ exerciseId, note, onClose }: { exerciseId: string; note: st
         <PrimaryButton
           disabled={!changed}
           onClick={() => {
-            plan.setNote(exerciseId, draft);
+            catalogue.setNote(exerciseId, draft);
             onClose();
           }}
         >
