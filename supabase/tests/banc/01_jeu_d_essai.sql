@@ -1,6 +1,19 @@
 -- Jeu d'essai du banc local : deux comptes (A et B), posé après les migrations
 -- 0001 à 0014, donc AVANT les migrations testées (elles doivent passer sur une
 -- base qui porte déjà des lignes).
+begin;
+
+-- Garde : ce fichier n'est fait que pour le banc local. Sur un projet Supabase
+-- (schémas `storage` ou `supabase_migrations` présents), il s'arrête ici et la
+-- transaction annule tout ce qui suit.
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname in ('storage', 'supabase_migrations', 'realtime', 'vault')) then
+    raise exception 'Fichier du banc local : à ne jamais lancer sur un projet Supabase.';
+  end if;
+end;
+$$;
+
 insert into auth.users (id, email) values
   ('aaaaaaaa-0000-0000-0000-000000000001', 'a@banc.test'),
   ('bbbbbbbb-0000-0000-0000-000000000002', 'b@banc.test');
@@ -43,3 +56,5 @@ insert into public.executions (id, owner_id, seance_version_id, performed_on) va
 -- Un exo perso resté sans muscle principal : la migration 0017 doit le remplir.
 insert into public.exercises (id, owner_id, name, muscle_group, primary_muscles) values
   ('b0000000-0000-0000-0000-0000000000e1', 'bbbbbbbb-0000-0000-0000-000000000002', 'Presse maison', 'jambes', '{}');
+
+commit;

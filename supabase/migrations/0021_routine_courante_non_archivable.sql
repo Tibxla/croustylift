@@ -40,7 +40,16 @@
 -- ensuite.
 --
 -- RISQUE : faible. Les deux triggers ne refusent qu'un état que le client ne
--- produit pas.
+-- produit pas par ces deux écritures.
+--
+-- CE QUE LA BASE NE COUVRE PAS : la routine courante se DÉRIVE de la dernière
+-- activation. Supprimer la routine courante (possible tant qu'elle n'a jamais
+-- été exécutée) emporte ses activations, et la précédente redevient courante,
+-- même archivée. La base ne peut pas refuser cette suppression sans refuser
+-- aussi celle d'un compte (cascade depuis auth.users). Le remède est dans la
+-- dérivation côté client : ignorer les activations des routines archivées
+-- (`getCurrentRoutineId`). Tant qu'il n'est pas livré, le contrôle préalable
+-- ci-dessus peut de nouveau rendre une ligne par ce chemin.
 
 begin;
 

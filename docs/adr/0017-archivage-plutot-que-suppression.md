@@ -21,7 +21,7 @@ Le nom reste réservé parce que l'analyse désigne une séance par « séance �
 
 ## Conséquences
 
-- La routine courante ne s'archive pas : il faut d'abord en définir une autre. La base tient la règle dans les deux sens (migration 0021) : elle refuse d'archiver la routine courante, et de définir comme courante une routine archivée.
+- La routine courante ne s'archive pas : il faut d'abord en définir une autre. La base refuse les deux écritures qui la violeraient (migration 0021) : archiver la routine courante, et définir comme courante une routine archivée.
 - Archiver ou désarchiver une séance de la routine courante change la configuration du template et coupe un bloc. La timeline des blocs doit donc lire ces gestes comme des événements datés, conservés tous les deux : une simple date d'archivage effacée au désarchivage réécrirait les blocs passés.
 - Aucune exécution ne peut plus perdre sa séance par suppression. Au 2026-09-13, la base n'en compte aucune (0 sur 79) : le groupe « Hors séance » de l'analyse n'a plus de source.
 

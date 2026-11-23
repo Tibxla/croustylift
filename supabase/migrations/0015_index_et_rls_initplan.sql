@@ -15,7 +15,7 @@
 -- Rejouable : `create index if not exists`, `alter policy` réécrit la même
 -- expression. Aucune donnée touchée.
 --
--- CONTRÔLE PRÉALABLE (lecture seule). Attendu : les 22 policies ci-dessous,
+-- CONTRÔLE PRÉALABLE (lecture seule). Attendu : les 18 policies ci-dessous,
 -- toutes `{authenticated}`, et rien d'autre. Une policy de plus ou de moins
 -- signale une dérive entre les migrations et la base : s'arrêter et comparer.
 --
@@ -24,7 +24,9 @@
 --
 --   exercises            : exercises_select, _insert, _update, _delete
 --   exercise_overrides   : exercise_overrides_select, _insert, _update, _delete
---   les dix autres tables : <table>_all
+--   les dix autres tables : <table>_all (exercise_notes, routines, seances,
+--     seance_versions, prescriptions, executions, performed_sets, dated_notes,
+--     routine_activations, seance_archive_events)
 --
 -- RISQUE : faible. Tables de quelques milliers de lignes, verrous brefs.
 

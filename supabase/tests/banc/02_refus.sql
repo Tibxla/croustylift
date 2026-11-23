@@ -7,6 +7,17 @@
 
 begin;
 
+-- Garde : ce fichier n'est fait que pour le banc local. Sur un projet Supabase
+-- (schémas `storage` ou `supabase_migrations` présents), il s'arrête ici et la
+-- transaction annule tout ce qui suit.
+do $$
+begin
+  if exists (select 1 from pg_namespace where nspname in ('storage', 'supabase_migrations', 'realtime', 'vault')) then
+    raise exception 'Fichier du banc local : à ne jamais lancer sur un projet Supabase.';
+  end if;
+end;
+$$;
+
 create schema banc;
 grant usage on schema banc to authenticated, anon;
 

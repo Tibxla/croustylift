@@ -16,6 +16,10 @@
 --   primary_muscles                      15 muscles au plus  30 éléments,
 --                                                            1500 caractères
 --
+-- Le premier lancement (`FirstLaunchScreen`) est le seul écran dont les champs
+-- de nom n'ont pas de `maxLength` : un nom de plus de 200 caractères y serait
+-- refusé par la base (23514). Aucun nom réel n'approche cette longueur.
+--
 -- `char_length` compte des caractères, `maxLength` des unités UTF-16 : un texte
 -- accepté par le navigateur ne dépasse jamais sa borne en caractères.
 --

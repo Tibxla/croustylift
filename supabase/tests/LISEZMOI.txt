@@ -6,7 +6,9 @@ Chaque ligne rendue commence par OK ou ECHEC ; une seule ligne ECHEC et la
 migration n'a pas tenu sa promesse. La colonne « empeche » dit ce que la
 contrainte refuse désormais.
 
-banc/ : banc d'essai LOCAL (Docker, Postgres jetable), jamais la prod.
+banc/ : banc d'essai LOCAL (Docker, Postgres jetable), jamais la prod. Ses
+fichiers écrivent (rôles, comptes, lignes) : chacun porte une garde qui
+l'arrête sur un projet Supabase.
 `banc/lancer.sh` rejoue tout l'historique des migrations, passe chaque nouvelle
 migration deux fois, lance les tests de contrôle, puis `banc/02_refus.sql`, qui
 tente pour de bon les écritures interdites sous les rôles de l'API.
