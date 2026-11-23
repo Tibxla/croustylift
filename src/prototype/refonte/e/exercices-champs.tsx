@@ -8,6 +8,7 @@
 // un trait blanc cassé à gauche (motif de la garde de Réglages), reliée par
 // aria-describedby ; jamais de rouge, jamais le signal.
 import { useId, useState, type ReactNode } from 'react';
+import { Icon } from './icons';
 
 const FIELD =
   'h-12 w-full min-w-0 rounded-(--r) border border-(--dim) bg-(--raise) px-3.5 text-[17px] text-(--ink) placeholder:text-(--faint) outline-none focus:border-(--ink) aria-[invalid=true]:border-(--ink)';
@@ -100,7 +101,7 @@ export function TextField({
   );
 }
 
-/** Mot de passe : « Afficher » / « Masquer » en mot, à droite du libellé. */
+/** Mot de passe : l'œil à droite du libellé (barré quand le mot est en clair). */
 export function PasswordField(props: Omit<Parameters<typeof TextField>[0], 'type' | 'trailing'>) {
   const [shown, setShown] = useState(false);
   return (
@@ -113,9 +114,9 @@ export function PasswordField(props: Omit<Parameters<typeof TextField>[0], 'type
           aria-pressed={shown}
           aria-label={shown ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
           onClick={() => setShown((s) => !s)}
-          className="-mb-1.5 -mr-2 inline-flex h-11 items-center px-2 text-[15px] text-(--muted) underline decoration-1 underline-offset-4 active:text-(--ink)"
+          className="-mb-1.5 -mr-2.5 inline-flex h-11 w-11 items-center justify-center text-(--muted) active:text-(--ink)"
         >
-          {shown ? 'Masquer' : 'Afficher'}
+          <Icon name={shown ? 'eye-off' : 'eye'} />
         </button>
       }
     />

@@ -467,5 +467,5 @@ export function routineMeta(r: PlanRoutine): string {
   const active = r.seances.filter((s) => !s.archived);
   const n = `${active.length} séance${active.length > 1 ? 's' : ''}`;
   const last = lastDoneOfRoutine(r);
-  return `${n} · ${last ? `dernière séance le ${fmtDate(last)}` : 'jamais faite'}`;
+  return `${n} · ${last ? `faite le ${fmtDate(last)}` : 'jamais faite'}`;
 }

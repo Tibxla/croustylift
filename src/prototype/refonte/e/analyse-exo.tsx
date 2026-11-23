@@ -9,6 +9,7 @@
 // dessous, ses séries de travail et ses kg soulevés. Un exo jamais fait garde
 // son cadre vide : aucun point à zéro.
 import { useState } from 'react';
+import { Icon } from './icons';
 import { Chart, dayOf, monthTicks, Swatch, type ChartSel, type ChartSeries } from './analyse-chart';
 import { fmtInt, SlopeStatus, useJournal, Page } from './analyse-common';
 import { BLOCKS, currentPlan, curvesOf, exoName, liftedKg, recordsOf, routineName, seanceInfo, type Curve } from './fixtures-analyse';
@@ -17,10 +18,42 @@ import { List, Row, ScreenHeader, SectionTitle, SecondaryButton, Status } from '
 import { isUnilateral } from './fixtures-exercices';
 import { useNav } from './shell';
 
+/* ------------------------------------------------------------------------ */
+/* Courbes masquées (règles de l'app : features/analysis/curve-visibility.ts)  */
+/* ------------------------------------------------------------------------ */
+
+// Mémorisé pour la session (hors React : la page est remontée à chaque
+// navigation). On garde les courbes MASQUÉES, pas les affichées : une séance
+// neuve apparaît d'elle-même.
+const hiddenByExo = new Map<string, Set<string>>();
+
+/** Les courbes affichées ; si le masquage retirait tout, tout revient. */
+function visibleCurves(curves: Curve[], hidden: ReadonlySet<string>): Curve[] {
+  const shown = curves.filter((c) => !hidden.has(c.seanceId));
+  return shown.length > 0 ? shown : curves;
+}
+
+/** Bascule ; refuse de masquer la dernière courbe visible. */
+function toggleHidden(hidden: ReadonlySet<string>, key: string, all: string[]): Set<string> {
+  const next = new Set(hidden);
+  if (next.has(key)) next.delete(key);
+  else if (all.filter((k) => !next.has(k)).length > 1) next.add(key);
+  return next;
+}
+
 export function ExoPage({ id }: { id: string }) {
   const nav = useNav();
   const journal = useJournal();
-  const curves = curvesOf(journal, id);
+  const allCurves = curvesOf(journal, id);
+  const [hidden, setHiddenState] = useState<Set<string>>(() => hiddenByExo.get(id) ?? new Set());
+  const toggle = (key: string) => {
+    const next = toggleHidden(hidden, key, allCurves.map((c) => c.seanceId));
+    hiddenByExo.set(id, next);
+    setHiddenState(next);
+  };
+  // Tout ce qui est chiffré (relevé, pente, faits) se lit sur les courbes AFFICHÉES :
+  // la plus récente d'entre elles prend le trait plein.
+  const curves = visibleCurves(allCurves, hidden);
   const rec = recordsOf(journal, id);
   const plannedIn = curves.length === 0 ? currentSeancesWith(id) : [];
   const [sel, setSel] = useState<ChartSel | null>(null);
@@ -31,7 +64,7 @@ export function ExoPage({ id }: { id: string }) {
   const point = selCurve?.points[selIndex];
   const exec = point ? journal.find((e) => e.id === point.execId) : undefined;
   const sets = exec?.exercises.find((x) => x.exerciseId === id)?.sets ?? [];
-  const total = curves.reduce((n, c) => n + c.points.length, 0);
+  const total = allCurves.reduce((n, c) => n + c.points.length, 0);
 
   const series: ChartSeries[] = curves.map((c, i) => ({
     id: c.seanceId,
@@ -120,10 +153,9 @@ export function ExoPage({ id }: { id: string }) {
                 .map((c) => `${seanceInfo(c.seanceId).name}, ${c.points.length} séances, de ${fmt1(c.points[0]!.e1rm)} à ${fmt1(c.points[c.points.length - 1]!.e1rm)} kg`)
                 .join(' ; ')}`}
             />
-            <p className="mt-1 text-[13px] text-(--faint)">Touche ou glisse sur le graphe pour lire une séance.</p>
           </div>
 
-          {curves.length > 1 && <Legend curves={curves} />}
+          {allCurves.length > 1 && <Legend curves={allCurves} shown={curves} onToggle={toggle} />}
 
           <SectionTitle aside={exec ? `${fmtInt(liftedKg(sets))} kg soulevés` : undefined}>
             Séries du {fmtDate(point.date)}
@@ -146,7 +178,7 @@ export function ExoPage({ id }: { id: string }) {
                 onClick={() => nav.push('seance', { id: exec.id })}
                 className="inline-flex min-h-11 items-center text-[16px] text-(--ink) underline decoration-1 underline-offset-4"
               >
-                Ouvrir la séance du {fmtDate(point.date)} dans le journal
+                Voir au journal
               </button>
             </div>
           )}
@@ -172,27 +204,47 @@ function currentSeancesWith(id: string): string[] {
     .map((s) => s.name);
 }
 
-function Legend({ curves }: { curves: Curve[] }) {
+/** Légende-contrôle : toucher une séance masque ou affiche sa courbe (œil). La
+ *  dernière courbe affichée ne se masque pas. Une courbe masquée garde son nom,
+ *  barré et éteint : on sait ce qu'on peut ré-afficher. */
+function Legend({ curves, shown, onToggle }: { curves: Curve[]; shown: Curve[]; onToggle: (key: string) => void }) {
   return (
-    <ul aria-label="Courbes par séance" className="mt-3 flex flex-col gap-2 px-5">
-      {curves.map((c, i) => {
+    <ul aria-label="Courbes par séance" className="mt-2 flex flex-col px-5">
+      {curves.map((c) => {
         const s = seanceInfo(c.seanceId);
         const first = c.points[0]!;
         const last = c.points[c.points.length - 1]!;
+        const rank = shown.indexOf(c);
+        const hidden = rank === -1;
+        const lastVisible = !hidden && shown.length === 1;
         return (
-          <li key={c.seanceId} className="flex items-start gap-3">
-            <span className="pt-[7px]">
-              <Swatch tone={i === 0 ? 'ink' : 'muted'} dashed={i > 0} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className={`block text-[15px] ${i === 0 ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}>
-                {s.name} · {s.routineName}
+          <li key={c.seanceId}>
+            <button
+              type="button"
+              onClick={() => onToggle(c.seanceId)}
+              disabled={lastVisible}
+              aria-pressed={!hidden}
+              aria-label={lastVisible ? `${s.name}, seule courbe affichée` : `${hidden ? 'Afficher' : 'Masquer'} la courbe ${s.name} · ${s.routineName}`}
+              className="flex min-h-12 w-full items-center gap-3 py-1 text-left active:opacity-70"
+            >
+              <span className="flex w-[22px] flex-none justify-center">{!hidden && <Swatch tone={rank === 0 ? 'ink' : 'muted'} dashed={rank > 0} />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-3">
+                  <span
+                    className={`truncate text-[15px] ${hidden ? 'text-(--faint) line-through' : rank === 0 ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}
+                  >
+                    {s.name}
+                  </span>
+                  {!hidden && <SlopeStatus slope={c.slope} points={c.points.length} short className="flex-none text-[15px]" />}
+                </span>
+                <span className="block truncate text-[14px] text-(--muted)">
+                  {s.routineName} · {c.points.length} séances, {fmtDate(first.date).replace(' ', '\u00a0')} au {fmtDate(last.date).replace(' ', '\u00a0')}
+                </span>
               </span>
-              <span className="block text-[14px] text-(--muted)">
-                {c.points.length} séances, {fmtDate(first.date).replace(' ', '\u00a0')} au {fmtDate(last.date).replace(' ', '\u00a0')}
+              <span className={`flex-none ${lastVisible ? 'text-(--dim)' : 'text-(--muted)'}`}>
+                <Icon name={hidden ? 'eye-off' : 'eye'} />
               </span>
-            </span>
-            <SlopeStatus slope={c.slope} points={c.points.length} short className="flex-none pt-px text-[15px]" />
+            </button>
           </li>
         );
       })}
@@ -230,7 +282,7 @@ function Facts({ id, curves }: { id: string; curves: Curve[] }) {
         )}
         <Row
           title={`Depuis la 1ʳᵉ ${s.name}`}
-          meta={`${s.routineName}, du ${fmtDate(first.date)} au ${fmtDate(last.date)}, ${main.points.length} séances`}
+          meta={`${main.points.length} séances depuis le ${fmtDate(first.date)}`}
           value={<Status v={v} size={12} word={`${fmtSigned(delta)} kg`} />}
         />
         {curves.slice(1).map((c) => (

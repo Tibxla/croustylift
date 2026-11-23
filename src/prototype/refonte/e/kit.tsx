@@ -15,6 +15,9 @@
 // Hiérarchie : taille et graisse d'Inter, chiffres tabulaires. L'action
 // principale d'un écran est UN bloc blanc cassé plein en bas (zone du pouce).
 // Le reste : bouton secondaire à contour, liens soulignés, lignes et filets.
+// Icônes : seulement les icônes FONCTIONNELLES de e/icons.tsx (remplacer,
+// ajouter, options, éditer, supprimer, note, réordonner, masquer), là où elles
+// sont lues sans hésiter ; une icône seule a un nom (aria-label) et 44 px.
 //
 // INTERDIT : dégradés (texte ou fond), flou, verre, halos, lueurs, ombres
 // floues, cartes arrondies avec icône dans un rond, emojis, icônes décoratives,
@@ -56,6 +59,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { range, type Verdict } from './format';
+import { Chevron } from './icons';
 
 /* ------------------------------------------------------------------------ */
 /* Tokens                                                                     */
@@ -274,14 +278,8 @@ export function TextLink({
   );
 }
 
-/** Chevron de navigation, seule « icône » admise : il dit « ça s'ouvre ». */
-export function Chevron({ dir = 'right' }: { dir?: 'right' | 'left' }) {
-  return (
-    <svg width="8" height="14" viewBox="0 0 8 14" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" className="flex-none">
-      <path d={dir === 'right' ? 'M1.5 1.5 6.5 7l-5 5.5' : 'M6.5 1.5 1.5 7l5 5.5'} />
-    </svg>
-  );
-}
+/** Chevron de navigation : vit dans e/icons.tsx (source unique), réexporté ici. */
+export { Chevron };
 
 /* ------------------------------------------------------------------------ */
 /* Mise en page d'écran                                                       */

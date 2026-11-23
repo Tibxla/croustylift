@@ -5,8 +5,14 @@
 //   a. Le sommaire de la séance (sous-page `sommaire`), à un geste de
 //      l'instrument : bouton « Sommaire » à gauche de l'action principale.
 //      Chaque exo avec sa prescription et son état ; le toucher rouvre
-//      l'instrument dessus. Il porte Ajouter, « Remplacer ou passer » et
-//      Terminer la séance (bouton secondaire au-dessus de Reprendre).
+//      l'instrument dessus. Il porte Ajouter (+ en tête), les options d'un exo
+//      pas commencé (⋯ : feuille « Remplacer · Passer »), « Remettre » sur un exo
+//      passé, les marques « ajouté » / « remplacé », « Annuler la séance »
+//      (confirmation qui dit ce qui part) et Terminer la séance.
+//   d. Notes (icône page, à droite de la ligne sous le nom, sans hauteur en
+//      plus) : note du jour, « tu notais », instructions, dans une feuille.
+//      Dès le minimum atteint, cette ligne devient le bilan de l'exo.
+//   e. Séance d'hier jamais rangée : la Salle demande Ranger ou Reprendre.
 //   b. L'enchaînement : dès le minimum de séries du plan atteint, le bloc
 //      principal devient « Exo suivant » (prochain exo ni fait ni passé), et
 //      « Logger la série n » passe en bouton secondaire juste au-dessus. Quand
@@ -21,7 +27,7 @@
 //
 // Pages : index (instrument, ou choix de la séance si aucune en cours),
 // sommaire, fin-de-seance (bouchon dans salle-fin.tsx).
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { ExercisePlan } from '../fixtures';
 import { catalog, MUSCLES, type Muscle, routines } from './fixtures-e';
 import {
@@ -57,10 +63,16 @@ import {
   TONE,
 } from './kit';
 import { SalleFin } from './salle-fin';
+import { TextArea } from './exercices-champs';
+import { catalogue, useCatalogue } from './fixtures-exercices';
+import { IconButton } from './icons';
 import {
   activeSide,
   draftOf,
+  entryCount,
+  exoSummary,
   isUni,
+  lastDatedNote,
   nextIndex,
   openSet,
   progressOf,
@@ -69,6 +81,7 @@ import {
   sideRef,
   sideRefDate,
   totalSets,
+  type ExoSummary,
   type Progress,
   type SeanceState,
   type Side,
@@ -81,7 +94,7 @@ export function Salle() {
   return (
     <Pages
       pages={{
-        index: () => (seance.state.phase === 'en-cours' ? <Instrument /> : <ChoixSeance />),
+        index: () => (seance.state.phase !== 'en-cours' ? <ChoixSeance /> : seance.state.stale ? <SeanceHier /> : <Instrument />),
         sommaire: () => <Sommaire />,
         'fin-de-seance': () => <SalleFin />,
       }}
@@ -135,7 +148,10 @@ function ExerciseIndex({ state, onPick }: { state: SeanceState; onPick: (i: numb
   );
 }
 
-function ExerciseHeader({ ex, next, onSwipe }: { ex: ExercisePlan; next: ExercisePlan | null; onSwipe: (dir: 1 | -1) => void }) {
+/** Nom de l'exo (balayable) et, dessous, UNE ligne : la prescription, puis le
+ *  bilan dès que le minimum de séries est atteint. La ligne garde une marge à
+ *  droite pour le bouton Notes, posé HORS de cette zone (elle capture le pointeur). */
+function ExerciseHeader({ ex, next, meta, onSwipe }: { ex: ExercisePlan; next: ExercisePlan | null; meta: ReactNode; onSwipe: (dir: 1 | -1) => void }) {
   const g = useRef<{ x: number } | null>(null);
   const [dx, setDx] = useState(0);
   return (
@@ -169,10 +185,97 @@ function ExerciseHeader({ ex, next, onSwipe }: { ex: ExercisePlan; next: Exercis
           </span>
         )}
       </div>
-      <p className="mt-1 text-[15px] text-(--muted)">
-        {range(ex.sets)} séries · {range(ex.reps)} reps · RIR {range(ex.rir)}
-      </p>
+      <p className="mt-1 flex h-[22px] items-center gap-2 overflow-hidden whitespace-nowrap pr-12 text-[15px] text-(--muted)">{meta}</p>
     </div>
+  );
+}
+
+/** Bilan de fin d'exo, une ligne : « fait · 3 séries · ▲ 2 battues · ▲ record ».
+ *  Mêmes comptes que le Sommaire et la fin de séance (`exoSummary`). */
+function ExoBilan({ sum }: { sum: ExoSummary }) {
+  return (
+    <>
+      <span className="font-medium text-(--ink)">fait · {sum.sets} série{sum.sets > 1 ? 's' : ''}</span>
+      {sum.beaten > 0 && <Status v="up" word={`${sum.beaten} battue${sum.beaten > 1 ? 's' : ''}`} />}
+      {sum.beaten === 0 && sum.matched > 0 && <Status v="eq" word={`${sum.matched} égalée${sum.matched > 1 ? 's' : ''}`} />}
+      {sum.record !== null && <Status v="up" word="record" />}
+    </>
+  );
+}
+
+/** Feuille des notes d'un exo, ouverte par l'icône Notes de l'instrument :
+ *  la note du jour (clavier autorisé : c'est de la prose, pas une mesure), le
+ *  repère « tu notais » (lecture seule, daté) et la note d'instructions. */
+function NotesSheet({ open, onClose, ex }: { open: boolean; onClose: () => void; ex: ExercisePlan }) {
+  const { seance } = useProto();
+  const state = seance.state;
+  const exos = useCatalogue();
+  const instr = exos.find((e) => e.id === ex.id)?.note ?? '';
+  const prev = lastDatedNote(state, ex.id);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(instr);
+  return (
+    <Sheet open={open} title={ex.name} onClose={onClose}>
+      <div className="px-5 pb-4">
+        <div className="flex items-baseline justify-between gap-3 pb-1.5">
+          <span className="text-[15px] font-semibold text-(--ink)">Note du jour</span>
+          <span className="text-[14px] text-(--muted)">{fmtDate(state.dateIso)}</span>
+        </div>
+        <TextArea
+          label={`Note du jour, ${ex.name}`}
+          value={state.notes[ex.id] ?? ''}
+          onChange={(v) => seance.setNote(ex.id, v)}
+          placeholder="Sensations, douleur, machine prise"
+        />
+        {prev && (
+          <div className="mt-5">
+            <p className="text-[15px] font-semibold text-(--ink)">
+              Tu notais <span className="font-normal text-(--muted)">le {fmtDate(prev.date)}</span>
+            </p>
+            <p className="mt-1 max-w-[40ch] text-[16px] leading-[1.45] text-(--muted)">{prev.body}</p>
+          </div>
+        )}
+        <div className="mt-4 border-t border-(--line) pt-1">
+          <div className="flex min-h-11 items-center justify-between gap-3">
+            <span className="text-[15px] font-semibold text-(--ink)">Instructions</span>
+            {!editing && (
+              <IconButton
+                icon="edit"
+                tone="muted"
+                className="-mr-2.5"
+                label={instr ? 'Modifier les instructions' : 'Écrire les instructions'}
+                onClick={() => {
+                  setDraft(instr);
+                  setEditing(true);
+                }}
+              />
+            )}
+          </div>
+          {editing ? (
+            <>
+              <TextArea label="Instructions" value={draft} onChange={setDraft} placeholder="Réglages de la machine, placement" />
+              <div className="mt-3 flex items-center gap-4">
+                <SecondaryButton
+                  onClick={() => {
+                    catalogue.setNote(ex.id, draft);
+                    setEditing(false);
+                  }}
+                >
+                  Enregistrer
+                </SecondaryButton>
+                <TextLink tone="muted" onClick={() => setEditing(false)}>
+                  Annuler
+                </TextLink>
+              </div>
+            </>
+          ) : instr ? (
+            <p className="max-w-[40ch] text-[16px] leading-[1.45] text-(--ink)">{instr}</p>
+          ) : (
+            <p className="text-[15px] text-(--muted)">Aucune.</p>
+          )}
+        </div>
+      </div>
+    </Sheet>
   );
 }
 
@@ -382,6 +485,9 @@ function Instrument() {
   const logMeta = `${fmtKg(draft.weightKg)} × ${draft.reps}`;
   const logValue = `${logMeta} · RIR ${draft.rir}`;
   const done = exercises.filter((e) => progressOf(state, e) === 'done').length;
+  const [notesOpen, setNotesOpen] = useState(false);
+  const instrNote = useCatalogue().find((e) => e.id === ex.id)?.note ?? '';
+  const hasNote = !!instrNote.trim() || !!state.notes[ex.id]?.trim() || !!lastDatedNote(state, ex.id);
 
   // Le bloc principal change de sens sous le pouce juste après un log : on
   // ignore un second tap trop rapproché pour ne pas sauter d'exo par réflexe.
@@ -406,14 +512,29 @@ function Instrument() {
         <ExerciseIndex state={state} onPick={seance.setIdx} />
         {/* Le fantôme, le balayage vers l'avant et « Exo suivant » désignent le même
             exo : le prochain à faire. Vers l'arrière, le balayage suit l'ordre. */}
-        <ExerciseHeader
-          ex={ex}
-          next={nextEx}
-          onSwipe={(d) => {
-            if (d === -1) seance.setIdx(idx - 1);
-            else if (nextI !== null) seance.setIdx(nextI);
-          }}
-        />
+        <div className="relative">
+          <ExerciseHeader
+            ex={ex}
+            next={nextEx}
+            meta={reached ? <ExoBilan sum={exoSummary(state, ex)} /> : `${range(ex.sets)} séries · ${range(ex.reps)} reps · RIR ${range(ex.rir)}`}
+            onSwipe={(d) => {
+              if (d === -1) seance.setIdx(idx - 1);
+              else if (nextI !== null) seance.setIdx(nextI);
+            }}
+          />
+          {/* Notes : hors de la zone de balayage, centré sur la ligne de méta, sans
+              hauteur en plus. Le carré dit qu'il y a déjà quelque chose à lire. */}
+          <div className="absolute bottom-[-11px] right-2.5">
+            <IconButton
+              icon="note"
+              tone="muted"
+              dot={hasNote}
+              label={`Notes de ${ex.name}${hasNote ? ', une note à lire' : ''}`}
+              onClick={() => setNotesOpen(true)}
+            />
+          </div>
+        </div>
+        <NotesSheet key={ex.id} open={notesOpen} onClose={() => setNotesOpen(false)} ex={ex} />
 
         {uni ? (
           <>
@@ -432,7 +553,7 @@ function Instrument() {
           {ref ? (
             <>
               <span className="text-(--muted)">
-                Référence série {rank} · {fmtDate(ex.reference!.date)}
+                réf. série {rank} · {fmtDate(ex.reference!.date)}
               </span>
               <span className="font-medium text-(--ink)">
                 {fmtKg(ref.weightKg)} × {ref.reps} · RIR {ref.rir}
@@ -440,7 +561,7 @@ function Instrument() {
             </>
           ) : (
             <span className="text-(--muted)">
-              {ex.reference ? `Pas de série ${rank} la dernière fois, rien à battre` : `Pas encore de Référence dans ${state.seanceName}`}
+              {ex.reference ? `Série ${rank} : rien à battre` : `Pas encore de réf. dans ${state.seanceName}`}
             </span>
           )}
         </div>
@@ -608,12 +729,52 @@ function Instrument() {
 
 type CatalogTarget = { mode: 'add' } | { mode: 'replace'; id: string; name: string };
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
+
+/** Marque de déviation au plan, sobre : un mot (« ajouté », « remplacé »). */
+function originWord(state: SeanceState, id: string): string | null {
+  return state.origin[id]?.kind ?? null;
+}
+
+/** Méta d'une ligne du Sommaire, UNE ligne : la prescription tant que rien n'est
+ *  fait, sinon l'état et le bilan (la prescription se relit dans l'instrument). */
+function SommaireMeta({ state, ex }: { state: SeanceState; ex: ExercisePlan }) {
+  const p = progressOf(state, ex);
+  const sum = exoSummary(state, ex);
+  const started = openSet(state, ex);
+  const origin = originWord(state, ex.id);
+  return (
+    <span className="flex flex-wrap items-center gap-x-2">
+      <span className={p === 'partial' || p === 'done' ? 'font-medium text-(--ink)' : 'text-(--muted)'}>
+        {p === 'todo' && `${range(ex.sets)} × ${range(ex.reps)} · RIR ${range(ex.rir)}`}
+        {p === 'skipped' && 'passé'}
+        {p === 'partial' && `en cours · ${sum.sets} sur ${range(ex.sets)}${started ? `, série ${sum.sets + 1} entamée` : ''}`}
+        {p === 'done' && `fait · ${plural(sum.sets, 'série')}`}
+        {origin && <span className="font-normal text-(--muted)"> · {origin}</span>}
+      </span>
+      {sum.beaten > 0 && <Status v="up" word={`${sum.beaten} battue${sum.beaten > 1 ? 's' : ''}`} />}
+    </span>
+  );
+}
+
+/** Ce qu'« Annuler la séance » fait perdre, accordé : « 1 série sera perdue »,
+ *  « 1 côté saisi et tes notes du jour seront perdus ». */
+function lossText(total: number, entries: number, notes: boolean): string {
+  const what = total > 0 ? plural(total, 'série') : entries > 0 ? `${plural(entries, 'côté')} saisi${entries > 1 ? 's' : ''}` : null;
+  const fem = total > 0 || !what;
+  const many = (what !== null && notes) || total > 1 || (total === 0 && entries > 1) || (!what && notes);
+  const subject = [what, notes ? 'tes notes du jour' : null].filter(Boolean).join(' et ');
+  return `${subject[0]!.toUpperCase()}${subject.slice(1)} ${many ? 'seront' : 'sera'} perdu${fem ? 'e' : ''}${many ? 's' : ''}.`;
+}
+
 function Sommaire() {
   const nav = useNav();
-  const { seance } = useProto();
+  const { seance, account, setAccount } = useProto();
   const state = seance.state;
   const current = state.exercises[state.idx]!;
   const [target, setTarget] = useState<CatalogTarget | null>(null);
+  const [options, setOptions] = useState<ExercisePlan | null>(null);
+  const [cancelAsk, setCancelAsk] = useState(false);
   const remaining = state.exercises.some((e) => {
     const p = progressOf(state, e);
     return p === 'todo' || p === 'partial';
@@ -621,6 +782,16 @@ function Sommaire() {
   const open = (i: number) => {
     seance.setIdx(i);
     nav.back();
+  };
+  const total = totalSets(state);
+  const entries = entryCount(state);
+  const hasNotes = Object.values(state.notes).some((b) => b.trim());
+  const cancel = () => {
+    // Les saisies de cette séance quittent la file d'envoi ; rien n'entre au journal.
+    if (account.pendingSync > 0) setAccount({ pendingSync: Math.max(0, account.pendingSync - entries) });
+    seance.cancel();
+    setCancelAsk(false);
+    nav.reset();
   };
 
   return (
@@ -640,42 +811,26 @@ function Sommaire() {
     >
       <ScreenHeader
         title={state.seanceName}
-        meta={`${state.routineName} · depuis ${state.startedAt} · ${state.elapsedMin} min · ${totalSets(state)} série${totalSets(state) > 1 ? 's' : ''}`}
+        meta={`${state.routineName} · ${state.elapsedMin} min · ${plural(total, 'série')}`}
         back={{ label: current.name, onClick: nav.back }}
+        action={<IconButton icon="plus" framed label="Ajouter un exo" onClick={() => setTarget({ mode: 'add' })} />}
       />
       <List label="Exercices de la séance">
         {state.exercises.map((ex, i) => {
           const p = progressOf(state, ex);
           const n = (state.logged[ex.id] ?? []).length;
           const started = openSet(state, ex);
-          const beaten = (state.logged[ex.id] ?? []).filter((s, k) => {
-            const r = refAt(ex, k + 1);
-            return r && setE1rm(s) > setE1rm(r);
-          }).length;
+          const origin = originWord(state, ex.id);
           return (
             <Row
               key={ex.id}
               lead={i + 1}
               title={ex.name}
-              meta={
-                <>
-                  <span className="block">
-                    {range(ex.sets)} × {range(ex.reps)} · RIR {range(ex.rir)}
-                  </span>
-                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2">
-                    <span className={p === 'partial' || p === 'done' ? 'font-medium text-(--ink)' : 'text-(--muted)'}>
-                      {PROGRESS_WORD[p]}
-                      {(p === 'partial' || p === 'done') && n > 0 && ` · ${n} série${n > 1 ? 's' : ''}`}
-                      {started && ` · série ${n + 1} entamée`}
-                    </span>
-                    {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
-                  </span>
-                </>
-              }
+              meta={<SommaireMeta state={state} ex={ex} />}
               current={i === state.idx}
               muted={p === 'skipped'}
               onClick={() => open(i)}
-              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}${started ? `, série ${n + 1} entamée` : ''}. Ouvrir dans l'instrument`}
+              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}${started ? `, série ${n + 1} entamée` : ''}${origin ? `, ${origin}` : ''}. Ouvrir dans l'instrument`}
               trailing={
                 p === 'skipped' ? (
                   // « Remettre », pas « Reprendre » : « Reprendre » est déjà le retour à l'instrument, en bas.
@@ -683,30 +838,59 @@ function Sommaire() {
                     Remettre
                   </TextLink>
                 ) : n === 0 && !started ? (
-                  <TextLink
-                    tone="muted"
-                    onClick={() => setTarget({ mode: 'replace', id: ex.id, name: ex.name })}
-                    ariaLabel={`Remplacer ou passer ${ex.name}`}
-                    className="-mr-1 px-1 py-1 text-right text-[15px] leading-[1.3]"
-                  >
-                    {/* Sur deux lignes : sur une seule, le lien écrase le nom de l'exo à 390 px. */}
-                    <span>
-                      Remplacer
-                      <br />
-                      ou passer
-                    </span>
-                  </TextLink>
+                  <IconButton icon="more" tone="muted" label={`Remplacer ou passer ${ex.name}`} onClick={() => setOptions(ex)} className="-mr-2.5" />
                 ) : undefined
               }
             />
           );
         })}
       </List>
-      <div className="px-5 pt-4">
-        <SecondaryButton onClick={() => setTarget({ mode: 'add' })} className="w-full">
-          Ajouter un exo
-        </SecondaryButton>
+      <div className="px-5 pt-5">
+        <TextLink tone="muted" onClick={() => (entries === 0 && !hasNotes ? cancel() : setCancelAsk(true))}>
+          Annuler la séance
+        </TextLink>
       </div>
+
+      <Sheet open={options !== null} title={options?.name ?? ''} onClose={() => setOptions(null)}>
+        <div className="flex gap-2 px-5 pb-1 pt-2">
+          <SecondaryButton
+            className="flex-1"
+            ariaLabel={`Remplacer ${options?.name ?? ''}`}
+            onClick={() => {
+              const ex = options!;
+              setOptions(null);
+              setTarget({ mode: 'replace', id: ex.id, name: ex.name });
+            }}
+          >
+            Remplacer
+          </SecondaryButton>
+          <SecondaryButton
+            className="flex-1"
+            ariaLabel={`Passer ${options?.name ?? ''}`}
+            onClick={() => {
+              seance.skip(options!.id);
+              setOptions(null);
+            }}
+          >
+            Passer
+          </SecondaryButton>
+        </div>
+      </Sheet>
+
+      <Sheet open={cancelAsk} title="Annuler la séance ?" onClose={() => setCancelAsk(false)}>
+        <div className="px-5 pb-2 pt-1">
+          <p className="max-w-[36ch] text-[16px] leading-[1.45] text-(--ink)">
+            {lossText(total, entries, hasNotes)} Rien n’entre au journal.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4">
+            <SecondaryButton onClick={() => setCancelAsk(false)}>Garder la séance</SecondaryButton>
+            <TextLink tone="muted" onClick={cancel}>
+              Annuler la séance
+            </TextLink>
+          </div>
+        </div>
+      </Sheet>
+
       <CatalogSheet
         key={target ? JSON.stringify(target) : 'ferme'}
         target={target}
@@ -716,10 +900,6 @@ function Sommaire() {
           if (!target) return;
           if (target.mode === 'add') seance.add(id);
           else seance.replace(target.id, id);
-          setTarget(null);
-        }}
-        onSkip={(id) => {
-          seance.skip(id);
           setTarget(null);
         }}
       />
@@ -733,13 +913,11 @@ function CatalogSheet({
   inSession,
   onClose,
   onPick,
-  onSkip,
 }: {
   target: CatalogTarget | null;
   inSession: string[];
   onClose: () => void;
   onPick: (catalogId: string) => void;
-  onSkip: (id: string) => void;
 }) {
   const [muscle, setMuscle] = useState<Muscle | 'tous'>('tous');
   const used = MUSCLES.filter((m) => catalog.some((c) => c.muscles.includes(m)));
@@ -750,12 +928,6 @@ function CatalogSheet({
       title={target?.mode === 'replace' ? `Remplacer ${target.name}` : 'Ajouter un exo'}
       onClose={onClose}
     >
-      {target?.mode === 'replace' && (
-        <div className="flex items-center justify-between gap-3 border-b border-(--line) px-5 pb-3">
-          <span className="text-[14px] text-(--muted)">Ou ne pas le faire aujourd'hui</span>
-          <SecondaryButton onClick={() => onSkip(target.id)}>Passer cet exo</SecondaryButton>
-        </div>
-      )}
       <div className="overflow-x-auto px-3 pt-1" style={{ scrollbarWidth: 'none' }}>
         <Choice
           label="Muscle"
@@ -781,6 +953,53 @@ function CatalogSheet({
         })}
       </List>
     </Sheet>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Séance d'hier non rangée (frontière minuit)                                */
+/* ------------------------------------------------------------------------ */
+
+/** Ouverture de la Salle après minuit sur une séance commencée la veille et
+ *  jamais rangée. Le plus probable : elle est finie et on l'a oubliée, d'où
+ *  « Ranger » en bloc principal (vers la fin de séance, à sa date d'hier).
+ *  « Reprendre » la rouvre telle quelle (séance qui passe minuit). Sans aucune
+ *  série, rien à ranger : on la quitte. */
+function SeanceHier() {
+  const nav = useNav();
+  const { seance } = useProto();
+  const s = seance.state;
+  const total = totalSets(s);
+  const done = s.exercises.filter((e) => progressOf(s, e) === 'done').length;
+  return (
+    <Screen
+      bottom={
+        <>
+          <SecondaryButton onClick={seance.resume} ariaLabel={`Reprendre la séance d’hier, ${s.seanceName}`}>
+            Reprendre
+          </SecondaryButton>
+          {total > 0 ? (
+            <PrimaryButton onClick={() => nav.push('fin-de-seance')} meta={`${total} série${total > 1 ? 's' : ''}`}>
+              Ranger la séance
+            </PrimaryButton>
+          ) : (
+            <PrimaryButton onClick={seance.cancel}>Quitter la séance</PrimaryButton>
+          )}
+        </>
+      }
+    >
+      <div className="pt-3" />
+      <ScreenHeader title="Pas rangée hier" meta={`${s.seanceName} · ${s.routineName} · ${fmtDate(s.dateIso)}, lancée à ${s.startedAt}`} />
+      <dl className="border-t border-(--line)">
+        <div className="flex min-h-12 items-center justify-between gap-4 border-b border-(--line) px-5 py-2.5">
+          <dt className="text-[16px] text-(--muted)">Exos faits</dt>
+          <dd className="text-[16px] font-medium text-(--ink)">
+            {done} sur {s.exercises.length}
+          </dd>
+        </div>
+      </dl>
+      <p className="px-5 pt-4 text-[15px] leading-[1.45] text-(--muted)">Rangée ou reprise, elle garde sa date : {fmtDate(s.dateIso)}</p>
+    </Screen>
   );
 }
 

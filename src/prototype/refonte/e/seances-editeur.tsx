@@ -38,6 +38,7 @@ import {
 import { Choice, EmptyState, List, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sheet, Stepper, TextLink } from './kit';
 import { CreateSeanceSheet } from './seances-routine';
 import { ActionRow, Confirm, NameSheet, ReorderRow, TextArea, TextField } from './seances-ui';
+import { Icon, IconButton } from './icons';
 import { useNav } from './shell';
 
 const LABEL: Record<FieldKey, string> = { sets: 'Séries', reps: 'Reps', rir: 'RIR' };
@@ -143,16 +144,29 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
         back={{ label: routine.name, onClick: tryBack }}
         action={
           items.length > 1 ? (
-            <SecondaryButton
-              size="sm"
-              onClick={() => {
+            reorder ? (
+              <SecondaryButton
+                size="sm"
+                onClick={() => {
                 setReorder((v) => !v);
                 setMoved(null);
                 setOpen(null);
-              }}
-            >
-              {reorder ? 'Terminé' : 'Réordonner'}
-            </SecondaryButton>
+                }}
+              >
+                Terminé
+              </SecondaryButton>
+            ) : (
+              <IconButton
+                icon="reorder"
+                framed
+                label="Réordonner"
+                onClick={() => {
+                setReorder((v) => !v);
+                setMoved(null);
+                setOpen(null);
+                }}
+              />
+            )
           ) : undefined
         }
       />
@@ -415,7 +429,10 @@ function ItemBlock({
             {state && <span className="font-medium text-(--ink)">· {state}</span>}
           </span>
         </span>
-        <span className="flex-none pt-0.5 text-[15px] text-(--muted) underline decoration-1 underline-offset-4">{open ? 'Replier' : 'Régler'}</span>
+        {/* Toute la ligne déplie ; le chevron dit dans quel sens (plus de « Régler » répété). */}
+        <span className="flex-none self-center text-(--muted)">
+          <Icon name={open ? 'chevron-up' : 'chevron-down'} />
+        </span>
       </button>
       {open && (
         <div className="pb-2">
@@ -424,22 +441,20 @@ function ItemBlock({
               <FieldEditor key={k} k={k} value={item[k]} onChange={(f) => onField(k, f)} />
             ))}
           </div>
-          <div className="px-5 pt-4">
-            <p className="text-[15px] font-semibold text-(--ink)">Note d'instructions</p>
-            {note ? (
-              <p className="mt-1 max-w-[40ch] text-[15px] leading-[1.45] text-(--muted)">{note}</p>
-            ) : (
-              <p className="mt-1 text-[15px] text-(--faint)">Aucune note pour cet exo.</p>
-            )}
-            <div className="mt-2 flex">
-              <SecondaryButton size="sm" onClick={onNote} ariaLabel={`${note ? 'Modifier' : 'Ajouter'} la note de ${name}`}>
-                {note ? 'Modifier la note' : 'Ajouter une note'}
-              </SecondaryButton>
+          <div className="px-5 pt-2">
+            <div className="flex min-h-11 items-center justify-between gap-3">
+              <p className="text-[15px] font-semibold text-(--ink)">Note d'instructions</p>
+              <IconButton icon="edit" tone="muted" className="-mr-2.5" onClick={onNote} label={`${note ? 'Modifier' : 'Ajouter'} la note de ${name}`} />
             </div>
+            {note ? (
+              <p className="max-w-[40ch] text-[15px] leading-[1.45] text-(--muted)">{note}</p>
+            ) : (
+              <p className="text-[15px] text-(--muted)">Aucune.</p>
+            )}
           </div>
           <div className="mt-3 flex border-t border-(--line) px-5 pt-3">
             <SecondaryButton size="sm" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
-              Retirer de la séance
+              Retirer
             </SecondaryButton>
           </div>
         </div>
@@ -513,7 +528,7 @@ function CountSection({ items, saved, dirty }: { items: PlanItem[]; saved: PlanI
         })}
       </dl>
       <p className="px-5 pt-2.5 text-[14px] leading-[1.45] text-(--faint)">
-        Une série compte pleine à 5 reps ou plus, en partie en deçà ; un exo unilatéral compte double au total.
+        Sous 5 reps, une série compte en partie ; un exo unilatéral compte double au total.
       </p>
     </section>
   );

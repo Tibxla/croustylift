@@ -212,3 +212,20 @@ export const UNI_HISTORY: Record<string, UniHistory> = {
 export function weakOf(p: SidePair): SideValue {
   return e1rm(p.G.weightKg, p.G.reps, p.G.rir) < e1rm(p.D.weightKg, p.D.reps, p.D.rir) ? p.G : p.D;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Notes datées de la dernière exécution (repère « tu notais »)               */
+/* ------------------------------------------------------------------------ */
+
+/** Note datée que la DERNIÈRE exécution de chaque séance porte pour un exo
+ *  (CONTEXT.md « Note datée ») : rien si elle n'en porte pas, on ne repêche
+ *  jamais une note plus ancienne. Clé : id de séance, puis id d'exo. */
+export const LAST_DATED_NOTES: Record<string, Record<string, { date: string; body: string }>> = {
+  'upper-a': {
+    bench: { date: '2026-11-17', body: 'Épaule droite raide, échauffement plus long. Prise un doigt plus serrée.' },
+    curl: { date: '2026-11-17', body: 'Haltères de 14 pris, fait à 12 les deux dernières.' },
+  },
+  'upper-b': {
+    'db-row': { date: '2026-11-20', body: 'Banc du fond, le seul qui ne bouge pas.' },
+  },
+};

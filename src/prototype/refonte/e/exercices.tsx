@@ -55,6 +55,7 @@ import {
   TONE,
 } from "./kit";
 import { Pages, useNav } from "./shell";
+import { IconButton } from "./icons";
 
 export function Exercices() {
   // Chiffres tabulaires réservés aux nombres (classe `tabular-nums`) : sur le
@@ -354,7 +355,7 @@ function Fiche({ id }: { id: string }) {
 
       <div className="border-t border-(--line)">
         <Line
-          label="Muscles principaux"
+          label="Muscles"
           sub={o?.muscles ? `original : ${nb(e.muscles, ", ")}` : undefined}
         >
           {nb(e.shownMuscles, ", ")}
@@ -397,11 +398,23 @@ function Fiche({ id }: { id: string }) {
       )}
 
       <section>
-        <SectionTitle
-          aside={e.note && !editNote ? "visible en salle" : undefined}
-        >
-          Note d’instructions
-        </SectionTitle>
+        <div className="flex items-center justify-between gap-3 px-5 pb-1 pt-5">
+          <h2 className="text-[17px] font-semibold text-(--ink)">
+            Note d’instructions
+          </h2>
+          {!editNote && (
+            <IconButton
+              icon="edit"
+              framed
+              label={e.note ? "Modifier la note" : "Écrire une note"}
+              onClick={() => {
+                setNote(e.note);
+                setEditNote(true);
+                setFlash(null);
+              }}
+            />
+          )}
+        </div>
         {editNote ? (
           <div className="px-5">
             <TextArea
@@ -413,13 +426,14 @@ function Fiche({ id }: { id: string }) {
             />
             <div className="mt-3 flex items-center gap-4">
               <SecondaryButton
+                ariaLabel="Enregistrer la note"
                 onClick={() => {
                   catalogue.setNote(e.id, note);
                   setEditNote(false);
                   setFlash(note.trim() ? "Note enregistrée." : "Note effacée.");
                 }}
               >
-                Enregistrer la note
+                Enregistrer
               </SecondaryButton>
               <TextLink
                 tone="muted"
@@ -440,21 +454,9 @@ function Fiche({ id }: { id: string }) {
               </p>
             ) : (
               <p className="text-[15px] leading-[1.45] text-(--muted)">
-                Aucune note. Elle s’affiche en salle sous le nom de l’exo.
+                Aucune. Elle se lit en salle, dans les notes de l’exo.
               </p>
             )}
-            <div className="mt-3 flex">
-              <SecondaryButton
-                size="sm"
-                onClick={() => {
-                  setNote(e.note);
-                  setEditNote(true);
-                  setFlash(null);
-                }}
-              >
-                {e.note ? "Modifier la note" : "Écrire une note"}
-              </SecondaryButton>
-            </div>
           </div>
         )}
       </section>
@@ -479,7 +481,7 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
   const rec = recordsOf(journal, e.id);
   const toAnalyse = (
     <TextLink onClick={() => nav.go("analyse", "exo", { id: e.id })}>
-      Voir la courbe dans l’Analyse
+      Voir dans l’Analyse
     </TextLink>
   );
 
@@ -541,8 +543,7 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
         {pts.length > 1 && <Spark values={pts.map((p) => p.e1rm)} />}
         <p className="px-5 text-[14px] leading-[1.45] text-(--muted)">
           {seanceInfo(main.seanceId).name} · {pts.length} séance
-          {pts.length > 1 ? "s" : ""} du {fmtDate(pts[0]!.date)} au{" "}
-          {fmtDate(lastPt.date)} · e1RM en kg de la 1ʳᵉ série{e.shownUnilateral ? ", côté faible" : ""}
+          {pts.length > 1 ? "s" : ""} · 1ʳᵉ série{e.shownUnilateral ? ", côté faible" : ""}
         </p>
         {curves.length > 1 && (
           <ul className="mt-2 px-5" aria-label="Autres séances">

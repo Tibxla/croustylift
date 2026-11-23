@@ -17,6 +17,7 @@ import {
 } from './fixtures-seances';
 import { EmptyState, List, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sheet, TextLink } from './kit';
 import { ActionNote, ActionRow, Confirm, Disclosure, NameSheet, ReorderRow } from './seances-ui';
+import { IconButton } from './icons';
 import { useNav } from './shell';
 
 const exos = (n: number) => `${n} exo${n > 1 ? 's' : ''}`;
@@ -72,15 +73,27 @@ export function RoutinePage({ id }: { id: string }) {
         back={{ label: 'Routines', onClick: nav.back }}
         action={
           !routine.archived && active.length > 1 ? (
-            <SecondaryButton
-              size="sm"
-              onClick={() => {
+            reorder ? (
+              <SecondaryButton
+                size="sm"
+                onClick={() => {
                 setReorder((v) => !v);
                 setMoved(null);
-              }}
-            >
-              {reorder ? 'Terminé' : 'Réordonner'}
-            </SecondaryButton>
+                }}
+              >
+                Terminé
+              </SecondaryButton>
+            ) : (
+              <IconButton
+                icon="reorder"
+                framed
+                label="Réordonner"
+                onClick={() => {
+                setReorder((v) => !v);
+                setMoved(null);
+                }}
+              />
+            )
           ) : undefined
         }
       />

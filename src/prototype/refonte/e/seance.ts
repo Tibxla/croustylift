@@ -8,6 +8,13 @@
 //   seance.add(id) / replace(exId, id) / skip(exId)   Déviations en salle
 //   seance.start(seanceId) / close()                   début, Clôture
 //   seance.setSide(exId, côté)                         unilatéral : côté saisi
+//   seance.setNote(exId, texte)                        Note datée du jour (par exo)
+//   seance.cancel()                                    « Annuler la séance » : rien au journal
+//   seance.setStale(on) / resume()                     séance d'hier non rangée (commande du prototype)
+//
+// DÉCOMPTE (CONTEXT.md « Décompte de séries ») : une série unilatérale complète
+// compte 2 au TOTAL de la séance (`totalSets`) et 1 par muscle (côté faible, via
+// `logged`). Une ligne d'exo garde une série par paire (`exoSummary`).
 //
 // UNILATÉRAL (ADR 0005, ADR 0010, CONTEXT.md « Unilatéral »). Une série = deux
 // côtés, chacun avec ses valeurs, tenus dans `uni` (paires au même rang). Le
@@ -20,9 +27,9 @@
 import { useMemo, useReducer } from 'react';
 import type { ExercisePlan } from '../fixtures';
 import { session as fixtureSession } from '../fixtures';
-import { catalogById, planFromCatalog, routines, UNI_HISTORY, weakOf, type Side } from './fixtures-e';
+import { catalogById, LAST_DATED_NOTES, planFromCatalog, routines, UNI_HISTORY, weakOf, type Side } from './fixtures-e';
 import { isUnilateral } from './fixtures-exercices';
-import { refAt, type SetValue } from './format';
+import { refAt, setE1rm, type SetValue } from './format';
 
 export type { Side };
 export const SIDE_WORD: Record<Side, string> = { G: 'gauche', D: 'droite' };
@@ -67,6 +74,13 @@ export interface SeanceState {
   drafts: Record<string, Draft>;
   /** Exo de la dernière série loggée (pour « Annuler »), null sinon. */
   lastLog: string | null;
+  /** Note datée du jour, par exo (texte libre, clavier autorisé). */
+  notes: Record<string, string>;
+  /** Déviations au plan : exo ajouté en salle, ou remplaçant (nom de l'exo remplacé). */
+  origin: Record<string, { kind: 'ajouté' } | { kind: 'remplacé'; from: string }>;
+  /** Séance commencée la veille et jamais rangée (frontière minuit), pas encore
+   *  reprise : la Salle demande d'abord quoi en faire. */
+  stale: boolean;
 }
 
 export type Progress = 'todo' | 'partial' | 'done' | 'skipped';
@@ -174,9 +188,51 @@ function withUni(ex: ExercisePlan, seanceId: string): ExercisePlan {
   return { ...ex, reference: ref ?? ex.reference, pr: weakPr ?? ex.pr };
 }
 
-/** Total de séries loggées dans l'Exécution. */
+/** Total de séries de l'Exécution : une série unilatérale complète compte 2
+ *  (les deux côtés), une bilatérale 1. Le décompte par muscle, lui, lit `logged`
+ *  (une par paire, côté faible). */
 export function totalSets(state: SeanceState): number {
-  return Object.values(state.logged).reduce((n, s) => n + s.length, 0);
+  return state.exercises.reduce((n, ex) => n + (state.logged[ex.id] ?? []).length * (isUni(state, ex) ? 2 : 1), 0);
+}
+
+/** Bilan d'un exo, partagé par le Sommaire, la Salle (bilan de fin d'exo) et la
+ *  fin de séance : séries complètes, battues et égalées contre la Référence au
+ *  même rang, record personnel. Unilatéral : au côté faible (pas de récap par côté). */
+export interface ExoSummary {
+  sets: number;
+  beaten: number;
+  matched: number;
+  /** e1RM du record battu aujourd'hui, null sinon. */
+  record: number | null;
+}
+
+export function exoSummary(state: SeanceState, ex: ExercisePlan): ExoSummary {
+  const logged = state.logged[ex.id] ?? [];
+  let beaten = 0;
+  let matched = 0;
+  logged.forEach((s, k) => {
+    const r = refAt(ex, k + 1);
+    if (r && setE1rm(s) > setE1rm(r)) beaten++;
+    else if (r && setE1rm(s) === setE1rm(r)) matched++;
+  });
+  const best = Math.max(0, ...logged.map(setE1rm));
+  const pr = ex.pr;
+  const record = pr && best > 0 && (best > pr.e1rm || (pr.date === state.dateIso && best >= pr.e1rm)) ? best : null;
+  return { sets: logged.length, beaten, matched, record };
+}
+
+/** Saisies de l'Exécution (une par série bilatérale, une par côté en unilatéral) :
+ *  ce qu'« Annuler la séance » retire de la file d'envoi. */
+export function entryCount(state: SeanceState): number {
+  return state.exercises.reduce((n, ex) => {
+    if (!isUni(state, ex)) return n + (state.logged[ex.id] ?? []).length;
+    return n + (state.uni[ex.id] ?? []).reduce((m, p) => m + (p.G ? 1 : 0) + (p.D ? 1 : 0), 0);
+  }, 0);
+}
+
+/** Repère « tu notais » : la note datée de la dernière exécution de CETTE séance. */
+export function lastDatedNote(state: SeanceState, exId: string): { date: string; body: string } | null {
+  return LAST_DATED_NOTES[state.seanceId]?.[exId] ?? null;
 }
 
 function initial(): SeanceState {
@@ -198,6 +254,9 @@ function initial(): SeanceState {
     idx: Math.max(0, s.exercises.findIndex((e) => e.status === 'in-progress')),
     drafts: {},
     lastLog: null,
+    notes: {},
+    origin: {},
+    stale: false,
   };
 }
 
@@ -211,7 +270,11 @@ type Action =
   | { type: 'add'; catalogId: string }
   | { type: 'replace'; id: string; catalogId: string }
   | { type: 'start'; seanceId: string }
-  | { type: 'close' };
+  | { type: 'close' }
+  | { type: 'cancel' }
+  | { type: 'note'; id: string; body: string }
+  | { type: 'stale'; on: boolean }
+  | { type: 'resume' };
 
 function reducer(state: SeanceState, a: Action): SeanceState {
   switch (a.type) {
@@ -302,6 +365,7 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         ...state,
         exercises: [...state.exercises, withUni(planFromCatalog(c), state.seanceId)],
         uniFlag: { ...state.uniFlag, [c.id]: isUnilateral(c.id) },
+        origin: { ...state.origin, [c.id]: { kind: 'ajouté' } },
       };
     }
     case 'replace': {
@@ -314,6 +378,11 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         ...state,
         exercises: state.exercises.map((e) => (e.id === a.id ? plan : e)),
         uniFlag: { ...state.uniFlag, [c.id]: isUnilateral(c.id) },
+        // Remplacer un ajouté le laisse ajouté ; remplacer un remplaçant garde l'exo du plan.
+        origin: {
+          ...state.origin,
+          [c.id]: state.origin[a.id]?.kind === 'ajouté' ? { kind: 'ajouté' } : { kind: 'remplacé', from: (state.origin[a.id] as { from?: string } | undefined)?.from ?? old.name },
+        },
       };
     }
     case 'start': {
@@ -344,10 +413,24 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         idx: 0,
         drafts: {},
         lastLog: null,
+        notes: {},
+        origin: {},
+        stale: false,
       };
     }
     case 'close':
-      return { ...state, phase: 'aucune', lastLog: null };
+      return { ...state, phase: 'aucune', lastLog: null, stale: false };
+    case 'cancel':
+      // Annulée, pas rangée : ni séries ni notes ne restent, rien n'entre au journal.
+      return { ...state, phase: 'aucune', logged: {}, uni: {}, notes: {}, drafts: {}, lastLog: null, stale: false };
+    case 'note':
+      return { ...state, notes: { ...state.notes, [a.id]: a.body } };
+    case 'stale':
+      // Simule une séance commencée hier soir et jamais rangée : la séance du
+      // prototype (6 séries, 22 nov., 18:42) revient en cours, à reprendre ou ranger.
+      return a.on ? { ...initial(), stale: true } : { ...state, stale: false };
+    case 'resume':
+      return { ...state, stale: false };
   }
 }
 
@@ -364,6 +447,11 @@ export interface SeanceStore {
   start: (seanceId: string) => void;
   /** Clôture : la séance rejoint le journal, la Salle revient au choix. */
   close: () => void;
+  /** Annuler la séance (lancée par erreur) : tout part, rien au journal. */
+  cancel: () => void;
+  setNote: (id: string, body: string) => void;
+  setStale: (on: boolean) => void;
+  resume: () => void;
 }
 
 export function useSeanceStore(): SeanceStore {
@@ -381,6 +469,10 @@ export function useSeanceStore(): SeanceStore {
       replace: (id, catalogId) => dispatch({ type: 'replace', id, catalogId }),
       start: (seanceId) => dispatch({ type: 'start', seanceId }),
       close: () => dispatch({ type: 'close' }),
+      cancel: () => dispatch({ type: 'cancel' }),
+      setNote: (id, body) => dispatch({ type: 'note', id, body }),
+      setStale: (on) => dispatch({ type: 'stale', on }),
+      resume: () => dispatch({ type: 'resume' }),
     }),
     [state],
   );

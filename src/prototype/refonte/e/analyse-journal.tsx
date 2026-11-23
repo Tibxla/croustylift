@@ -31,8 +31,11 @@ import {
   TextLink,
 } from './kit';
 import { useNav, useProto } from './shell';
+import { isUnilateral } from './fixtures-exercices';
+import { IconButton } from './icons';
 
-const nSets = (e: Execution) => e.exercises.reduce((n, x) => n + x.sets.length, 0);
+/** Séries de l'exécution : une série unilatérale (deux côtés) compte 2 au total. */
+const nSets = (e: Execution) => e.exercises.reduce((n, x) => n + x.sets.length * (isUnilateral(x.exerciseId) ? 2 : 1), 0);
 const lifted = (e: Execution) => e.exercises.reduce((n, x) => n + liftedKg(x.sets), 0);
 
 /* ------------------------------------------------------------------------ */
@@ -177,7 +180,19 @@ export function SeancePage({ id }: { id: string }) {
 
   return (
     <Page>
-      <ScreenHeader title={s.name} meta={`${fmtDateLong(e.date)} · ${s.routineName}`} back={{ label: 'Journal', onClick: nav.back }} />
+      <ScreenHeader
+        title={s.name}
+        meta={`${fmtDateLong(e.date)} · ${s.routineName}`}
+        back={{ label: 'Journal', onClick: nav.back }}
+        action={
+          canEdit ? (
+            <div className="flex gap-2">
+              <IconButton icon="edit" framed label="Corriger la durée ou le BPM" onClick={() => setMetricsOpen(true)} />
+              <IconButton icon="trash" framed label="Supprimer cette séance" onClick={() => setConfirm(true)} />
+            </div>
+          ) : undefined
+        }
+      />
 
       <dl className="grid grid-cols-4 gap-2 border-y border-(--line) px-5 py-3">
         <Fact label="Durée" value={fmtDuration(e.durationMin)} />
@@ -185,15 +200,9 @@ export function SeancePage({ id }: { id: string }) {
         <Fact label="Séries" value={String(nSets(e))} />
         <Fact label="kg soulevés" value={fmtInt(lifted(e))} />
       </dl>
-      {canEdit ? (
-        <div className="flex px-5 pt-3">
-          <SecondaryButton size="sm" onClick={() => setMetricsOpen(true)}>
-            Corriger la durée ou le BPM
-          </SecondaryButton>
-        </div>
-      ) : (
+      {!canEdit && (
         <p className="px-5 pt-3 text-[15px] leading-[1.45] text-(--muted)">
-          En cours en salle. Elle se corrige depuis la Salle tant qu'elle n'est pas close.
+          En cours en salle : elle se corrige depuis la Salle.
         </p>
       )}
 
@@ -217,11 +226,6 @@ export function SeancePage({ id }: { id: string }) {
           </section>
         );
       })}
-      {canEdit && (
-        <div className="flex px-5 pt-6">
-          <SecondaryButton onClick={() => setConfirm(true)}>Supprimer cette séance</SecondaryButton>
-        </div>
-      )}
 
       <SetEditor
         key={editing ? `serie-${editing.exerciseId}-${editing.rank}` : 'serie-ferme'}
@@ -235,7 +239,7 @@ export function SeancePage({ id }: { id: string }) {
         }}
         onRemove={() => {
           if (!editing) return;
-          const last = nSets(e) === 1;
+          const last = e.exercises.reduce((n, x) => n + x.sets.length, 0) === 1;
           store.removeSet(e.id, editing.exerciseId, editing.rank);
           setEditing(null);
           if (last) {

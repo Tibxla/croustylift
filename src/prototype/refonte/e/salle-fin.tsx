@@ -27,7 +27,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ExercisePlan } from '../fixtures';
 import type { Muscle } from './fixtures-e';
 import { byCanonicalOrder, lastBpm, musclesOf, plannedWeek, setWeight, weekBefore, weekStart } from './fixtures-fin';
-import { fmt1, fmtDate, fmtKg, range, refAt, setE1rm } from './format';
+import { fmt1, fmtDate, fmtKg, range } from './format';
+import { IconButton } from './icons';
 import {
   EmptyState,
   List,
@@ -35,14 +36,13 @@ import {
   Row,
   Screen,
   ScreenHeader,
-  SecondaryButton,
   SectionTitle,
   Sign,
   Status,
   Stepper,
   TextLink,
 } from './kit';
-import { openSet, progressOf, totalSets, type Progress, type SeanceState } from './seance';
+import { exoSummary, openSet, progressOf, totalSets, type Progress, type SeanceState } from './seance';
 import { useNav, useProto } from './shell';
 
 /* ------------------------------------------------------------------------ */
@@ -59,6 +59,8 @@ interface ExoRecap {
   record: number | null;
   /** Unilatéral : une série n'a qu'un côté saisi (« entamée », non comptée). */
   started: boolean;
+  /** Déviation au plan (« ajouté », « remplacé »), null si l'exo est celui du plan. */
+  origin: string | null;
 }
 
 interface Recap {
@@ -80,21 +82,14 @@ function buildRecap(s: SeanceState): Recap {
     const logged = s.logged[ex.id] ?? [];
     const progress = progressOf(s, ex);
     count[progress]++;
-    let beaten = 0;
-    let matched = 0;
-    logged.forEach((set, k) => {
-      kg += set.weightKg * set.reps;
-      const r = refAt(ex, k + 1);
-      if (r && setE1rm(set) > setE1rm(r)) beaten++;
-      else if (r && setE1rm(set) === setE1rm(r)) matched++;
-    });
+    // Bilan partagé avec le Sommaire et la Salle (battues, égalées, record).
+    const { beaten, matched, record } = exoSummary(s, ex);
+    // kg soulevés : comme le journal, une valeur par série (côté faible en unilatéral).
+    for (const set of logged) kg += set.weightKg * set.reps;
+    // Par muscle : une par série (côté faible en unilatéral), pondérée par les reps.
     const w = logged.reduce((n, set) => n + setWeight(set.reps), 0);
     if (w > 0) for (const m of musclesOf(ex.id)) today[m] = (today[m] ?? 0) + w;
-    // Record personnel : meilleure e1RM du jour au-dessus de l'ancien record (ou
-    // record déjà daté d'aujourd'hui). Un exo sans historique n'en bat aucun.
-    const best = Math.max(0, ...logged.map(setE1rm));
-    const record = ex.pr && best > 0 && (best > ex.pr.e1rm || (ex.pr.date === s.dateIso && best >= ex.pr.e1rm)) ? best : null;
-    return { ex, progress, sets: logged.length, beaten, matched, record, started: !!openSet(s, ex) };
+    return { ex, progress, sets: logged.length, beaten, matched, record, started: !!openSet(s, ex), origin: s.origin[ex.id]?.kind ?? null };
   });
   return {
     exos,
@@ -261,7 +256,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
               label="Durée"
               meta={s.elapsedMin === 0 ? `chrono lancé à ${s.startedAt}` : `chrono ${s.startedAt} à ${addMinutes(s.startedAt, s.elapsedMin)}`}
               value={fmtDur(duration)}
-              action={<SecondaryButton size="sm" onClick={() => setDurOpen(true)} ariaLabel="Corriger la durée">Corriger</SecondaryButton>}
+              action={<IconButton icon="edit" framed label="Corriger la durée" onClick={() => setDurOpen(true)} />}
             />
           )}
           {bpmOn ? (
@@ -283,9 +278,9 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
           ) : (
             <MeasureLine
               label="BPM moyen"
-              meta="facultatif, lu sur ta montre"
+              meta="facultatif"
               value={<span className="text-[15px] font-normal text-(--muted)">pas noté</span>}
-              action={<SecondaryButton size="sm" onClick={() => setBpmOn(true)} ariaLabel="Ajouter le BPM moyen">Ajouter</SecondaryButton>}
+              action={<IconButton icon="plus" framed label="Ajouter le BPM moyen" onClick={() => setBpmOn(true)} />}
             />
           )}
         </div>
@@ -317,7 +312,6 @@ function Figures({ recap }: { recap: Recap }) {
       <div>
         <dt className="text-[13px] text-(--muted)">kg soulevés</dt>
         <dd className="mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-(--ink)">{fmtInt(recap.kg)}</dd>
-        <dd className="mt-1.5 text-[13px] text-(--faint)">poids × reps</dd>
       </div>
       <div className="text-right">
         <dt className="text-[13px] text-(--muted)">Records</dt>
@@ -356,11 +350,11 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
             {e.record !== null && <Status v="up" word={`record ${fmt1(e.record)}`} />}
+            {e.origin && <span>· {e.origin}</span>}
           </span>
-        ) : p === 'skipped' ? (
-          'passé aujourd’hui'
         ) : (
-          `aucune série sur ${range(ex.sets)}`
+          // Le mot de droite dit déjà « passé » ou « pas fait » : seule la déviation reste.
+          (e.origin ?? undefined)
         )
       }
       value={
@@ -445,8 +439,8 @@ function MuscleWeek({ today, dateIso }: { today: Partial<Record<Muscle, number>>
         <span id="fin-muscles">Séries par muscle</span>
       </SectionTitle>
       <p className="px-5 text-[14px] leading-[1.45] text-(--muted)">
-        {seancesBefore.length > 0 ? `Avant aujourd’hui : ${seancesBefore.join(', ')}. ` : 'Première séance de la semaine. '}
-        Prévu : {routineName}, ses {seanceCount} séances une fois. Une série de moins de 5 reps compte en partie.
+        {seancesBefore.length > 0 ? `Avant : ${seancesBefore.join(', ')}. ` : 'Première de la semaine. '}
+        Prévu : {routineName}, {seanceCount} séances. Sous 5 reps, une série compte en partie.
       </p>
       <Legend />
       <ul aria-label="Séries par muscle, semaine" className="border-t border-(--line)">

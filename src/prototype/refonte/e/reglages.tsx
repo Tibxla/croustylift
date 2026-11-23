@@ -259,27 +259,21 @@ function DonneesSection() {
     <section>
       <SectionTitle>Données</SectionTitle>
       <p className="px-5 text-[15px] leading-[1.45] text-(--muted)">
-        Tout ton historique dans un fichier : séances, séries, notes, exos perso.
+        Tout ton historique dans un fichier : séances, séries, notes, exos perso. L'import ajoute et met à jour, ne supprime rien.
       </p>
-      <div className="mt-3 flex flex-col gap-2 px-5">
-        <SecondaryButton onClick={() => setExportMsg('Fichier téléchargé : croustylift-2026-11-23')}>
-          Exporter mes données
+      <div className="mt-3 flex gap-2 px-5">
+        <SecondaryButton className="flex-1" ariaLabel="Exporter mes données" onClick={() => { setImportMsg(null); setExportMsg('Fichier téléchargé : croustylift-2026-11-23'); }}>
+          Exporter
         </SecondaryButton>
-        {exportMsg && (
-          <p role="status" className="text-[14px] text-(--muted)">
-            {exportMsg}
-          </p>
-        )}
-        <SecondaryButton onClick={() => setImportMsg("Sélecteur de fichier : non branché dans le prototype")}>
-          Importer un fichier
+        <SecondaryButton className="flex-1" ariaLabel="Importer un fichier" onClick={() => { setExportMsg(null); setImportMsg('Sélecteur de fichier : non branché dans le prototype'); }}>
+          Importer
         </SecondaryButton>
-        <p className="text-[14px] text-(--muted)">L'import ajoute et met à jour, ne supprime rien.</p>
-        {importMsg && (
-          <p role="status" className="text-[14px] text-(--muted)">
-            {importMsg}
-          </p>
-        )}
       </div>
+      {(exportMsg || importMsg) && (
+        <p role="status" className="px-5 pt-2 text-[14px] text-(--muted)">
+          {importMsg ?? exportMsg}
+        </p>
+      )}
     </section>
   );
 }
@@ -352,7 +346,7 @@ function AboutSection() {
 /** Commandes du prototype (simuler le réseau, comparer la règle animée ou non).
  *  Absentes de l'app réelle. */
 function PrototypeSection() {
-  const { account, setAccount, settings, setSettings } = useProto();
+  const { account, setAccount, settings, setSettings, seance } = useProto();
   return (
     <section className="mt-6">
       <Rule strong />
@@ -370,6 +364,12 @@ function PrototypeSection() {
           min={0}
           max={20}
           onChange={(v) => setAccount({ pendingSync: v })}
+        />
+        <Switch
+          label="Séance d’hier non rangée"
+          meta="la Salle s’ouvre après minuit sur l’Upper A du 22 nov."
+          checked={seance.state.stale}
+          onChange={seance.setStale}
         />
         <Switch
           label="Règle animée au toucher"
