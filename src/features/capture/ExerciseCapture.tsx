@@ -669,7 +669,12 @@ function ExerciseRecapSheet({
     // z-40 : AU-DESSUS de la nav (z-30) — sinon la nav recouvre les actions du bas
     // de la feuille (« Revenir à la liste »). La feuille couvre la nav, c'est voulu
     // (on est concentré sur le récap).
-    <div className="fixed inset-0 z-40 flex flex-col">
+    <div
+      className="fixed inset-0 z-40 flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Récap de l’exercice"
+    >
       {/* Fond cliquable = « Continuer l'exo » (fermer sans quitter l'exo). */}
       <button
         type="button"
