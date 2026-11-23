@@ -375,6 +375,44 @@ select banc.accepte('rejouer ce même fichier',
 select banc.vrai('rejeu : aucun événement de plus',
   (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b3'));
 
+-- Routines : c'est l'état FINAL du fichier qui est jugé. Sauvegarde « Ancienne
+-- archivée, Nouvelle courante » ; depuis, Ancienne a été désarchivée et
+-- Nouvelle (jamais exécutée) supprimée : Ancienne est redevenue courante.
+-- Archiver Ancienne avant d'avoir rendu l'activation de Nouvelle était refusé.
+select banc.accepte('A crée Ancienne puis Nouvelle, courante, et archive Ancienne',
+  'insert into public.routines (id, name) values (''a0000000-0000-0000-0000-0000000000a7'', ''Ancienne''), (''a0000000-0000-0000-0000-0000000000b7'', ''Nouvelle''); insert into public.routine_activations (id, routine_id, activated_at) values (''a0000000-0000-0000-0000-0000000000c7'', ''a0000000-0000-0000-0000-0000000000a7'', now() + interval ''10 seconds''), (''a0000000-0000-0000-0000-0000000000c8'', ''a0000000-0000-0000-0000-0000000000b7'', now() + interval ''11 seconds''); update public.routines set archived_at = now() where id = ''a0000000-0000-0000-0000-0000000000a7''');
+create temp table sauvegarde_routines on commit drop as
+select jsonb_build_object(
+  'routines', (select jsonb_agg(to_jsonb(t)) from public.routines t),
+  'routine_activations', (select jsonb_agg(to_jsonb(t)) from public.routine_activations t)
+) as data;
+select banc.accepte('depuis la sauvegarde : A désarchive Ancienne et supprime Nouvelle',
+  'update public.routines set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000a7''; delete from public.routines where id = ''a0000000-0000-0000-0000-0000000000b7''');
+select banc.vrai('Ancienne est redevenue la routine courante',
+  (select a.routine_id = 'a0000000-0000-0000-0000-0000000000a7' from public.routine_activations a order by a.activated_at desc limit 1));
+select banc.accepte('restaurer la sauvegarde : son état final (Nouvelle courante, Ancienne archivée) est valide',
+  format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde_routines)));
+select banc.vrai('après restauration : Nouvelle est courante et active, Ancienne est archivée',
+  (select a.routine_id = 'a0000000-0000-0000-0000-0000000000b7' from public.routine_activations a order by a.activated_at desc limit 1)
+  and (select archived_at is null from public.routines where id = 'a0000000-0000-0000-0000-0000000000b7')
+  and (select archived_at is not null from public.routines where id = 'a0000000-0000-0000-0000-0000000000a7'));
+select banc.accepte('réimporter aussitôt la même sauvegarde',
+  format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde_routines)));
+-- Sauvegarde prise routine archivée, désarchivée depuis : le fichier la rearchive.
+select banc.accepte('A désarchive Ancienne après la sauvegarde',
+  'update public.routines set archived_at = null where id = ''a0000000-0000-0000-0000-0000000000a7''');
+select banc.accepte('restaurer : Ancienne, non courante, est de nouveau archivée',
+  format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde_routines)));
+select banc.vrai('Ancienne est archivée',
+  (select archived_at is not null from public.routines where id = 'a0000000-0000-0000-0000-0000000000a7'));
+-- Un fichier dont l'état FINAL laisse pour courante une routine archivée reste refusé, en entier.
+select banc.refuse('sauvegarde retouchée : la routine courante du fichier y est archivée', '23514',
+  format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
+    'routines', jsonb_build_array(
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000b7', 'name', 'Nouvelle retouchée', 'archived_at', '2026-11-01T00:00:00Z')))));
+select banc.vrai('refusé en entier : Nouvelle garde son nom et reste active',
+  (select name = 'Nouvelle' and archived_at is null from public.routines where id = 'a0000000-0000-0000-0000-0000000000b7'));
+
 -- Atomicité : la dernière table échoue, les premières ne doivent pas rester.
 select banc.refuse('import dont une série pointe une exécution absente', '23503',
   format('select public.import_user_data(%L::jsonb)', jsonb_build_object(

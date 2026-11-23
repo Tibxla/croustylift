@@ -22,6 +22,21 @@
 --     couple (exécution, exercice) d'une note du fichier est retirée avant
 --     l'écriture. Le fichier gagne, comme pour toute ligne restaurée ; sans
 --     cela l'unicité de la migration 0018 refuserait tout l'import.
+--   - Routines : c'est l'état FINAL du fichier qui est jugé, pas chaque
+--     écriture en chemin. Les archivages NOUVEAUX (routine active en base,
+--     archivée dans le fichier) sont différés : les routines sont écrites sans
+--     eux, puis leurs activations, puis seulement les archivages. Écrits au fil
+--     des tables, ils refusaient une sauvegarde valide : fichier « A archivée,
+--     B courante », base où A est redevenue courante depuis (B supprimée) ;
+--     archiver A avant d'avoir rendu l'activation de B heurtait la règle de la
+--     migration 0021 (la routine courante ne s'archive pas). Un désarchivage,
+--     lui, s'applique tout de suite : il ne peut que rendre une activation
+--     permise. Un fichier dont l'état final laisse pour courante une routine
+--     archivée reste refusé en entier, une fois 0021 appliquée.
+--   - Verrou du compte : celui de la migration 0021, pris d'emblée et sous la
+--     même clé, pour qu'un archivage ou une activation venu d'un autre appareil
+--     passe avant ou après l'import, jamais au milieu. Il est écrit ici en
+--     toutes lettres : la fonction marche que 0021 soit appliquée ou non.
 --
 -- Pendant l'import, le trigger `log_seance_archive` se tait : l'état
 -- `archived_at` et le journal viennent tous deux du fichier. Sans cela,
@@ -65,7 +80,8 @@
 -- déploiement du client qui appelle la fonction, et la migration 0022 (journal
 -- en insertion seule) APRÈS ce déploiement et le passage des anciens clients.
 -- La fonction marche dans les deux états de la policy du journal : elle n'y
--- fait que des insertions.
+-- fait que des insertions. Elle marche aussi avant et après la migration 0021
+-- (routine courante jamais archivée), qui passe elle aussi après le client.
 --
 -- RISQUE : faible pour la base (une fonction ajoutée, un trigger qui gagne une
 -- sortie anticipée).
@@ -130,6 +146,7 @@ declare
   v_cols text;
   v_set text;
   v_has_id boolean;
+  v_owner uuid;
 begin
   if p_data is null or jsonb_typeof(p_data) <> 'object' then
     raise exception 'import_user_data : un objet JSON est attendu (une clé par table).'
@@ -138,7 +155,44 @@ begin
 
   perform set_config('croustylift.import', 'on', true);
 
+  -- Verrou du compte (même clé que `lock_current_routine`, migration 0021) :
+  -- celui de l'appelant, et ceux que portent les routines et les activations du
+  -- fichier (sous `service_role`, il n'y a pas d'appelant). Ordre fixe.
+  for v_owner in
+    select distinct s.owner_id from (
+      select (select auth.uid()) as owner_id
+      union all
+      select (l.ligne ->> 'owner_id')::uuid
+      from jsonb_array_elements(
+        case when jsonb_typeof(p_data -> 'routines') = 'array' then p_data -> 'routines' else '[]'::jsonb end
+        || case when jsonb_typeof(p_data -> 'routine_activations') = 'array'
+             then p_data -> 'routine_activations' else '[]'::jsonb end
+      ) as l(ligne)
+      where jsonb_typeof(l.ligne) = 'object'
+    ) s
+    where s.owner_id is not null
+    order by 1
+  loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('croustylift.routine_courante:' || v_owner::text, 0)
+    );
+  end loop;
+
   foreach v_table in array v_tables loop
+    -- Routines et activations du fichier sont écrites (`seances` vient juste
+    -- après elles) : les archivages différés s'appliquent maintenant, sur un
+    -- compte dont la routine courante est déjà celle du fichier. Placé AVANT
+    -- les sorties anticipées ci-dessous : il passe même si le fichier ne porte
+    -- ni activation ni séance.
+    if v_table = 'seances' and jsonb_typeof(p_data -> 'routines') = 'array' then
+      update public.routines r
+        set archived_at = f.archived_at
+        from jsonb_populate_recordset(null::public.routines, p_data -> 'routines') f
+        where r.id = f.id
+          and f.archived_at is not null
+          and r.archived_at is null;
+    end if;
+
     v_rows := p_data -> v_table;
     if v_rows is null or jsonb_typeof(v_rows) = 'null' then
       continue;
@@ -154,8 +208,17 @@ begin
     -- Colonnes de la table que porte au moins une ligne du fichier.
     select
       string_agg(format('%I', a.attname), ', ' order by a.attnum),
-      string_agg(format('%1$I = excluded.%1$I', a.attname), ', ' order by a.attnum)
-        filter (where a.attname <> 'id'),
+      string_agg(
+        case
+          -- Archivage nouveau d'une routine : différé (cf. en-tête). Une routine
+          -- active en base le reste ici ; une routine archivée prend la valeur
+          -- du fichier (autre date, ou désarchivage).
+          when v_table = 'routines' and a.attname = 'archived_at'
+            then 'archived_at = case when cible.archived_at is null then null else excluded.archived_at end'
+          else format('%1$I = excluded.%1$I', a.attname)
+        end,
+        ', ' order by a.attnum
+      ) filter (where a.attname <> 'id'),
       coalesce(bool_or(a.attname = 'id'), false)
     into v_cols, v_set, v_has_id
     from pg_catalog.pg_attribute a
@@ -196,7 +259,7 @@ begin
     end if;
 
     execute format(
-      'insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, $1) on conflict (id) do %3$s',
+      'insert into public.%1$I as cible (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, $1) on conflict (id) do %3$s',
       v_table,
       v_cols,
       case

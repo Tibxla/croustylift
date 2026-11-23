@@ -33,6 +33,17 @@
 -- (`pg_advisory_xact_lock`) : archivage, activation et suppression d'un même
 -- compte passent l'un après l'autre, et le second voit l'écriture du premier.
 --
+-- ORDRE, impératif (voir supabase/tests/ORDRE.md) : cette migration s'applique
+-- APRÈS le déploiement du client qui importe par `import_user_data` (migration
+-- 0024) ET après le passage des anciens clients. L'ancien import écrivait les
+-- tables l'une après l'autre, sans transaction : sur une sauvegarde « A
+-- archivée, B courante » restaurée dans un compte où A est redevenue courante,
+-- il aurait été refusé ici en réarchivant A, après avoir déjà écrit les tables
+-- précédentes, laissant le compte à moitié restauré. Le client à jour n'a pas
+-- besoin d'elle pour tenir la règle dans ses propres gestes (`archiveRoutine`
+-- relit la routine courante) : elle ferme les courses et les appels directs.
+-- Son numéro ne dit pas son rang.
+--
 -- Rejouable. Aucune donnée modifiée : un compte déjà dans l'état interdit fait
 -- échouer la migration entière.
 --

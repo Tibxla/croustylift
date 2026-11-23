@@ -22,6 +22,13 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
                    and p.prosrc like '%is distinct from coalesce(dernier.archived, false)%'),
          'séance masquée par le plan mais comptée par l''Analyse après une restauration, ou l''inverse'
   union all
+  select 'import_user_data diffère les archivages nouveaux de routines après leurs activations, sous le verrou du compte',
+         exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.import_user_data(jsonb)')
+                   and p.prosrc like '%when cible.archived_at is null then null else excluded.archived_at%'
+                   and p.prosrc like '%f.archived_at is not null%and r.archived_at is null%'
+                   and p.prosrc like '%croustylift.routine_courante:%'),
+         'sauvegarde valide refusée (routine archivée dans le fichier, redevenue courante en base), import croisé avec un archivage'
+  union all
   select 'aucune fonction SECURITY DEFINER dans public',
          not exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
          'fonction qui contournerait la RLS'
