@@ -8,13 +8,16 @@ import type { LocalAccount } from '../lib/local-account'
  * porte de purge de l'app — au lieu de perdre des saisies en silence.
  */
 export class PendingWritesError extends Error {
-  /** Nombre d'écritures encore en file au moment du refus. */
+  /** Nombre d'écritures retenues (file ET quarantaine) au moment du refus. */
   readonly pending: number
+  /** Dont celles en quarantaine : rejetées par le serveur, elles ne partiront pas. */
+  readonly refused: number
 
-  constructor(pending: number) {
+  constructor(pending: number, refused = 0) {
     super(`${pending} écriture(s) locale(s) en attente de synchronisation.`)
     this.name = 'PendingWritesError'
     this.pending = pending
+    this.refused = refused
   }
 }
 
