@@ -925,7 +925,9 @@ let inFlight: Promise<FlushResult> | null = null;
 //
 // Le verrou n'est jamais ATTENDU : s'il est pris, un autre onglet flushe cette
 // même file (et relit la file entre deux ops, donc voit ce qu'on vient
-// d'enfiler) ; la passe d'ici ne fait rien et le dit par son `remaining`.
+// d'enfiler) ; la passe d'ici ne fait rien, le dit par son `remaining`, et un
+// nouvel essai est reprogrammé tant que la file n'est pas vide (cf.
+// `scheduleLockRetry`).
 // Attendre exposerait à ne plus jamais flusher si l'onglet détenteur est figé
 // par le système en pleine passe. Pour ce cas précis, un verrou refusé depuis
 // plus d'une minute est REPRIS (`steal`) : mieux vaut une passe doublée, que
@@ -935,6 +937,57 @@ let inFlight: Promise<FlushResult> | null = null;
 const FLUSH_LOCK = 'croustylift:outbox:flush';
 const FLUSH_LOCK_STEAL_AFTER_MS = 60_000;
 let flushLockRefusedSince: number | null = null;
+
+// NOUVEL ESSAI après un verrou occupé. Ne pas attendre le verrou ne doit pas
+// vouloir dire « ne plus jamais essayer » : si la passe de l'autre onglet
+// s'arrête sur un échec transitoire juste après notre refus, il libère le
+// verrou et plus rien ne réveillait notre file, qui attendait la prochaine
+// saisie ou le prochain remontage. Tant que le verrou a été refusé, que la file
+// n'est pas vide et que l'appareil est en ligne, un essai est donc reprogrammé,
+// avec des attentes qui s'allongent (0,5 s, puis le double, plafonné à 30 s).
+// Un seul minuteur à la fois ; il s'éteint dès que le verrou est obtenu ou que
+// la file est vide. Hors ligne, rien n'est reprogrammé : le retour du réseau
+// relance la synchro par ailleurs.
+const LOCK_RETRY_FIRST_MS = 500;
+const LOCK_RETRY_MAX_MS = 30_000;
+let flushLockBusy = false;
+let lockRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let lockRetryAttempt = 0;
+/** Ce que le nouvel essai lance : par défaut la même passe, sinon le flush de l'app. */
+let lockRetryRunner: (() => Promise<unknown>) | null = null;
+
+/**
+ * Fait passer les nouveaux essais par le flush de l'app (`flushOutbox`, qui
+ * relit aussi les copies d'historique acquittées) plutôt que par la passe nue.
+ */
+export function setFlushRetryRunner(run: (() => Promise<unknown>) | null): void {
+  lockRetryRunner = run;
+}
+
+function scheduleLockRetry(fns: SyncFns, who?: SessionReader): void {
+  if (lockRetryTimer !== null) return;
+  const delay = Math.min(LOCK_RETRY_FIRST_MS * 2 ** lockRetryAttempt, LOCK_RETRY_MAX_MS);
+  lockRetryAttempt += 1;
+  lockRetryTimer = setTimeout(() => {
+    lockRetryTimer = null;
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (offline || readQueue().length === 0) {
+      lockRetryAttempt = 0;
+      return;
+    }
+    void (lockRetryRunner ? lockRetryRunner() : flush(fns, who))
+      .catch(() => {})
+      .finally(() => {
+        // L'écran suit la file (bannière de synchro) sans attendre un geste.
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+          window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
+        }
+      });
+  }, delay);
+}
+
+/** Événement `window` émis quand la file a bougé sans geste de l'écran (nouvel essai). */
+export const OUTBOX_CHANGED_EVENT = 'croustylift:outbox-changed';
 
 async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushResult> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
@@ -950,9 +1003,11 @@ async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushRes
       (lock) => {
         if (lock === null) {
           flushLockRefusedSince ??= Date.now();
+          flushLockBusy = true;
           return { remaining: readQueue().length, flushed: 0 };
         }
         flushLockRefusedSince = null;
+        flushLockBusy = false;
         running = run();
         return running;
       },
@@ -986,9 +1041,18 @@ async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushRes
  */
 export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   if (inFlight) return inFlight;
-  inFlight = underFlushLock(() => runFlush(fns, who)).finally(() => {
-    inFlight = null;
-  });
+  inFlight = underFlushLock(() => runFlush(fns, who))
+    .then((result) => {
+      // Verrou pris par un autre onglet et file non vide : un essai est
+      // reprogrammé (cf. `scheduleLockRetry`). Verrou obtenu : les attentes
+      // repartent de zéro.
+      if (flushLockBusy && result.remaining > 0) scheduleLockRetry(fns, who);
+      else if (!flushLockBusy) lockRetryAttempt = 0;
+      return result;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
   return inFlight;
 }
 

@@ -82,6 +82,7 @@ import {
 } from './state';
 import {
   enqueue,
+  OUTBOX_CHANGED_EVENT,
   pendingCount,
   quarantineCount,
   purgeByExecution,
@@ -698,10 +699,13 @@ function subscribeSync(cb: () => void): () => void {
   const onOnlineOffline = () => cb();
   window.addEventListener('online', onOnlineOffline);
   window.addEventListener('offline', onOnlineOffline);
+  // La file a bougé sans geste de cet écran (essai reprogrammé par l'outbox).
+  window.addEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
   return () => {
     syncListeners.delete(cb);
     window.removeEventListener('online', onOnlineOffline);
     window.removeEventListener('offline', onOnlineOffline);
+    window.removeEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
   };
 }
 

@@ -65,6 +65,12 @@ function recorder(insertSet?: (op: OutboxOp) => Promise<void>): { fns: SyncFns; 
   return { fns, sent };
 }
 
+/** Laisse tourner promesses et verrous jusqu'à ce que `ready` soit vrai. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 50 && !ready(); i += 1) await vi.advanceTimersByTimeAsync(0);
+  if (!ready()) throw new Error('condition jamais atteinte');
+}
+
 const persistedIds = () =>
   (JSON.parse(storage.getItem('croustylift:outbox') ?? '[]') as OutboxOp[]).map((op) => op.id);
 
@@ -127,5 +133,88 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
 
     // A relit : S0 reste retirée pour lui, S1 et S2 sont là.
     expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
+  });
+});
+
+describe('verrou de flush occupé par un autre onglet', () => {
+  it('la file de B n’attend pas une autre saisie : un nouvel essai part seul quand A a libéré le verrou', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    // A tient le verrou pendant sa requête, qui finira par échouer (transitoire).
+    let failA!: () => void;
+    const tabA = recorder(
+      () => new Promise<void>((_resolve, reject) => (failA = () => reject(new Error('offline')))),
+    );
+    const flushA = a.flush(tabA.fns);
+    await until(() => typeof failA === 'function');
+    // B logge sa dernière série : verrou pris, rien ne part.
+    b.enqueue(setOp('S1'));
+    const tabB = recorder();
+    expect(await b.flush(tabB.fns)).toEqual({ remaining: 2, flushed: 0 });
+    expect(tabB.sent).toEqual([]);
+
+    // La requête de A échoue, A libère le verrou. Aucune nouvelle saisie dans B.
+    failA();
+    await flushA;
+    await vi.advanceTimersByTimeAsync(1000);
+
+    // Avant : B n'avait aucun réveil planifié, sa file attendait indéfiniment.
+    expect(tabB.sent).toEqual(['S0', 'S1']);
+    expect(persistedIds()).toEqual([]);
+  });
+
+  it('tant que le verrou reste pris, les essais s’espacent (pas de boucle serrée)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    const tabA = recorder();
+    let holding = false;
+    const gate: { release: (() => void) | null } = { release: null };
+    // La première requête de A pend (verrou tenu) ; les suivantes passent.
+    tabA.fns.insertSet = () => {
+      if (holding) return Promise.resolve();
+      holding = true;
+      return new Promise<void>((resolve) => (gate.release = resolve));
+    };
+    const flushA = a.flush(tabA.fns);
+    await until(() => holding);
+    b.enqueue(setOp('S1'));
+    await b.flush(recorder().fns);
+    const lockRequests = vi.spyOn(navigator.locks, 'request');
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    // 0,5 s, 1 s, 2 s, 4 s : quatre essais en dix secondes, pas des centaines.
+    expect(lockRequests.mock.calls.length).toBe(4);
+    // Le verrou du navigateur est commun au processus de test : on le rend.
+    lockRequests.mockRestore();
+    gate.release?.();
+    await flushA;
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+
+  it('file vidée entre-temps (l’autre onglet a tout envoyé) : plus d’essai planifié', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    let succeedA!: () => void;
+    const tabA = recorder(() => new Promise<void>((resolve) => (succeedA = resolve)));
+    const flushA = a.flush(tabA.fns);
+    await until(() => typeof succeedA === 'function');
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    succeedA();
+    await flushA;
+    const lockRequests = vi.spyOn(navigator.locks, 'request');
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(tabB.sent).toEqual([]);
+    // Un seul réveil, qui trouve la file vide et ne redemande pas le verrou.
+    expect(lockRequests.mock.calls.length).toBe(0);
   });
 });

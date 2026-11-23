@@ -25,6 +25,7 @@ import {
 import {
   enqueueTracked,
   flush,
+  setFlushRetryRunner,
   pendingAmong,
   refusedAmong,
   type FlushResult,
@@ -238,3 +239,8 @@ export function flushOutbox() {
   // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
   return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
 }
+
+// Un essai reprogrammé après un verrou occupé (cf. outbox) passe par le flush de
+// l'app, pour que les copies d'historique acquittées soient relues comme après
+// toute autre passe.
+setFlushRetryRunner(flushOutbox);
