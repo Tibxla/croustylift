@@ -8,8 +8,11 @@
 // La page ouverte tourne alors sur l'ancien bundle, et c'est ELLE qui choisit le
 // moment de recharger. Deux règles :
 //   1. on ne recharge jamais pendant une séance en cours de saisie, un champ
-//      focalisé, un brouillon déclaré ou une récupération de mot de passe
-//      (`reloadAllowed`, vérifiée à l'instant du rechargement) ;
+//      focalisé, un brouillon ou une écriture directe déclarés, une
+//      récupération de mot de passe, ni tant que des écritures de la file ne
+//      tiennent qu'en mémoire, stockage de l'appareil plein (`reloadAllowed`,
+//      vérifiée à l'instant du rechargement ; raisons relevées par
+//      `currentBlockers`, reload-guards.ts) ;
 //   2. on recharge là où rien ne se perd : au lancement, tant que l'utilisateur
 //      n'a encore rien touché, ou à un changement d'onglet, qui démonte déjà
 //      l'écran quitté.
