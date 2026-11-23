@@ -227,7 +227,9 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
           <SectionTitle>Séance</SectionTitle>
           {pending === 'archive' ? (
             <Confirm
-              confirmLabel="Archiver la séance"
+              destructive={dirty}
+              keepLabel="Garder et continuer"
+              confirmLabel={dirty ? 'Archiver sans les modifications' : 'Archiver la séance'}
               onCancel={() => setPending(null)}
               onConfirm={() => {
                 plan.archiveSeance(seance.id);
@@ -243,6 +245,8 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
             </Confirm>
           ) : pending === 'delete' ? (
             <Confirm
+              destructive
+              keepLabel="Garder la séance"
               confirmLabel="Supprimer la séance"
               onCancel={() => setPending(null)}
               onConfirm={() => {
@@ -294,6 +298,17 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
         footer={
           changes === 'guard' ? (
             <>
+              {/* La perte reste un lien discret ; fermer la feuille = continuer l'édition. */}
+              <TextLink
+                tone="muted"
+                className="self-start"
+                onClick={() => {
+                  plan.discard(seance.id);
+                  nav.back();
+                }}
+              >
+                Abandonner les modifications
+              </TextLink>
               <PrimaryButton
                 disabled={empty}
                 onClick={() => {
@@ -303,14 +318,6 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
               >
                 {empty ? 'Ajoute au moins un exo' : 'Enregistrer et revenir'}
               </PrimaryButton>
-              <SecondaryButton
-                onClick={() => {
-                  plan.discard(seance.id);
-                  nav.back();
-                }}
-              >
-                Abandonner les modifications
-              </SecondaryButton>
             </>
           ) : undefined
         }

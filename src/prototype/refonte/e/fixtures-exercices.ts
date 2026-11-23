@@ -169,6 +169,12 @@ export function useCatalogue(): Exo[] {
   return raw.map(fuse);
 }
 
+/** Drapeau unilatéral fusionné (override compris), lu hors React (Salle, Analyse). */
+export function isUnilateral(id: string): boolean {
+  const it = items.find((i) => i.id === id);
+  return it ? fuse(it).shownUnilateral : !!catalog.find((c) => c.id === id)?.unilateral;
+}
+
 export function sameMuscles(a: Muscle[], b: Muscle[]): boolean {
   return a.length === b.length && a.every((m) => b.includes(m));
 }

@@ -241,9 +241,12 @@ export function SecondaryButton({
   );
 }
 
-/** Lien souligné, cible 44 px. Réservé à la navigation (« Voir dans l'Analyse »)
- *  et aux actions mineures en ligne (« Annuler la série 3 », « Remettre », le
- *  « Annuler » d'une confirmation). Une vraie action est un bouton. */
+/** Lien souligné, cible 44 px. Réservé à la navigation (« Voir dans l'Analyse »),
+ *  aux actions mineures en ligne (« Annuler la série 3 », « Remettre ») et à
+ *  l'option DESTRUCTIVE d'une confirmation qui fait perdre des données
+ *  (« Supprimer définitivement ») : dans une confirmation, l'option sûre est
+ *  toujours le bouton (« Garder »), la perte un lien discret. Une vraie action
+ *  est un bouton. */
 export function TextLink({
   children,
   onClick,
@@ -919,36 +922,95 @@ export function Ruler({
 /* Rangée de numéros (reps, RIR)                                              */
 /* ------------------------------------------------------------------------ */
 
-/** Rangée de numéros touchables : la fourchette du plan est soulignée d'un
- *  filet, la valeur choisie d'un trait épais, la Référence d'un petit carré
- *  (« réf. » à l'écran). */
+
+/** Rangée de numéros touchables, de `min` à `max` (reps 1-50, RIR 0-10 : voir
+ *  REPS_MIN… dans format.ts). Un tap = une valeur ; la fourchette du plan est
+ *  soulignée d'un filet, la valeur choisie d'un trait épais, la Référence d'un
+ *  petit carré (« réf. » à l'écran).
+ *
+ *  DÉFILEMENT. La rangée court d'un bord de l'écran à l'autre et défile au pouce
+ *  (défilement natif, accroché au chiffre centré). Une case vaut 1/8 de la
+ *  largeur : 7 chiffres entiers au centre et un demi-chiffre coupé net à chaque
+ *  bord tant qu'il reste des valeurs de ce côté (l'indice « ça continue », sans
+ *  dégradé ni chevron). Au bout de la plage, la marge d'écran revient : plus de
+ *  coupe, plus rien à chercher. À la souris (prototype sur ordinateur), on la
+ *  glisse comme la règle ; un glissé ne choisit rien.
+ *
+ *  RECADRAGE, toujours instantané (aucune animation : geste répété des centaines
+ *  de fois). Au montage, la rangée se cale sur la fourchette du plan et la valeur
+ *  courante si elles tiennent ensemble, sinon sur la valeur. Ensuite elle ne
+ *  bouge plus d'elle-même, sauf si la valeur choisie change d'ailleurs (log,
+ *  annulation, clavier) et sort du champ. Un tap ne déplace jamais les chiffres
+ *  sous le doigt. L'appelant remonte la rangée (`key`) à chaque exo ou série
+ *  pour qu'elle reparte calée.
+ *
+ *  Clavier : un seul arrêt de tabulation (la valeur choisie), ← → Début Fin. */
 export function NumberRow({
   label,
-  values,
+  min,
+  max,
   value,
   presc,
   refValue,
   onPick,
-  scrollTo,
-  perView,
 }: {
   label: string;
-  values: number[];
+  min: number;
+  max: number;
   value: number;
   presc: [number, number];
   refValue: number | null;
   onPick: (n: number) => void;
-  /** Première valeur visible à l'ouverture (rangée défilante). */
-  scrollTo?: number;
-  perView: number;
 }) {
   const row = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
+  const values = range0(min, max);
+  /** La dernière valeur vient d'un tap dans cette rangée : ne rien recadrer. */
+  const pickedHere = useRef(false);
+  const focusSel = useRef(false);
+  const drag = useRef<{ x: number; left: number; moved: boolean } | null>(null);
+  const swallowClick = useRef(false);
+
+  const cellOf = (n: number) => row.current?.querySelector<HTMLElement>(`[data-n="${n}"]`) ?? null;
+  const centerOn = (n: number) => {
     const el = row.current;
-    if (!el || scrollTo === undefined) return;
-    const i = values.indexOf(scrollTo);
-    el.scrollLeft = (Math.max(0, i) * el.clientWidth) / perView;
-  }, [scrollTo, values, perView]);
+    const c = cellOf(n);
+    if (!el || !c) return;
+    el.scrollLeft = c.offsetLeft + c.offsetWidth / 2 - el.clientWidth / 2;
+  };
+  const fullyVisible = (n: number) => {
+    const el = row.current;
+    const c = cellOf(n);
+    if (!el || !c) return true;
+    return c.offsetLeft >= el.scrollLeft - 1 && c.offsetLeft + c.offsetWidth <= el.scrollLeft + el.clientWidth + 1;
+  };
+
+  useLayoutEffect(() => {
+    // Calage d'ouverture : plan + valeur s'ils tiennent dans les 7 cases entières.
+    const a = Math.max(min, Math.min(presc[0], value));
+    const b = Math.min(max, Math.max(presc[1], value));
+    centerOn(b - a + 1 <= 7 ? Math.round((a + b) / 2) : value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useLayoutEffect(() => {
+    if (focusSel.current) {
+      focusSel.current = false;
+      cellOf(value)?.focus({ preventScroll: true });
+    }
+    if (pickedHere.current) {
+      pickedHere.current = false;
+      return;
+    }
+    if (!fullyVisible(value)) centerOn(value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const pickKey = (n: number) => {
+    const v = Math.min(max, Math.max(min, n));
+    if (v === value) return;
+    focusSel.current = true;
+    onPick(v);
+  };
 
   return (
     <div>
@@ -961,10 +1023,67 @@ export function NumberRow({
       </div>
       <div
         ref={row}
-        className="mx-5 mt-0.5 flex overflow-x-auto"
-        style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory' }}
+        data-number-row={label}
+        className="relative mt-0.5 flex overflow-x-auto px-5"
+        style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollBehavior: 'auto', overscrollBehaviorX: 'contain' }}
         role="radiogroup"
         aria-label={label}
+        onKeyDown={(e) => {
+          const k = e.key;
+          if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
+          e.preventDefault();
+          // La barre de bascule du prototype écoute ← → sur window.
+          e.stopPropagation();
+          pickKey(k === 'Home' ? min : k === 'End' ? max : value + (k === 'ArrowRight' ? 1 : -1));
+        }}
+        onPointerDown={(e) => {
+          if (e.pointerType !== 'mouse' || e.button !== 0) return;
+          drag.current = { x: e.clientX, left: e.currentTarget.scrollLeft, moved: false };
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          const dx = e.clientX - d.x;
+          if (!d.moved) {
+            if (Math.abs(dx) < 5) return;
+            d.moved = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            e.currentTarget.style.scrollSnapType = 'none';
+          }
+          e.currentTarget.scrollLeft = d.left - dx;
+        }}
+        onPointerUp={(e) => {
+          const d = drag.current;
+          drag.current = null;
+          if (!d?.moved) return;
+          // Accroche au chiffre le plus proche du centre, sans glisser.
+          const el = e.currentTarget;
+          const mid = el.scrollLeft + el.clientWidth / 2;
+          let best = values[0]!;
+          let gap = Infinity;
+          for (const n of values) {
+            const c = cellOf(n);
+            if (!c) continue;
+            const g = Math.abs(c.offsetLeft + c.offsetWidth / 2 - mid);
+            if (g < gap) {
+              gap = g;
+              best = n;
+            }
+          }
+          centerOn(best);
+          el.style.scrollSnapType = 'x mandatory';
+          swallowClick.current = true;
+          window.setTimeout(() => (swallowClick.current = false), 0);
+        }}
+        onPointerCancel={(e) => {
+          drag.current = null;
+          e.currentTarget.style.scrollSnapType = 'x mandatory';
+        }}
+        onClickCapture={(e) => {
+          if (!swallowClick.current) return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
       >
         {values.map((n) => {
           const sel = n === value;
@@ -975,9 +1094,17 @@ export function NumberRow({
               type="button"
               role="radio"
               aria-checked={sel}
-              onClick={() => onPick(n)}
-              className="relative h-12 flex-none"
-              style={{ flexBasis: `${100 / perView}%`, scrollSnapAlign: 'start' }}
+              tabIndex={sel ? 0 : -1}
+              data-n={n}
+              onClick={() => {
+                if (n === value) return;
+                pickedHere.current = true;
+                onPick(n);
+              }}
+              className="relative h-12 flex-none select-none"
+              // 1/8 de la largeur de la rangée (le pourcentage se lit sur la boîte
+              // de contenu, marges d'écran de 20 px déduites).
+              style={{ flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
             >
               <span
                 className={`flex h-full items-center justify-center text-[23px] tracking-[-0.01em] ${
@@ -995,4 +1122,8 @@ export function NumberRow({
       </div>
     </div>
   );
+}
+
+function range0(a: number, b: number): number[] {
+  return Array.from({ length: b - a + 1 }, (_, i) => a + i);
 }

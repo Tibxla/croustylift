@@ -542,7 +542,7 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
         <p className="px-5 text-[14px] leading-[1.45] text-(--muted)">
           {seanceInfo(main.seanceId).name} · {pts.length} séance
           {pts.length > 1 ? "s" : ""} du {fmtDate(pts[0]!.date)} au{" "}
-          {fmtDate(lastPt.date)} · e1RM en kg de la 1ʳᵉ série
+          {fmtDate(lastPt.date)} · e1RM en kg de la 1ʳᵉ série{e.shownUnilateral ? ", côté faible" : ""}
         </p>
         {curves.length > 1 && (
           <ul className="mt-2 px-5" aria-label="Autres séances">
@@ -658,16 +658,17 @@ function ExitSection({
             title={`Revenir à « ${e.name} » ?`}
             actions={
               <>
-                <SecondaryButton
+                <SecondaryButton onClick={() => setGuard(null)}>
+                  Garder ta version
+                </SecondaryButton>
+                <TextLink
+                  tone="muted"
                   onClick={() => {
                     catalogue.resetOverride(e.id);
                     setGuard(null);
                   }}
                 >
                   Revenir à l’original
-                </SecondaryButton>
-                <TextLink tone="muted" onClick={() => setGuard(null)}>
-                  Garder ta version
                 </TextLink>
               </>
             }
@@ -768,16 +769,17 @@ function ExitSection({
           title={`Supprimer « ${e.shownName} » ?`}
           actions={
             <>
-              <SecondaryButton
+              <SecondaryButton onClick={() => setGuard(null)}>
+                Garder
+              </SecondaryButton>
+              <TextLink
+                tone="muted"
                 onClick={() => {
                   catalogue.remove(e.id);
                   nav.back();
                 }}
               >
                 Supprimer définitivement
-              </SecondaryButton>
-              <TextLink tone="muted" onClick={() => setGuard(null)}>
-                Garder
               </TextLink>
             </>
           }

@@ -14,6 +14,7 @@ import { fmtInt, SlopeStatus, useJournal, Page } from './analyse-common';
 import { BLOCKS, currentPlan, curvesOf, exoName, liftedKg, recordsOf, routineName, seanceInfo, type Curve } from './fixtures-analyse';
 import { fmt1, fmtDate, fmtKg, fmtSigned, setE1rm } from './format';
 import { List, Row, ScreenHeader, SectionTitle, SecondaryButton, Status } from './kit';
+import { isUnilateral } from './fixtures-exercices';
 import { useNav } from './shell';
 
 export function ExoPage({ id }: { id: string }) {
@@ -47,7 +48,7 @@ export function ExoPage({ id }: { id: string }) {
     <Page>
       <ScreenHeader
         title={exoName(id)}
-        meta={total > 0 ? `e1RM de la 1ʳᵉ série · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
+        meta={total > 0 ? `e1RM de la 1ʳᵉ série${isUnilateral(id) ? ', côté faible' : ''} · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
         back={{ label: 'Analyse', onClick: nav.back }}
       />
 

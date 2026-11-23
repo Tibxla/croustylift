@@ -177,26 +177,45 @@ function NameForm({
   );
 }
 
-/** Confirmation en ligne (motif de la garde de déconnexion des Réglages). */
+/** Confirmation en ligne (motif de la garde de déconnexion des Réglages). Le
+ *  texte dit toujours ce qui sera perdu. `destructive` (une perte qui ne se
+ *  défait pas) : l'option SÛRE devient le bouton (`keepLabel`) et la perte un
+ *  lien souligné discret, comme partout dans l'app. Sinon (archivage, qui se
+ *  défait), l'action est le bouton et « Annuler » le lien. */
 export function Confirm({
   children,
   confirmLabel,
   onConfirm,
   onCancel,
+  destructive = false,
+  keepLabel = 'Garder',
 }: {
   children: ReactNode;
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  destructive?: boolean;
+  keepLabel?: string;
 }) {
   return (
     <div role="alert" className="mx-5 my-3 border-l-[3px] border-(--ink) pl-3">
       <div className="text-[15px] leading-[1.45] text-(--ink)">{children}</div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4">
-        <SecondaryButton onClick={onConfirm}>{confirmLabel}</SecondaryButton>
-        <TextLink tone="muted" onClick={onCancel}>
-          Annuler
-        </TextLink>
+        {destructive ? (
+          <>
+            <SecondaryButton onClick={onCancel}>{keepLabel}</SecondaryButton>
+            <TextLink tone="muted" onClick={onConfirm}>
+              {confirmLabel}
+            </TextLink>
+          </>
+        ) : (
+          <>
+            <SecondaryButton onClick={onConfirm}>{confirmLabel}</SecondaryButton>
+            <TextLink tone="muted" onClick={onCancel}>
+              Annuler
+            </TextLink>
+          </>
+        )}
       </div>
     </div>
   );

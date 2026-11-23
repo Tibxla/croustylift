@@ -19,7 +19,7 @@
 // et `Pages` remonte chaque page à neuf.
 import { useSyncExternalStore } from 'react';
 import { session } from '../fixtures';
-import { catalogById, routines, type Prescription } from './fixtures-e';
+import { catalogById, routines, UNI_HISTORY, weakOf, type Prescription } from './fixtures-e';
 import { setE1rm, type SetValue } from './format';
 import type { SeanceState } from './seance';
 
@@ -172,6 +172,8 @@ const SPECS: Spec[] = [
     exos: [
       { id: 'incline-db', n: 3, firsts: ['26x9@2', '26x10@2', '26x11@2', '28x9@2', '28x10@2', '28x10@1', '28x11@1', '30x9@2', '30x10@2'] },
       { id: 'pullup', n: 3, firsts: ['10x6@2', '10x7@2', '10x7@2', '10x8@2', '10x8@1', '12.5x6@2', '12.5x6@2', '12.5x7@2', '12.5x7@2'] },
+      // Rowing unilatéral : côté faible seulement (ADR 0005), la droite ici.
+      { id: 'db-row', n: 3, firsts: ['27.5x10@2', '27.5x11@2', '30x9@2', '30x10@2', '30x10@2', '30x11@2', '32.5x8@2', '32.5x9@2', '32.5x10@2'] },
       { id: 'lateral', n: 4, firsts: ['10x15@1', '10x15@1', '10x16@1', '10x14@1', '10x15@1', '10x16@0', '10x15@1', '10x15@1', '10x15@1'] },
       { id: 'pushdown', n: 3, firsts: ['30x12@1', '30x13@1', '32.5x11@1', '32.5x12@1', '32.5x13@1', '35x11@1', '35x12@1', '35x12@1', '35x13@1'] },
       // Curl marteau : recule depuis qu'il passe en fin de séance.
@@ -206,6 +208,13 @@ export function buildBase(): Execution[] {
           const log = exercises.find((x) => x.exerciseId === e.id);
           if (log && e.reference) log.sets = e.reference.sets.map((s) => ({ ...s }));
         }
+      }
+      // 20 nov. : le rowing unilatéral garde, série par série, le côté faible de
+      // la Référence par côté que la Salle affiche.
+      const uni = UNI_HISTORY['db-row']?.ref;
+      if (uni && spec.seanceId === uni.seanceId && date === uni.date) {
+        const log = exercises.find((x) => x.exerciseId === 'db-row');
+        if (log) log.sets = uni.sets.map((p) => ({ ...weakOf(p) }));
       }
       if (exercises.length === 0) return;
       out.push({ id: `${spec.seanceId}-${date}`, date, seanceId: spec.seanceId, ...metricsFor(date, i, spec.seanceId), exercises });

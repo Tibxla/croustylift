@@ -95,3 +95,13 @@ export function setE1rm(s: SetValue): number {
 export function refAt(ex: ExercisePlan, rank: number): SetValue | null {
   return ex.reference?.sets[rank - 1] ?? null;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Bornes des rangées de numéros                                              */
+/* ------------------------------------------------------------------------ */
+
+/** Toute valeur plausible s'atteint au pouce, sans clavier. */
+export const REPS_MIN = 1;
+export const REPS_MAX = 50;
+export const RIR_MIN = 0;
+export const RIR_MAX = 10;

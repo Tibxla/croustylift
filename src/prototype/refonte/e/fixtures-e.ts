@@ -2,7 +2,7 @@
 // catalogue d'exercices (base + perso) et routines de l'utilisateur. Muscles
 // dans le vocabulaire canonique de CONTEXT.md (15 muscles principaux).
 import type { ExercisePlan } from '../fixtures';
-import { session } from '../fixtures';
+import { e1rm, session } from '../fixtures';
 
 export const MUSCLES = [
   'pectoraux', 'avant épaule', 'milieu épaule', 'arrière épaule', 'trapèzes',
@@ -120,6 +120,7 @@ export const routines: Routine[] = [
         items: [
           p('incline-db', [3, 4], [8, 12], [1, 2]),
           p('pullup', [3, 4], [6, 10], [1, 2]),
+          p('db-row', [3, 3], [8, 12], [1, 2]),
           p('lateral', [3, 4], [12, 20], [0, 1]),
           p('pushdown', [3, 3], [10, 15], [0, 1]),
           p('hammer', [2, 3], [10, 12], [0, 1]),
@@ -166,4 +167,48 @@ export function planFromCatalog(c: CatalogExercise, presc?: Omit<Prescription, '
     weeklyRatePct: null,
     loggedToday: [],
   };
+}
+
+/* ------------------------------------------------------------------------ */
+/* Unilatéral : valeurs par côté (ADR 0005, ADR 0010)                         */
+/* ------------------------------------------------------------------------ */
+
+/** G = gauche, D = droite. */
+export type Side = 'G' | 'D';
+export interface SideValue {
+  weightKg: number;
+  reps: number;
+  rir: number;
+}
+export type SidePair = Record<Side, SideValue>;
+
+/** Par exo unilatéral : la Référence par (position, côté) dans UNE séance, et
+ *  le Record par côté (tous jours confondus). Le journal de l'Analyse garde le
+ *  côté faible de chaque série (fixtures-analyse.ts), la courbe aussi. */
+export interface UniHistory {
+  ref: { seanceId: string; date: string; sets: SidePair[] } | null;
+  pr: Record<Side, { e1rm: number; weightKg: number; reps: number; date: string }> | null;
+}
+
+const sv = (weightKg: number, reps: number, rir: number): SideValue => ({ weightKg, reps, rir });
+const prOf = (v: SideValue, date: string) => ({ e1rm: e1rm(v.weightKg, v.reps, v.rir), weightKg: v.weightKg, reps: v.reps, date });
+
+/** Rowing haltère unilatéral, fait en Upper B le 20 nov. : la droite est le
+ *  côté faible (2,5 kg de moins), comme souvent. */
+const DB_ROW_REF: SidePair[] = [
+  { G: sv(35, 10, 2), D: sv(32.5, 10, 2) },
+  { G: sv(35, 9, 2), D: sv(32.5, 9, 1) },
+  { G: sv(35, 8, 1), D: sv(32.5, 8, 1) },
+];
+
+export const UNI_HISTORY: Record<string, UniHistory> = {
+  'db-row': {
+    ref: { seanceId: 'upper-b', date: '2026-11-20', sets: DB_ROW_REF },
+    pr: { G: prOf(sv(35, 10, 2), '2026-11-20'), D: prOf(sv(32.5, 10, 2), '2026-11-20') },
+  },
+};
+
+/** Côté faible d'une paire : e1RM la plus basse (à égalité, la droite). */
+export function weakOf(p: SidePair): SideValue {
+  return e1rm(p.G.weightKg, p.G.reps, p.G.rir) < e1rm(p.D.weightKg, p.D.reps, p.D.rir) ? p.G : p.D;
 }

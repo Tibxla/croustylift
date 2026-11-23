@@ -175,6 +175,8 @@ export function RoutinePage({ id }: { id: string }) {
             </Confirm>
           ) : pending === 'delete' ? (
             <Confirm
+              destructive
+              keepLabel="Garder la routine"
               confirmLabel="Supprimer la routine"
               onCancel={() => setPending(null)}
               onConfirm={() => {

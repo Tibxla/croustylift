@@ -306,17 +306,17 @@ function CompteSection() {
               {n} saisie{n > 1 ? 's' : ''} pas encore synchronisée{n > 1 ? 's' : ''}. Se déconnecter les efface de cet appareil. Reviens en
               ligne pour te déconnecter sans rien perdre.
             </p>
+            {/* L'option sûre est le bouton ; la perte, un lien discret. */}
             <div className="mt-3 flex flex-wrap items-center gap-x-4">
-              <SecondaryButton
+              <SecondaryButton onClick={() => setGuard(false)}>Rester connecté</SecondaryButton>
+              <TextLink
+                tone="muted"
                 onClick={() => {
                   setGuard(false);
                   setAccount({ phase: 'deconnecte', pendingSync: 0 });
                 }}
               >
                 Me déconnecter et perdre ces saisies
-              </SecondaryButton>
-              <TextLink tone="muted" onClick={() => setGuard(false)}>
-                Rester connecté
               </TextLink>
             </div>
           </div>

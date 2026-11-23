@@ -245,7 +245,11 @@ function Connexion() {
                 title={`Effacer ${plural(dev.pending, "saisie", "saisies")} ?`}
                 actions={
                   <>
-                    <SecondaryButton
+                    <SecondaryButton onClick={() => setPurge(false)}>
+                      Garder
+                    </SecondaryButton>
+                    <TextLink
+                      tone="muted"
                       onClick={() => {
                         setDevice({ pending: 0, localSession: false });
                         setPurge(false);
@@ -254,9 +258,6 @@ function Connexion() {
                       }}
                     >
                       Effacer et changer de compte
-                    </SecondaryButton>
-                    <TextLink tone="muted" onClick={() => setPurge(false)}>
-                      Garder
                     </TextLink>
                   </>
                 }

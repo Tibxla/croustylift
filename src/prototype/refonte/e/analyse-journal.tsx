@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { Chart, dayOf, monthTicks, type ChartSel } from './analyse-chart';
 import { fmtDateLong, fmtDuration, fmtInt, fmtMonthTitle, fmtWeekday, useJournal, Page } from './analyse-common';
 import { exoName, liftedKg, prescriptionOf, seanceInfo, store, useAnalyseStore, type Execution } from './fixtures-analyse';
-import { fmt1, fmtDate, fmtKg, setE1rm, type SetValue } from './format';
+import { fmt1, fmtDate, fmtKg, REPS_MAX, REPS_MIN, RIR_MAX, RIR_MIN, setE1rm, type SetValue } from './format';
 import {
   EmptyState,
   List,
@@ -28,6 +28,7 @@ import {
   Sheet,
   Stepper,
   Switch,
+  TextLink,
 } from './kit';
 import { useNav, useProto } from './shell';
 
@@ -250,19 +251,19 @@ export function SeancePage({ id }: { id: string }) {
         onClose={() => setConfirm(false)}
         footer={
           <>
-            <SecondaryButton onClick={() => setConfirm(false)} className="w-full">
-              Garder la séance
-            </SecondaryButton>
-            <PrimaryButton
+            {/* L'option sûre est le bouton principal ; la perte, un lien discret. */}
+            <TextLink
+              tone="muted"
+              className="self-start"
               onClick={() => {
                 store.removeExecution(e.id, `${s.name} du ${fmtDate(e.date)} supprimée, ${nSets(e)} séries.`);
                 setConfirm(false);
                 nav.back();
               }}
-              meta={`${nSets(e)} séries`}
             >
-              Supprimer
-            </PrimaryButton>
+              Supprimer la séance et ses {nSets(e)} séries
+            </TextLink>
+            <PrimaryButton onClick={() => setConfirm(false)}>Garder la séance</PrimaryButton>
           </>
         }
       >
@@ -288,9 +289,6 @@ function Fact({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
-const RIRS = [0, 1, 2, 3, 4, 5];
-
 function SetEditor({
   e,
   editing,
@@ -306,7 +304,9 @@ function SetEditor({
 }) {
   const { settings } = useProto();
   const [v, setV] = useState<SetValue | null>(editing?.value ?? null);
+  const [removing, setRemoving] = useState(false);
   if (!editing || !v) return null;
+  const lastOfSeance = nSets(e) === 1;
   const step = settings.stepKg;
   const presc = prescriptionOf(e.seanceId, editing.exerciseId);
   const orig = editing.value;
@@ -318,19 +318,36 @@ function SetEditor({
       title={`Série ${editing.rank} · ${exoName(editing.exerciseId)}`}
       onClose={onClose}
       footer={
-        <>
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <SecondaryButton size="sm" onClick={onRemove}>
-              Supprimer cette série
-            </SecondaryButton>
-            <span className="text-[14px] text-(--muted)">
-              avant {fmtKg(orig.weightKg)} × {orig.reps} · RIR {orig.rir}
-            </span>
+        removing ? (
+          // Même règle que toutes les confirmations : l'option sûre est le bouton.
+          <div role="alert" className="border-l-[3px] border-(--ink) pl-3">
+            <p className="text-[16px] font-semibold leading-[1.35] text-(--ink)">Supprimer la série {editing.rank} ?</p>
+            <p className="mt-1 text-[15px] leading-[1.45] text-(--muted)">
+              {fmtKg(orig.weightKg)} × {orig.reps} · RIR {orig.rir} quitte le journal, les courbes et les records.
+              {lastOfSeance ? ' C’est la dernière série : la séance quitte le journal avec elle.' : ''} Ça ne se défait pas.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4">
+              <SecondaryButton onClick={() => setRemoving(false)}>Garder la série</SecondaryButton>
+              <TextLink tone="muted" onClick={onRemove}>
+                {lastOfSeance ? 'Supprimer la série et la séance' : 'Supprimer la série'}
+              </TextLink>
+            </div>
           </div>
-          <PrimaryButton onClick={() => onSave(v)} disabled={!changed} meta={`e1RM ${fmt1(setE1rm(v))}`}>
-            {changed ? 'Enregistrer' : 'Rien à enregistrer'}
-          </PrimaryButton>
-        </>
+        ) : (
+          <>
+            <div className="flex min-h-11 items-center justify-between gap-3">
+              <TextLink tone="muted" onClick={() => setRemoving(true)}>
+                Supprimer cette série
+              </TextLink>
+              <span className="text-[14px] text-(--muted)">
+                avant {fmtKg(orig.weightKg)} × {orig.reps} · RIR {orig.rir}
+              </span>
+            </div>
+            <PrimaryButton onClick={() => onSave(v)} disabled={!changed} meta={`e1RM ${fmt1(setE1rm(v))}`}>
+              {changed ? 'Enregistrer' : 'Rien à enregistrer'}
+            </PrimaryButton>
+          </>
+        )
       }
     >
       <p className="px-5 text-[14px] text-(--muted)">
@@ -361,22 +378,21 @@ function SetEditor({
       <div className="mt-2 flex flex-col gap-1.5 pb-2">
         <NumberRow
           label="Reps"
-          values={REPS}
+          min={REPS_MIN}
+          max={REPS_MAX}
           value={v.reps}
           presc={presc?.reps ?? [orig.reps, orig.reps]}
           refValue={null}
           onPick={(n) => setV({ ...v, reps: n })}
-          scrollTo={Math.max(1, Math.min(v.reps - 3, 24))}
-          perView={7}
         />
         <NumberRow
           label="RIR"
-          values={RIRS}
+          min={RIR_MIN}
+          max={RIR_MAX}
           value={v.rir}
           presc={presc?.rir ?? [orig.rir, orig.rir]}
           refValue={null}
           onPick={(n) => setV({ ...v, rir: n })}
-          perView={6}
         />
       </div>
     </Sheet>

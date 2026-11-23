@@ -42,7 +42,7 @@ import {
   Stepper,
   TextLink,
 } from './kit';
-import { progressOf, totalSets, type Progress, type SeanceState } from './seance';
+import { openSet, progressOf, totalSets, type Progress, type SeanceState } from './seance';
 import { useNav, useProto } from './shell';
 
 /* ------------------------------------------------------------------------ */
@@ -57,6 +57,8 @@ interface ExoRecap {
   matched: number;
   /** e1RM du record personnel battu aujourd'hui, null sinon. */
   record: number | null;
+  /** Unilatéral : une série n'a qu'un côté saisi (« entamée », non comptée). */
+  started: boolean;
 }
 
 interface Recap {
@@ -92,7 +94,7 @@ function buildRecap(s: SeanceState): Recap {
     // record déjà daté d'aujourd'hui). Un exo sans historique n'en bat aucun.
     const best = Math.max(0, ...logged.map(setE1rm));
     const record = ex.pr && best > 0 && (best > ex.pr.e1rm || (ex.pr.date === s.dateIso && best >= ex.pr.e1rm)) ? best : null;
-    return { ex, progress, sets: logged.length, beaten, matched, record };
+    return { ex, progress, sets: logged.length, beaten, matched, record, started: !!openSet(s, ex) };
   });
   return {
     exos,
@@ -349,6 +351,7 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
             <span>
               {plural(e.sets, 'série')}
               {p === 'partial' && ` sur ${range(ex.sets)}`}
+              {e.started && `, série ${e.sets + 1} entamée`}
             </span>
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}

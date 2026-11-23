@@ -12,6 +12,12 @@
 //      « Logger la série n » passe en bouton secondaire juste au-dessus. Quand
 //      il ne reste rien : « Terminer la séance ». Avant le seuil, un lien
 //      « Exo suivant » permet de passer à la suite sur demande.
+//   c. Exo unilatéral (ADR 0005, 0010) : la ligne de Référence devient le
+//      sélecteur « Gauche · Droite » (44 px, côté déjà saisi marqué « fait »),
+//      avec la Référence de ce côté ; la bande montre chaque série en deux
+//      demi-cases G/D ; Écart et Record se lisent par côté. Après un côté,
+//      l'instrument passe à l'autre, mêmes valeurs. Seules les séries complètes
+//      comptent (jauges, « Exo suivant », Sommaire) ; un seul côté = entamée.
 //
 // Pages : index (instrument, ou choix de la séance si aucune en cours),
 // sommaire, fin-de-seance (bouchon dans salle-fin.tsx).
@@ -25,6 +31,10 @@ import {
   fmtSigned,
   range,
   refAt,
+  REPS_MAX,
+  REPS_MIN,
+  RIR_MAX,
+  RIR_MIN,
   setE1rm,
   verdict,
   WORDS,
@@ -47,7 +57,23 @@ import {
   TONE,
 } from './kit';
 import { SalleFin } from './salle-fin';
-import { draftOf, nextIndex, progressOf, totalSets, type Progress, type SeanceState } from './seance';
+import {
+  activeSide,
+  draftOf,
+  isUni,
+  nextIndex,
+  openSet,
+  progressOf,
+  SIDE_WORD,
+  sidePr,
+  sideRef,
+  sideRefDate,
+  totalSets,
+  type Progress,
+  type SeanceState,
+  type Side,
+  type UniSet,
+} from './seance';
 import { Pages, useNav, useProto } from './shell';
 
 export function Salle() {
@@ -63,15 +89,6 @@ export function Salle() {
   );
 }
 
-const REPS = Array.from({ length: 30 }, (_, i) => i + 1);
-const RIRS = [0, 1, 2, 3, 4, 5];
-
-function repsWindowStart([lo, hi]: [number, number]): number {
-  let start = Math.max(1, lo - 2);
-  if (hi > start + 6) start = hi - 6;
-  return start;
-}
-
 const PROGRESS_WORD: Record<Progress, string> = { todo: 'à faire', partial: 'en cours', done: 'fait', skipped: 'passé' };
 
 /* ------------------------------------------------------------------------ */
@@ -85,7 +102,7 @@ function ExerciseIndex({ state, onPick }: { state: SeanceState; onPick: (i: numb
   return (
     <div className="grid px-3" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }} role="tablist" aria-label="Exercices de la séance">
       {state.exercises.map((ex, i) => {
-        const count = (state.logged[ex.id] ?? []).length;
+        const count = (state.logged[ex.id] ?? []).length + (openSet(state, ex) ? 0.5 : 0);
         const p = progressOf(state, ex);
         const fill = Math.min(1, count / ex.sets[0]);
         const active = i === state.idx;
@@ -200,6 +217,126 @@ function SetBand({ ex, logged, draft }: { ex: ExercisePlan; logged: SetValue[]; 
   );
 }
 
+const SIDES: Side[] = ['G', 'D'];
+const cap = (w: string) => w[0]!.toUpperCase() + w.slice(1);
+
+/** Bande des séries d'un exo unilatéral : chaque série tient sur deux demi-cases
+ *  superposées, G puis D, valeurs et signe PAR CÔTÉ (Référence de ce côté, à
+ *  cette position). Une ligne de RIR en moins que la bande bilatérale : la
+ *  bande reste plus basse, le sélecteur de côté tient sans grandir l'instrument. */
+function UniSetBand({ pairs, side, draft, refOf, slotsMin }: { pairs: UniSet[]; side: Side; draft: SetValue; refOf: (rank: number, s: Side) => SetValue | null; slotsMin: number }) {
+  const done = pairs.filter((p) => p.G && p.D).length;
+  const slots = Math.max(slotsMin, done + 1);
+  const scroll = slots > 4;
+  const band = useRef<HTMLOListElement>(null);
+  useLayoutEffect(() => {
+    const el = band.current;
+    const first = el?.children[Math.max(0, done - 3)] as HTMLElement | undefined;
+    if (!el || !first) return;
+    el.scrollLeft += first.getBoundingClientRect().left - el.getBoundingClientRect().left - 20;
+  }, [done, slots]);
+  return (
+    <ol ref={band} className={`flex px-5 ${scroll ? 'overflow-x-auto' : ''}`} style={{ scrollbarWidth: 'none' }} aria-label="Séries de cet exo, gauche et droite">
+      {Array.from({ length: slots }, (_, i) => {
+        const rank = i + 1;
+        const p = pairs[i];
+        const isCurrent = i === done;
+        const started = !!p && !(p.G && p.D);
+        return (
+          <li key={rank} className="relative min-w-0 pb-2 pr-2" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+            <div className="flex h-[18px] items-center gap-2 text-[13px]">
+              <span className={isCurrent ? 'font-semibold text-(--ink)' : 'text-(--faint)'}>{rank}</span>
+              {isCurrent && <span className="text-(--muted)">{started ? 'entamée' : 'en cours'}</span>}
+              {i >= slotsMin && !isCurrent && <span className="text-(--faint)">en plus</span>}
+            </div>
+            {SIDES.map((sd) => {
+              const v = p?.[sd] ?? null;
+              const r = refOf(rank, sd);
+              const verd = v && r ? verdict(setE1rm(v), setE1rm(r)) : null;
+              const live = isCurrent && !v && sd === side;
+              const txt = v ? `${fmtKg(v.weightKg)}×${v.reps}` : live ? `${fmtKg(draft.weightKg)}×${draft.reps}` : '·';
+              return (
+                <div key={sd} className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
+                  <span className={`w-2.5 flex-none text-[13px] ${live ? 'font-semibold text-(--ink)' : 'text-(--faint)'}`}>{sd}</span>
+                  <span className={`truncate text-[14px] font-medium tracking-[-0.01em] ${v ? 'text-(--ink)' : live ? 'text-(--muted)' : 'text-(--faint)'}`}>{txt}</span>
+                  {verd && (
+                    <span className={TONE[verd]} aria-label={WORDS.set[verd]}>
+                      <Sign v={verd} size={10} />
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            <span className={`absolute bottom-0 left-0 right-2 ${isCurrent ? 'h-[3px] bg-(--ink)' : p ? 'h-px bg-(--muted)' : 'h-px bg-(--line)'}`} />
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** Sélecteur de côté, en mots, au pouce : le côté actif net (souligné épais),
+ *  le côté déjà saisi pour cette série marqué « fait » et éteint. À droite, la
+ *  Référence de CE côté à cette position. Il remplace la ligne de Référence de
+ *  l'exo bilatéral, sur une seule rangée de 44 px. */
+function SideRow({
+  side,
+  open,
+  rank,
+  refV,
+  refDate,
+  onSide,
+}: {
+  side: Side;
+  open: UniSet | null;
+  rank: number;
+  refV: SetValue | null;
+  refDate: string | null;
+  onSide: (s: Side) => void;
+}) {
+  return (
+    <div className="flex min-h-11 items-center justify-between gap-2 px-5">
+      <div role="radiogroup" aria-label="Côté" className="-ml-2.5 flex flex-none">
+        {SIDES.map((sd) => {
+          const sel = sd === side;
+          const done = !!open?.[sd];
+          return (
+            <button
+              key={sd}
+              type="button"
+              role="radio"
+              aria-checked={sel}
+              disabled={done}
+              aria-label={done ? `${cap(SIDE_WORD[sd])}, saisi pour la série ${rank}` : cap(SIDE_WORD[sd])}
+              onClick={() => onSide(sd)}
+              className={`h-11 flex-none px-2.5 text-[17px] ${
+                sel ? 'font-semibold text-(--ink) underline decoration-[3px] underline-offset-[8px]' : done ? 'text-(--faint)' : 'text-(--muted) active:text-(--ink)'
+              }`}
+            >
+              {cap(SIDE_WORD[sd])}
+              {done && <span className="ml-1 text-[13px] text-(--faint)">fait</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="min-w-0 text-right leading-tight">
+        {refV ? (
+          <>
+            <span className="block truncate text-[13px] text-(--muted)">
+              réf. série {rank} · {fmtDate(refDate!)}
+            </span>
+            <span className="block whitespace-nowrap text-[14px] font-medium text-(--ink)">
+              {fmtKg(refV.weightKg)} × {refV.reps} · RIR {refV.rir}
+            </span>
+          </>
+        ) : (
+          <span className="text-[14px] text-(--muted)">{refDate ? 'rien à battre' : 'aucune réf.'}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Instrument() {
   const nav = useNav();
   const { seance, settings, account } = useProto();
@@ -209,12 +346,20 @@ function Instrument() {
   const sets = state.logged[ex.id] ?? [];
   const draft = draftOf(state, ex);
   const rank = sets.length + 1;
-  const ref = refAt(ex, rank);
+  // Unilatéral : tout se lit PAR CÔTÉ (Référence, écart, Record) ; ADR 0010.
+  const uni = isUni(state, ex);
+  const pairs = uni ? (state.uni[ex.id] ?? []) : [];
+  const side = activeSide(state, ex);
+  const open = uni ? openSet(state, ex) : null;
+  const ref = uni ? sideRef(state, ex, rank, side) : refAt(ex, rank);
   const e1 = setE1rm(draft);
   const v = ref ? verdict(e1, setE1rm(ref)) : null;
-  const todayBest = Math.max(0, ...sets.map(setE1rm));
-  const best = Math.max(ex.pr?.e1rm ?? 0, todayBest);
-  const bestIsToday = todayBest > (ex.pr?.e1rm ?? 0);
+  const todayBest = uni
+    ? Math.max(0, ...pairs.flatMap((p) => (p[side] ? [setE1rm(p[side]!)] : [])))
+    : Math.max(0, ...sets.map(setE1rm));
+  const pr = uni ? sidePr(ex, side) : ex.pr;
+  const best = Math.max(pr?.e1rm ?? 0, todayBest);
+  const bestIsToday = todayBest > (pr?.e1rm ?? 0);
   const isRecord = best > 0 && e1 > best;
   const step = settings.stepKg;
   const kgStr = fmtKg(draft.weightKg);
@@ -222,7 +367,18 @@ function Instrument() {
   const reached = sets.length >= ex.sets[0];
   const nextI = nextIndex(state);
   const nextEx = nextI === null ? null : exercises[nextI]!;
-  const logLabel = rank > ex.sets[1] ? 'Logger une de plus' : `Logger la série ${rank}`;
+  // Unilatéral : toujours le numéro de série (la bande le montre, « une de plus »
+  // ne tiendrait pas à côté de « Annuler »).
+  const logLabel = uni
+    ? `Logger ${SIDE_WORD[side]} · série ${rank}`
+    : rank > ex.sets[1]
+      ? 'Logger une de plus'
+      : `Logger la série ${rank}`;
+  // Dernier côté saisi (pour « Annuler ») : le second d'une paire complète, sinon le seul.
+  const lastPair = pairs[pairs.length - 1];
+  const lastSide: Side | null = !lastPair ? null : lastPair.G && lastPair.D ? (lastPair.first === 'G' ? 'D' : 'G') : lastPair.G ? 'G' : 'D';
+  // Unilatéral : le côté suffit (c'est toujours la dernière saisie, visible dans la bande).
+  const undoLabel = uni && lastSide ? `Annuler ${SIDE_WORD[lastSide]}` : `Annuler la série ${sets.length}`;
   const logMeta = `${fmtKg(draft.weightKg)} × ${draft.reps}`;
   const logValue = `${logMeta} · RIR ${draft.rir}`;
   const done = exercises.filter((e) => progressOf(state, e) === 'done').length;
@@ -231,7 +387,8 @@ function Instrument() {
   // ignore un second tap trop rapproché pour ne pas sauter d'exo par réflexe.
   const flippedAt = useRef(0);
   const log = () => {
-    const willReach = !reached && sets.length + 1 >= ex.sets[0];
+    // Unilatéral : seul le second côté complète la série.
+    const willReach = !reached && sets.length + 1 >= ex.sets[0] && (!uni || !!open);
     seance.log();
     if (willReach) flippedAt.current = Date.now();
   };
@@ -258,6 +415,15 @@ function Instrument() {
           }}
         />
 
+        {uni ? (
+          <>
+            <div className="mt-1">
+              <UniSetBand pairs={pairs} side={side} draft={draft} refOf={(r, sd) => sideRef(state, ex, r, sd)} slotsMin={ex.sets[1]} />
+            </div>
+            <SideRow side={side} open={open} rank={rank} refV={ref} refDate={sideRefDate(state, ex)} onSide={(sd) => seance.setSide(ex.id, sd)} />
+          </>
+        ) : (
+          <>
         <div className="mt-3">
           <SetBand ex={ex} logged={sets} draft={draft} />
         </div>
@@ -278,6 +444,8 @@ function Instrument() {
             </span>
           )}
         </div>
+          </>
+        )}
 
         {/* La virgule tombe pile au-dessus de l'aiguille. */}
         <output aria-live="polite" className="mt-0.5 flex items-baseline leading-none">
@@ -325,7 +493,7 @@ function Instrument() {
             )}
           </div>
           <div className="text-right">
-            <dt className="text-[13px] text-(--muted)">Record</dt>
+            <dt className="text-[13px] text-(--muted)">{uni ? `Record ${SIDE_WORD[side]}` : 'Record'}</dt>
             {isRecord ? (
               <>
                 <dd className="mt-1 flex items-center justify-end gap-1.5 text-[22px] font-medium leading-none tracking-[-0.01em] text-(--sig)">
@@ -337,7 +505,7 @@ function Instrument() {
             ) : best > 0 ? (
               <>
                 <dd className="mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-(--muted)">{fmt1(best)}</dd>
-                <dd className="mt-1.5 text-[13px] text-(--faint)">{bestIsToday || !ex.pr ? 'aujourd’hui' : fmtDate(ex.pr.date)}</dd>
+                <dd className="mt-1.5 text-[13px] text-(--faint)">{bestIsToday || !pr ? 'aujourd’hui' : fmtDate(pr.date)}</dd>
               </>
             ) : (
               <dd className="mt-1 text-[16px] text-(--muted)">aucun</dd>
@@ -346,26 +514,26 @@ function Instrument() {
         </dl>
 
         <div className="mt-3 flex flex-col gap-1.5">
+          {/* Remontées à chaque exo et à chaque série : elles repartent calées. */}
           <NumberRow
-            key={`reps-${ex.id}`}
+            key={`reps-${ex.id}-${rank}${uni ? side : ''}`}
             label="Reps"
-            values={REPS}
+            min={REPS_MIN}
+            max={REPS_MAX}
             value={draft.reps}
             presc={ex.reps}
             refValue={ref?.reps ?? null}
             onPick={(n) => update({ reps: n })}
-            scrollTo={repsWindowStart(ex.reps)}
-            perView={7}
           />
           <NumberRow
-            key={`rir-${ex.id}`}
+            key={`rir-${ex.id}-${rank}${uni ? side : ''}`}
             label="RIR"
-            values={RIRS}
+            min={RIR_MIN}
+            max={RIR_MAX}
             value={draft.rir}
             presc={ex.rir}
             refValue={ref?.rir ?? null}
             onPick={(n) => update({ rir: n })}
-            perView={6}
           />
         </div>
       </div>
@@ -377,7 +545,7 @@ function Instrument() {
           <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
             {state.lastLog === ex.id ? (
               <TextLink tone="muted" onClick={seance.undo}>
-                Annuler la série {sets.length}
+                {undoLabel}
               </TextLink>
             ) : (
               <span />
@@ -472,13 +640,14 @@ function Sommaire() {
     >
       <ScreenHeader
         title={state.seanceName}
-        meta={`${state.routineName} · depuis ${state.startedAt} · ${state.elapsedMin} min · ${totalSets(state)} séries`}
+        meta={`${state.routineName} · depuis ${state.startedAt} · ${state.elapsedMin} min · ${totalSets(state)} série${totalSets(state) > 1 ? 's' : ''}`}
         back={{ label: current.name, onClick: nav.back }}
       />
       <List label="Exercices de la séance">
         {state.exercises.map((ex, i) => {
           const p = progressOf(state, ex);
           const n = (state.logged[ex.id] ?? []).length;
+          const started = openSet(state, ex);
           const beaten = (state.logged[ex.id] ?? []).filter((s, k) => {
             const r = refAt(ex, k + 1);
             return r && setE1rm(s) > setE1rm(r);
@@ -496,7 +665,8 @@ function Sommaire() {
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2">
                     <span className={p === 'partial' || p === 'done' ? 'font-medium text-(--ink)' : 'text-(--muted)'}>
                       {PROGRESS_WORD[p]}
-                      {(p === 'partial' || p === 'done') && ` · ${n} série${n > 1 ? 's' : ''}`}
+                      {(p === 'partial' || p === 'done') && n > 0 && ` · ${n} série${n > 1 ? 's' : ''}`}
+                      {started && ` · série ${n + 1} entamée`}
                     </span>
                     {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
                   </span>
@@ -505,14 +675,14 @@ function Sommaire() {
               current={i === state.idx}
               muted={p === 'skipped'}
               onClick={() => open(i)}
-              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}. Ouvrir dans l'instrument`}
+              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}${started ? `, série ${n + 1} entamée` : ''}. Ouvrir dans l'instrument`}
               trailing={
                 p === 'skipped' ? (
                   // « Remettre », pas « Reprendre » : « Reprendre » est déjà le retour à l'instrument, en bas.
                   <TextLink tone="muted" onClick={() => seance.skip(ex.id)} ariaLabel={`Remettre ${ex.name} dans la séance`} className="-mr-1 px-1 text-[15px]">
                     Remettre
                   </TextLink>
-                ) : n === 0 ? (
+                ) : n === 0 && !started ? (
                   <TextLink
                     tone="muted"
                     onClick={() => setTarget({ mode: 'replace', id: ex.id, name: ex.name })}
@@ -602,7 +772,7 @@ function CatalogSheet({
             <Row
               key={c.id}
               title={c.name}
-              meta={c.muscles.join(' · ')}
+              meta={`${c.muscles.join(' · ')}${c.unilateral ? ' · unilatéral' : ''}`}
               value={there ? <span className="text-[14px] font-normal text-(--faint)">dans la séance</span> : c.kind === 'perso' ? <span className="text-[14px] font-normal text-(--muted)">perso</span> : undefined}
               muted={there}
               onClick={there ? undefined : () => onPick(c.id)}
