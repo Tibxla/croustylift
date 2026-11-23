@@ -1,7 +1,7 @@
 // Libellés de l'état de synchro : la quarantaine ne se cache jamais derrière
 // « Synchronisé », et une Déconnexion refusée à cause d'elle dit pourquoi.
 import { describe, it, expect } from 'vitest';
-import { signOutRefusalLabel, syncBannerLabel } from './sync-label';
+import { signOutRefusalLabel, syncBannerLabel, unsavedWritesLabel } from './sync-label';
 
 describe('syncBannerLabel', () => {
   it('rien en file, rien en quarantaine : synchronisé, en vert', () => {
@@ -74,6 +74,33 @@ describe('signOutRefusalLabel', () => {
     expect(signOutRefusalLabel({ held: 3, refused: 1 })).toBe(
       '2 saisies pas encore synchronisées. Reviens en ligne pour te déconnecter sans rien perdre. ' +
         '1 saisie refusée par le serveur n’a pas pu être enregistrée.',
+    );
+  });
+});
+
+describe('unsavedWritesLabel', () => {
+  it('écritures en attente : c’est le réseau, elles partiront', () => {
+    expect(unsavedWritesLabel({ pending: 2, refused: 0 })).toBe(
+      'Pas de réseau pour le moment. Gardé sur l’appareil, envoyé au retour du réseau.',
+    );
+  });
+
+  it('écriture refusée par la base : ne parle pas de réseau', () => {
+    const label = unsavedWritesLabel({ pending: 0, refused: 1 });
+    expect(label).toBe('1 saisie refusée par le serveur : elle n’est pas enregistrée.');
+    expect(label).not.toContain('réseau');
+  });
+
+  it('plusieurs refus : accord au pluriel', () => {
+    expect(unsavedWritesLabel({ pending: 0, refused: 3 })).toBe(
+      '3 saisies refusées par le serveur : elles ne sont pas enregistrées.',
+    );
+  });
+
+  it('les deux à la fois : les deux raisons sont dites', () => {
+    expect(unsavedWritesLabel({ pending: 1, refused: 1 })).toBe(
+      'Pas de réseau pour le moment. Gardé sur l’appareil, envoyé au retour du réseau. ' +
+        '1 saisie refusée par le serveur : elle n’est pas enregistrée.',
     );
   });
 });

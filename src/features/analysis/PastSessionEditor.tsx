@@ -26,6 +26,7 @@ import {
   type LogicalSet,
 } from '../capture/past-session-edit';
 import { flushOps } from '../capture/sync';
+import { unsavedWritesLabel } from '../capture/sync-label';
 import type { OutboxOp } from '../capture/outbox';
 import type { Side } from '../../domain/types';
 
@@ -249,9 +250,10 @@ export function PastSessionEditor({
       // file (le journal rechargé montrerait l'ancien réalisé).
       const result = await flushOps(ops);
       if (result.remaining > 0) {
-        // Ops durables (déjà enfilées) mais pas encore remontées : on garde
-        // l'éditeur ouvert et on explique qu'elles partiront au retour du réseau.
-        setSave({ phase: 'error', message: 'Pas de réseau pour le moment.' });
+        // Ops durables (déjà enfilées) mais pas en base : on garde l'éditeur
+        // ouvert et on dit pourquoi. En attente (elles partiront au retour du
+        // réseau) et refusées par la base ne se disent pas pareil.
+        setSave({ phase: 'error', message: unsavedWritesLabel(result) });
         return;
       }
       onSaved();
@@ -291,7 +293,7 @@ export function PastSessionEditor({
         { type: 'deleteExecution', id: executionId, ...(exerciseIds ? { exerciseIds } : {}) },
       ]);
       if (result.remaining > 0) {
-        setDel({ phase: 'error', message: 'Pas de réseau pour le moment.' });
+        setDel({ phase: 'error', message: unsavedWritesLabel(result) });
         return;
       }
       onDeleted();
