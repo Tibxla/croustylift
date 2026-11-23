@@ -26,6 +26,11 @@
 
 begin;
 
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
+
 create or replace function public.reorder_seances(p_routine_id uuid, p_seance_ids uuid[])
 returns void
 language plpgsql

@@ -31,6 +31,11 @@
 
 begin;
 
+-- Attente bornée : un verrou pris ailleurs fait échouer la migration (à
+-- relancer) au lieu de geler l'app derrière elle.
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
+
 update public.exercises
   set primary_muscles = array[muscle_group]
   where cardinality(primary_muscles) = 0

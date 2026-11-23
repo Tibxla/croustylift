@@ -30,6 +30,13 @@
 
 begin;
 
+set local lock_timeout = '5s';
+set local statement_timeout = '60s';
+
+-- Verrou d'abord : aucune écriture d'override entre le contrôle des lignes
+-- existantes et la pose du trigger (les lectures passent).
+lock table public.exercise_overrides in share row exclusive mode;
+
 do $$
 declare
   v_hors_base int;

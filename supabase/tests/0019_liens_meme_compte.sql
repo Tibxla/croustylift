@@ -21,15 +21,26 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
     ('dated_notes_execution_id_fkey', 'dated_notes', 'execution_id', 'executions', 'c')
   ) as k(nom, enfant, colonne, parent, action)
   union all
+  select 'les six index de 0019a sont uniques et valides',
+         (select count(*) from pg_index i join pg_class c on c.oid = i.indexrelid
+           join pg_namespace ns on ns.oid = c.relnamespace
+           where ns.nspname = 'public' and i.indisvalid and i.indisunique and c.relname in (
+             'routines_id_owner_id_key', 'seances_id_owner_id_key', 'seance_versions_id_owner_id_key',
+             'executions_id_owner_id_key', 'seances_owner_routine_name_unique',
+             'seance_versions_owner_seance_version_key')) = 6,
+         'clé composite sans cible, ou index resté invalide après une construction interrompue'
+  union all
   select 'index des noms de séance : owner_id en tête',
-         exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'seances_routine_name_unique'
-                   and indexdef like 'CREATE UNIQUE INDEX%(owner_id, routine_id, lower(%'),
+         exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'seances_owner_routine_name_unique'
+                   and indexdef like 'CREATE UNIQUE INDEX%(owner_id, routine_id, lower(%')
+         and not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'seances_routine_name_unique'),
          'lecture des noms de séance d''un autre compte par l''erreur d''unicité'
   union all
   select 'unicité des versions : owner_id en tête',
-         exists (select 1 from pg_constraint where conrelid = 'public.seance_versions'::regclass
-                   and conname = 'seance_versions_seance_id_version_key'
-                   and pg_get_constraintdef(oid) = 'UNIQUE (owner_id, seance_id, version)'),
+         exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'seance_versions_owner_seance_version_key'
+                   and indexdef like 'CREATE UNIQUE INDEX%(owner_id, seance_id, version)')
+         and not exists (select 1 from pg_constraint where conrelid = 'public.seance_versions'::regclass
+                   and conname = 'seance_versions_seance_id_version_key'),
          'lecture des numéros de version d''un autre compte par l''erreur d''unicité'
   union all
   select 'une seule clé étrangère entre deux tables',
