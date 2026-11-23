@@ -2,7 +2,7 @@
 //
 // Trois états sur la même page :
 //   1. Avant la Clôture : récap de l'Exécution (séries, kg soulevés, records,
-//      exos un par un, y compris ceux en partie ou pas faits), décompte de
+//      exos un par un, y compris ceux en cours ou pas faits), décompte de
 //      séries par muscle de la semaine contre le prévu de la routine, durée
 //      chronométrée (corrigeable au stepper), BPM moyen facultatif (stepper).
 //      Pas de note ici : la Note datée est par exo et se prend en Salle.
@@ -42,7 +42,7 @@ import {
   Stepper,
   TextLink,
 } from './kit';
-import { entryCount, exoSummary, openSet, progressOf, SIDE_WORD, startedExos, totalSets, type Progress, type SeanceState } from './seance';
+import { entryCount, exoSummary, openSideWord, progressOf, startedExos, totalSets, type Progress, type SeanceState } from './seance';
 import { useNav, useProto } from './shell';
 
 /* ------------------------------------------------------------------------ */
@@ -57,7 +57,7 @@ interface ExoRecap {
   matched: number;
   /** e1RM du record personnel battu aujourd'hui, null sinon. */
   record: number | null;
-  /** Unilatéral : côté saisi d'une série à un seul côté (« entamée », non comptée), null sinon. */
+  /** Unilatéral : série à un seul côté (non comptée), dite par son côté fait : « gauche faite ». */
   started: string | null;
   /** Déviation au plan (« ajouté », « remplacé »), null si l'exo est celui du plan. */
   origin: string | null;
@@ -95,7 +95,7 @@ function buildRecap(s: SeanceState): Recap {
     // Par muscle : une par série (côté faible en unilatéral), pondérée par les reps.
     const w = logged.reduce((n, set) => n + setWeight(set.reps), 0);
     if (w > 0) for (const m of musclesOf(ex.id)) today[m] = (today[m] ?? 0) + w;
-    return { ex, progress, sets: logged.length, beaten, matched, record, started: (() => { const o = openSet(s, ex); return o ? SIDE_WORD[o.G ? 'G' : 'D'] : null; })(), origin: s.origin[ex.id]?.kind ?? null };
+    return { ex, progress, sets: logged.length, beaten, matched, record, started: openSideWord(s, ex), origin: s.origin[ex.id]?.kind ?? null };
   });
   return {
     exos,
@@ -125,7 +125,8 @@ const span = (start: string, min: number) => (min === 0 ? `lancée à ${start}` 
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n > 1 ? many : one}`;
 
-const PROGRESS_WORD: Record<Progress, string> = { done: 'fait', partial: 'en partie', skipped: 'passé', todo: 'pas fait' };
+// Un seul mot pour un exo commencé, partout : « en cours » (arbitrage du 23/11).
+const PROGRESS_WORD: Record<Progress, string> = { done: 'fait', partial: 'en cours', skipped: 'passé', todo: 'pas fait' };
 
 /* ------------------------------------------------------------------------ */
 /* Page                                                                       */
@@ -192,11 +193,11 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
     <Screen
       bottom={
         <>
-          {/* Exos entamés : une information, pas une erreur ni un blocage. Ils sont
-              rangés avec les séries faites, et se lisent « en partie » plus haut. */}
+          {/* Exos en cours : une information, pas une erreur ni un blocage. Ils sont
+              rangés avec les séries faites, et se lisent « en cours » plus haut. */}
           {started > 0 && (
             <p className="text-[14px] leading-[1.4] text-(--muted)">
-              {started} exo{started > 1 ? 's' : ''} entamé{started > 1 ? 's' : ''}, rangé{started > 1 ? 's' : ''} tel{started > 1 ? 's' : ''} quel{started > 1 ? 's' : ''}.
+              {started} exo{started > 1 ? 's' : ''} en cours, rangé{started > 1 ? 's' : ''} tel{started > 1 ? 's' : ''} quel{started > 1 ? 's' : ''}.
             </p>
           )}
           {(account.offline || pending > 0) && (
@@ -306,7 +307,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
 
 function exosAside(c: Record<Progress, number>): string {
   const parts = [`${c.done} fait${c.done > 1 ? 's' : ''}`];
-  if (c.partial) parts.push(`${c.partial} en partie`);
+  if (c.partial) parts.push(`${c.partial} en cours`);
   if (c.skipped) parts.push(`${c.skipped} passé${c.skipped > 1 ? 's' : ''}`);
   if (c.todo) parts.push(`${c.todo} pas fait${c.todo > 1 ? 's' : ''}`);
   return parts.join(' · ');
@@ -359,7 +360,7 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
             <span>
               {e.sets > 0 && plural(e.sets, 'série')}
               {e.sets > 0 && p === 'partial' && ` sur ${ex.sets[0]}`}
-              {e.started && `${e.sets > 0 ? ', ' : ''}série ${e.sets + 1} entamée (${e.started})`}
+              {e.started && `${e.sets > 0 ? ', ' : ''}série ${e.sets + 1} : ${e.started}`}
             </span>
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}

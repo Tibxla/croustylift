@@ -4,13 +4,23 @@
 //   seance.state       exos, séries loggées, brouillons, exo affiché, phase
 //   seance.log()       logge le brouillon de l'exo affiché
 //   seance.undo()      retire la dernière série de l'exo affiché
+//   seance.editSet(exId, i, valeur, côté?) / removeSet(exId, i)
+//                      corriger ou supprimer N'IMPORTE QUELLE série déjà loggée
+//                      (correction de saisie, ADR 0002 : pas un événement métier)
 //   seance.setIdx(i)   affiche l'exo i dans l'instrument
 //   seance.add(id) / replace(exId, id) / skip(exId)   Déviations en salle
+//                      (ajouter place l'instrument sur l'exo ajouté ; remplacer
+//                      un exo déjà commencé garde ses séries et insère le
+//                      remplaçant juste après lui)
 //   seance.start(seanceId) / close()                   début, Clôture
 //   seance.setSide(exId, côté)                         unilatéral : côté saisi
 //   seance.setNote(exId, texte)                        Note datée du jour (par exo)
 //   seance.cancel()                                    « Annuler la séance » : rien au journal
 //   seance.setStale(on) / resume()                     séance d'hier non rangée (commande du prototype)
+//
+// DEUX EXÉCUTIONS LE MÊME JOUR (CONTEXT.md « Référence ») : la Clôture garde les
+// séries rangées dans `prior`, par séance. Relancer la même séance prend cette
+// exécution comme Référence (et comme socle du Record), par côté en unilatéral.
 //
 // DÉCOMPTE (CONTEXT.md « Décompte de séries ») : une série unilatérale complète
 // compte 2 au TOTAL de la séance (`totalSets`) et 1 par muscle (côté faible, via
@@ -81,6 +91,15 @@ export interface SeanceState {
   /** Séance commencée la veille et jamais rangée (frontière minuit), pas encore
    *  reprise : la Salle demande d'abord quoi en faire. */
   stale: boolean;
+  /** Dernière exécution RANGÉE dans ce prototype, par séance : la Référence
+   *  d'une seconde exécution (même jour compris). Survit au début d'une séance. */
+  prior: Record<string, PriorExec>;
+}
+
+export interface PriorExec {
+  date: string;
+  logged: Record<string, SetValue[]>;
+  uni: Record<string, UniSet[]>;
 }
 
 export type Progress = 'todo' | 'partial' | 'done' | 'skipped';
@@ -107,19 +126,30 @@ export function activeSide(state: SeanceState, ex: ExercisePlan): Side {
 
 /** Référence par (position, côté) : la dernière fois dans CETTE séance. */
 export function sideRef(state: SeanceState, ex: ExercisePlan, rank: number, side: Side): SetValue | null {
+  const pp = state.prior[state.seanceId]?.uni[ex.id];
+  if (pp?.length) return pp[rank - 1]?.[side] ?? null;
   const r = UNI_HISTORY[ex.id]?.ref;
   if (!r || r.seanceId !== state.seanceId) return null;
   return r.sets[rank - 1]?.[side] ?? null;
 }
 
 export function sideRefDate(state: SeanceState, ex: ExercisePlan): string | null {
+  const pr = state.prior[state.seanceId];
+  if (pr?.uni[ex.id]?.length) return pr.date;
   const r = UNI_HISTORY[ex.id]?.ref;
   return r && r.seanceId === state.seanceId ? r.date : null;
 }
 
-/** Record d'un côté (tous jours) : e1RM, ou 0. */
-export function sidePr(ex: ExercisePlan, side: Side): { e1rm: number; date: string } | null {
-  return UNI_HISTORY[ex.id]?.pr?.[side] ?? null;
+/** Record d'un côté (tous jours) : e1RM, ou null. Une exécution rangée plus tôt
+ *  dans le prototype (`prior`) compte, toutes séances confondues. */
+export function sidePr(state: SeanceState, ex: ExercisePlan, side: Side): { e1rm: number; date: string } | null {
+  let best: { e1rm: number; date: string } | null = UNI_HISTORY[ex.id]?.pr?.[side] ?? null;
+  for (const p of Object.values(state.prior))
+    for (const pair of p.uni[ex.id] ?? []) {
+      const v = pair[side];
+      if (v && setE1rm(v) > (best?.e1rm ?? 0)) best = { e1rm: setE1rm(v), date: p.date };
+    }
+  return best;
 }
 
 /** Fait = minimum de séries du plan atteint (règle de l'app réelle). Une série
@@ -147,10 +177,23 @@ export function nextIndex(state: SeanceState): number | null {
   return null;
 }
 
-/** Exos entamés : en cours (sous le minimum), ou faits mais avec une série
- *  unilatérale à un seul côté. Ce que « Terminer la séance » signale, sans bloquer. */
+/** Exos en cours : sous le minimum, ou faits mais avec une série unilatérale à
+ *  un seul côté. Ce que « Terminer la séance » signale (« 2 exos en cours »),
+ *  sans bloquer. Un seul mot partout pour un exo commencé : « en cours ». */
 export function startedExos(state: SeanceState): ExercisePlan[] {
   return state.exercises.filter((ex) => progressOf(state, ex) === 'partial' || (isUni(state, ex) && !!openSet(state, ex)));
+}
+
+/** « 2 exos en cours », ou undefined. */
+export function startedLabel(state: SeanceState): string | undefined {
+  const n = startedExos(state).length;
+  return n > 0 ? `${n} exo${n > 1 ? 's' : ''} en cours` : undefined;
+}
+
+/** Côté fait d'une série unilatérale à un seul côté : « gauche faite », ou null. */
+export function openSideWord(state: SeanceState, ex: ExercisePlan): string | null {
+  const o = openSet(state, ex);
+  return o ? `${SIDE_WORD[o.G ? 'G' : 'D']} faite` : null;
 }
 
 /** Où reprend un exo déjà entamé : « série 2 », « série 1, droite ». null s'il
@@ -208,6 +251,21 @@ function withUni(ex: ExercisePlan, seanceId: string): ExercisePlan {
   return { ...ex, reference: ref ?? ex.reference, pr: weakPr ?? ex.pr };
 }
 
+/** Exo habillé de la dernière exécution RANGÉE de cette séance (`prior`) : elle
+ *  devient sa Référence, et son meilleur e1RM peut relever le Record. */
+function withPrior(ex: ExercisePlan, prior: Record<string, PriorExec>, seanceId: string): ExercisePlan {
+  const p = prior[seanceId];
+  const sets = p?.logged[ex.id];
+  let out = ex;
+  if (p && sets?.length) out = { ...out, reference: { date: p.date, sets } };
+  for (const q of Object.values(prior))
+    for (const s of q.logged[ex.id] ?? []) {
+      const e = setE1rm(s);
+      if (e > (out.pr?.e1rm ?? 0)) out = { ...out, pr: { e1rm: e, weightKg: s.weightKg, reps: s.reps, date: q.date } };
+    }
+  return out;
+}
+
 /** Total de séries de l'Exécution : une série unilatérale complète compte 2
  *  (les deux côtés), une bilatérale 1. Le décompte par muscle, lui, lit `logged`
  *  (une par paire, côté faible). */
@@ -237,7 +295,10 @@ export function exoSummary(state: SeanceState, ex: ExercisePlan): ExoSummary {
   });
   const best = Math.max(0, ...logged.map(setE1rm));
   const pr = ex.pr;
-  const record = pr && best > 0 && (best > pr.e1rm || (pr.date === state.dateIso && best >= pr.e1rm)) ? best : null;
+  // Record daté du jour dans les fixtures : il vient des séries du jour (égalé =
+  // c'est lui). Daté du jour par une exécution déjà RANGÉE aujourd'hui : il faut le battre.
+  const ownToday = pr?.date === state.dateIso && !Object.values(state.prior).some((p) => p.date === state.dateIso);
+  const record = pr && best > 0 && (best > pr.e1rm || (ownToday && best >= pr.e1rm)) ? best : null;
   return { sets: logged.length, beaten, matched, record };
 }
 
@@ -255,7 +316,7 @@ export function lastDatedNote(state: SeanceState, exId: string): { date: string;
   return LAST_DATED_NOTES[state.seanceId]?.[exId] ?? null;
 }
 
-function initial(): SeanceState {
+function initial(prior: Record<string, PriorExec> = {}): SeanceState {
   const s = fixtureSession;
   return {
     phase: 'en-cours',
@@ -277,6 +338,7 @@ function initial(): SeanceState {
     notes: {},
     origin: {},
     stale: false,
+    prior,
   };
 }
 
@@ -286,6 +348,8 @@ type Action =
   | { type: 'side'; id: string; side: Side }
   | { type: 'log' }
   | { type: 'undo' }
+  | { type: 'edit'; id: string; i: number; side?: Side; v: SetValue }
+  | { type: 'remove'; id: string; i: number }
   | { type: 'skip'; id: string }
   | { type: 'add'; catalogId: string }
   | { type: 'replace'; id: string; catalogId: string }
@@ -376,6 +440,53 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         lastLog: null,
       };
     }
+    case 'edit': {
+      // Corriger une série déjà loggée, à n'importe quel rang (bande des séries).
+      const ex = state.exercises.find((e) => e.id === a.id);
+      if (!ex) return state;
+      const v = { weightKg: a.v.weightKg, reps: a.v.reps, rir: a.v.rir };
+      if (isUni(state, ex)) {
+        const pairs = state.uni[ex.id] ?? [];
+        const p = pairs[a.i];
+        const side = a.side ?? 'G';
+        if (!p || !p[side]) return state;
+        const next = pairs.map((q, k) => (k === a.i ? { ...q, [side]: v } : q));
+        const drafts = { ...state.drafts };
+        // Série entamée : l'autre côté repart des valeurs corrigées (mêmes valeurs).
+        if (a.i === pairs.length - 1 && !(p.G && p.D)) drafts[ex.id] = { ...v };
+        return { ...state, uni: { ...state.uni, [ex.id]: next }, logged: { ...state.logged, [ex.id]: completes(next) }, drafts };
+      }
+      const sets = state.logged[ex.id] ?? [];
+      if (!sets[a.i]) return state;
+      const next = sets.map((s, k) => (k === a.i ? v : s));
+      const drafts = { ...state.drafts };
+      // Dernière série corrigée : la suivante repart de son poids (comme au log).
+      if (a.i === sets.length - 1) drafts[ex.id] = { ...draftOf(state, ex), weightKg: v.weightKg };
+      return { ...state, logged: { ...state.logged, [ex.id]: next }, drafts };
+    }
+    case 'remove': {
+      // Supprimer une série : les suivantes remontent d'un rang. Unilatéral : la
+      // paire entière (une série = deux côtés ; un côté seul ne reste jamais au
+      // milieu de la bande, seule la dernière paire peut être entamée).
+      const ex = state.exercises.find((e) => e.id === a.id);
+      if (!ex) return state;
+      const drafts = { ...state.drafts };
+      if (isUni(state, ex)) {
+        const pairs = state.uni[ex.id] ?? [];
+        if (!pairs[a.i]) return state;
+        const next = pairs.filter((_, k) => k !== a.i);
+        delete drafts[ex.id];
+        const side = { ...state.side };
+        if (a.i === pairs.length - 1) delete side[ex.id];
+        return { ...state, uni: { ...state.uni, [ex.id]: next }, logged: { ...state.logged, [ex.id]: completes(next) }, drafts, side, lastLog: null };
+      }
+      const sets = state.logged[ex.id] ?? [];
+      if (!sets[a.i]) return state;
+      const next = sets.filter((_, k) => k !== a.i);
+      // Brouillon ré-amorcé sur le nouveau rang (Référence de ce rang, poids de la dernière série).
+      delete drafts[ex.id];
+      return { ...state, logged: { ...state.logged, [ex.id]: next }, drafts, lastLog: null };
+    }
     case 'skip': {
       // « Passer » est le SEUL geste qui marque un exo passé, et seulement s'il
       // n'est pas commencé : quitter un exo après une série le laisse en cours.
@@ -389,6 +500,9 @@ function reducer(state: SeanceState, a: Action): SeanceState {
       if (!c || state.exercises.some((e) => e.id === c.id)) return state;
       return {
         ...state,
+        // Ajouté en salle, c'est pour le faire maintenant : l'instrument s'y place.
+        idx: state.exercises.length,
+        lastLog: null,
         exercises: [...state.exercises, withUni(planFromCatalog(c), state.seanceId)],
         uniFlag: { ...state.uniFlag, [c.id]: isUnilateral(c.id) },
         origin: { ...state.origin, [c.id]: { kind: 'ajouté' } },
@@ -400,6 +514,21 @@ function reducer(state: SeanceState, a: Action): SeanceState {
       if (!c || !old || state.exercises.some((e) => e.id === c.id)) return state;
       // Le remplaçant garde la prescription de l'exo remplacé (Déviation « exo remplacé »).
       const plan = withUni(planFromCatalog(c, { sets: old.sets, reps: old.reps, rir: old.rir }), state.seanceId);
+      const oldIdx = state.exercises.indexOf(old);
+      if ((state.logged[old.id] ?? []).length > 0 || openSet(state, old)) {
+        // Déjà commencé (machine prise après une série) : ses séries restent à
+        // lui, il reste « en cours » ; le remplaçant s'insère juste après et
+        // l'instrument s'y place si l'exo remplacé était l'exo affiché.
+        const exercises = [...state.exercises.slice(0, oldIdx + 1), plan, ...state.exercises.slice(oldIdx + 1)];
+        return {
+          ...state,
+          exercises,
+          idx: state.idx === oldIdx ? oldIdx + 1 : state.idx > oldIdx ? state.idx + 1 : state.idx,
+          lastLog: null,
+          uniFlag: { ...state.uniFlag, [c.id]: isUnilateral(c.id) },
+          origin: { ...state.origin, [c.id]: { kind: 'remplacé', from: old.name } },
+        };
+      }
       return {
         ...state,
         exercises: state.exercises.map((e) => (e.id === a.id ? plan : e)),
@@ -415,13 +544,14 @@ function reducer(state: SeanceState, a: Action): SeanceState {
       const routine = routines.find((r) => r.seances.some((s) => s.id === a.seanceId));
       const tpl = routine?.seances.find((s) => s.id === a.seanceId);
       if (!routine || !tpl) return state;
-      const exercises =
+      const base =
         tpl.id === 'upper-a'
           ? fixtureSession.exercises.map((e) => ({ ...e, status: 'todo' as const, loggedToday: [] }))
           : tpl.items.flatMap((it) => {
               const c = catalogById(it.exerciseId);
               return c ? [withUni(planFromCatalog(c, it), tpl.id)] : [];
             });
+      const exercises = base.map((e) => withPrior(e, state.prior, tpl.id));
       return {
         phase: 'en-cours',
         routineName: routine.name,
@@ -442,10 +572,17 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         notes: {},
         origin: {},
         stale: false,
+        prior: state.prior,
       };
     }
-    case 'close':
-      return { ...state, phase: 'aucune', lastLog: null, stale: false };
+    case 'close': {
+      // La Clôture range l'exécution : elle devient la Référence de la prochaine
+      // exécution de cette séance, même le jour même.
+      const logged = Object.fromEntries(Object.entries(state.logged).filter(([, v]) => v.length > 0));
+      const uni = Object.fromEntries(Object.entries(state.uni).filter(([, v]) => v.length > 0));
+      const prior = Object.keys(logged).length + Object.keys(uni).length > 0 ? { ...state.prior, [state.seanceId]: { date: state.dateIso, logged, uni } } : state.prior;
+      return { ...state, phase: 'aucune', lastLog: null, stale: false, prior };
+    }
     case 'cancel':
       // Annulée, pas rangée : ni séries ni notes ne restent, rien n'entre au journal.
       return { ...state, phase: 'aucune', logged: {}, uni: {}, notes: {}, drafts: {}, lastLog: null, stale: false };
@@ -454,7 +591,7 @@ function reducer(state: SeanceState, a: Action): SeanceState {
     case 'stale':
       // Simule une séance commencée hier soir et jamais rangée : la séance du
       // prototype (6 séries, 22 nov., 18:42) revient en cours, à reprendre ou ranger.
-      return a.on ? { ...initial(), stale: true } : { ...state, stale: false };
+      return a.on ? { ...initial(state.prior), stale: true } : { ...state, stale: false };
     case 'resume':
       return { ...state, stale: false };
   }
@@ -467,6 +604,10 @@ export interface SeanceStore {
   setSide: (id: string, side: Side) => void;
   log: () => void;
   undo: () => void;
+  /** Corrige la série `i` (0 = première) de l'exo ; unilatéral : le côté donné. */
+  editSet: (id: string, i: number, v: SetValue, side?: Side) => void;
+  /** Supprime la série `i` de l'exo (unilatéral : la paire). */
+  removeSet: (id: string, i: number) => void;
   skip: (id: string) => void;
   add: (catalogId: string) => void;
   replace: (id: string, catalogId: string) => void;
@@ -490,6 +631,8 @@ export function useSeanceStore(): SeanceStore {
       setSide: (id, side) => dispatch({ type: 'side', id, side }),
       log: () => dispatch({ type: 'log' }),
       undo: () => dispatch({ type: 'undo' }),
+      editSet: (id, i, v, side) => dispatch({ type: 'edit', id, i, v, side }),
+      removeSet: (id, i) => dispatch({ type: 'remove', id, i }),
       skip: (id) => dispatch({ type: 'skip', id }),
       add: (catalogId) => dispatch({ type: 'add', catalogId }),
       replace: (id, catalogId) => dispatch({ type: 'replace', id, catalogId }),

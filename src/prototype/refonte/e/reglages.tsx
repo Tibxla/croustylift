@@ -1,15 +1,18 @@
 // PROTOTYPE JETABLE · socle E, surface Réglages.
 //
-// Couleur de signal : 7 prédéfinies sobres (ni violet, ni rouge d'alarme),
-// toutes ≥ 9:1 sur le fond, plus « Autre couleur » : une teinte réglée sans
-// clavier sur une règle de teintes OKLCH à luminance 0,78 et chroma 0,11 fixées
-// (la règle n'apparaît que quand « Autre couleur » est choisie) : ce couple
-// reste dans le gamut sRGB sur les 360 teintes et garde ≥ 8,4:1 sur le fond
-// des feuilles (#1a1815), donc ≥ 9:1 sur le fond d'écran (calcul hors app,
-// scratchpad/proto/E3/scan.mjs). Le choix s'applique en direct à toute l'app
-// par `--sig` (posé sur la racine du shell). Aucun chiffre technique à l'écran
-// (ni ratio de contraste, ni degré) : une couleur se choisit par son nom et
-// son aperçu. Une ligne par réglage (libellé à gauche, contrôle à droite).
+// Couleur de signal : 6 prédéfinies bien distinctes, réparties sur le cercle
+// des teintes (jaune par défaut, rouge à la demande de l'utilisateur), toutes
+// ≥ 5,8:1 sur le fond et sur les feuilles. Plus « Autre couleur » : toutes les
+// teintes et toutes les clartés, par deux règles sans clavier, en aplats (pas de
+// dégradé) : la teinte sur 360° et la clarté, du sombre au clair, à l'intensité
+// la plus forte que le sRGB permet pour ce couple (donc ni gris ni tons éteints :
+// un signal doit ressortir ; une 3e règle « intensité » les ouvrirait) (la chroma est réduite pour
+// rester dans le gamut : jamais un canal écrêté, donc jamais une teinte qui
+// dérive). Une couleur libre n'est jamais refusée : sous 4,5:1 sur le fond, une
+// ligne discrète dit « peu lisible sous les néons », sans chiffre ; l'utilisateur
+// décide. Le choix s'applique en direct à toute l'app par `--sig` (posé sur la
+// racine du shell), l'aperçu au-dessus reste à l'écran pendant qu'on règle.
+// Aucun chiffre technique à l'écran (ni ratio, ni degré).
 //
 // Autres réglages, ceux que l'app a ou devrait avoir : pas de la règle de
 // poids (0,25 à 10 kg, l'app ne connaît que le kg), réduire les animations,
@@ -38,45 +41,76 @@ import { useProto } from './shell';
 /* Couleurs                                                                   */
 /* ------------------------------------------------------------------------ */
 
-/** Ratios WCAG calculés sur le fond #100e0c (et ≥ 8,5:1 sur la feuille #1a1815). */
+/** Ratios WCAG sur le fond #100e0c / la feuille #1a1815 (calculés le 23/11). */
 export const SIG_PRESETS: { name: string; hex: string }[] = [
-  { name: 'Jaune', hex: '#f6d236' },
-  { name: 'Ambre', hex: '#ffa94d' },
-  { name: 'Lime', hex: '#c3e04e' },
-  { name: 'Vert', hex: '#5ed68f' },
-  { name: 'Turquoise', hex: '#44d1c6' },
-  { name: 'Ciel', hex: '#6cc0ff' },
-  { name: 'Rose', hex: '#ff94b4' },
-  // Ajoutées le 23/11 à la demande de l'utilisateur (« toutes les couleurs, le
-  // rouge par exemple ») : toutes ≥ 5,3:1 sur le fond et sur la feuille.
-  { name: 'Rouge', hex: '#ff5d5d' },
-  { name: 'Orange', hex: '#ff8a3d' },
-  { name: 'Magenta', hex: '#f27ad6' },
-  { name: 'Violet', hex: '#b59cff' },
-  { name: 'Bleu', hex: '#7ea6ff' },
+  { name: 'Jaune', hex: '#f6d236' }, // 13,0 / 12,0
+  { name: 'Rouge', hex: '#ff5d5d' }, //  6,4 /  5,9
+  { name: 'Rose', hex: '#f27ad6' }, //  7,8 /  7,2
+  { name: 'Violet', hex: '#b59cff' }, //  8,4 /  7,7
+  { name: 'Ciel', hex: '#6cc0ff' }, //  9,7 /  9,0
+  { name: 'Vert', hex: '#5ed68f' }, // 10,5 /  9,7
 ];
 
-const FREE_L = 0.78;
-const FREE_C = 0.11;
-
-function oklchToHex(L: number, C: number, h: number): string {
+/** OKLCH vers sRGB linéaire (non borné : hors gamut si un canal sort de [0, 1]). */
+function oklchToLinear(L: number, C: number, h: number): [number, number, number] {
   const a = C * Math.cos((h * Math.PI) / 180);
   const b = C * Math.sin((h * Math.PI) / 180);
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
   const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  const lin = [
+  return [
     4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
     -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
     -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
   ];
+}
+
+const inGamut = (rgb: number[]) => rgb.every((v) => v >= -0.0005 && v <= 1.0005);
+
+/** Chroma la plus forte qui reste dans le sRGB pour (L, h) : recherche par dichotomie. */
+function maxChroma(L: number, h: number): number {
+  let lo = 0;
+  let hi = 0.37;
+  for (let k = 0; k < 18; k++) {
+    const mid = (lo + hi) / 2;
+    if (inGamut(oklchToLinear(L, mid, h))) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function linearToHex(lin: number[]): string {
   const enc = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
   return '#' + lin.map((v) => Math.round(Math.min(1, Math.max(0, enc(v))) * 255).toString(16).padStart(2, '0')).join('');
 }
 
-/** Teinte libre, crans de 2°. */
+/** Contraste WCAG entre deux couleurs #rrggbb. */
+export function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p) as [number, number];
+  return (x + 0.05) / (y + 0.05);
+}
+
+/** Teinte libre, crans de 2° (180 crans). Clarté : 25 crans, L de 0,30 à 0,96. */
 const HUE_STEP = 2;
-const freeHex = (hue: number) => oklchToHex(FREE_L, FREE_C, hue);
+export const CLARTE_MAX = 24;
+const L_MIN = 0.3;
+const L_MAX = 0.96;
+const lightOf = (l: number) => L_MIN + ((L_MAX - L_MIN) * l) / CLARTE_MAX;
+/** Clarté de départ : L ≈ 0,80, proche des prédéfinies. */
+const CLARTE_DEFAUT = 18;
+
+export function freeHex(h: number, l: number): string {
+  const L = lightOf(l);
+  return linearToHex(oklchToLinear(L, maxChroma(L, h), h));
+}
+
+/** Sous 4,5:1 sur le fond d'écran : « peu lisible sous les néons » (sans refuser). */
+const BG = '#100e0c';
+export const readable = (hex: string) => contrast(hex, BG) >= 4.5;
 
 /* ------------------------------------------------------------------------ */
 /* Page                                                                       */
@@ -97,17 +131,19 @@ export function Reglages() {
   );
 }
 
-/** Nom affiché d'une teinte libre : pas de degré, pas de chiffre. */
+/** Nom affiché d'une couleur libre : pas de degré, pas de chiffre. */
 export const FREE_NAME = 'Autre couleur';
 
 function SignalSection() {
   const { settings, setSettings } = useProto();
-  const [hue, setHue] = useState(settings.sigHue ?? 96);
-  const free = settings.sigHue !== null;
-  const pickHue = (h: number) => {
-    setHue(h);
-    setSettings({ sig: freeHex(h), sigName: FREE_NAME, sigHue: h });
+  const [free0, setFree0] = useState(settings.sigFree ?? { h: 96, l: CLARTE_DEFAUT });
+  const free = settings.sigFree !== null;
+  const pick = (f: { h: number; l: number }) => {
+    setFree0(f);
+    setSettings({ sig: freeHex(f.h, f.l), sigName: FREE_NAME, sigFree: f });
   };
+  const freeColor = freeHex(free0.h, free0.l);
+  const weak = !readable(freeColor);
 
   return (
     <section aria-labelledby="sig-title">
@@ -120,17 +156,16 @@ function SignalSection() {
 
       <SignalPreview />
 
-      {/* Toutes les couleurs proposées restent lisibles sur le fond (contraste
-          vérifié hors écran) : on choisit au nom et à l'aperçu, sans chiffre. */}
+      {/* On choisit au nom et à l'aperçu, sans chiffre. */}
       <div role="radiogroup" aria-label="Couleur de signal">
-        <div className="mt-5 grid grid-cols-4 gap-x-3 gap-y-4 px-5">
+        <div className="mt-5 grid grid-cols-6 gap-x-2 px-5">
           {SIG_PRESETS.map((p) => (
             <Swatch
               key={p.name}
               hex={p.hex}
               name={p.name}
               selected={!free && settings.sig === p.hex}
-              onPick={() => setSettings({ sig: p.hex, sigName: p.name, sigHue: null })}
+              onPick={() => setSettings({ sig: p.hex, sigName: p.name, sigFree: null })}
             />
           ))}
         </div>
@@ -138,50 +173,89 @@ function SignalSection() {
           type="button"
           role="radio"
           aria-checked={free}
-          onClick={() => pickHue(hue)}
-          className="mx-5 mt-4 flex min-h-12 w-[calc(100%-40px)] items-center gap-3 text-left"
+          aria-label={`${FREE_NAME}${free && weak ? ', peu lisible sous les néons' : ''}`}
+          onClick={() => pick(free0)}
+          className="mx-5 mt-3 flex min-h-12 w-[calc(100%-40px)] items-center gap-3 text-left"
         >
           <span className="flex-none rounded-(--r) p-[3px]" style={{ outline: free ? '2px solid var(--ink)' : 'none' }}>
-            <span className="block h-9 w-[52px] rounded-[3px]" style={{ background: freeHex(hue) }} />
+            <span className="block h-9 w-[52px] rounded-[3px]" style={{ background: freeColor }} />
           </span>
           <span className={`min-w-0 flex-1 text-[16px] ${free ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}>{FREE_NAME}</span>
-          <span className="flex-none text-[14px] text-(--faint)">{free ? 'choisie' : 'à régler'}</span>
+          <span className="flex-none text-[14px] text-(--faint)">{free ? 'choisie' : 'toutes les teintes'}</span>
         </button>
       </div>
 
       {free && (
-        <div className="mt-3">
-          <p className="px-5 text-[14px] text-(--muted)">Glisse pour changer de teinte.</p>
-          <div className="mt-2">
-            <Ruler
-              label="Autre couleur, teinte"
-              steps={Math.round(hue / HUE_STEP)}
-              max={358 / HUE_STEP}
-              pxPerStep={9}
-              isMajor={(s) => (s * HUE_STEP) % 30 === 0}
-              isMid={() => true}
-              tickColor={(s) => freeHex(s * HUE_STEP)}
-              needle="var(--ink)"
-              height={44}
-              format={(s) => `teinte ${s + 1} sur ${358 / HUE_STEP + 1}`}
-              onChange={(s) => pickHue(s * HUE_STEP)}
-            />
-          </div>
+        <div className="mt-1">
+          <FreeRuler
+            label="Teinte"
+            ruler={
+              <Ruler
+                label="Autre couleur, teinte"
+                steps={free0.h / HUE_STEP}
+                max={358 / HUE_STEP}
+                pxPerStep={9}
+                isMajor={(s) => (s * HUE_STEP) % 30 === 0}
+                isMid={() => true}
+                tickColor={(s) => freeHex(s * HUE_STEP, free0.l)}
+                needle="var(--ink)"
+                height={44}
+                format={(s) => `teinte ${s + 1} sur ${358 / HUE_STEP + 1}`}
+                onChange={(s) => pick({ ...free0, h: s * HUE_STEP })}
+              />
+            }
+          />
+          <FreeRuler
+            label="Clarté"
+            aside="sombre à gauche, clair à droite"
+            ruler={
+              <Ruler
+                label="Autre couleur, clarté"
+                steps={free0.l}
+                max={CLARTE_MAX}
+                pxPerStep={14}
+                isMajor={(s) => s % 6 === 0}
+                isMid={() => true}
+                tickColor={(s) => freeHex(free0.h, s)}
+                needle="var(--ink)"
+                height={44}
+                format={(s) => `clarté ${s + 1} sur ${CLARTE_MAX + 1}`}
+                onChange={(s) => pick({ ...free0, l: s })}
+              />
+            }
+          />
+          {/* Jamais refusée : l'utilisateur décide. Une ligne, sans chiffre. */}
+          <p role="status" className="min-h-[22px] px-5 pt-2 text-[14px] text-(--muted)">
+            {weak ? 'Peu lisible sous les néons.' : ''}
+          </p>
         </div>
       )}
     </section>
   );
 }
 
-/** Carré de couleur en aplat. Choisi : contour blanc cassé + nom en gras + « choisie ». */
+/** Une règle de la couleur libre, avec son nom au-dessus (une ligne). */
+function FreeRuler({ label, aside, ruler }: { label: string; aside?: string; ruler: ReactNode }) {
+  return (
+    <div className="mt-2">
+      <div className="flex items-baseline justify-between px-5 pb-1.5">
+        <span className="text-[15px] font-semibold text-(--ink)">{label}</span>
+        {aside && <span className="text-[13px] text-(--faint)">{aside}</span>}
+      </div>
+      {ruler}
+    </div>
+  );
+}
+
+/** Carré de couleur en aplat. Choisi : contour blanc cassé + nom en gras souligné. */
 function Swatch({ hex, name, selected, onPick }: { hex: string; name: string; selected: boolean; onPick: () => void }) {
   return (
-    <button type="button" role="radio" aria-checked={selected} aria-label={name} onClick={onPick} className="e-press min-h-11 text-left">
+    <button type="button" role="radio" aria-checked={selected} aria-label={name} onClick={onPick} className="e-press min-h-11 min-w-0 text-left">
       <span className="block rounded-(--r) p-[3px]" style={{ outline: selected ? '2px solid var(--ink)' : 'none' }}>
         <span className="block h-9 rounded-[3px]" style={{ background: hex }} />
       </span>
-      <span className={`mt-1.5 block text-[15px] ${selected ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}>{name}</span>
-      <span className="block min-h-[18px] text-[13px] text-(--faint)">{selected ? 'choisie' : ''}</span>
+      {/* Choisie : contour + nom en gras (le mot « choisie » ne tiendrait pas en six colonnes). */}
+      <span className={`mt-1.5 block truncate text-[14px] ${selected ? 'font-semibold text-(--ink) underline decoration-2 underline-offset-[5px]' : 'text-(--muted)'}`}>{name}</span>
     </button>
   );
 }

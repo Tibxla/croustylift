@@ -37,9 +37,11 @@
 //   --dim     #6b6761   3,4:1    repères non textuels (graduations), texte ≥ 24 px seulement
 //   --line    #3a3733   1,6:1    filets décoratifs, jamais porteurs de sens seuls
 //   --on-ink  #4a463f   8,3:1    texte secondaire posé SUR le bouton blanc cassé
-//   --sig     réglable  ≥ 9,3:1  signal (voir plus haut). Lire : `var(--sig)`,
-//                                en Tailwind `text-(--sig)` / `bg-(--sig)`. Prédéfinies
-//                                9,3 à 13,0:1 ; teinte libre ≥ 9,1:1 (≥ 8,4:1 sur --raise).
+//   --sig     réglable           signal (voir plus haut). Lire : `var(--sig)`,
+//                                en Tailwind `text-(--sig)` / `bg-(--sig)`. Six prédéfinies
+//                                de 5,9 à 13,0:1 (sur --raise compris) ; la couleur libre
+//                                (Réglages) peut descendre sous 4,5:1 : seule exception
+//                                au contraste AA, signalée à l'utilisateur, jamais refusée.
 //   --r       6px                rayon des blocs (boutons, carrés de couleur)
 //   --r-sheet 10px               rayon haut des feuilles basses
 //   --gutter  20px               marge latérale d'écran (px-5)
@@ -738,7 +740,14 @@ export function Choice<T extends string | number>({
  *  glisse en 190 ms (ease-out fort), et un nouveau toucher ou un glissé repart
  *  de la position affichée (interruptible). Ni le clavier ni un changement venu
  *  de l'extérieur (autre exo) n'animent. Réduire les animations : la règle
- *  globale de BASE_CSS retire `transform` des transitions. */
+ *  globale de BASE_CSS retire `transform` des transitions.
+ *
+ *  ÉLAN (grosse marche, ex. +40 kg) : un glissé lâché vite continue sur sa
+ *  lancée, proportionnelle à la vitesse du doigt sur ses 100 dernières ms
+ *  (au-delà de 0,9 px/ms seulement : un glissé posé ou un petit ajustement vif
+ *  s'arrête là où on lâche ; lancée bornée à 560 px). La piste y
+ *  glisse en 320 ms ease-out fort, interruptible par un nouveau toucher ; avec
+ *  Réduire les animations, elle y saute. */
 export function Ruler({
   steps,
   onChange,
@@ -775,10 +784,12 @@ export function Ruler({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
-  const gesture = useRef<{ x: number; start: number; moved: boolean; last: number } | null>(null);
+  const gesture = useRef<{ x: number; start: number; moved: boolean; last: number; trail: { x: number; t: number }[] } | null>(null);
   const animTimer = useRef(0);
   const [drag, setDrag] = useState<number | null>(null);
-  const [tapAnim, setTapAnim] = useState(false);
+  /** Durée du glissé animé en cours (toucher ou élan), 0 sinon. */
+  const [animMs, setAnimMs] = useState(0);
+  const tapAnim = animMs > 0;
   const [half, setHalf] = useState(14);
   const value = drag ?? steps;
   const clamp = (v: number) => Math.min(max, Math.max(0, v));
@@ -798,13 +809,19 @@ export function Ruler({
   };
   const stopAnim = () => {
     window.clearTimeout(animTimer.current);
-    setTapAnim(false);
+    setAnimMs(0);
+  };
+  const playAnim = (ms: number) => {
+    window.clearTimeout(animTimer.current);
+    setAnimMs(ms);
+    animTimer.current = window.setTimeout(() => setAnimMs(0), ms + 40);
   };
 
   // Fenêtre doublée : pendant le glissé animé (un toucher va jusqu'à une
   // demi-largeur), le départ et l'arrivée restent garnis.
   const base = Math.round(value);
-  const reach = 2 * half + 2;
+  // Élan : la lancée peut dépasser une largeur, la fenêtre s'élargit le temps du glissé.
+  const reach = 2 * half + 2 + (tapAnim ? 64 : 0);
   const ticks: number[] = [];
   for (let k = -reach; k <= reach; k++) if (base + k >= 0 && base + k <= max) ticks.push(base + k);
 
@@ -838,12 +855,14 @@ export function Ruler({
           stopAnim();
           setDrag(from);
         }
-        gesture.current = { x: e.clientX, start: from, moved: false, last: from };
+        gesture.current = { x: e.clientX, start: from, moved: false, last: from, trail: [{ x: e.clientX, t: e.timeStamp }] };
       }}
       onPointerMove={(e) => {
         const g = gesture.current;
         if (!g) return;
         const dx = e.clientX - g.x;
+        g.trail.push({ x: e.clientX, t: e.timeStamp });
+        while (g.trail.length > 2 && e.timeStamp - g.trail[0]!.t > 100) g.trail.shift();
         if (!g.moved && Math.abs(dx) < 4) return;
         g.moved = true;
         const v = clamp(g.start - dx / pxPerStep);
@@ -859,14 +878,22 @@ export function Ruler({
         if (!g.moved) {
           const r = box.current!.getBoundingClientRect();
           const target = clamp(Math.round(g.start + (e.clientX - (r.left + r.width / 2)) / pxPerStep));
-          if (animateTap && target !== g.start) {
-            window.clearTimeout(animTimer.current);
-            setTapAnim(true);
-            animTimer.current = window.setTimeout(() => setTapAnim(false), 230);
-          }
+          if (animateTap && target !== g.start) playAnim(190);
           onChange(target);
         } else {
-          onChange(Math.round(g.last));
+          // Élan : vitesse du doigt sur ses 100 dernières ms (px/ms).
+          const a = g.trail[0]!;
+          const dt = e.timeStamp - a.t;
+          const vel = dt > 0 && e.timeStamp - (g.trail[g.trail.length - 1]?.t ?? 0) < 60 ? (e.clientX - a.x) / dt : 0;
+          // Seuil haut (0,9 px/ms) : un petit ajustement vif (45 px en 80 ms) ne
+          // part pas ; seul un vrai coup sec a de l'élan, compté au-delà de 0,5 px/ms.
+          if (Math.abs(vel) > 0.9) {
+            // Lancée bornée à une largeur et demie : un coup sec ne part jamais au bout de la règle.
+            const throwPx = Math.sign(vel) * Math.min(560, (Math.abs(vel) - 0.5) * 300);
+            const to = clamp(Math.round(g.last - throwPx / pxPerStep));
+            playAnim(320);
+            onChange(to);
+          } else onChange(Math.round(g.last));
         }
         setDrag(null);
       }}
@@ -883,7 +910,7 @@ export function Ruler({
           transform: `translate3d(${-value * pxPerStep}px, 0, 0)`,
           // Sans `animateTap`, aucune transition : la règle sert des centaines de
           // fois par séance, elle suit le doigt et saute au cran touché.
-          transition: tapAnim ? 'transform 190ms cubic-bezier(0.23, 1, 0.32, 1)' : 'none',
+          transition: tapAnim ? `transform ${animMs}ms cubic-bezier(0.23, 1, 0.32, 1)` : 'none',
         }}
       >
         {ticks.map((v) => {

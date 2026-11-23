@@ -57,7 +57,7 @@ export function AppE(_props: { session?: SessionFixture }) {
   const [settings, setSettingsState] = useState<Settings>(() => ({
     sig: SIG_DEFAULT,
     sigName: 'Jaune',
-    sigHue: null,
+    sigFree: null,
     stepKg: 1.25,
     reduceMotion: prefersReducedMotion(),
     rulerTapAnim: false,
@@ -70,17 +70,33 @@ export function AppE(_props: { session?: SessionFixture }) {
   });
   const store = useSeanceStore();
 
-  // Hors ligne, chaque série loggée s'ajoute à l'outbox (bandeau de synchro).
-  const seance = useMemo(
-    () => ({
+  // Hors ligne, chaque écriture s'ajoute à l'outbox (bandeau de synchro, bouton
+  // Sommaire) : série loggée, série corrigée, série supprimée. « Annuler » la
+  // dernière série la retire de la file si elle y attendait encore.
+  const seance = useMemo(() => {
+    const bump = (d: number) => {
+      if (account.offline) setAccountState((a) => ({ ...a, pendingSync: Math.max(0, a.pendingSync + d) }));
+    };
+    return {
       ...store,
       log: () => {
         store.log();
-        if (account.offline) setAccountState((a) => ({ ...a, pendingSync: a.pendingSync + 1 }));
+        bump(1);
       },
-    }),
-    [store, account.offline],
-  );
+      undo: () => {
+        store.undo();
+        bump(-1);
+      },
+      editSet: (...args: Parameters<typeof store.editSet>) => {
+        store.editSet(...args);
+        bump(1);
+      },
+      removeSet: (...args: Parameters<typeof store.removeSet>) => {
+        store.removeSet(...args);
+        bump(1);
+      },
+    };
+  }, [store, account.offline]);
 
   // Piles de navigation, une par surface.
   const [surface, setSurface] = useState<SurfaceId>('salle');

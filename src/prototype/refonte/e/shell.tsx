@@ -70,8 +70,10 @@ export interface Settings {
   sig: string;
   /** Nom affiché : « Jaune », « Autre couleur »… */
   sigName: string;
-  /** Teinte OKLCH si teinte libre, null pour une prédéfinie. */
-  sigHue: number | null;
+  /** Couleur libre : teinte OKLCH (0 à 358°) et clarté (cran 0 à CLARTE_MAX,
+   *  du sombre au clair, intensité la plus forte que l'écran sait afficher).
+   *  null pour une prédéfinie. */
+  sigFree: { h: number; l: number } | null;
   stepKg: number;
   reduceMotion: boolean;
   /** Commande du prototype : la règle de poids glisse jusqu'au cran touché

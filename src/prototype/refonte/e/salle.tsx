@@ -6,7 +6,9 @@
 //      l'instrument : bouton « Sommaire » à gauche de l'action principale.
 //      Chaque exo avec sa prescription et son état ; le toucher rouvre
 //      l'instrument dessus. Il porte Ajouter (+ en tête), les options d'un exo
-//      pas commencé (⋯ : feuille « Remplacer · Passer »), « Remettre » sur un exo
+//      pas fini (⋯ : « Remplacer · Passer » s'il n'est pas commencé, « Remplacer »
+//      seul s'il est en cours : ses séries restent, le remplaçant s'insère
+//      après), « Remettre » sur un exo
 //      passé, les marques « ajouté » / « remplacé », « Annuler la séance »
 //      (confirmation qui dit ce qui part) et Terminer la séance.
 //   d. Notes (icône page, à droite de la ligne sous le nom, sans hauteur en
@@ -23,7 +25,14 @@
 //      (jamais « passé », seul le geste « Passer » le fait) et n'est plus
 //      relancé. Y revenir (index, balayage arrière, Sommaire) reprend à sa
 //      série, avec sa Référence. Plusieurs exos peuvent être en cours à la fois ;
-//      « Terminer » les compte (« 2 exos entamés ») sans bloquer.
+//      « Terminer » les compte (« 2 exos en cours ») sans bloquer.
+//   g. Correction : toucher une case loggée de la bande ouvre la feuille de
+//      CETTE série (SetEditSheet) : poids, reps, RIR, badge recalculé,
+//      « Enregistrer », « Supprimer la série » (confirmée). Toutes les séries
+//      de l'exo affiché, pas seulement la dernière.
+//   h. Ne pas faire une série : « Exo suivant », bouton de la rangée du haut
+//      tant que le minimum n'est pas atteint (puis bloc principal). Rien à
+//      saisir : la série manquante se lit par écart au plan (ADR 0002).
 //   f. Marques d'état (e/icons.tsx) : fait, en cours, passé, à côté du numéro
 //      dans l'index et avant le mot dans le Sommaire et la fin de séance.
 //   c. Exo unilatéral (ADR 0005, 0010) : la ligne de Référence devient le
@@ -83,6 +92,7 @@ import {
   lastDatedNote,
   nextIndex,
   openSet,
+  openSideWord,
   progressOf,
   resumeWord,
   SIDE_WORD,
@@ -90,6 +100,7 @@ import {
   sideRef,
   sideRefDate,
   startedExos,
+  startedLabel,
   totalSets,
   type ExoSummary,
   type Progress,
@@ -291,7 +302,16 @@ function NotesSheet({ open, onClose, ex }: { open: boolean; onClose: () => void;
   );
 }
 
-function SetBand({ ex, logged, draft }: { ex: ExercisePlan; logged: SetValue[]; draft: SetValue }) {
+/** Une case loggée de la bande se touche : elle ouvre la feuille de correction
+ *  de CETTE série. L'affordance tient sans hauteur en plus : la valeur est
+ *  soulignée comme un lien (le soulignement dit « ça se touche » dans toute
+ *  l'app), la case entière est la cible (≥ 44 px), et elle réagit au doigt.
+ *  La case de la série en cours (le brouillon) et les cases vides ne se
+ *  touchent pas : rien à corriger. */
+const EDITABLE = 'underline decoration-(--dim) decoration-1 underline-offset-[5px]';
+const CELL_BTN = 'block w-full min-w-0 pb-2 pr-2 text-left active:bg-(--line)';
+
+function SetBand({ ex, logged, draft, onEdit }: { ex: ExercisePlan; logged: SetValue[]; draft: SetValue; onEdit: (i: number) => void }) {
   const slots = Math.max(ex.sets[1], logged.length + 1);
   const scroll = slots > 4;
   const band = useRef<HTMLOListElement>(null);
@@ -310,20 +330,36 @@ function SetBand({ ex, logged, draft }: { ex: ExercisePlan; logged: SetValue[]; 
         const isCurrent = i === logged.length;
         const ref = refAt(ex, rank);
         const v = s && ref ? verdict(setE1rm(s), setE1rm(ref)) : null;
-        return (
-          <li key={rank} className="relative min-w-0 pb-2 pr-2" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
-            <div className="flex h-[18px] items-center gap-2 text-[13px]">
+        const body = (
+          <>
+            <span className="flex h-[18px] items-center gap-2 text-[13px]">
               <span className={isCurrent ? 'font-semibold text-(--ink)' : 'text-(--faint)'}>{rank}</span>
               {v && <Status v={v} word={WORDS.set[v]} />}
               {!v && isCurrent && <span className="text-(--muted)">en cours</span>}
               {i >= ex.sets[1] && !v && !isCurrent && <span className="text-(--faint)">en plus</span>}
-            </div>
-            <div className={`mt-1 truncate text-[16px] font-medium tracking-[-0.01em] ${s ? 'text-(--ink)' : isCurrent ? 'text-(--muted)' : 'text-(--faint)'}`}>
+            </span>
+            <span className={`mt-1 block truncate text-[16px] font-medium tracking-[-0.01em] ${s ? `text-(--ink) ${EDITABLE}` : isCurrent ? 'text-(--muted)' : 'text-(--faint)'}`}>
               {s ? `${fmtKg(s.weightKg)}×${s.reps}` : isCurrent ? `${fmtKg(draft.weightKg)}×${draft.reps}` : '·'}
-            </div>
-            <div className="text-[13px] text-(--faint)">{s ? `RIR ${s.rir}` : isCurrent ? `RIR ${draft.rir}` : ' '}</div>
+            </span>
+            <span className="block text-[13px] text-(--faint)">{s ? `RIR ${s.rir}` : isCurrent ? `RIR ${draft.rir}` : ' '}</span>
+          </>
+        );
+        return (
+          <li key={rank} className="relative min-w-0" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+            {s ? (
+              <button
+                type="button"
+                onClick={() => onEdit(i)}
+                aria-label={`Modifier la série ${rank}, ${fmtKg(s.weightKg)} × ${s.reps} · RIR ${s.rir}${v ? `, ${WORDS.set[v]}` : ''}`}
+                className={CELL_BTN}
+              >
+                {body}
+              </button>
+            ) : (
+              <div className="pb-2 pr-2">{body}</div>
+            )}
             <span
-              className={`absolute bottom-0 left-0 right-2 ${isCurrent ? 'h-[3px] bg-(--ink)' : s ? 'h-px bg-(--muted)' : 'h-px bg-(--line)'}`}
+              className={`pointer-events-none absolute bottom-0 left-0 right-2 ${isCurrent ? 'h-[3px] bg-(--ink)' : s ? 'h-px bg-(--muted)' : 'h-px bg-(--line)'}`}
             />
           </li>
         );
@@ -338,8 +374,24 @@ const cap = (w: string) => w[0]!.toUpperCase() + w.slice(1);
 /** Bande des séries d'un exo unilatéral : chaque série tient sur deux demi-cases
  *  superposées, G puis D, valeurs et signe PAR CÔTÉ (Référence de ce côté, à
  *  cette position). Une ligne de RIR en moins que la bande bilatérale : la
- *  bande reste plus basse, le sélecteur de côté tient sans grandir l'instrument. */
-function UniSetBand({ pairs, side, draft, refOf, slotsMin }: { pairs: UniSet[]; side: Side; draft: SetValue; refOf: (rank: number, s: Side) => SetValue | null; slotsMin: number }) {
+ *  bande reste plus basse, le sélecteur de côté tient sans grandir l'instrument.
+ *  Une case loggée (complète ou à un côté) se touche en entier (≥ 44 px) ; le
+ *  côté corrigé est la demi-case touchée (au clavier : le premier côté saisi). */
+function UniSetBand({
+  pairs,
+  side,
+  draft,
+  refOf,
+  slotsMin,
+  onEdit,
+}: {
+  pairs: UniSet[];
+  side: Side;
+  draft: SetValue;
+  refOf: (rank: number, s: Side) => SetValue | null;
+  slotsMin: number;
+  onEdit: (i: number, side: Side) => void;
+}) {
   const done = pairs.filter((p) => p.G && p.D).length;
   const slots = Math.max(slotsMin, done + 1);
   const scroll = slots > 4;
@@ -356,14 +408,13 @@ function UniSetBand({ pairs, side, draft, refOf, slotsMin }: { pairs: UniSet[]; 
         const rank = i + 1;
         const p = pairs[i];
         const isCurrent = i === done;
-        const started = !!p && !(p.G && p.D);
-        return (
-          <li key={rank} className="relative min-w-0 pb-2 pr-2" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
-            <div className="flex h-[18px] items-center gap-2 text-[13px]">
+        const body = (
+          <>
+            <span className="flex h-[18px] items-center gap-2 text-[13px]">
               <span className={isCurrent ? 'font-semibold text-(--ink)' : 'text-(--faint)'}>{rank}</span>
-              {isCurrent && <span className="text-(--muted)">{started ? 'entamée' : 'en cours'}</span>}
+              {isCurrent && <span className="text-(--muted)">en cours</span>}
               {i >= slotsMin && !isCurrent && <span className="text-(--faint)">en plus</span>}
-            </div>
+            </span>
             {SIDES.map((sd) => {
               const v = p?.[sd] ?? null;
               const r = refOf(rank, sd);
@@ -371,18 +422,47 @@ function UniSetBand({ pairs, side, draft, refOf, slotsMin }: { pairs: UniSet[]; 
               const live = isCurrent && !v && sd === side;
               const txt = v ? `${fmtKg(v.weightKg)}×${v.reps}` : live ? `${fmtKg(draft.weightKg)}×${draft.reps}` : '·';
               return (
-                <div key={sd} className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
+                <span key={sd} data-side={sd} className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
                   <span className={`w-2.5 flex-none text-[13px] ${live ? 'font-semibold text-(--ink)' : 'text-(--faint)'}`}>{sd}</span>
-                  <span className={`truncate text-[14px] font-medium tracking-[-0.01em] ${v ? 'text-(--ink)' : live ? 'text-(--muted)' : 'text-(--faint)'}`}>{txt}</span>
+                  <span className={`truncate text-[14px] font-medium tracking-[-0.01em] ${v ? `text-(--ink) ${EDITABLE}` : live ? 'text-(--muted)' : 'text-(--faint)'}`}>{txt}</span>
                   {verd && (
                     <span className={TONE[verd]} aria-label={WORDS.set[verd]}>
                       <Sign v={verd} size={10} />
                     </span>
                   )}
-                </div>
+                </span>
               );
             })}
-            <span className={`absolute bottom-0 left-0 right-2 ${isCurrent ? 'h-[3px] bg-(--ink)' : p ? 'h-px bg-(--muted)' : 'h-px bg-(--line)'}`} />
+          </>
+        );
+        const sides = p ? SIDES.filter((sd) => !!p[sd]) : [];
+        return (
+          <li key={rank} className="relative min-w-0" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+            {p && sides.length > 0 ? (
+              <button
+                type="button"
+                aria-label={`Modifier la série ${rank}, ${sides.map((sd) => `${SIDE_WORD[sd]} ${fmtKg(p[sd]!.weightKg)} × ${p[sd]!.reps}`).join(', ')}`}
+                className={CELL_BTN}
+                onClick={(e) => {
+                  // La demi-case touchée ; au clavier (pas de point), le premier côté saisi.
+                  let sd: Side = sides.includes(p.first) ? p.first : sides[0]!;
+                  if (e.detail > 0) {
+                    for (const row of e.currentTarget.querySelectorAll<HTMLElement>('[data-side]')) {
+                      const r = row.getBoundingClientRect();
+                      const s2 = row.dataset.side as Side;
+                      if (e.clientY >= r.top - 4 && e.clientY <= r.bottom + 4 && p[s2]) sd = s2;
+                    }
+                    if (e.clientY > (e.currentTarget.querySelector<HTMLElement>('[data-side="D"]')?.getBoundingClientRect().bottom ?? Infinity) && p.D) sd = 'D';
+                  }
+                  onEdit(i, sd);
+                }}
+              >
+                {body}
+              </button>
+            ) : (
+              <div className="pb-2 pr-2">{body}</div>
+            )}
+            <span className={`pointer-events-none absolute bottom-0 left-0 right-2 ${isCurrent ? 'h-[3px] bg-(--ink)' : p ? 'h-px bg-(--muted)' : 'h-px bg-(--line)'}`} />
           </li>
         );
       })}
@@ -422,14 +502,14 @@ function SideRow({
               role="radio"
               aria-checked={sel}
               disabled={done}
-              aria-label={done ? `${cap(SIDE_WORD[sd])}, saisi pour la série ${rank}` : cap(SIDE_WORD[sd])}
+              aria-label={done ? `${cap(SIDE_WORD[sd])} faite, série ${rank}` : cap(SIDE_WORD[sd])}
               onClick={() => onSide(sd)}
               className={`h-11 flex-none px-2.5 text-[17px] ${
                 sel ? 'font-semibold text-(--ink) underline decoration-[3px] underline-offset-[8px]' : done ? 'text-(--faint)' : 'text-(--muted) active:text-(--ink)'
               }`}
             >
               {cap(SIDE_WORD[sd])}
-              {done && <span className="ml-1 text-[13px] text-(--faint)">fait</span>}
+              {done && <span className="ml-1 text-[13px] text-(--faint)">faite</span>}
             </button>
           );
         })}
@@ -449,6 +529,151 @@ function SideRow({
         )}
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Correction d'une série déjà loggée                                         */
+/* ------------------------------------------------------------------------ */
+
+type EditTarget = { i: number; side: Side | null };
+
+/** Feuille de correction d'UNE série (touchée dans la bande) : mêmes contrôles
+ *  que l'instrument (règle de poids, rangées reps et RIR, sans clavier), le
+ *  badge contre la Référence de CE rang recalculé en direct, le Record aussi.
+ *  « Enregistrer » en bloc principal ; « Supprimer la série » en lien, avec une
+ *  confirmation où l'option sûre est le bouton (« Garder la série »).
+ *  Unilatéral : le côté touché, contre la Référence et le Record de ce côté ;
+ *  supprimer retire la série entière (les deux côtés). */
+function SetEditSheet({ ex, target, onClose }: { ex: ExercisePlan; target: EditTarget | null; onClose: () => void }) {
+  const { seance, settings } = useProto();
+  const state = seance.state;
+  const uni = isUni(state, ex);
+  const pairs = state.uni[ex.id] ?? [];
+  const sets = state.logged[ex.id] ?? [];
+  const side = target?.side ?? null;
+  const orig: SetValue | null = !target ? null : uni ? (pairs[target.i]?.[side ?? 'G'] ?? null) : (sets[target.i] ?? null);
+  const [v, setV] = useState<SetValue | null>(orig);
+  const [ask, setAsk] = useState(false);
+  // Montée par clé (exo, rang, côté) : fermée, elle se démonte et joue sa sortie.
+  if (!target || !orig || !v) return null;
+
+  const i = target.i;
+  const rank = i + 1;
+  const step = settings.stepKg;
+  const ref = uni ? sideRef(state, ex, rank, side!) : refAt(ex, rank);
+  const refDate = uni ? sideRefDate(state, ex) : (ex.reference?.date ?? null);
+  const e1 = setE1rm(v);
+  const verd = ref ? verdict(e1, setE1rm(ref)) : null;
+  // Record : le même calcul que le bilan de l'exo, sur l'état APRÈS correction.
+  let isRecord: boolean;
+  if (uni) {
+    const others = pairs.flatMap((p, k) => (k !== i && p[side!] ? [setE1rm(p[side!]!)] : []));
+    isRecord = e1 > 0 && e1 > Math.max(sidePr(state, ex, side!)?.e1rm ?? 0, ...others);
+  } else {
+    const after: SeanceState = { ...state, logged: { ...state.logged, [ex.id]: sets.map((s, k) => (k === i ? v : s)) } };
+    const rec = exoSummary(after, ex).record;
+    isRecord = rec !== null && rec === e1;
+  }
+  const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
+  const kgStr = fmtKg(v.weightKg);
+  const what = uni ? `Série ${rank}, ${SIDE_WORD[side!]}` : `Série ${rank}`;
+  const value = `${fmtKg(v.weightKg)} × ${v.reps} · RIR ${v.rir}`;
+  const pair = uni ? pairs[i] : null;
+  const save = () => {
+    if (changed) seance.editSet(ex.id, i, v, side ?? undefined);
+    onClose();
+  };
+  const remove = () => {
+    seance.removeSet(ex.id, i);
+    onClose();
+  };
+  const later = uni ? pairs.length - 1 - i : sets.length - 1 - i;
+
+  return (
+    <Sheet
+      open
+      title={`${what} · ${ex.name}`}
+      onClose={onClose}
+      footer={
+        ask ? undefined : (
+          <PrimaryButton onClick={save} meta={value} ariaLabel={`Enregistrer la série ${rank}, ${value}`}>
+            Enregistrer
+          </PrimaryButton>
+        )
+      }
+    >
+      {ask ? (
+        <div className="px-5 pb-2 pt-1">
+          <p className="max-w-[36ch] text-[16px] leading-[1.45] text-(--ink)">
+            {uni && pair?.G && pair?.D
+              ? `La série ${rank} sera supprimée, gauche et droite.`
+              : `La série ${rank} (${fmtKg(orig.weightKg)} × ${orig.reps} · RIR ${orig.rir}) sera supprimée.`}
+            {later > 0 ? ` ${later > 1 ? `Les ${later} suivantes remontent` : 'La suivante remonte'} d’un rang.` : ''}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4">
+            <SecondaryButton onClick={() => setAsk(false)}>Garder la série</SecondaryButton>
+            <TextLink tone="muted" onClick={remove}>
+              Supprimer la série
+            </TextLink>
+          </div>
+        </div>
+      ) : (
+        <div className="pb-1">
+          <div className="flex items-baseline justify-between gap-3 px-5 text-[14px]">
+            {ref ? (
+              <>
+                <span className="text-(--muted)">
+                  réf. série {rank}
+                  {refDate ? ` · ${fmtDate(refDate)}` : ''}
+                </span>
+                <span className="font-medium text-(--ink)">
+                  {fmtKg(ref.weightKg)} × {ref.reps} · RIR {ref.rir}
+                </span>
+              </>
+            ) : (
+              <span className="text-(--muted)">{refDate ? `Série ${rank} : rien à battre` : 'Pas encore de réf.'}</span>
+            )}
+          </div>
+          <output aria-live="polite" className="mt-1 flex items-baseline leading-none">
+            <span className="w-1/2 text-right text-[56px] font-[650] tracking-[-0.045em] text-(--ink)">{Math.trunc(v.weightKg)}</span>
+            <span className="w-1/2 whitespace-nowrap text-left">
+              <span className="text-[56px] font-[650] tracking-[-0.045em] text-(--ink)">{kgStr.includes(',') ? `,${kgStr.split(',')[1]}` : ''}</span>
+              <span className="ml-2 text-[20px] font-medium text-(--muted)">kg</span>
+            </span>
+          </output>
+          <div className="mt-2">
+            <Ruler
+              key={step}
+              label="Poids de la série"
+              steps={v.weightKg / step}
+              max={Math.round(500 / step)}
+              pxPerStep={Math.max(8, 11.2 * step)}
+              isMajor={(st) => (st * step) % 5 === 0}
+              isMid={(st) => (st * step) % 2.5 === 0}
+              majorLabel={(st) => fmtKg(st * step)}
+              format={(st) => `${fmtKg(st * step)} kg`}
+              onChange={(st) => setV({ ...v, weightKg: st * step })}
+              animateTap={settings.rulerTapAnim && !settings.reduceMotion}
+            />
+          </div>
+          {/* Le badge de la série, recalculé : ce que la bande affichera. */}
+          <p className="flex min-h-7 items-center gap-3 px-5 text-[14px]" aria-live="polite">
+            {verd ? <Status v={verd} word={WORDS.set[verd]} /> : <span className="text-(--muted)">aucune réf. à ce rang</span>}
+            {isRecord && <Status v="up" word="record" />}
+          </p>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <NumberRow label="Reps" min={REPS_MIN} max={REPS_MAX} value={v.reps} presc={ex.reps} refValue={ref?.reps ?? null} onPick={(n) => setV({ ...v, reps: n })} />
+            <NumberRow label="RIR" min={RIR_MIN} max={RIR_MAX} value={v.rir} presc={ex.rir} refValue={ref?.rir ?? null} onPick={(n) => setV({ ...v, rir: n })} />
+          </div>
+          <div className="px-5 pt-2">
+            <TextLink tone="muted" onClick={() => setAsk(true)} ariaLabel={`Supprimer la série ${rank}`}>
+              Supprimer la série
+            </TextLink>
+          </div>
+        </div>
+      )}
+    </Sheet>
   );
 }
 
@@ -472,7 +697,7 @@ function Instrument() {
   const todayBest = uni
     ? Math.max(0, ...pairs.flatMap((p) => (p[side] ? [setE1rm(p[side]!)] : [])))
     : Math.max(0, ...sets.map(setE1rm));
-  const pr = uni ? sidePr(ex, side) : ex.pr;
+  const pr = uni ? sidePr(state, ex, side) : ex.pr;
   const best = Math.max(pr?.e1rm ?? 0, todayBest);
   const bestIsToday = todayBest > (pr?.e1rm ?? 0);
   const isRecord = best > 0 && e1 > best;
@@ -499,9 +724,9 @@ function Instrument() {
   const done = exercises.filter((e) => progressOf(state, e) === 'done').length;
   // Exo suivant déjà entamé : le bloc dit où il reprend (« série 2 »).
   const nextResume = nextEx ? resumeWord(state, nextEx) : null;
-  const started = startedExos(state).length;
-  const startedWord = started > 0 ? `${started} exo${started > 1 ? 's' : ''} entamé${started > 1 ? 's' : ''}` : undefined;
+  const startedWord = startedLabel(state);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [edit, setEdit] = useState<EditTarget | null>(null);
   const instrNote = useCatalogue().find((e) => e.id === ex.id)?.note ?? '';
   const hasNote = !!instrNote.trim() || !!state.notes[ex.id]?.trim() || !!lastDatedNote(state, ex.id);
 
@@ -551,18 +776,26 @@ function Instrument() {
           </div>
         </div>
         <NotesSheet key={ex.id} open={notesOpen} onClose={() => setNotesOpen(false)} ex={ex} />
+        <SetEditSheet key={edit ? `${ex.id}-${edit.i}-${edit.side ?? ''}` : 'ferme'} ex={ex} target={edit} onClose={() => setEdit(null)} />
 
         {uni ? (
           <>
             <div className="mt-1">
-              <UniSetBand pairs={pairs} side={side} draft={draft} refOf={(r, sd) => sideRef(state, ex, r, sd)} slotsMin={ex.sets[1]} />
+              <UniSetBand
+                pairs={pairs}
+                side={side}
+                draft={draft}
+                refOf={(r, sd) => sideRef(state, ex, r, sd)}
+                slotsMin={ex.sets[1]}
+                onEdit={(i, sd) => setEdit({ i, side: sd })}
+              />
             </div>
             <SideRow side={side} open={open} rank={rank} refV={ref} refDate={sideRefDate(state, ex)} onSide={(sd) => seance.setSide(ex.id, sd)} />
           </>
         ) : (
           <>
         <div className="mt-3">
-          <SetBand ex={ex} logged={sets} draft={draft} />
+          <SetBand ex={ex} logged={sets} draft={draft} onEdit={(i) => setEdit({ i, side: null })} />
         </div>
 
         <div className="mt-3 flex items-baseline justify-between gap-3 px-5 text-[14px]">
@@ -694,14 +927,31 @@ function Instrument() {
                 {logLabel}
               </SecondaryButton>
             ) : nextEx ? (
-              // Après n'importe quelle série : l'exo affiché reste « en cours ».
-              <TextLink tone="muted" onClick={goNext} ariaLabel={`Aller à l'exo suivant, ${nextEx.name}${nextResume ? `, reprise ${nextResume}` : ''}`}>
+              // Ne pas faire la série en cours (ni les suivantes) : on passe à
+              // l'exo suivant, rien d'autre. Pas de « série passée » à saisir :
+              // une série non faite se lit par écart au plan (ADR 0002). L'exo
+              // quitté reste « en cours » (ou « à faire » sans série) et se
+              // reprend par l'index. Même place que « Logger la série n » une
+              // fois le minimum atteint : la rangée du haut tient l'autre choix.
+              <SecondaryButton
+                onClick={goNext}
+                press={false}
+                size="sm"
+                className="ml-auto min-w-0 flex-1"
+                ariaLabel={`Aller à l'exo suivant, ${nextEx.name}${nextResume ? `, reprise ${nextResume}` : ''}, sans faire la série ${rank}`}
+              >
                 Exo suivant
-              </TextLink>
+              </SecondaryButton>
             ) : (
-              <TextLink tone="muted" onClick={finish} ariaLabel={`Terminer la séance${startedWord ? `, ${startedWord}` : ''}`}>
+              <SecondaryButton
+                onClick={finish}
+                press={false}
+                size="sm"
+                className="ml-auto min-w-0 flex-1"
+                ariaLabel={`Terminer la séance${startedWord ? `, ${startedWord}` : ''}`}
+              >
                 Terminer la séance
-              </TextLink>
+              </SecondaryButton>
             )}
         </div>
         <div className="flex items-stretch gap-2">
@@ -761,11 +1011,6 @@ function originWord(state: SeanceState, id: string): string | null {
   return state.origin[id]?.kind ?? null;
 }
 
-/** Côté déjà saisi d'une série unilatérale entamée : « série 2 entamée (gauche) ». */
-function openWord(state: SeanceState, ex: ExercisePlan, n: number): string | null {
-  const o = openSet(state, ex);
-  return o ? `série ${n + 1} entamée (${SIDE_WORD[o.G ? 'G' : 'D']})` : null;
-}
 
 /** Méta d'une ligne du Sommaire, UNE ligne : la prescription tant que rien n'est
  *  fait, sinon la marque d'état, son mot et le bilan (la prescription se relit
@@ -773,7 +1018,7 @@ function openWord(state: SeanceState, ex: ExercisePlan, n: number): string | nul
 function SommaireMeta({ state, ex }: { state: SeanceState; ex: ExercisePlan }) {
   const p = progressOf(state, ex);
   const sum = exoSummary(state, ex);
-  const side = openWord(state, ex, sum.sets);
+  const side = openSideWord(state, ex);
   const origin = originWord(state, ex.id);
   const tail = origin && <span className="font-normal text-(--muted)"> · {origin}</span>;
   return (
@@ -816,13 +1061,14 @@ function Sommaire() {
   const [target, setTarget] = useState<CatalogTarget | null>(null);
   const [options, setOptions] = useState<ExercisePlan | null>(null);
   const [cancelAsk, setCancelAsk] = useState(false);
+  // Séries (ou côtés) déjà faites sur l'exo des options : « Passer » disparaît.
+  const optionsStarted = options ? (state.uni[options.id] ?? []).length || (state.logged[options.id] ?? []).length : 0;
   const remaining = state.exercises.some((e) => {
     const p = progressOf(state, e);
     return p === 'todo' || p === 'partial';
   });
-  // Exos entamés : signalés sur « Terminer », jamais bloquants.
-  const started = startedExos(state).length;
-  const startedMeta = started > 0 ? `${started} exo${started > 1 ? 's' : ''} entamé${started > 1 ? 's' : ''}` : undefined;
+  // Exos en cours : signalés sur « Terminer », jamais bloquants.
+  const startedMeta = startedLabel(state);
   const open = (i: number) => {
     seance.setIdx(i);
     nav.back();
@@ -878,28 +1124,50 @@ function Sommaire() {
               current={i === state.idx}
               muted={p === 'skipped'}
               onClick={() => open(i)}
-              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${plural(n, 'série')} sur ${ex.sets[0]}` : ''}${started ? `, série ${n + 1} entamée` : ''}${origin ? `, ${origin}` : ''}. Ouvrir dans l'instrument`}
+              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${plural(n, 'série')} sur ${ex.sets[0]}` : ''}${started ? `, ${openSideWord(state, ex)}` : ''}${origin ? `, ${origin}` : ''}. Ouvrir dans l'instrument`}
               trailing={
                 p === 'skipped' ? (
                   // « Remettre », pas « Reprendre » : « Reprendre » est déjà le retour à l'instrument, en bas.
                   <TextLink tone="muted" onClick={() => seance.skip(ex.id)} ariaLabel={`Remettre ${ex.name} dans la séance`} className="-mr-1 px-1 text-[15px]">
                     Remettre
                   </TextLink>
-                ) : n === 0 && !started ? (
-                  <IconButton icon="more" tone="muted" label={`Remplacer ou passer ${ex.name}`} onClick={() => setOptions(ex)} className="-mr-2.5" />
-                ) : undefined
+                ) : p === 'done' ? undefined : (
+                  // Pas commencé : Remplacer ou Passer. En cours : Remplacer seulement
+                  // (ses séries restent à lui, le remplaçant s'insère après). Fait : rien
+                  // (remplacer un exo fini serait un ajout, c'est le + en tête).
+                  <IconButton
+                    icon="more"
+                    tone="muted"
+                    label={n === 0 && !started ? `Remplacer ou passer ${ex.name}` : `Remplacer ${ex.name}`}
+                    onClick={() => setOptions(ex)}
+                    className="-mr-2.5"
+                  />
+                )
               }
             />
           );
         })}
       </List>
       <div className="px-5 pt-5">
-        <TextLink tone="muted" onClick={() => (entries === 0 && !hasNotes ? cancel() : setCancelAsk(true))}>
-          Annuler la séance
-        </TextLink>
+        {/* Rien de saisi : on ne perd rien, le geste se dit « Changer de séance »
+            (retour au choix, sans confirmation). Sinon : Annuler, confirmé. */}
+        {entries === 0 && !hasNotes ? (
+          <TextLink tone="muted" onClick={cancel}>
+            Changer de séance
+          </TextLink>
+        ) : (
+          <TextLink tone="muted" onClick={() => setCancelAsk(true)}>
+            Annuler la séance
+          </TextLink>
+        )}
       </div>
 
       <Sheet open={options !== null} title={options?.name ?? ''} onClose={() => setOptions(null)}>
+        {optionsStarted > 0 && (
+          <p className="max-w-[36ch] px-5 pt-1 text-[15px] leading-[1.45] text-(--muted)">
+            {optionsStarted > 1 ? `Les ${optionsStarted} séries faites restent` : 'La série faite reste'} sur {options?.name}. Le remplaçant se place juste après.
+          </p>
+        )}
         <div className="flex gap-2 px-5 pb-1 pt-2">
           <SecondaryButton
             className="flex-1"
@@ -912,16 +1180,18 @@ function Sommaire() {
           >
             Remplacer
           </SecondaryButton>
-          <SecondaryButton
-            className="flex-1"
-            ariaLabel={`Passer ${options?.name ?? ''}`}
-            onClick={() => {
-              seance.skip(options!.id);
-              setOptions(null);
-            }}
-          >
-            Passer
-          </SecondaryButton>
+          {optionsStarted === 0 && (
+            <SecondaryButton
+              className="flex-1"
+              ariaLabel={`Passer ${options?.name ?? ''}`}
+              onClick={() => {
+                seance.skip(options!.id);
+                setOptions(null);
+              }}
+            >
+              Passer
+            </SecondaryButton>
+          )}
         </div>
       </Sheet>
 
@@ -1048,7 +1318,7 @@ function SeanceHier() {
         </div>
         {started > 0 && (
           <div className="flex min-h-12 items-center justify-between gap-4 border-b border-(--line) px-5 py-2.5">
-            <dt className="text-[16px] text-(--muted)">Exos entamés</dt>
+            <dt className="text-[16px] text-(--muted)">Exos en cours</dt>
             <dd className="text-[16px] font-medium text-(--ink)">{started}</dd>
           </div>
         )}
@@ -1065,6 +1335,8 @@ function SeanceHier() {
 function ChoixSeance() {
   const { seance } = useProto();
   const routine = routines.find((r) => r.current)!;
+  // Une séance rangée dans ce prototype est sa dernière exécution.
+  const lastOf = (id: string, fallback: string | null | undefined) => seance.state.prior[id]?.date ?? fallback ?? null;
   return (
     <Screen>
       <ScreenHeader title="Quelle séance ?" meta={`${routine.name} · routine courante`} />
@@ -1076,7 +1348,7 @@ function ChoixSeance() {
               key={s.id}
               title={s.name}
               meta={`${s.items.length} exos`}
-              valueMeta={s.lastDone ? `faite le ${fmtDate(s.lastDone)}` : 'jamais faite'}
+              valueMeta={lastOf(s.id, s.lastDone) ? `faite le ${fmtDate(lastOf(s.id, s.lastDone)!)}` : 'jamais faite'}
               onClick={() => seance.start(s.id)}
             />
           ))}
