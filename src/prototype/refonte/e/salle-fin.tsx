@@ -27,8 +27,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ExercisePlan } from '../fixtures';
 import type { Muscle } from './fixtures-e';
 import { byCanonicalOrder, lastBpm, musclesOf, plannedWeek, setWeight, weekBefore, weekStart } from './fixtures-fin';
-import { fmt1, fmtDate, fmtKg, range } from './format';
-import { IconButton } from './icons';
+import { fmt1, fmtDate, fmtKg } from './format';
+import { IconButton, StateMark } from './icons';
 import {
   EmptyState,
   List,
@@ -42,7 +42,7 @@ import {
   Stepper,
   TextLink,
 } from './kit';
-import { exoSummary, openSet, progressOf, totalSets, type Progress, type SeanceState } from './seance';
+import { entryCount, exoSummary, openSet, progressOf, SIDE_WORD, startedExos, totalSets, type Progress, type SeanceState } from './seance';
 import { useNav, useProto } from './shell';
 
 /* ------------------------------------------------------------------------ */
@@ -57,8 +57,8 @@ interface ExoRecap {
   matched: number;
   /** e1RM du record personnel battu aujourd'hui, null sinon. */
   record: number | null;
-  /** Unilatéral : une série n'a qu'un côté saisi (« entamée », non comptée). */
-  started: boolean;
+  /** Unilatéral : côté saisi d'une série à un seul côté (« entamée », non comptée), null sinon. */
+  started: string | null;
   /** Déviation au plan (« ajouté », « remplacé »), null si l'exo est celui du plan. */
   origin: string | null;
 }
@@ -95,7 +95,7 @@ function buildRecap(s: SeanceState): Recap {
     // Par muscle : une par série (côté faible en unilatéral), pondérée par les reps.
     const w = logged.reduce((n, set) => n + setWeight(set.reps), 0);
     if (w > 0) for (const m of musclesOf(ex.id)) today[m] = (today[m] ?? 0) + w;
-    return { ex, progress, sets: logged.length, beaten, matched, record, started: !!openSet(s, ex), origin: s.origin[ex.id]?.kind ?? null };
+    return { ex, progress, sets: logged.length, beaten, matched, record, started: (() => { const o = openSet(s, ex); return o ? SIDE_WORD[o.G ? 'G' : 'D'] : null; })(), origin: s.origin[ex.id]?.kind ?? null };
   });
   return {
     exos,
@@ -179,6 +179,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
     onClosed(c);
   };
   const pending = account.pendingSync;
+  const started = startedExos(s).length;
 
   // Corriger la durée par crans de 5 min alignés (27 → 30 ou 25), au plus près
   // de ce qu'on retient d'une séance.
@@ -191,6 +192,13 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
     <Screen
       bottom={
         <>
+          {/* Exos entamés : une information, pas une erreur ni un blocage. Ils sont
+              rangés avec les séries faites, et se lisent « en partie » plus haut. */}
+          {started > 0 && (
+            <p className="text-[14px] leading-[1.4] text-(--muted)">
+              {started} exo{started > 1 ? 's' : ''} entamé{started > 1 ? 's' : ''}, rangé{started > 1 ? 's' : ''} tel{started > 1 ? 's' : ''} quel{started > 1 ? 's' : ''}.
+            </p>
+          )}
           {(account.offline || pending > 0) && (
             <p className="text-[14px] leading-[1.4] text-(--muted)">
               {account.offline
@@ -349,9 +357,9 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
         worked ? (
           <span className="flex flex-wrap items-center gap-x-2">
             <span>
-              {plural(e.sets, 'série')}
-              {p === 'partial' && ` sur ${range(ex.sets)}`}
-              {e.started && `, série ${e.sets + 1} entamée`}
+              {e.sets > 0 && plural(e.sets, 'série')}
+              {e.sets > 0 && p === 'partial' && ` sur ${ex.sets[0]}`}
+              {e.started && `${e.sets > 0 ? ', ' : ''}série ${e.sets + 1} entamée (${e.started})`}
             </span>
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
@@ -364,7 +372,10 @@ function ExoLine({ e, i }: { e: ExoRecap; i: number }) {
         )
       }
       value={
-        <span className={`text-[15px] ${p === 'done' ? 'font-medium text-(--ink)' : 'font-normal text-(--muted)'}`}>{PROGRESS_WORD[p]}</span>
+        // Marque d'état + mot ; « pas fait » n'a pas de marque (l'absence se lit).
+        <StateMark state={p} size={15} className={`text-[15px] ${p === 'done' || p === 'partial' ? 'font-medium text-(--ink)' : 'font-normal text-(--muted)'}`}>
+          {PROGRESS_WORD[p]}
+        </StateMark>
       }
     />
   );
@@ -594,6 +605,7 @@ function SansSerie() {
   const nav = useNav();
   const { seance } = useProto();
   const s = seance.state;
+  const sides = entryCount(s);
   return (
     <Screen
       bottom={
@@ -610,7 +622,7 @@ function SansSerie() {
       <ScreenHeader title="Fin de séance" meta={`${s.seanceName} · ${s.routineName}`} back={{ label: 'Séance', onClick: nav.back }} />
       <EmptyState
         title="Aucune série loggée"
-        body="Elle n’entre pas au journal."
+        body={sides > 0 ? `${sides} côté${sides > 1 ? 's' : ''} saisi${sides > 1 ? 's' : ''}, sans série complète : elle n’entre pas au journal.` : 'Elle n’entre pas au journal.'}
       />
     </Screen>
   );

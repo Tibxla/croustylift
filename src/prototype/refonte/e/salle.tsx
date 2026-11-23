@@ -14,10 +14,18 @@
 //      Dès le minimum atteint, cette ligne devient le bilan de l'exo.
 //   e. Séance d'hier jamais rangée : la Salle demande Ranger ou Reprendre.
 //   b. L'enchaînement : dès le minimum de séries du plan atteint, le bloc
-//      principal devient « Exo suivant » (prochain exo ni fait ni passé), et
+//      principal devient « Exo suivant » (prochain exo, `nextIndex`), et
 //      « Logger la série n » passe en bouton secondaire juste au-dessus. Quand
 //      il ne reste rien : « Terminer la séance ». Avant le seuil, un lien
-//      « Exo suivant » permet de passer à la suite sur demande.
+//      « Exo suivant » (ou « Terminer la séance ») passe à la suite en un geste.
+//      ALTERNANCE : après n'importe quelle série, on passe à l'exo suivant sans
+//      confirmation et sans jamais y revenir ; l'exo quitté reste « en cours »
+//      (jamais « passé », seul le geste « Passer » le fait) et n'est plus
+//      relancé. Y revenir (index, balayage arrière, Sommaire) reprend à sa
+//      série, avec sa Référence. Plusieurs exos peuvent être en cours à la fois ;
+//      « Terminer » les compte (« 2 exos entamés ») sans bloquer.
+//   f. Marques d'état (e/icons.tsx) : fait, en cours, passé, à côté du numéro
+//      dans l'index et avant le mot dans le Sommaire et la fin de séance.
 //   c. Exo unilatéral (ADR 0005, 0010) : la ligne de Référence devient le
 //      sélecteur « Gauche · Droite » (44 px, côté déjà saisi marqué « fait »),
 //      avec la Référence de ce côté ; la bande montre chaque série en deux
@@ -65,7 +73,7 @@ import {
 import { SalleFin } from './salle-fin';
 import { TextArea } from './exercices-champs';
 import { catalogue, useCatalogue } from './fixtures-exercices';
-import { IconButton } from './icons';
+import { IconButton, StateIcon, StateMark } from './icons';
 import {
   activeSide,
   draftOf,
@@ -76,10 +84,12 @@ import {
   nextIndex,
   openSet,
   progressOf,
+  resumeWord,
   SIDE_WORD,
   sidePr,
   sideRef,
   sideRefDate,
+  startedExos,
   totalSets,
   type ExoSummary,
   type Progress,
@@ -110,8 +120,6 @@ const PROGRESS_WORD: Record<Progress, string> = { todo: 'à faire', partial: 'en
 
 function ExerciseIndex({ state, onPick }: { state: SeanceState; onPick: (i: number) => void }) {
   const n = state.exercises.length;
-  // Au-delà de 5 colonnes le mot « passé » ne tient plus : la jauge en pointillés suffit.
-  const roomy = n <= 5;
   return (
     <div className="grid px-3" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }} role="tablist" aria-label="Exercices de la séance">
       {state.exercises.map((ex, i) => {
@@ -129,9 +137,11 @@ function ExerciseIndex({ state, onPick }: { state: SeanceState; onPick: (i: numb
             onClick={() => onPick(i)}
             className="flex h-11 min-w-0 flex-col justify-center px-2"
           >
-            <span className={`truncate text-left text-[14px] ${active ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}>
+            {/* Numéro + marque d'état (le mot est dans l'aria-label : la colonne est
+                trop étroite pour lui). La jauge, dessous, garde la fraction. */}
+            <span data-progress={p} className={`flex h-5 items-center gap-1 text-left text-[14px] ${active ? 'font-semibold text-(--ink)' : 'text-(--muted)'}`}>
               {i + 1}
-              {p === 'skipped' && roomy && <span className="ml-1.5 text-[13px]">passé</span>}
+              <StateIcon state={p} size={14} />
             </span>
             {p === 'skipped' ? (
               <span className="mt-1.5 block h-[3px] w-full border-t-[3px] border-dashed border-(--dim)" />
@@ -195,7 +205,9 @@ function ExerciseHeader({ ex, next, meta, onSwipe }: { ex: ExercisePlan; next: E
 function ExoBilan({ sum }: { sum: ExoSummary }) {
   return (
     <>
-      <span className="font-medium text-(--ink)">fait · {sum.sets} série{sum.sets > 1 ? 's' : ''}</span>
+      <StateMark state="done" size={15} className="font-medium text-(--ink)">
+        fait · {sum.sets} série{sum.sets > 1 ? 's' : ''}
+      </StateMark>
       {sum.beaten > 0 && <Status v="up" word={`${sum.beaten} battue${sum.beaten > 1 ? 's' : ''}`} />}
       {sum.beaten === 0 && sum.matched > 0 && <Status v="eq" word={`${sum.matched} égalée${sum.matched > 1 ? 's' : ''}`} />}
       {sum.record !== null && <Status v="up" word="record" />}
@@ -485,6 +497,10 @@ function Instrument() {
   const logMeta = `${fmtKg(draft.weightKg)} × ${draft.reps}`;
   const logValue = `${logMeta} · RIR ${draft.rir}`;
   const done = exercises.filter((e) => progressOf(state, e) === 'done').length;
+  // Exo suivant déjà entamé : le bloc dit où il reprend (« série 2 »).
+  const nextResume = nextEx ? resumeWord(state, nextEx) : null;
+  const started = startedExos(state).length;
+  const startedWord = started > 0 ? `${started} exo${started > 1 ? 's' : ''} entamé${started > 1 ? 's' : ''}` : undefined;
   const [notesOpen, setNotesOpen] = useState(false);
   const instrNote = useCatalogue().find((e) => e.id === ex.id)?.note ?? '';
   const hasNote = !!instrNote.trim() || !!state.notes[ex.id]?.trim() || !!lastDatedNote(state, ex.id);
@@ -662,8 +678,8 @@ function Instrument() {
       {/* Zone du pouce. Ligne du haut : les actions de rechange (annuler, l'autre
           choix). Ligne du bas : Sommaire + l'action attendue, toujours au même endroit. */}
       <div className="sticky bottom-0 z-10 mt-2 bg-(--bg) px-5 pb-(--pad-bottom) pt-1">
-        {(state.lastLog === ex.id || reached || nextI !== null) && (
-          <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
+        {/* Toujours là : la barre garde sa hauteur d'un exo à l'autre. */}
+        <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
             {state.lastLog === ex.id ? (
               <TextLink tone="muted" onClick={seance.undo}>
                 {undoLabel}
@@ -677,15 +693,17 @@ function Instrument() {
               <SecondaryButton onClick={log} press={false} className="ml-auto min-w-0 flex-1" ariaLabel={`${logLabel}, ${logValue}`}>
                 {logLabel}
               </SecondaryButton>
+            ) : nextEx ? (
+              // Après n'importe quelle série : l'exo affiché reste « en cours ».
+              <TextLink tone="muted" onClick={goNext} ariaLabel={`Aller à l'exo suivant, ${nextEx.name}${nextResume ? `, reprise ${nextResume}` : ''}`}>
+                Exo suivant
+              </TextLink>
             ) : (
-              nextEx && (
-                <TextLink tone="muted" onClick={goNext} ariaLabel={`Passer à l'exo suivant, ${nextEx.name}`}>
-                  Exo suivant
-                </TextLink>
-              )
+              <TextLink tone="muted" onClick={finish} ariaLabel={`Terminer la séance${startedWord ? `, ${startedWord}` : ''}`}>
+                Terminer la séance
+              </TextLink>
             )}
-          </div>
-        )}
+        </div>
         <div className="flex items-stretch gap-2">
           <button
             type="button"
@@ -709,11 +727,18 @@ function Instrument() {
               {logValue}
             </PrimaryButton>
           ) : nextEx ? (
-            <PrimaryButton onClick={goNext} over="Exo suivant" ariaLabel={`Exo suivant · ${nextEx.name}`} press={false}>
+            <PrimaryButton
+              onClick={goNext}
+              // Reprise dite au-dessus, jamais en méta : le nom de l'exo reste entier.
+              over={nextResume ? `Exo suivant · reprise ${nextResume}` : 'Exo suivant'}
+              ariaLabel={`Exo suivant · ${nextEx.name}${nextResume ? `, reprise ${nextResume}` : ''}`}
+              press={false}
+            >
               {nextEx.name}
             </PrimaryButton>
           ) : (
-            <PrimaryButton onClick={finish} press={false}>
+            // L'avertissement au-dessus du libellé (en méta, il le tronquerait) : informatif, sans confirmation.
+            <PrimaryButton onClick={finish} over={startedWord} ariaLabel={`Terminer la séance${startedWord ? `, ${startedWord}` : ''}`} press={false}>
               Terminer la séance
             </PrimaryButton>
           )}
@@ -736,22 +761,36 @@ function originWord(state: SeanceState, id: string): string | null {
   return state.origin[id]?.kind ?? null;
 }
 
+/** Côté déjà saisi d'une série unilatérale entamée : « série 2 entamée (gauche) ». */
+function openWord(state: SeanceState, ex: ExercisePlan, n: number): string | null {
+  const o = openSet(state, ex);
+  return o ? `série ${n + 1} entamée (${SIDE_WORD[o.G ? 'G' : 'D']})` : null;
+}
+
 /** Méta d'une ligne du Sommaire, UNE ligne : la prescription tant que rien n'est
- *  fait, sinon l'état et le bilan (la prescription se relit dans l'instrument). */
+ *  fait, sinon la marque d'état, son mot et le bilan (la prescription se relit
+ *  dans l'instrument). En cours : « 1 série sur 3 », le minimum qui fait « fait ». */
 function SommaireMeta({ state, ex }: { state: SeanceState; ex: ExercisePlan }) {
   const p = progressOf(state, ex);
   const sum = exoSummary(state, ex);
-  const started = openSet(state, ex);
+  const side = openWord(state, ex, sum.sets);
   const origin = originWord(state, ex.id);
+  const tail = origin && <span className="font-normal text-(--muted)"> · {origin}</span>;
   return (
     <span className="flex flex-wrap items-center gap-x-2">
-      <span className={p === 'partial' || p === 'done' ? 'font-medium text-(--ink)' : 'text-(--muted)'}>
-        {p === 'todo' && `${range(ex.sets)} × ${range(ex.reps)} · RIR ${range(ex.rir)}`}
-        {p === 'skipped' && 'passé'}
-        {p === 'partial' && `en cours · ${sum.sets} sur ${range(ex.sets)}${started ? `, série ${sum.sets + 1} entamée` : ''}`}
-        {p === 'done' && `fait · ${plural(sum.sets, 'série')}`}
-        {origin && <span className="font-normal text-(--muted)"> · {origin}</span>}
-      </span>
+      {p === 'todo' ? (
+        <span className="text-(--muted)">
+          {`${range(ex.sets)} × ${range(ex.reps)} · RIR ${range(ex.rir)}`}
+          {tail}
+        </span>
+      ) : (
+        <StateMark state={p} className={p === 'skipped' ? 'text-(--muted)' : 'font-medium text-(--ink)'}>
+          {p === 'skipped' && 'passé'}
+          {p === 'partial' && ['en cours', sum.sets > 0 ? `${sum.sets} série${sum.sets > 1 ? 's' : ''} sur ${ex.sets[0]}` : null, side].filter(Boolean).join(' · ')}
+          {p === 'done' && ['fait', plural(sum.sets, 'série'), side].filter(Boolean).join(' · ')}
+          {tail}
+        </StateMark>
+      )}
       {sum.beaten > 0 && <Status v="up" word={`${sum.beaten} battue${sum.beaten > 1 ? 's' : ''}`} />}
     </span>
   );
@@ -764,6 +803,8 @@ function lossText(total: number, entries: number, notes: boolean): string {
   const fem = total > 0 || !what;
   const many = (what !== null && notes) || total > 1 || (total === 0 && entries > 1) || (!what && notes);
   const subject = [what, notes ? 'tes notes du jour' : null].filter(Boolean).join(' et ');
+  // Rien à perdre (séance toute neuve) : la feuille ne s'ouvre pas, mais elle est rendue.
+  if (!subject) return '';
   return `${subject[0]!.toUpperCase()}${subject.slice(1)} ${many ? 'seront' : 'sera'} perdu${fem ? 'e' : ''}${many ? 's' : ''}.`;
 }
 
@@ -779,6 +820,9 @@ function Sommaire() {
     const p = progressOf(state, e);
     return p === 'todo' || p === 'partial';
   });
+  // Exos entamés : signalés sur « Terminer », jamais bloquants.
+  const started = startedExos(state).length;
+  const startedMeta = started > 0 ? `${started} exo${started > 1 ? 's' : ''} entamé${started > 1 ? 's' : ''}` : undefined;
   const open = (i: number) => {
     seance.setIdx(i);
     nav.back();
@@ -799,13 +843,17 @@ function Sommaire() {
       bottom={
         remaining ? (
           <>
-            <SecondaryButton onClick={() => nav.push('fin-de-seance')}>Terminer la séance</SecondaryButton>
+            <SecondaryButton onClick={() => nav.push('fin-de-seance')} meta={startedMeta} ariaLabel={`Terminer la séance${startedMeta ? `, ${startedMeta}` : ''}`}>
+              Terminer la séance
+            </SecondaryButton>
             <PrimaryButton onClick={nav.back} over="Reprendre" ariaLabel={`Reprendre · ${current.name}`}>
               {current.name}
             </PrimaryButton>
           </>
         ) : (
-          <PrimaryButton onClick={() => nav.push('fin-de-seance')}>Terminer la séance</PrimaryButton>
+          <PrimaryButton onClick={() => nav.push('fin-de-seance')} meta={startedMeta} ariaLabel={`Terminer la séance${startedMeta ? `, ${startedMeta}` : ''}`}>
+            Terminer la séance
+          </PrimaryButton>
         )
       }
     >
@@ -830,7 +878,7 @@ function Sommaire() {
               current={i === state.idx}
               muted={p === 'skipped'}
               onClick={() => open(i)}
-              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}${started ? `, série ${n + 1} entamée` : ''}${origin ? `, ${origin}` : ''}. Ouvrir dans l'instrument`}
+              ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${plural(n, 'série')} sur ${ex.sets[0]}` : ''}${started ? `, série ${n + 1} entamée` : ''}${origin ? `, ${origin}` : ''}. Ouvrir dans l'instrument`}
               trailing={
                 p === 'skipped' ? (
                   // « Remettre », pas « Reprendre » : « Reprendre » est déjà le retour à l'instrument, en bas.
@@ -971,6 +1019,7 @@ function SeanceHier() {
   const s = seance.state;
   const total = totalSets(s);
   const done = s.exercises.filter((e) => progressOf(s, e) === 'done').length;
+  const started = startedExos(s).length;
   return (
     <Screen
       bottom={
@@ -997,6 +1046,12 @@ function SeanceHier() {
             {done} sur {s.exercises.length}
           </dd>
         </div>
+        {started > 0 && (
+          <div className="flex min-h-12 items-center justify-between gap-4 border-b border-(--line) px-5 py-2.5">
+            <dt className="text-[16px] text-(--muted)">Exos entamés</dt>
+            <dd className="text-[16px] font-medium text-(--ink)">{started}</dd>
+          </div>
+        )}
       </dl>
       <p className="px-5 pt-4 text-[15px] leading-[1.45] text-(--muted)">Rangée ou reprise, elle garde sa date : {fmtDate(s.dateIso)}</p>
     </Screen>

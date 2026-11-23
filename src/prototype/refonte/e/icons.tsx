@@ -14,6 +14,19 @@
 //     44 × 44 px.
 //   - `dot` : indice discret (petit carré blanc cassé, 6 px) quand le contenu
 //     existe déjà (une note est écrite). Jamais le signal.
+//
+// MARQUES D'ÉTAT D'UN EXO (seule exception à « une icône remplace un mot ») :
+// trois cercles de même encombrement, lus comme une suite. Elles accompagnent
+// TOUJOURS le mot (`StateMark`), sauf dans l'index de la Salle, trop étroit, où
+// le mot est porté par l'aria-label de l'onglet et la jauge dit la fraction.
+//   fait      cercle + coche          l'exo a son minimum de séries
+//   en cours  cercle à moitié plein   entamé, pas fini : seule marque pleine,
+//                                     celle qui appelle encore un geste
+//   passé     cercle barré            écarté par le geste « Passer », rien d'autre
+//   à faire   aucune marque           l'absence se lit, une 4ᵉ forme serait du bruit
+// Teintes : `--ink` (fait, en cours) et `--muted` (passé). Jamais le signal
+// (réservé à « mieux que la réf. »), jamais `--line`. Pas d'animation : la
+// marque change à chaque série loggée.
 import type { ReactNode } from 'react';
 
 export type IconName =
@@ -26,7 +39,10 @@ export type IconName =
   | 'eye'
   | 'eye-off'
   | 'chevron-down'
-  | 'chevron-up';
+  | 'chevron-up'
+  | 'state-done'
+  | 'state-partial'
+  | 'state-skipped';
 
 const PATHS: Record<IconName, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
@@ -78,7 +94,51 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   'chevron-down': <path d="M6 9.5l6 6 6-6" />,
   'chevron-up': <path d="M6 14.5l6-6 6 6" />,
+  // Marques d'état : même cercle (r 8,25), donc même encombrement en colonne.
+  'state-done': (
+    <>
+      <circle cx="12" cy="12" r="8.25" />
+      <path d="M8.4 12.3l2.5 2.5 4.8-5.2" />
+    </>
+  ),
+  'state-partial': (
+    <>
+      <circle cx="12" cy="12" r="8.25" />
+      <path d="M12 6.5a5.5 5.5 0 0 1 0 11z" fill="currentColor" stroke="none" />
+    </>
+  ),
+  'state-skipped': (
+    <>
+      <circle cx="12" cy="12" r="8.25" />
+      <path d="M6.3 17.7 17.7 6.3" />
+    </>
+  ),
 };
+
+export type ExoState = 'todo' | 'partial' | 'done' | 'skipped';
+
+const STATE_ICON: Record<Exclude<ExoState, 'todo'>, IconName> = {
+  done: 'state-done',
+  partial: 'state-partial',
+  skipped: 'state-skipped',
+};
+
+/** Marque d'état seule (sans mot) : l'index de la Salle seulement. `todo` : rien. */
+export function StateIcon({ state, size = 14, className = '' }: { state: ExoState; size?: number; className?: string }) {
+  if (state === 'todo') return null;
+  return <Icon name={STATE_ICON[state]} size={size} className={`${state === 'skipped' ? 'text-(--muted)' : ''} ${className}`} />;
+}
+
+/** Marque d'état + son mot (« ◐ en cours · 1 série sur 3 ») : le statut ne se lit
+ *  jamais à la seule icône. La teinte suit le texte autour, sauf « passé » (gris). */
+export function StateMark({ state, children, size = 15, className = '' }: { state: ExoState; children: ReactNode; size?: number; className?: string }) {
+  return (
+    <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
+      <StateIcon state={state} size={size} />
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
 
 /** Chevron de navigation : il dit « ça s'ouvre » (ligne) ou « retour » (en-tête). */
 export function Chevron({ dir = 'right' }: { dir?: 'right' | 'left' }) {

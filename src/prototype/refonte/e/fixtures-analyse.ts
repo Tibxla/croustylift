@@ -229,6 +229,18 @@ export const BLOCKS: Block[] = [
   { id: 'b-ppl-2', routineId: 'ppl-automne', start: '2026-10-20', end: null, cause: 'Upper A modifiée le 20 oct.' },
 ];
 
+/** Début de la routine courante : son premier bloc (22 sept. pour PPL automne,
+ *  les deux blocs compris, pas seulement le bloc en cours depuis le 20 oct.). */
+export const ROUTINE_START = BLOCKS.filter((b) => b.routineId === CURRENT_ROUTINE.id)
+  .map((b) => b.start)
+  .sort()[0]!;
+
+/** Exécution de la routine courante : une de ses séances, depuis son début.
+ *  Filtre de la synthèse de l'onglet Exos ET de sa liste (mêmes chiffres). */
+export function inCurrentRoutine(e: Execution): boolean {
+  return e.date >= ROUTINE_START && seanceInfo(e.seanceId).routineId === CURRENT_ROUTINE.id;
+}
+
 export function blockOf(date: string): Block | undefined {
   return BLOCKS.find((b) => date >= b.start && (b.end === null || date <= b.end));
 }

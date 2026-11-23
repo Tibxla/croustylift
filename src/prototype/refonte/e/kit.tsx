@@ -18,6 +18,8 @@
 // Icônes : seulement les icônes FONCTIONNELLES de e/icons.tsx (remplacer,
 // ajouter, options, éditer, supprimer, note, réordonner, masquer), là où elles
 // sont lues sans hésiter ; une icône seule a un nom (aria-label) et 44 px.
+// Plus les trois marques d'état d'un exo (fait, en cours, passé ; e/icons.tsx),
+// toujours à côté de leur mot, jamais en couleur de signal.
 //
 // INTERDIT : dégradés (texte ou fond), flou, verre, halos, lueurs, ombres
 // floues, cartes arrondies avec icône dans un rond, emojis, icônes décoratives,

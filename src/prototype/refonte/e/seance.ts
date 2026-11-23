@@ -130,16 +130,36 @@ export function progressOf(state: SeanceState, ex: ExercisePlan): Progress {
   return n >= ex.sets[0] ? 'done' : 'partial';
 }
 
-/** Prochain exo ni fait ni passé, dans l'ordre, après l'exo affiché puis depuis
- *  le début. null : il ne reste rien, l'action devient « Terminer la séance ». */
+/** Prochain exo proposé (fantôme, balayage avant, « Exo suivant », bloc
+ *  principal). ALTERNANCE : on peut faire une série et passer à l'exo suivant
+ *  sans jamais y revenir. L'exo quitté reste « en cours » (jamais « passé ») et
+ *  n'est plus relancé : derrière l'exo affiché, seuls les exos jamais commencés
+ *  reviennent (cas de la machine prise au début). Devant, le prochain à faire ou
+ *  déjà entamé, dans l'ordre. null : rien à proposer, l'action devient
+ *  « Terminer la séance » (les exos entamés y sont signalés, sans bloquer). */
 export function nextIndex(state: SeanceState): number | null {
   const n = state.exercises.length;
   for (let k = 1; k < n; k++) {
     const i = (state.idx + k) % n;
     const p = progressOf(state, state.exercises[i]!);
-    if (p === 'todo' || p === 'partial') return i;
+    if (p === 'todo' || (p === 'partial' && i > state.idx)) return i;
   }
   return null;
+}
+
+/** Exos entamés : en cours (sous le minimum), ou faits mais avec une série
+ *  unilatérale à un seul côté. Ce que « Terminer la séance » signale, sans bloquer. */
+export function startedExos(state: SeanceState): ExercisePlan[] {
+  return state.exercises.filter((ex) => progressOf(state, ex) === 'partial' || (isUni(state, ex) && !!openSet(state, ex)));
+}
+
+/** Où reprend un exo déjà entamé : « série 2 », « série 1, droite ». null s'il
+ *  n'est pas commencé. Dit sur le bloc qui y mène (rien de caché au retour). */
+export function resumeWord(state: SeanceState, ex: ExercisePlan): string | null {
+  const n = (state.logged[ex.id] ?? []).length;
+  const open = openSet(state, ex);
+  if (n === 0 && !open) return null;
+  return open ? `série ${n + 1}, ${SIDE_WORD[open.G ? 'D' : 'G']}` : `série ${n + 1}`;
 }
 
 export function seedDraft(ex: ExercisePlan, logged: SetValue[]): Draft {
@@ -356,8 +376,14 @@ function reducer(state: SeanceState, a: Action): SeanceState {
         lastLog: null,
       };
     }
-    case 'skip':
+    case 'skip': {
+      // « Passer » est le SEUL geste qui marque un exo passé, et seulement s'il
+      // n'est pas commencé : quitter un exo après une série le laisse en cours.
+      const ex = state.exercises.find((e) => e.id === a.id);
+      if (!ex) return state;
+      if (!state.skipped[a.id] && ((state.logged[a.id] ?? []).length > 0 || openSet(state, ex))) return state;
       return { ...state, skipped: { ...state.skipped, [a.id]: !state.skipped[a.id] } };
+    }
     case 'add': {
       const c = catalogById(a.catalogId);
       if (!c || state.exercises.some((e) => e.id === c.id)) return state;
