@@ -32,13 +32,14 @@ describe('fetchAllRows', () => {
     const { table, page } = fakeServer(2350, 1000);
     const rows = await fetchAllRows<Row>(page);
     expect(rows).toEqual(table);
-    // 3 pages de données + la page vide qui clôt la lecture.
-    expect(page.mock.calls.map(([after]) => after)).toEqual([null, id(999), id(1999), id(2349)]);
+    // 3 pages de données ; la 3ᵉ, courte, clôt la lecture (pas de requête de plus).
+    expect(page.mock.calls.map(([after]) => after)).toEqual([null, id(999), id(1999)]);
   });
 
-  it('plafond serveur PLUS BAS que la page demandée : une page courte n’est pas la fin', async () => {
-    const { table, page } = fakeServer(1200, 500);
-    await expect(fetchAllRows<Row>(page, 1000)).resolves.toEqual(table);
+  it('première page courte : rendue SANS requête de plus (un aller-retour coupé ne fait plus échouer une lecture complète)', async () => {
+    const { table, page } = fakeServer(12, 1000);
+    await expect(fetchAllRows<Row>(page)).resolves.toEqual(table);
+    expect(page).toHaveBeenCalledTimes(1);
   });
 
   it('total multiple exact de la page : pas de ligne perdue ni doublée', async () => {
@@ -98,8 +99,9 @@ describe('fetchAllRows', () => {
   });
 
   it('serveur qui ignore le curseur (toujours la même page) : la boucle s’arrête en erreur', async () => {
+    // Page pleine (taille 1) pour que la boucle continue et bute sur le même id.
     const page = vi.fn(async () => ({ data: [{ id: 'a' }], error: null }));
-    await expect(fetchAllRows(page)).rejects.toThrow(/ne progresse pas/);
+    await expect(fetchAllRows(page, 1)).rejects.toThrow(/ne progresse pas/);
     expect(page).toHaveBeenCalledTimes(2);
   });
 });

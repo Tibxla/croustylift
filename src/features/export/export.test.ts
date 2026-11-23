@@ -5,6 +5,7 @@ import {
   buildExport,
   collectUserData,
   serializeExport,
+  withoutRowsNewerThanTheirParent,
   type CollectedData,
   type ExportClient,
   type ExportPage,
@@ -239,3 +240,45 @@ describe('serializeExport', () => {
     expect(JSON.parse(json)).toEqual(out);
   });
 });
+
+describe('withoutRowsNewerThanTheirParent', () => {
+  const empty = () =>
+    Object.fromEntries(EXPORT_TABLES.map((t) => [t, [] as Row[]])) as CollectedData;
+
+  it('série écrite pendant l’export, exécution absente : écartée, la sauvegarde reste restaurable', () => {
+    const data = empty();
+    data.executions = [{ id: 'e1', seance_version_id: null }];
+    data.performed_sets = [
+      { id: 's1', execution_id: 'e1' },
+      { id: 's2', execution_id: 'e-arrivee-pendant-export' },
+    ];
+    data.dated_notes = [{ id: 'n1', execution_id: 'e-arrivee-pendant-export' }];
+    const out = withoutRowsNewerThanTheirParent(data);
+    expect(out.performed_sets.map((r) => r.id)).toEqual(['s1']);
+    expect(out.dated_notes).toEqual([]);
+  });
+
+  it('en cascade : une version absente écarte ses exécutions, puis leurs séries', () => {
+    const data = empty();
+    data.seance_versions = [];
+    data.executions = [
+      { id: 'e1', seance_version_id: 'v-nouvelle' },
+      { id: 'e2', seance_version_id: null },
+    ];
+    data.performed_sets = [
+      { id: 's1', execution_id: 'e1' },
+      { id: 's2', execution_id: 'e2' },
+    ];
+    const out = withoutRowsNewerThanTheirParent(data);
+    expect(out.executions.map((r) => r.id)).toEqual(['e2']);
+    expect(out.performed_sets.map((r) => r.id)).toEqual(['s2']);
+  });
+
+  it('sauvegarde cohérente : rien n’est retiré', () => {
+    const data = empty();
+    data.routines = [{ id: 'r1' }];
+    data.seances = [{ id: 'se1', routine_id: 'r1' }];
+    expect(withoutRowsNewerThanTheirParent(data)).toEqual(data);
+  });
+});
+

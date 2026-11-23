@@ -113,8 +113,8 @@ export interface ExportClient {
  * sur `id`, clé unique de toutes les tables exportées : aucune ligne sautée ni
  * doublée entre deux pages, même si une écriture arrive pendant l'export). Ce
  * n'est PAS un instantané transactionnel : les tables sont lues l'une après
- * l'autre côté serveur, une sauvegarde prise pendant une séance peut porter une
- * série dont l'exécution a été lue juste avant. Une erreur Supabase sur n'importe quelle table
+ * l'autre côté serveur ; les lignes écrites entre la lecture de leur parent et
+ * la leur sont écartées (`withoutRowsNewerThanTheirParent`). Une erreur Supabase sur n'importe quelle table
  * fait échouer la collecte (pas d'export partiel).
  *
  * Les exos de BASE (owner_id null) sont filtrés : seuls les exos perso sortent.
@@ -134,7 +134,48 @@ export async function collectUserData(client: ExportClient): Promise<CollectedDa
     }),
   );
 
-  return Object.fromEntries(entries) as CollectedData;
+  return withoutRowsNewerThanTheirParent(Object.fromEntries(entries) as CollectedData);
+}
+
+/**
+ * Liens enfant → parent entre tables EXPORTÉES (les exos de base, non exportés,
+ * n'y figurent pas). Colonne nullable (`executions.seance_version_id`) : une
+ * valeur nulle n'a pas de parent à vérifier.
+ */
+const PARENT_LINKS: readonly { child: ExportTable; column: string; parent: ExportTable }[] = [
+  { child: 'routine_activations', column: 'routine_id', parent: 'routines' },
+  { child: 'seances', column: 'routine_id', parent: 'routines' },
+  { child: 'seance_archive_events', column: 'seance_id', parent: 'seances' },
+  { child: 'seance_versions', column: 'seance_id', parent: 'seances' },
+  { child: 'prescriptions', column: 'seance_version_id', parent: 'seance_versions' },
+  { child: 'executions', column: 'seance_version_id', parent: 'seance_versions' },
+  { child: 'performed_sets', column: 'execution_id', parent: 'executions' },
+  { child: 'dated_notes', column: 'execution_id', parent: 'executions' },
+];
+
+/**
+ * Écarte les lignes dont le parent manque à la sauvegarde (logique PURE, testée).
+ * Les tables se lisent l'une après l'autre : une séance synchronisée PENDANT
+ * l'export peut faire entrer ses séries alors que son exécution, lue avant,
+ * n'y est pas. Une telle sauvegarde échouerait à la restauration (clé étrangère).
+ * Ces lignes sont postérieures à la lecture de leur parent : les écarter rend
+ * une sauvegarde cohérente, prise juste avant leur écriture. Répété jusqu'à
+ * stabilité, l'écart d'un parent pouvant en orpheliner d'autres.
+ */
+export function withoutRowsNewerThanTheirParent(data: CollectedData): CollectedData {
+  const out = { ...data };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const { child, column, parent } of PARENT_LINKS) {
+      const parents = new Set(out[parent].map((row) => row.id));
+      const kept = out[child].filter((row) => row[column] == null || parents.has(row[column]));
+      if (kept.length !== out[child].length) {
+        out[child] = kept;
+        changed = true;
+      }
+    }
+  }
+  return out;
 }
 
 /** Un exo perso a un owner_id ; les exos de base (catalogue commun) ont owner_id null. */

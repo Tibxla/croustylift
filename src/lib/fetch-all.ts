@@ -13,9 +13,13 @@
 //     pages décale la fenêtre — une ligne supprimée en fait sauter une autre,
 //     une ligne insérée en fait relire une. Le curseur, lui, ne dépend que de la
 //     dernière ligne reçue ;
-//   - s'arrêter sur une page « courte » : si le plafond du serveur est plus bas
-//     que la page demandée, elle n'est pas la fin. On ne s'arrête que sur le
-//     vide, au prix d'une requête de plus par lecture.
+// On s'arrête sur une page « courte » (moins de lignes que demandé) : c'est la
+// fin, SANS requête de plus. Une page vide en plus coûtait un aller-retour qui,
+// coupé, faisait échouer une lecture pourtant complète (Capture sans copie au
+// premier montage). HYPOTHÈSE : le plafond « Max rows » du projet est au moins
+// égal à `FETCH_PAGE_SIZE` (1000, défaut Supabase, vérifié en prod le
+// 2026-11-23 : pages pleines de 1000). S'il était abaissé sous 1000, une page
+// courte ne serait plus la fin : remonter alors `FETCH_PAGE_SIZE` au plafond.
 //
 // CONTRAT DE L'APPELANT : la requête sélectionne `id`, est triée par `id` SEUL
 // (`.order('id')`), limitée à `limit`, et filtrée `id > after` quand `after`
@@ -83,6 +87,8 @@ export async function fetchAllRows<T extends { id: string }>(
     if (!last) return rows;
     if (last.id === after) break;
     rows.push(...batch);
+    // Page courte = fin de la lecture (cf. en-tête : plafond serveur ≥ pageSize).
+    if (batch.length < pageSize) return rows;
     after = last.id;
   }
   throw new Error('Lecture paginée interrompue : la requête ne progresse pas.');
