@@ -209,7 +209,7 @@ describe('analyzeExecutions — libellé « séance · routine » (ADR 0016)', (
 // répartit par exo. Les lignes arrivent triées par id (pagination), donc dans le
 // désordre : le regroupement ne doit pas en dépendre.
 
-describe('groupExecutionRows — toutes les séries, regroupées par exo', () => {
+describe('groupExecutionRows : toutes les séries, regroupées par exo', () => {
   const setRow = (over: Partial<ExecutionSetRow> & { id: string }): ExecutionSetRow => ({
     created_at: '2026-07-01T10:00:00+00:00',
     weight_kg: 80,

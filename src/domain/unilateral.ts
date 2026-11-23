@@ -62,7 +62,7 @@ export function pairSidesByOrder(sets: PerformedSet[]): SidePair[] {
  *   - `countLogicalSetsDone` (set-count.ts) : orders distincts, un côté seul = 1
  *     (série « entamée ») — pour le décompte logique d'analyse ;
  *   - `countPerformedSets` (set-count.ts) : pondéré par reps, G + D = 2 au total
- *     — pour le décompte de séries de la séance (Clôture et Journal) ;
+ *     pour le décompte de séries de la séance (Clôture et Journal) ;
  *   - ici : fraction de série RÉELLEMENT faite, un côté = 0,5 — pour le compteur
  *     de progression de la vue capture, qui se lit « faites / prévu ».
  */

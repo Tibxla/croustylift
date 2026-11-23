@@ -301,7 +301,7 @@ describe('buildConfigTimeline — archivage de séance', () => {
 
 // --- Instants, jour local, bloc implicite (ADR 0001, amendement du 2026-11-23) --
 
-describe('buildConfigTimeline — instants et jour local', () => {
+describe('buildConfigTimeline : instants et jour local', () => {
   const seances = [{ id: 'A', routineId: 'R' }]
 
   it('chaque changement porte son instant en plus de son jour', () => {
@@ -377,7 +377,7 @@ describe('buildConfigTimeline — instants et jour local', () => {
   })
 })
 
-describe('buildConfigTimeline — bloc implicite avant toute activation', () => {
+describe('buildConfigTimeline : bloc implicite avant toute activation', () => {
   const base = {
     seances: [{ id: 'A', routineId: 'R' }],
     seanceVersions: [
