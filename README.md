@@ -15,7 +15,7 @@ Lis ta progression réelle au calme, façon cadran d'instrument.
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646cff.svg?logo=vite&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-3ecf8e.svg?logo=supabase&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-940%20passing-22c55e.svg)
+![Tests](https://img.shields.io/badge/tests-Vitest-22c55e.svg)
 
 </div>
 
@@ -39,9 +39,12 @@ Projet perso (et quelques potes). PWA installable, **offline-first**, **0 € d'
 
 **Capture en salle**
 - Logging d'une série en **1 tap**, cible « à battre » déjà affichée.
-- Steppers custom au pouce (poids / reps / RIR) — **jamais le clavier OS**.
+- Steppers custom au pouce (poids / reps / RIR) : le clavier OS reste facultatif.
+- Une séance se **lance** par un geste explicite, qui démarre le chrono (ADR 0011).
 - Exercices **unilatéraux** (logging du côté faible), ajout / remplacement d'exo à la volée.
 - **Offline-first** : écriture locale immédiate, file d'attente de sync (last-write-wins).
+- **Démarrage hors ligne** : l'app s'ouvre sans réseau sur une copie locale de tes
+  données, et reconnaît l'appareil sans appel serveur (ADR 0012).
 
 **Analyse au calme**
 - **Courbe e1RM** estimée (max théorique à 1 rép), trend par bloc, journal brut auditable.
@@ -51,11 +54,17 @@ Projet perso (et quelques potes). PWA installable, **offline-first**, **0 € d'
 **Organisation**
 - Routines → séances → **prescriptions** (séries × fourchette de reps × RIR).
 - Catalogue d'exercices **base + perso**, personnalisation par utilisateur.
+- **Duplication** d'une séance, dans la même routine ou une autre (ADR 0015).
+- **Archivage** des routines et séances déjà exécutées : elles sortent du plan,
+  leur historique reste entier (ADR 0017).
 
 **Données & plateforme**
 - **Export / import** JSON de tout l'historique.
 - Multi-utilisateur (toi + potes), isolation par **RLS** Postgres.
 - PWA installable, safe-area iOS, `prefers-reduced-motion` respecté.
+- **Mise à jour sans invite** : une nouvelle version s'installe au lancement ou à un
+  changement d'onglet, jamais pendant une séance. La version qui tourne (commit et
+  date de build) s'affiche dans le bloc Compte de l'Analyse.
 
 ## Design — « L'instrument de nuit »
 
@@ -78,8 +87,8 @@ Le système complet est documenté dans **[`DESIGN.md`](./DESIGN.md)** (format S
 | Données | **Supabase** — Auth + Postgres + RLS · sync UUID client, last-write-wins |
 | Dataviz | **Recharts** (courbe e1RM, comparaisons) |
 | PWA | `vite-plugin-pwa` / Workbox — precache + offline |
-| Typo | Geist · Geist Mono *(repli Inter · JetBrains Mono, self-hosted)* |
-| Tests | **Vitest** · domaine métier en **TDD** (940 tests) |
+| Typo | Geist · Geist Mono *(Inter en second de pile ; auto-hébergées, sous-ensembles latins)* |
+| Tests | **Vitest** · domaine métier en **TDD** |
 
 ## Démarrage
 
@@ -107,10 +116,32 @@ npm run dev
 | `npm run build` | Typecheck (`tsc -b`) + build de prod + PWA |
 | `npm run preview` | Sert le build de prod en local |
 | `npm test` | Tests en watch · `npm run test:run` en one-shot |
-| `npm run lint` | ESLint (dont `react-hooks` / React Compiler) |
+| `npm run lint` | ESLint (dont `react-hooks` / React Compiler), plafond de warnings fixé |
 | `npm run typecheck` | `tsc -b` seul |
+| `npm run size` | Poids gzip de chaque chunk du build, confronté à son budget |
+| `npm run contrast` | Contrastes WCAG des tokens de couleur |
 
-Le schéma Postgres et les politiques RLS sont versionnés dans `supabase/migrations/` (14 migrations), appliquées sur le projet Supabase hébergé.
+Le schéma Postgres et les politiques RLS sont versionnés dans `supabase/migrations/`, appliquées sur le projet Supabase hébergé.
+
+La CI (GitHub Actions) enchaîne lint, tests, build et budget de taille.
+
+### Mise à jour de l'app installée
+
+Après un déploiement, le nouveau service worker **attend** : l'app ouverte garde son
+ancien bundle complet, hors ligne compris. Elle bascule (un rechargement) au lancement
+tant que rien n'a été touché, ou au changement d'onglet suivant, et jamais pendant une
+séance en cours ni pendant une saisie. Le bloc Compte (onglet Analyse) affiche la
+version qui tourne et, si une version attend, un bouton « Mettre à jour ». La logique
+est dans `src/pwa/`.
+
+### Relevé de diagnostic (iPhone)
+
+Sur iPhone en mode écran d'accueil, WebKit peut garder une fenêtre d'affichage fausse
+après le clavier ou un passage en arrière-plan, ce qui décroche les barres du bas.
+L'app le détecte, force une remesure et journalise l'incident sur l'appareil
+(`src/viewport/`). Un **appui long d'une seconde et demie sur la barre d'onglets**
+ouvre le relevé : mesures en direct, journal des incidents, bouton « Copier ». Sur
+un navigateur de bureau, `?diag=1` l'ouvre aussi.
 
 ## Structure
 
@@ -127,6 +158,8 @@ src/
 │  └─ notes/        # Notes datées
 ├─ auth/        # Login, mot de passe oublié / réinitialisation
 ├─ lib/         # Client Supabase, helpers
+├─ pwa/         # Service worker : mise à jour contrôlée, reprise sur chunk introuvable
+├─ viewport/    # Fenêtre d'affichage iOS : détection, remesure, relevé de diagnostic
 └─ index.css    # Tokens OKLCH (@theme) + primitives .btn / .panel / .field
 ```
 
@@ -145,7 +178,8 @@ Vocabulaire métier complet dans **[`GLOSSARY.md`](./GLOSSARY.md)**. En bref :
 
 Les choix structurants sont tracés dans **[`docs/adr/`](./docs/adr/)** — templates de séance
 versionnés, déviations dérivées par diff, synchro UUID *last-write-wins*, décompte de séries
-pondéré par les reps, gestion de l'unilatéral, etc.
+pondéré par les reps, gestion de l'unilatéral, chrono au lancement, boot hors ligne,
+duplication et archivage des séances, etc.
 
 ## Documentation
 

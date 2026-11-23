@@ -1,8 +1,8 @@
 # Améliorations futures
 
-Findings de l'audit (2026-06-19). Tout ce qui était actionnable a été livré sur `main`
-(CI verte). **Aucune dette code ni tâche restante.** Ce fichier garde la trace de ce
-qui a été fait et des décisions actées.
+Ce fichier garde la trace de ce que les audits (2026-06-19, 2026-11-22) ont fait
+livrer et des décisions actées : des limites connues, acceptées en connaissance de
+cause. Ce n'est pas une liste de tâches.
 
 ## Fait (pour mémoire)
 
@@ -11,8 +11,11 @@ qui a été fait et des décisions actées.
   backfill `closed_at` migration 0010 appliqué en prod).
 - ✅ **Résilience** : error boundary de rendu (racine + par surface), crash hooks
   `LoginScreen` (hooks avant return conditionnel).
-- ✅ **Perf** : lazy-load de l'Analyse (recharts hors du chunk critique) + vendor split
-  react/supabase → chunk critique Capture 266 → 94 kB gzip.
+- ✅ **Perf** : lazy-load de l'Analyse et vendors en chunks séparés (`react`, `supabase`
+  au lancement ; `recharts` avec l'Analyse seulement). Leur hash ne change pas d'un
+  déploiement à l'autre : seul le code de l'app est retéléchargé. Chaque chunk a un
+  budget gzip, vérifié en CI (`scripts/bundle-size.mjs`, qui fait foi pour les chiffres).
+  Polices restreintes aux sous-ensembles latins.
 - ✅ **Domaine** : gardes division par zéro (`meanY`) et fourchette inversée (`min>max`).
 - ✅ **Sync/outbox** : reset orphelin compensé (`deleteExecution`), `handleSaveDatedNote`
   sur projection `stateRef` (M6), garde de tête outbox robuste via `_seq`, `mergeProgress`
@@ -23,7 +26,18 @@ qui a été fait et des décisions actées.
   `set-state-in-effect` et `refs` en `warn` (patterns légitimes, projet sans Compiler).
 - ✅ **Outillage** : ESLint (react-hooks rétabli), CI GitHub Actions (lint + tests +
   build, verte), scripts `lint`/`typecheck`, `engines`, `.nvmrc`, licence MIT.
-- ✅ **PWA** : `viewport-fit=cover` + safe-area, favicon SVG, icône maskable plein-bord.
+- ✅ **PWA** : `viewport-fit=cover` + safe-area, favicon SVG, icône maskable plein-bord
+  (PNG et SVG).
+- ✅ **Mise à jour de l'app installée** : le service worker neuf attend, l'app bascule au
+  lancement ou à un changement d'onglet, jamais pendant une séance ; reprise par un
+  rechargement unique si un chunk est introuvable ; version du build affichée dans le
+  bloc Compte (`src/pwa/`).
+- ✅ **Barres du bas sur iPhone** : document non défilable quand le contenu tient,
+  remesure forcée de la fenêtre après le clavier et au retour au premier plan, relevé de
+  diagnostic par appui long sur la barre d'onglets (`src/viewport/`).
+- ✅ **Sécurité et CI** : CSP `connect-src` limitée à l'hôte du projet Supabase ; workflow
+  en lecture seule, actions épinglées par SHA, plafond de warnings ESLint, budget de
+  taille ; contrastes des tokens mesurés par `npm run contrast`.
 - ✅ **Couverture** : `reconstructExerciseExecutions` (rows→domaine) et `mergeRowWithOverride`
   (adaptateur d'override) extraites/testées.
 
@@ -63,18 +77,11 @@ qui a été fait et des décisions actées.
 
 - **Séance retouchée en plein entraînement** : une exécution garde la version de séance
   sous laquelle elle est née (`upsertExecution` est une insertion seule, sa réaffirmation
-  ne réécrit ni version, ni date, ni lancement). Si la séance est retouchée pendant
-  l'entraînement, la Capture remontée affiche le template de la nouvelle version pour la
-  fin de la séance entamée, alors que la base la range sous l'ancienne : écart d'affichage
-  accepté, l'Analyse reste juste. L'appareil qui tient la séance relit son exécution par
-  son id (`loadTodayExecution`, id de l'état local), quelle que soit sa version. Deux
-  conséquences assumées : sans état local (autre appareil, stockage vidé), l'exécution
-  entamée n'est pas retrouvée sous la nouvelle version (recherche par version) et la
-  suite de la séance ouvre une seconde exécution ; un lancement réancré hors ligne sur
+  ne réécrit ni version, ni date, ni lancement). L'appareil qui tient
+  la séance relit son exécution par son id (`loadTodayExecution`, id de l'état local),
+  quelle que soit sa version. Conséquence assumée : un lancement réancré hors ligne sur
   une exécution déjà en base n'atteint plus `started_at`.
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
   n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
-  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. La
-  garde lit la file : une clôture sortie de la file sans avoir été appliquée en base ne
-  serait plus vue.
+  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture.
