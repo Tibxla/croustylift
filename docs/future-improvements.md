@@ -100,13 +100,6 @@ perte), finition.
 
 ### Notes datées
 
-- **Rejeu d'une ancienne file : effacement acquitté sans effet** (importante). Une file
-  enfilée avant l'identité par couple peut contenir l'écriture d'une note sous son id
-  déterministe, puis son effacement, qui ne porte que cet id. Si la note du couple vit
-  en base sous un id historique, l'écriture vise la bonne ligne mais l'effacement en
-  vise une autre, touche zéro ligne et sort de la file : la note saisie puis effacée
-  reste. Piste : avant le premier envoi, compléter les effacements hérités à partir des
-  écritures en file du même compte et du même id (`capture/sync.ts`, `notes/data.ts`).
 - **Réponse tardive qui réaffiche une note effacée** (mineure). Si un autre onglet
   acquitte l'effacement pendant que la réponse de la base, qui porte encore la note,
   est en route, la Capture l'adopte de nouveau. Piste : passer au rapprochement les

@@ -88,6 +88,8 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from } };
 });
 
+import { adoptLegacyOps, clearQueue, flush, readQuarantine, readQueue } from '../capture/outbox';
+import { syncFns } from '../capture/sync';
 import { datedNoteId } from './dated-note-id';
 import {
   datedNoteOutboxOp,
@@ -216,5 +218,96 @@ describe('note datée, cas propres à un état du schéma', () => {
     server.rows = [historique()];
     expect(await deleteDatedNoteById(HISTORIQUE)).toBe(1);
     expect(server.rows).toEqual([]);
+  });
+});
+
+// Une file enfilée par un bundle antérieur : l'effacement ne porte que l'id de la
+// note. Rejouée telle quelle, l'écriture atterrissait sur la ligne du couple (id
+// historique) et l'effacement, resté sur l'autre id, ne touchait rien.
+describe('rejeu d’une file héritée : écriture puis effacement de la même note', () => {
+  class MemoryStorage {
+    private store = new Map<string, string>();
+    getItem(k: string): string | null {
+      return this.store.get(k) ?? null;
+    }
+    setItem(k: string, v: string): void {
+      this.store.set(k, String(v));
+    }
+    removeItem(k: string): void {
+      this.store.delete(k);
+    }
+    get length(): number {
+      return this.store.size;
+    }
+    key(i: number): string | null {
+      return [...this.store.keys()][i] ?? null;
+    }
+  }
+
+  /** Id sous lequel l'ancien client a enfilé ses deux ops (aléatoire ou déterministe). */
+  const EN_FILE = '77777777-7777-4777-8777-777777777777';
+  const legacyQueue = (ops: Record<string, unknown>[]) =>
+    localStorage.setItem('croustylift:outbox', JSON.stringify(ops));
+  const legacyWrite = { type: 'upsertDatedNote', id: EN_FILE, executionId: EXEC, exerciseId: EXO, body: 'saisie puis effacée', _seq: 1 };
+  const legacyDelete = { type: 'deleteDatedNote', id: EN_FILE, _seq: 2 };
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new MemoryStorage() as unknown as Storage;
+    clearQueue();
+  });
+
+  it.each([
+    { etat: 'avant 0018', uniqueCouple: false },
+    { etat: 'après 0018', uniqueCouple: true },
+  ])('$etat : la note sous id historique est bien effacée, rien ne reste en file', async ({ uniqueCouple }) => {
+    server.uniqueCouple = uniqueCouple;
+    server.rows = [historique('texte d’avant')];
+    legacyQueue([legacyWrite, legacyDelete]);
+
+    adoptLegacyOps();
+    // L'effacement hérité a reçu le couple de l'écriture, et c'est persisté.
+    expect(readQueue()[1]).toMatchObject({ type: 'deleteDatedNote', id: EN_FILE, executionId: EXEC, exerciseId: EXO });
+    expect(JSON.parse(localStorage.getItem('croustylift:outbox')!)[1]).toMatchObject({ executionId: EXEC, exerciseId: EXO });
+
+    const result = await flush(syncFns);
+    expect(result.remaining).toBe(0);
+    expect(server.rows).toEqual([]);
+    expect(readQuarantine()).toEqual([]);
+  });
+
+  it('sans complément, le défaut est bien là : l’effacement par id laisse la note', async () => {
+    server.rows = [historique('texte d’avant')];
+    legacyQueue([legacyWrite, legacyDelete]);
+    // Pas d'`adoptLegacyOps` : la file part telle que l'ancien client l'a laissée.
+    await flush(syncFns);
+    expect(server.rows).toMatchObject([{ id: HISTORIQUE, body: 'saisie puis effacée' }]);
+  });
+
+  it('effacement hérité sans écriture en file : il garde son id, et efface la ligne de cet id', async () => {
+    server.rows = [historique()];
+    legacyQueue([{ type: 'deleteDatedNote', id: HISTORIQUE, _seq: 1 }]);
+    adoptLegacyOps();
+    expect(readQueue()[0]).not.toHaveProperty('executionId');
+    await flush(syncFns);
+    expect(server.rows).toEqual([]);
+  });
+
+  it('l’écriture d’un AUTRE compte, ou d’une autre note, ne prête pas son couple', () => {
+    legacyQueue([
+      { ...legacyWrite, _owner: 'compte-a' },
+      { ...legacyDelete, _owner: 'compte-b' },
+      { type: 'upsertDatedNote', id: 'autre-note', executionId: 'exec-x', exerciseId: 'exo-x', body: 'y', _owner: 'compte-b' },
+    ]);
+    adoptLegacyOps();
+    expect(readQueue()[1]).not.toHaveProperty('executionId');
+  });
+
+  it('une file déjà au format courant n’est pas réécrite', () => {
+    const ops = [legacyWrite, { ...legacyDelete, executionId: EXEC, exerciseId: EXO }];
+    legacyQueue(ops);
+    const before = localStorage.getItem('croustylift:outbox');
+    adoptLegacyOps();
+    expect(localStorage.getItem('croustylift:outbox')).toBe(before);
   });
 });

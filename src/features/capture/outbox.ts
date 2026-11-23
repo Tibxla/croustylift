@@ -441,18 +441,56 @@ export function readOwnQueue(): OutboxOp[] {
 }
 
 /**
- * Migration douce : attribue au compte local reconnu les ops enfilées par un
- * bundle antérieur (sans `_owner`). À appeler AU DÉMARRAGE, avant que la couche
+ * Migration douce des ops enfilées par un bundle antérieur : complète les
+ * effacements de note datée (cf. `completeLegacyNoteDeletes`, pour toute la
+ * file), et attribue au compte local reconnu les ops sans `_owner`. À appeler AU
+ * DÉMARRAGE, avant tout envoi et avant que la couche
  * d'auth ne réécrive le marqueur : faite au flush, elle donnerait les ops de A
  * au compte B arrivé entre-temps. Sans marqueur, rien n'est attribué : ces ops
  * restent en file et ne partent sous aucun compte (on ne devine pas).
  */
 export function adoptLegacyOps(): void {
-  const owner = loadLocalAccount()?.userId;
-  if (!owner) return;
   const queue = readQueue();
-  if (queue.every((op) => op._owner !== undefined)) return;
-  writeQueue(queue.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op)));
+  // Les effacements de notes hérités d'abord (cf. `completeLegacyNoteDeletes`).
+  let next = completeLegacyNoteDeletes(queue);
+  const owner = loadLocalAccount()?.userId;
+  if (owner && next.some((op) => op._owner === undefined)) {
+    next = next.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op));
+  }
+  if (next !== queue) writeQueue(next);
+}
+
+/**
+ * Complète les EFFACEMENTS de note datée enfilés par un bundle antérieur, qui ne
+ * portent que l'id de la note, avec le couple (exécution, exercice) de
+ * l'écriture de la même note encore en file (même id, même compte).
+ *
+ * Pourquoi : l'écriture d'une note vise désormais la ligne de son COUPLE, quel
+ * que soit son id (`upsertDatedNote`, features/notes/data.ts). Si la base tient
+ * la note sous un autre id (écrite ailleurs, ou par un client plus ancien),
+ * l'écriture en file atterrit sur cette ligne-là ; l'effacement qui la suivait,
+ * resté sur l'id d'origine, ne touchait alors aucune ligne et sortait de la
+ * file comme un succès. La note saisie puis effacée restait en base. Avec son
+ * couple, l'effacement vise la même ligne que l'écriture.
+ *
+ * Un effacement sans écriture de la même note en file garde son seul id : le
+ * couple est inconnu, et la note visée existe sous cet id (il vient de l'état
+ * de capture qui l'avait lue). Rend `queue` lui-même si rien ne change. Pur.
+ */
+export function completeLegacyNoteDeletes(queue: OutboxOp[]): OutboxOp[] {
+  let changed = false;
+  const next = queue.map((op) => {
+    if (op.type !== 'deleteDatedNote') return op;
+    if (op.executionId !== undefined && op.exerciseId !== undefined) return op;
+    const write = queue.find(
+      (other) =>
+        other.type === 'upsertDatedNote' && other.id === op.id && other._owner === op._owner,
+    );
+    if (write === undefined || write.type !== 'upsertDatedNote') return op;
+    changed = true;
+    return { ...op, executionId: write.executionId, exerciseId: write.exerciseId };
+  });
+  return changed ? next : queue;
 }
 
 /** Longueur courante de la file (pilote l'indicateur de sync). */
