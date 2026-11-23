@@ -405,13 +405,43 @@ select banc.accepte('restaurer : Ancienne, non courante, est de nouveau archivé
   format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde_routines)));
 select banc.vrai('Ancienne est archivée',
   (select archived_at is not null from public.routines where id = 'a0000000-0000-0000-0000-0000000000a7'));
--- Un fichier dont l'état FINAL laisse pour courante une routine archivée reste refusé, en entier.
-select banc.refuse('sauvegarde retouchée : la routine courante du fichier y est archivée', '23514',
+-- La routine courante du compte ne s'archive pas, même par un import (X26) :
+-- sauvegarde où Nouvelle est archivée, restaurée sur un compte où elle est
+-- courante. Tout le fichier est restauré, sauf cet archivage.
+select banc.accepte('sauvegarde où la routine courante du compte est archivée : restaurée',
   format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
     'routines', jsonb_build_array(
-      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000b7', 'name', 'Nouvelle retouchée', 'archived_at', '2026-11-01T00:00:00Z')))));
-select banc.vrai('refusé en entier : Nouvelle garde son nom et reste active',
-  (select name = 'Nouvelle' and archived_at is null from public.routines where id = 'a0000000-0000-0000-0000-0000000000b7'));
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000b7', 'name', 'Nouvelle restaurée', 'archived_at', '2026-11-01T00:00:00Z'),
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000a7', 'name', 'Ancienne restaurée', 'archived_at', '2026-10-01T00:00:00Z')),
+    'routine_activations', jsonb_build_array(
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000c9', 'routine_id', 'a0000000-0000-0000-0000-0000000000b7', 'activated_at', '2026-09-01T00:00:00Z')))));
+select banc.vrai('le reste du fichier est écrit, Nouvelle reste courante et active',
+  (select name = 'Nouvelle restaurée' and archived_at is null from public.routines where id = 'a0000000-0000-0000-0000-0000000000b7')
+  and (select name = 'Ancienne restaurée' and archived_at is not null from public.routines where id = 'a0000000-0000-0000-0000-0000000000a7')
+  and (select count(*) = 1 from public.routine_activations where id = 'a0000000-0000-0000-0000-0000000000c9')
+  and (select a.routine_id = 'a0000000-0000-0000-0000-0000000000b7' from public.routine_activations a order by a.activated_at desc limit 1));
+-- Dès qu'une autre routine est courante, la même sauvegarde archive Nouvelle.
+select banc.accepte('A rend PPL courante, puis réimporte la même sauvegarde',
+  'insert into public.routine_activations (routine_id, activated_at) values (''a0000000-0000-0000-0000-0000000000a1'', now() + interval ''20 seconds'')');
+select banc.accepte('réimport : Nouvelle, qui n''est plus courante, est archivée',
+  format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
+    'routines', jsonb_build_array(
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000b7', 'name', 'Nouvelle restaurée', 'archived_at', '2026-11-01T00:00:00Z')))));
+select banc.vrai('Nouvelle est archivée, PPL reste courante',
+  (select archived_at is not null from public.routines where id = 'a0000000-0000-0000-0000-0000000000b7')
+  and (select a.routine_id = 'a0000000-0000-0000-0000-0000000000a1' from public.routine_activations a order by a.activated_at desc limit 1));
+-- Un fichier invalide par lui-même reste refusé, en entier : il crée une
+-- routine déjà archivée et en fait la routine courante.
+select banc.refuse('sauvegarde retouchée : elle crée une routine archivée et la rend courante', '23514',
+  format('select public.import_user_data(%L::jsonb)', jsonb_build_object(
+    'routines', jsonb_build_array(
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000d7', 'name', 'Fantôme', 'archived_at', '2026-11-01T00:00:00Z'),
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000a1', 'name', 'PPL retouchée')),
+    'routine_activations', jsonb_build_array(
+      jsonb_build_object('id', 'a0000000-0000-0000-0000-0000000000ca', 'routine_id', 'a0000000-0000-0000-0000-0000000000d7', 'activated_at', '2099-01-01T00:00:00Z')))));
+select banc.vrai('refusé en entier : ni Fantôme ni le nouveau nom de PPL',
+  (select count(*) = 0 from public.routines where id = 'a0000000-0000-0000-0000-0000000000d7')
+  and (select name = 'PPL' from public.routines where id = 'a0000000-0000-0000-0000-0000000000a1'));
 
 -- Atomicité : la dernière table échoue, les premières ne doivent pas rester.
 select banc.refuse('import dont une série pointe une exécution absente', '23503',

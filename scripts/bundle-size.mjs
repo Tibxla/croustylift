@@ -22,7 +22,7 @@ const BUDGETS = {
   'index.js': 70_000, // code de l'app (mesuré : 67 581)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
-  'index.css': 10_000, // (mesuré : 9 302)
+  'index.css': 9_500, // (mesuré : 9 110, Inter et latin étendu retirés)
   // À la demande.
   'AnalysisScreen.js': 16_500, // code de l'Analyse (mesuré : 15 883)
   'recharts.js': 112_000, // recharts et ses dépendances, avec l'Analyse seulement (mesuré : 106 899)

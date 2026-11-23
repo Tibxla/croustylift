@@ -31,8 +31,22 @@
 --     archiver A avant d'avoir rendu l'activation de B heurtait la règle de la
 --     migration 0021 (la routine courante ne s'archive pas). Un désarchivage,
 --     lui, s'applique tout de suite : il ne peut que rendre une activation
---     permise. Un fichier dont l'état final laisse pour courante une routine
---     archivée reste refusé en entier, une fois 0021 appliquée.
+--     permise.
+--   - La routine courante du compte ne s'archive pas, même par un import : un
+--     archivage différé qui viserait la routine courante une fois les
+--     activations écrites n'est PAS appliqué, la routine reste active (audit
+--     X26). Cas visé : routine archivée dans la sauvegarde, réactivée sur le
+--     compte depuis. L'import fusionne (il ne retire aucune activation), donc
+--     cette activation, plus récente que la sauvegarde, reste la dernière ; elle
+--     suppose un désarchivage postérieur au fichier, qui l'emporte. Tout le
+--     reste du fichier est restauré. Refuser l'import en entier, comme avant,
+--     bloquait une restauration pour un état que le compte tient déjà ; et
+--     tant que 0021 n'était pas appliquée, l'archivage passait et laissait le
+--     compte dans l'état interdit (routine courante archivée) qui fait échouer
+--     le contrôle préalable de 0021. La règle est donc tenue ici, que 0021
+--     soit appliquée ou non.
+--     Reste refusé en entier, une fois 0021 appliquée : un fichier invalide par
+--     lui-même, qui CRÉE une routine déjà archivée et en fait la courante.
 --   - Verrou du compte : celui de la migration 0021, pris d'emblée et sous la
 --     même clé, pour qu'un archivage ou une activation venu d'un autre appareil
 --     passe avant ou après l'import, jamais au milieu. Il est écrit ici en
@@ -181,7 +195,7 @@ begin
   foreach v_table in array v_tables loop
     -- Routines et activations du fichier sont écrites (`seances` vient juste
     -- après elles) : les archivages différés s'appliquent maintenant, sur un
-    -- compte dont la routine courante est déjà celle du fichier. Placé AVANT
+    -- compte dont la routine courante est déjà celle de l'état fusionné. Placé AVANT
     -- les sorties anticipées ci-dessous : il passe même si le fichier ne porte
     -- ni activation ni séance.
     if v_table = 'seances' and jsonb_typeof(p_data -> 'routines') = 'array' then
@@ -190,7 +204,14 @@ begin
         from jsonb_populate_recordset(null::public.routines, p_data -> 'routines') f
         where r.id = f.id
           and f.archived_at is not null
-          and r.archived_at is null;
+          and r.archived_at is null
+          -- Sauf la routine courante du compte : elle reste active (X26).
+          and r.id is distinct from (
+            select a.routine_id from public.routine_activations a
+            where a.owner_id = r.owner_id
+            order by a.activated_at desc
+            limit 1
+          );
     end if;
 
     v_rows := p_data -> v_table;

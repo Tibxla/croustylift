@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 /* Polices auto-hébergées (cf. DESIGN.md, Readout Rule : mono tabulaire pour les
-   chiffres mesurés). Geist en titres et corps, Geist Mono pour tout chiffre mesuré,
-   Inter en second de pile. Déclarations dans fonts.css (sous-ensembles latins). */
+   chiffres mesurés). Geist en titres et corps, Geist Mono pour tout chiffre mesuré.
+   Déclarations dans fonts.css (sous-ensemble latin). */
 @import "./fonts.css";
 
 /*
@@ -43,7 +43,7 @@
   --color-good: oklch(0.80 0.13 158);         /* cible atteinte / battue (vert froid) + ▲ */
   --color-warn: oklch(0.82 0.115 80);         /* sous-objectif / skippé (ambre, pas rouge) + ▼ */
 
-  --font-sans: "Geist Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", monospace;
 
   /* Courbes de motion — ease-out exponentielles, JAMAIS de bounce/élastique

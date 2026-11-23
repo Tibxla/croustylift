@@ -87,7 +87,7 @@ Le système complet est documenté dans **[`DESIGN.md`](./DESIGN.md)** (format S
 | Données | **Supabase** — Auth + Postgres + RLS · sync UUID client, last-write-wins |
 | Dataviz | **Recharts** (courbe e1RM, comparaisons) |
 | PWA | `vite-plugin-pwa` / Workbox — precache + offline |
-| Typo | Geist · Geist Mono *(Inter en second de pile ; auto-hébergées, sous-ensembles latins)* |
+| Typo | Geist · Geist Mono *(auto-hébergées, sous-ensemble latin)* |
 | Tests | **Vitest** · domaine métier en **TDD** |
 
 ## Démarrage

@@ -19,7 +19,7 @@ figure pas n'est pas connu.
   au lancement ; `recharts` avec l'Analyse seulement). Leur hash ne change pas d'un
   déploiement à l'autre : seul le code de l'app est retéléchargé. Chaque chunk a un
   budget gzip, vérifié en CI (`scripts/bundle-size.mjs`, qui fait foi pour les chiffres).
-  Polices restreintes aux sous-ensembles latins.
+  Polices restreintes au sous-ensemble latin de Geist et Geist Mono (59 ko précachés).
 - ✅ **Domaine** : gardes division par zéro (`meanY`) et fourchette inversée (`min>max`).
 - ✅ **Sync/outbox** : reset orphelin compensé (`deleteExecution`), `handleSaveDatedNote`
   sur projection `stateRef` (M6), garde de tête outbox robuste via `_seq`, `mergeProgress`
@@ -181,17 +181,6 @@ perte), finition.
 
 ### Base et import
 
-- **Import et archivage : verrous pris en ordre inverse** (mineure). `import_user_data`
-  prend le verrou du compte avant les verrous de ligne, le trigger d'archivage de la
-  migration 0021 fait l'inverse. Les deux gestes lancés au même instant peuvent
-  s'interbloquer ; Postgres le détecte et annule l'un des deux (`40P01`), qui se
-  relance. Déduit de la lecture, aucune course jouée au banc. Piste : une fonction
-  d'archivage qui prend le verrou du compte d'abord, et la course à deux sessions dans
-  `supabase/tests/banc/lancer.sh`.
-- **Sauvegarde dont une routine archivée a été réactivée depuis** : refusée en entier
-  (mineure). L'état final laisserait pour courante une routine archivée. Le message de
-  la base dit quoi faire : définir une autre routine courante, puis réimporter
-  (`docs/export-format.md`).
 - **Réordonnancement des séances : fonction prête, éteinte.** `reorder_seances`
   (migration 0023) est écrite et son appel aussi, derrière `REORDER_SEANCES_RPC`,
   laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
@@ -218,8 +207,9 @@ perte), finition.
 - **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
   à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
   (14) les fige.
-- **Inter toujours embarquée** (finition) : seconde de pile, environ 133 ko de polices
-  en précache. À caler sur les polices de la refonte visuelle.
-- **Exports sans consommateur** (finition) : `summarizeBlocks`, `describeNoteKind`,
-  `loadDatedNote`, `initialState`, `upperA`, et les autres exports sans appelant, pas
-  relus.
+- **Exports sans consommateur hors tests** (finition) : `loadDatedNote`
+  (`notes/data.ts`), `listRefused` (`capture/outbox.ts`), `initialState`
+  (`capture/state.ts`) et `upperA` (`capture/fixtures.ts`, jeu d'essai de 71 appels
+  de tests, à déplacer dans un fichier de test plutôt qu'à supprimer). Les autres
+  exports sans appelant extérieur servent dans leur propre fichier : ce sont des
+  `export` posés pour les tests, pas du code mort.

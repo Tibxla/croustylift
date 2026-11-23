@@ -42,17 +42,10 @@ export function estimateE1rm(weightKg: number, reps: number, rir: number): numbe
 // L'arrondi reste l'affaire de l'affichage, jamais de la comparaison.
 
 /**
- * La mesure entière d'une série : centièmes de kg × (29 + reps + RIR), soit
- * 3000 fois son e1RM. Deux séries ont le même e1RM si et seulement si elles ont
- * la même mesure.
- */
-export function e1rmUnits(weightKg: number, reps: number, rir: number): number {
-  return Math.round(weightKg * 100) * (29 + reps + rir)
-}
-
-/**
- * La mesure entière d'un e1RM déjà calculé par `estimateE1rm`. Le produit par
- * 3000 retombe sur l'entier exact : l'erreur flottante (de l'ordre de 1e-9 à
+ * La mesure entière d'un e1RM déjà calculé par `estimateE1rm` : centièmes de
+ * kg × (29 + reps + RIR), soit 3000 fois l'e1RM. Deux séries ont le même e1RM
+ * si et seulement si elles ont la même mesure. Le produit par 3000 retombe sur
+ * l'entier exact : l'erreur flottante (de l'ordre de 1e-9 à
  * cette échelle) est très loin du demi qu'il faudrait pour changer d'entier.
  * Ce n'est pas un arrondi de la valeur, c'est la relecture de l'entier d'origine.
  */
