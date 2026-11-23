@@ -197,14 +197,6 @@ perte), finition.
   laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
   séance, sans transaction.
 
-### Réseau
-
-- **Lecture qui pend : jusqu'à environ 87 s avant l'échec** (mineure). Le délai d'une
-  requête est de 20 s, mais `postgrest-js` rejoue de lui-même une lecture échouée, trois
-  fois, avec 1 s, 2 s puis 4 s d'attente. Les écritures ne sont pas rejouées. Piste :
-  `.retry(false)` sur les lectures du chemin d'ouverture, ou un délai plus court pour
-  elles.
-
 ### Messages, tests, build
 
 - **Erreurs encore affichées telles quelles** (mineure) : un refus de droits (42501) et

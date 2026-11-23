@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { fetchWithTimeout } from './fetch-timeout';
+import { fetchWithTimeout, TIMEOUT_ERROR_NAME } from './fetch-timeout';
 import { isPermanentRejection } from '../features/capture/outbox';
 
 /** Un `fetch` qui ne répond jamais, mais rejette quand son signal est abandonné. */
@@ -26,7 +26,7 @@ describe('fetchWithTimeout', () => {
 
     const err = await outcome;
     expect(err).toBeInstanceOf(DOMException);
-    expect((err as DOMException).name).toBe('TimeoutError');
+    expect((err as DOMException).name).toBe(TIMEOUT_ERROR_NAME);
   });
 
   it('un abandon par délai n’est pas un rejet définitif pour l’outbox', async () => {
@@ -82,7 +82,7 @@ describe('fetchWithTimeout', () => {
 
     const err = await outcome;
     expect(err).toBeInstanceOf(DOMException);
-    expect((err as DOMException).name).toBe('TimeoutError');
+    expect((err as DOMException).name).toBe(TIMEOUT_ERROR_NAME);
     expect(isPermanentRejection(err)).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
