@@ -29,12 +29,14 @@ import {
   loadSeanceForCapture,
   loadTodayExecutionWithin,
   pruneCaptureCopies,
+  TODAY_READ_BUDGET_MS,
   type LoadedSeance,
   type SeanceChoice,
   type SeanceHistoryContext,
   type Session,
   type TodayExecution,
 } from './data';
+import type { PreviousDatedNote } from './fixtures';
 import {
   addExercise,
   layoutEditOf,
@@ -221,9 +223,17 @@ export function CaptureScreen() {
       // suite, attendues plus bas.
       const versionIdsRead = listSeanceVersionIds(seance.id);
       void versionIdsRead.catch(() => {});
-      const notesRead = loadLastSeanceExecution(seance.id, date).then((last) =>
-        loadPreviousDatedNotes(seance.id, last),
-      );
+      // Les deux lectures du repère s'enchaînent, chacune bornée dans sa couche :
+      // ensemble elles tiennent sous le MÊME budget que l'exécution du jour, pour
+      // qu'un jour nouveau sur un réseau qui pend n'allonge pas l'ouverture.
+      const notesRead = Promise.race([
+        loadLastSeanceExecution(seance.id, date).then((last) =>
+          loadPreviousDatedNotes(seance.id, last),
+        ),
+        new Promise<Record<string, PreviousDatedNote>>((resolve) =>
+          setTimeout(() => resolve({}), TODAY_READ_BUDGET_MS),
+        ),
+      ]);
 
       // L'exécution du jour ADOPTÉ. Celle que l'appareil tient déjà se relit par
       // son id ; sinon c'est l'exécution ouverte du jour de la SÉANCE, quelle que
