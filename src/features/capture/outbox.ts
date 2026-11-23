@@ -923,20 +923,16 @@ let inFlight: Promise<FlushResult> | null = null;
 // revenir la série. Un verrou du navigateur (`navigator.locks`) ne laisse donc
 // flusher qu'un onglet à la fois.
 //
-// Le verrou n'est jamais ATTENDU : s'il est pris, un autre onglet flushe cette
-// même file (et relit la file entre deux ops, donc voit ce qu'on vient
-// d'enfiler) ; la passe d'ici ne fait rien, le dit par son `remaining`, et un
-// nouvel essai est reprogrammé tant que la file n'est pas vide (cf.
-// `scheduleLockRetry`).
-// Attendre exposerait à ne plus jamais flusher si l'onglet détenteur est figé
-// par le système en pleine passe. Pour ce cas précis, un verrou refusé depuis
-// plus d'une minute est REPRIS (`steal`) : mieux vaut une passe doublée, que
-// l'idempotence par id rend sans dommage dans presque tous les cas, qu'une file
-// qui ne part plus. Sans l'API (vieux navigateur, tests), la passe tourne sans
-// verrou, comme avant.
+// Le verrou n'est jamais ATTENDU, et jamais REPRIS à un autre onglet : s'il est
+// pris, un autre onglet flushe cette même file (et relit la file entre deux
+// ops, donc voit ce qu'on vient d'enfiler) ; la passe d'ici ne fait rien, le dit
+// par son `remaining`, et un nouvel essai est reprogrammé tant que la file n'est
+// pas vide (cf. `scheduleLockRetry`). Reprendre le verrou d'un onglet dont la
+// passe dure laisserait deux onglets écrire en même temps, ce que le verrou
+// existe pour empêcher. Un onglet figé par le système en pleine passe garde
+// donc le verrou jusqu'à son réveil ; les essais continuent, espacés. Sans
+// l'API (vieux navigateur, tests), la passe tourne sans verrou, comme avant.
 const FLUSH_LOCK = 'croustylift:outbox:flush';
-const FLUSH_LOCK_STEAL_AFTER_MS = 60_000;
-let flushLockRefusedSince: number | null = null;
 
 // NOUVEL ESSAI après un verrou occupé. Ne pas attendre le verrou ne doit pas
 // vouloir dire « ne plus jamais essayer » : si la passe de l'autre onglet
@@ -992,32 +988,14 @@ export const OUTBOX_CHANGED_EVENT = 'croustylift:outbox-changed';
 async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushResult> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
   if (!locks || typeof locks.request !== 'function') return run();
-  const steal =
-    flushLockRefusedSince !== null &&
-    Date.now() - flushLockRefusedSince > FLUSH_LOCK_STEAL_AFTER_MS;
-  let running: Promise<FlushResult> | null = null;
-  try {
-    return await locks.request(
-      FLUSH_LOCK,
-      steal ? { steal: true } : { ifAvailable: true },
-      (lock) => {
-        if (lock === null) {
-          flushLockRefusedSince ??= Date.now();
-          flushLockBusy = true;
-          return { remaining: readQueue().length, flushed: 0 };
-        }
-        flushLockRefusedSince = null;
-        flushLockBusy = false;
-        running = run();
-        return running;
-      },
-    );
-  } catch (err) {
-    // Verrou repris par un autre onglet pendant notre passe : la demande est
-    // rejetée, mais la passe, elle, continue. C'est son résultat qui compte.
-    if (running) return running;
-    throw err;
-  }
+  return locks.request(FLUSH_LOCK, { ifAvailable: true }, (lock) => {
+    if (lock === null) {
+      flushLockBusy = true;
+      return { remaining: readQueue().length, flushed: 0 };
+    }
+    flushLockBusy = false;
+    return run();
+  });
 }
 
 /**

@@ -373,7 +373,7 @@ describe('flush : verrou entre onglets', () => {
     expect(readQueue()).toHaveLength(1);
   });
 
-  it('verrou refusé depuis plus d’une minute (onglet figé) : il est repris, la file part', async () => {
+  it('verrou refusé depuis plus d’une minute : il n’est JAMAIS repris à l’autre onglet', async () => {
     vi.useFakeTimers();
     const state = { held: true, stolen: 0 };
     vi.stubGlobal('navigator', { locks: fakeLocks(state) });
@@ -381,14 +381,15 @@ describe('flush : verrou entre onglets', () => {
     const fns = okFns();
 
     await flush(fns);
-    vi.advanceTimersByTime(59_000);
-    await flush(fns);
+    vi.advanceTimersByTime(61_000);
+    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    vi.advanceTimersByTime(600_000);
+    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+
     expect(state.stolen).toBe(0);
     expect(fns.calls()).toEqual([]);
-
-    vi.advanceTimersByTime(2_000);
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
-    expect(state.stolen).toBe(1);
+    expect(readQueue()).toHaveLength(1);
+    clearQueue();
   });
 
   it('sans l’API de verrou : la passe tourne comme avant', async () => {

@@ -196,6 +196,55 @@ describe('verrou de flush occupé par un autre onglet', () => {
     await vi.advanceTimersByTimeAsync(60_000);
   });
 
+  it('flush long dans A : B réessaie plus d’une minute sans jamais écrire tant que A tient le verrou', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    const tabA = recorder();
+    let holding = false;
+    const gate: { release: (() => void) | null } = { release: null };
+    // La requête de A dure (réseau lent) : A tient le verrou tout ce temps.
+    tabA.fns.insertSet = (op) => {
+      if (holding) {
+        tabA.sent.push(op.id);
+        return Promise.resolve();
+      }
+      holding = true;
+      return new Promise<void>((resolve) => {
+        gate.release = () => {
+          tabA.sent.push(op.id);
+          resolve();
+        };
+      });
+    };
+    const flushA = a.flush(tabA.fns);
+    await until(() => holding);
+    b.enqueue(setOp('S1'));
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    const lockRequests = vi.spyOn(navigator.locks, 'request');
+
+    // Deux minutes d'essais automatiques dans B.
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    // B a réessayé (avec des attentes qui s'allongent), sans jamais reprendre le
+    // verrou ni rien envoyer : avant, passé une minute, il le volait et écrivait
+    // en même temps que A.
+    expect(lockRequests.mock.calls.length).toBeGreaterThan(4);
+    expect(lockRequests.mock.calls.every(([, options]) => (options as { steal?: boolean }).steal !== true)).toBe(true);
+    expect(tabB.sent).toEqual([]);
+    expect(persistedIds()).toEqual(['S0', 'S1']);
+
+    // A finit : c'est lui qui envoie, dans l'ordre, y compris la série de B.
+    lockRequests.mockRestore();
+    gate.release?.();
+    await flushA;
+    expect(tabA.sent).toEqual(['S0', 'S1']);
+    expect(persistedIds()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+
   it('file vidée entre-temps (l’autre onglet a tout envoyé) : plus d’essai planifié', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const a = await openTab();
