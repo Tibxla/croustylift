@@ -135,7 +135,9 @@ function ExosTab({ journal }: { journal: Execution[] }) {
           )}
           {never.length > 0 && `${never.length} exo${never.length > 1 ? 's' : ''} du plan jamais fait${never.length > 1 ? 's' : ''}, sans courbe.`}
         </p>
-        <p className="mt-2 text-[14px] text-(--faint)">Pente de chaque exo dans sa séance, sur la 1ʳᵉ série.</p>
+        <p className="mt-2 text-[14px] leading-[1.45] text-(--faint)">
+          Le chiffre : l'e1RM de ta 1ʳᵉ série la dernière fois, ton max estimé sur une rep. Chaque exo se suit dans sa séance.
+        </p>
       </section>
 
       {plan.map((g) =>
@@ -148,7 +150,7 @@ function ExosTab({ journal }: { journal: Execution[] }) {
           </section>
         ) : (
           <section key={g.seance.id} aria-label={g.seance.name}>
-            <SectionTitle aside={`dernière le ${fmtDate(g.lastDone)}`}>{g.seance.name}</SectionTitle>
+            <SectionTitle aside={`faite le ${fmtDate(g.lastDone)}`}>{g.seance.name}</SectionTitle>
             <List label={`Exos de ${g.seance.name}`}>
               {g.lines.map((l) => (
                 <ExoRow key={l.id} line={l} onOpen={() => nav.push('exo', { id: l.id })} />

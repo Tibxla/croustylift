@@ -27,7 +27,7 @@ export function ExoForm({ id, prefill }: { id?: string; prefill?: string }) {
   const [tried, setTried] = useState(false);
 
   const trimmed = name.trim().replace(/\s+/g, ' ');
-  const nameErr = tried && !trimmed ? 'Donne un nom à l’exercice.' : null;
+  const nameErr = tried && !trimmed ? 'Donne un nom à l’exo.' : null;
   const muscleErr = tried && muscles.length === 0 ? 'Choisis au moins un muscle principal.' : null;
 
   const submit = () => {
@@ -65,7 +65,7 @@ export function ExoForm({ id, prefill }: { id?: string; prefill?: string }) {
       }}
     >
       <ImplicitSubmit />
-      <Screen bottom={<PrimaryButton onClick={submit}>{exo ? 'Enregistrer' : 'Créer l’exercice'}</PrimaryButton>}>
+      <Screen bottom={<PrimaryButton onClick={submit}>{exo ? 'Enregistrer' : 'Créer l’exo'}</PrimaryButton>}>
         <ScreenHeader title={title} meta={meta} back={{ label: exo ? exo.shownName : 'Exercices', onClick: nav.back }} />
 
         <TextField

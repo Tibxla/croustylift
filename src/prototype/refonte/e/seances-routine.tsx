@@ -206,7 +206,7 @@ export function RoutinePage({ id }: { id: string }) {
                 />
               )}
               {routine.archived ? (
-                <ActionRow label="Désarchiver" meta="Elle revient dans ta liste. Sa Référence et ses courbes reprennent où elles s'étaient arrêtées." onClick={() => plan.unarchiveRoutine(routine.id)} />
+                <ActionRow label="Désarchiver" meta="Elle revient dans ta liste, avec ses courbes et ses séries de la dernière fois à battre, là où elles s'étaient arrêtées." onClick={() => plan.unarchiveRoutine(routine.id)} />
               ) : routine.current ? (
                 <ActionNote>La routine courante ne s'archive pas. Définis d'abord une autre routine comme courante.</ActionNote>
               ) : executed ? (
@@ -289,7 +289,7 @@ export function CreateSeanceSheet({
         intro={
           src ? (
             <>
-              Copie de {src.s.name} · {src.r.name}, dans {routine.name}. Les deux séances seront indépendantes. La copie part sans Référence ni courbe
+              Copie de {src.s.name} · {src.r.name}, dans {routine.name}. Les deux séances seront indépendantes. La copie part sans série de la dernière fois à battre ni courbe
               tant qu'elle n'a pas été faite ; tes records restent affichés.
             </>
           ) : (

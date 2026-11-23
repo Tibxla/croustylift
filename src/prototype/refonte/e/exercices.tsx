@@ -154,13 +154,13 @@ function Catalogue() {
       <ScreenHeader
         title="Exercices"
         meta={
-          <span className="tabular-nums">{`${active.length} exercices · ${nPerso} perso`}</span>
+          <span className="tabular-nums">{`${active.length} exos · ${nPerso} perso`}</span>
         }
       />
 
       <div className="px-5">
         <label htmlFor="exo-search" className="sr-only">
-          Chercher un exercice
+          Chercher un exo
         </label>
         <div className="flex items-center gap-2">
           <input
@@ -168,7 +168,7 @@ function Catalogue() {
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Chercher un exercice"
+            placeholder="Chercher un exo"
             enterKeyHint="search"
             autoComplete="off"
             spellCheck={false}
@@ -202,7 +202,7 @@ function Catalogue() {
       {shown.length === 0 ? (
         <EmptyState
           title={
-            q ? `Rien pour « ${q.trim()} »` : "Aucun exercice pour ce muscle"
+            q ? `Rien pour « ${q.trim()} »` : "Aucun exo pour ce muscle"
           }
           body={
             q
@@ -222,10 +222,10 @@ function Catalogue() {
       ) : (
         <>
           <SectionTitle aside={perso.length ? String(perso.length) : undefined}>
-            Tes exercices
+            Tes exos
           </SectionTitle>
           {perso.length ? (
-            <List label="Tes exercices">{perso.map(row)}</List>
+            <List label="Tes exos">{perso.map(row)}</List>
           ) : (
             <p className="border-t border-(--line) px-5 py-3 text-[15px] text-(--muted)">
               {q || muscle !== "tous"
@@ -542,9 +542,9 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
         </dl>
         {pts.length > 1 && <Spark values={pts.map((p) => p.e1rm)} />}
         <p className="px-5 text-[14px] leading-[1.45] text-(--muted)">
-          {seanceInfo(main.seanceId).name} · {pts.length} exécution
+          {seanceInfo(main.seanceId).name} · {pts.length} séance
           {pts.length > 1 ? "s" : ""} du {fmtDate(pts[0]!.date)} au{" "}
-          {fmtDate(lastPt.date)} · e1RM en kg de la 1ʳᵉ série
+          {fmtDate(lastPt.date)} · e1RM (max estimé sur une rep) de la 1ʳᵉ série, en kg
         </p>
         {curves.length > 1 && (
           <ul className="mt-2 px-5" aria-label="Autres séances">
@@ -571,7 +571,7 @@ function History({ e, journal }: { e: Exo; journal: Execution[] }) {
     body = (
       <div className="border-t border-(--line) px-5 pt-3">
         <p className="text-[16px] text-(--ink)">
-          {e.usage.executions} exécutions · {e.usage.sets} séries
+          {e.usage.executions} séance{e.usage.executions > 1 ? "s" : ""} · {e.usage.sets} séries
         </p>
         <p className="mt-0.5 text-[14px] text-(--muted)">
           {e.usage.seanceName} · du {fmtDate(e.usage.first)} au{" "}

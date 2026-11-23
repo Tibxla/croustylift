@@ -799,6 +799,9 @@ function PremierLancement() {
                   </span>
                 </li>
               ))}
+              <li className="pt-1.5 text-[14px] leading-[1.4] text-(--faint)">
+                Séries × reps · RIR : les reps en réserve, celles que tu aurais encore pu faire.
+              </li>
             </ol>
           )}
           {option(

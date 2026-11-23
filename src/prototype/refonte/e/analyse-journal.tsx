@@ -207,7 +207,7 @@ export function SeancePage({ id }: { id: string }) {
                 <Row
                   key={k}
                   lead={k + 1}
-                  title={`${fmtKg(v.weightKg)} × ${v.reps} @ RIR ${v.rir}`}
+                  title={`${fmtKg(v.weightKg)} × ${v.reps} · RIR ${v.rir}`}
                   valueMeta={`${fmtInt(v.weightKg * v.reps)} kg`}
                   onClick={canEdit ? () => setEditing({ exerciseId: x.exerciseId, rank: k + 1, value: { ...v } }) : undefined}
                   ariaLabel={`Série ${k + 1}, ${fmtKg(v.weightKg)} × ${v.reps} à RIR ${v.rir}. Corriger`}
@@ -327,7 +327,7 @@ function SetEditor({
               Supprimer cette série
             </TextLink>
             <span className="text-[14px] text-(--muted)">
-              avant {fmtKg(orig.weightKg)} × {orig.reps} @ RIR {orig.rir}
+              avant {fmtKg(orig.weightKg)} × {orig.reps} · RIR {orig.rir}
             </span>
           </div>
           <PrimaryButton onClick={() => onSave(v)} disabled={!changed} meta={`e1RM ${fmt1(setE1rm(v))}`}>

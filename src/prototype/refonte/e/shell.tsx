@@ -68,7 +68,7 @@ export interface Nav {
 export interface Settings {
   /** Couleur de signal (CSS). Toujours lue via var(--sig) dans le rendu. */
   sig: string;
-  /** Nom affiché : « Jaune », « Teinte libre 74° »… */
+  /** Nom affiché : « Jaune », « Autre couleur »… */
   sigName: string;
   /** Teinte OKLCH si teinte libre, null pour une prédéfinie. */
   sigHue: number | null;

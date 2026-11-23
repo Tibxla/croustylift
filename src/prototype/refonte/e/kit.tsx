@@ -92,13 +92,33 @@ export function rootStyle(sig: string): CSSProperties {
   } as CSSProperties;
 }
 
-/** Règles globales du socle, posées une fois par le shell. `data-motion="reduite"`
- *  coupe toute transition (réglage « Réduire les animations »). */
+/** Règles globales du socle, posées une fois par le shell.
+ *
+ *  MOUVEMENT (rares, courts, interruptibles : des transitions, jamais de keyframes)
+ *  - `e-press` : un bouton s'enfonce sous le doigt, scale(0.97) en 140 ms ease-out.
+ *    Jamais sur les gestes répétés des centaines de fois en salle (logger, règle,
+ *    rangées de numéros) : là, le retour est instantané (changement de fond).
+ *  - `e-sheet` / `e-veil` : la feuille monte du bas en 240 ms (courbe de tiroir
+ *    iOS), le voile apparaît en fondu. Entrée par `@starting-style`.
+ *  - `data-motion="reduite"` (réglage « Réduire les animations », initialisé sur
+ *    prefers-reduced-motion) : plus aucun déplacement ni changement d'échelle ;
+ *    restent les fondus d'opacité et de couleur, qui aident à comprendre. */
 export const BASE_CSS = `
-@keyframes e-sheet-in { from { transform: translateY(24px); opacity: 0 } to { transform: none; opacity: 1 } }
-@keyframes e-fade-in { from { opacity: 0 } to { opacity: 1 } }
+.e-press { transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.e-press:active:not(:disabled) { transform: scale(0.97); }
+.e-veil { opacity: 1; transition: opacity 200ms ease-out; }
+.e-sheet { transform: translateY(0); transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1), opacity 240ms ease-out; }
+@starting-style {
+  .e-veil { opacity: 0; }
+  .e-sheet { transform: translateY(100%); }
+}
 [data-e-root][data-motion="reduite"] *, [data-e-root][data-motion="reduite"] *::before {
-  transition: none !important; animation: none !important;
+  animation: none !important;
+  transition-property: opacity, color, background-color, border-color !important;
+}
+[data-e-root][data-motion="reduite"] .e-press:active { transform: none; }
+@starting-style {
+  [data-e-root][data-motion="reduite"] .e-sheet { transform: none; opacity: 0; }
 }
 `;
 
@@ -147,6 +167,7 @@ export function PrimaryButton({
   onClick,
   disabled,
   ariaLabel,
+  press = true,
   className = '',
 }: {
   children: ReactNode;
@@ -156,6 +177,8 @@ export function PrimaryButton({
   onClick?: () => void;
   disabled?: boolean;
   ariaLabel?: string;
+  /** false : pas d'enfoncement (geste répété en salle, ex. logger). */
+  press?: boolean;
   className?: string;
 }) {
   return (
@@ -164,7 +187,7 @@ export function PrimaryButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
-      className={`flex h-14 min-w-0 flex-auto items-center justify-between gap-3 rounded-(--r) bg-(--ink) px-4 text-left text-(--bg) active:bg-(--muted) disabled:bg-(--line) disabled:text-(--muted) ${className}`}
+      className={`flex h-14 min-w-0 flex-auto items-center justify-between gap-3 rounded-(--r) bg-(--ink) px-4 text-left text-(--bg) active:bg-(--muted) disabled:bg-(--line) disabled:text-(--muted) ${press ? 'e-press' : ''} ${className}`}
     >
       <span className="flex min-w-0 flex-col">
         {over && <span className="truncate text-[13px] font-medium leading-tight text-(--on-ink)">{over}</span>}
@@ -181,12 +204,17 @@ export function SecondaryButton({
   meta,
   onClick,
   disabled,
+  press = true,
+  ariaLabel,
   className = '',
 }: {
   children: ReactNode;
   meta?: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  /** false : pas d'enfoncement (geste répété en salle). */
+  press?: boolean;
+  ariaLabel?: string;
   className?: string;
 }) {
   return (
@@ -194,7 +222,8 @@ export function SecondaryButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex h-12 min-w-0 items-center justify-between gap-3 rounded-(--r) border border-(--muted) px-4 text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:text-(--faint) ${className}`}
+      aria-label={ariaLabel}
+      className={`flex h-12 min-w-0 items-center justify-between gap-3 rounded-(--r) border border-(--muted) px-4 text-(--ink) active:bg-(--line) disabled:border-(--line) disabled:text-(--faint) ${press ? 'e-press' : ''} ${className}`}
     >
       <span className="truncate text-[16px] font-medium">{children}</span>
       {meta && <span className="flex-none text-[14px] text-(--muted)">{meta}</span>}
@@ -458,15 +487,13 @@ export function Sheet({
       <div
         aria-hidden
         onClick={onClose}
-        className="absolute inset-x-0 bottom-0 h-[100dvh] bg-black/65"
-        style={{ animation: 'e-fade-in 160ms ease-out' }}
+        className="e-veil absolute inset-x-0 bottom-0 h-[100dvh] bg-black/65"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
-        className="absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-(--r-sheet) border-t border-(--line) bg-(--raise)"
-        style={{ animation: 'e-sheet-in 200ms var(--ease-out-quart)' }}
+        className="e-sheet absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-(--r-sheet) border-t border-(--line) bg-(--raise)"
       >
         <div className="flex flex-none items-center justify-between gap-3 py-2 pl-5 pr-3">
           <h2 ref={heading} id={id} tabIndex={-1} className="min-w-0 truncate text-[17px] font-semibold text-(--ink) outline-none">
@@ -521,8 +548,8 @@ export function Switch({
         className={`relative h-7 w-12 flex-none rounded-(--r) border ${checked ? 'border-(--ink) bg-(--ink)' : 'border-(--muted)'}`}
       >
         <span
-          className={`absolute top-[3px] h-5 w-5 rounded-[3px] transition-[left] duration-150 ${
-            checked ? 'left-[23px] bg-(--bg)' : 'left-[3px] bg-(--muted)'
+          className={`absolute left-[3px] top-[3px] h-5 w-5 rounded-[3px] transition-transform duration-150 ease-out ${
+            checked ? 'translate-x-5 bg-(--bg)' : 'bg-(--muted)'
           }`}
         />
       </span>
@@ -531,7 +558,8 @@ export function Switch({
 }
 
 /** Stepper pour les formulaires hors salle (prescription, réglages) : − valeur +,
- *  carrés de 48 px, aucune saisie clavier. */
+ *  carrés de 48 px, aucune saisie clavier. Sans `meta`, il tient sur une ligne :
+ *  libellé à gauche, stepper à droite, valeur jamais coupée. */
 export function Stepper({
   label,
   value,
@@ -541,6 +569,7 @@ export function Stepper({
   step = 1,
   format = String,
   meta,
+  valueWidth,
 }: {
   label: string;
   value: number;
@@ -550,6 +579,9 @@ export function Stepper({
   step?: number;
   format?: (v: number) => string;
   meta?: ReactNode;
+  /** Largeur fixe de la valeur (px) quand elle varie (« 1 kg », « 1,25 kg ») :
+   *  les boutons ne bougent pas sous le pouce d'un tap à l'autre. */
+  valueWidth?: number;
 }) {
   const set = (v: number) => onChange(Math.min(max, Math.max(min, Math.round(v * 1000) / 1000)));
   const btn =
@@ -557,13 +589,13 @@ export function Stepper({
   return (
     <div className="flex min-h-16 items-center gap-3 border-b border-(--line) px-5 py-2">
       <span className="min-w-0 flex-1">
-        <span className="block text-[17px] font-medium text-(--ink)">{label}</span>
+        <span className="block truncate text-[17px] font-medium text-(--ink)">{label}</span>
         {meta && <span className="mt-0.5 block text-[14px] text-(--muted)">{meta}</span>}
       </span>
       <button type="button" className={btn} aria-label={`${label} moins`} disabled={value <= min} onClick={() => set(value - step)}>
         −
       </button>
-      <output aria-live="polite" className="w-14 text-center text-[20px] font-medium text-(--ink)">
+      <output aria-live="polite" className="min-w-14 whitespace-nowrap text-center text-[20px] font-medium text-(--ink)" style={valueWidth ? { width: valueWidth } : undefined}>
         {format(value)}
       </output>
       <button type="button" className={btn} aria-label={`${label} plus`} disabled={value >= max} onClick={() => set(value + step)}>
@@ -734,7 +766,8 @@ export function Ruler({
             style={{
               left: `calc(50% + ${off}px)`,
               transform: 'translateX(-50%)',
-              transition: drag === null ? 'left 180ms var(--ease-out-quart)' : 'none',
+              // Aucune transition : la règle sert des centaines de fois par séance,
+              // elle suit le doigt et saute au cran touché sans délai.
             }}
           >
             <div
@@ -763,9 +796,12 @@ export function Ruler({
 /* ------------------------------------------------------------------------ */
 
 /** Rangée de numéros touchables : la fourchette du plan est soulignée d'un
- *  filet, la valeur choisie d'un trait épais, la Référence d'un petit carré. */
+ *  filet, la valeur choisie d'un trait épais, la Référence d'un petit carré.
+ *  À l'écran, la Référence se dit « dernière fois » (le mot de CONTEXT.md reste
+ *  dans le code) : un ami comprend sans lexique. */
 export function NumberRow({
   label,
+  hint,
   values,
   value,
   presc,
@@ -775,6 +811,8 @@ export function NumberRow({
   perView,
 }: {
   label: string;
+  /** Glose courte après le libellé (« RIR · reps en réserve »). */
+  hint?: string;
   values: number[];
   value: number;
   presc: [number, number];
@@ -795,10 +833,13 @@ export function NumberRow({
   return (
     <div>
       <div className="flex items-baseline justify-between px-5">
-        <span className="text-[15px] font-semibold text-(--ink)">{label}</span>
+        <span className="text-[15px] font-semibold text-(--ink)">
+          {label}
+          {hint && <span className="ml-1.5 text-[14px] font-normal text-(--muted)">{hint}</span>}
+        </span>
         <span className="text-[14px] text-(--muted)">
           plan {range(presc)}
-          {refValue !== null && <span> · réf. {refValue}</span>}
+          {refValue !== null && <span> · dernière fois {refValue}</span>}
         </span>
       </div>
       <div

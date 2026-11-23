@@ -266,7 +266,7 @@ function Instrument() {
           {ref ? (
             <>
               <span className="text-(--muted)">
-                Référence série {rank} · {fmtDate(ex.reference!.date)}
+                Dernière fois, série {rank} · {fmtDate(ex.reference!.date)}
               </span>
               <span className="font-medium text-(--ink)">
                 {fmtKg(ref.weightKg)} × {ref.reps} · RIR {ref.rir}
@@ -274,7 +274,7 @@ function Instrument() {
             </>
           ) : (
             <span className="text-(--muted)">
-              {ex.reference ? `Pas de série ${rank} la dernière fois, rien à battre` : `Pas encore de Référence dans ${state.seanceName}`}
+              {ex.reference ? `Pas de série ${rank} la dernière fois, rien à battre` : `Premier passage dans ${state.seanceName}, rien à battre`}
             </span>
           )}
         </div>
@@ -307,10 +307,11 @@ function Instrument() {
           <div>
             <dt className="text-[13px] text-(--muted)">e1RM</dt>
             <dd className="mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-(--ink)">{fmt1(e1)}</dd>
-            <dd className="mt-1.5 text-[13px] text-(--faint)">kg estimés</dd>
+            {/* Glose permanente : l'ami qui découvre l'app lit « max estimé ». */}
+            <dd className="mt-1.5 text-[13px] text-(--faint)">max estimé, kg</dd>
           </div>
           <div>
-            <dt className="text-[13px] text-(--muted)">Écart à la réf.</dt>
+            <dt className="text-[13px] text-(--muted)">Écart</dt>
             {ref && v ? (
               <>
                 <dd className={`mt-1 flex items-center gap-1.5 text-[22px] font-medium leading-none tracking-[-0.01em] ${TONE[v]}`}>
@@ -320,7 +321,7 @@ function Instrument() {
                 <dd className={`mt-1.5 text-[13px] ${TONE[v]}`}>{WORDS.gap[v]}</dd>
               </>
             ) : (
-              <dd className="mt-1 text-[16px] text-(--muted)">aucune réf.</dd>
+              <dd className="mt-1 text-[16px] text-(--muted)">aucun</dd>
             )}
           </div>
           <div className="text-right">
@@ -359,6 +360,7 @@ function Instrument() {
           <NumberRow
             key={`rir-${ex.id}`}
             label="RIR"
+            hint="reps en réserve"
             values={RIRS}
             value={draft.rir}
             presc={ex.rir}
@@ -375,14 +377,16 @@ function Instrument() {
         {(state.lastLog === ex.id || reached || nextI !== null) && (
           <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
             {state.lastLog === ex.id ? (
-              <TextLink tone="muted" onClick={seance.undo} ariaLabel={`Annuler la série ${sets.length}`}>
-                Annuler
+              <TextLink tone="muted" onClick={seance.undo}>
+                Annuler la série {sets.length}
               </TextLink>
             ) : (
               <span />
             )}
             {reached ? (
-              <SecondaryButton onClick={log} meta={logMeta} className="ml-auto min-w-0 flex-1">
+              // Sans les valeurs en méta : elles sont juste au-dessus (série en cours),
+              // et « Annuler la série n » doit tenir sur la même ligne en entier.
+              <SecondaryButton onClick={log} press={false} className="ml-auto min-w-0 flex-1" ariaLabel={`${logLabel}, ${logValue}`}>
                 {logLabel}
               </SecondaryButton>
             ) : (
@@ -399,7 +403,7 @@ function Instrument() {
             type="button"
             onClick={() => nav.push('sommaire')}
             aria-label={`Sommaire de la séance, ${done} exos faits sur ${exercises.length}${account.offline ? `, hors ligne, ${account.pendingSync} saisies sur l'appareil` : ''}`}
-            className="flex h-14 w-[104px] flex-none flex-col items-start justify-center rounded-(--r) border border-(--muted) px-3 text-left active:bg-(--line)"
+            className="e-press flex h-14 w-[104px] flex-none flex-col items-start justify-center rounded-(--r) border border-(--muted) px-3 text-left active:bg-(--line)"
           >
             <span className="text-[16px] font-medium leading-tight text-(--ink)">Sommaire</span>
             {account.offline || account.pendingSync > 0 ? (
@@ -413,15 +417,17 @@ function Instrument() {
             )}
           </button>
           {!reached ? (
-            <PrimaryButton onClick={log} over={logLabel} ariaLabel={`${logLabel}, ${logValue}`}>
+            <PrimaryButton onClick={log} over={logLabel} ariaLabel={`${logLabel}, ${logValue}`} press={false}>
               {logValue}
             </PrimaryButton>
           ) : nextEx ? (
-            <PrimaryButton onClick={goNext} over="Exo suivant" ariaLabel={`Exo suivant · ${nextEx.name}`}>
+            <PrimaryButton onClick={goNext} over="Exo suivant" ariaLabel={`Exo suivant · ${nextEx.name}`} press={false}>
               {nextEx.name}
             </PrimaryButton>
           ) : (
-            <PrimaryButton onClick={finish}>Terminer la séance</PrimaryButton>
+            <PrimaryButton onClick={finish} press={false}>
+              Terminer la séance
+            </PrimaryButton>
           )}
         </div>
       </div>
@@ -507,8 +513,9 @@ function Sommaire() {
               ariaLabel={`${i + 1}. ${ex.name}, ${PROGRESS_WORD[p]}${n ? `, ${n} séries` : ''}. Ouvrir dans l'instrument`}
               trailing={
                 p === 'skipped' ? (
-                  <TextLink tone="muted" onClick={() => seance.skip(ex.id)} className="-mr-1 px-1 text-[15px]">
-                    Reprendre
+                  // « Remettre », pas « Reprendre » : « Reprendre » est déjà le retour à l'instrument, en bas.
+                  <TextLink tone="muted" onClick={() => seance.skip(ex.id)} ariaLabel={`Remettre ${ex.name} dans la séance`} className="-mr-1 px-1 text-[15px]">
+                    Remettre
                   </TextLink>
                 ) : n === 0 ? (
                   <TextLink
@@ -526,7 +533,7 @@ function Sommaire() {
       </List>
       <div className="px-5 pt-4">
         <SecondaryButton onClick={() => setTarget({ mode: 'add' })} className="w-full">
-          Ajouter un exercice
+          Ajouter un exo
         </SecondaryButton>
       </div>
       <CatalogSheet
@@ -569,7 +576,7 @@ function CatalogSheet({
   return (
     <Sheet
       open={target !== null}
-      title={target?.mode === 'replace' ? `Remplacer ${target.name}` : 'Ajouter un exercice'}
+      title={target?.mode === 'replace' ? `Remplacer ${target.name}` : 'Ajouter un exo'}
       onClose={onClose}
     >
       {target?.mode === 'replace' && (
@@ -616,6 +623,7 @@ function ChoixSeance() {
   return (
     <Screen>
       <ScreenHeader title="Quelle séance ?" meta={`${routine.name} · routine courante`} />
+      <p className="px-5 pb-3 text-[15px] leading-[1.45] text-(--muted)">Touche celle du jour pour la lancer.</p>
       <List label="Séances de la routine courante">
         {routine.seances
           .filter((s) => !s.archived)
@@ -624,7 +632,7 @@ function ChoixSeance() {
               key={s.id}
               title={s.name}
               meta={`${s.items.length} exos`}
-              valueMeta={s.lastDone ? `dernière fois ${fmtDate(s.lastDone)}` : 'jamais faite'}
+              valueMeta={s.lastDone ? `faite le ${fmtDate(s.lastDone)}` : 'jamais faite'}
               onClick={() => seance.start(s.id)}
             />
           ))}

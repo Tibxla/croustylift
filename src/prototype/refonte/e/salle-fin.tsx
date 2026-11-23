@@ -6,8 +6,10 @@
 //      séries par muscle de la semaine contre le prévu de la routine, durée
 //      chronométrée (corrigeable au stepper), BPM moyen facultatif (stepper).
 //      Pas de note ici : la Note datée est par exo et se prend en Salle.
-//   2. Après « Clôturer » : « Séance rangée », récap court, « Nouvelle séance »
-//      et un lien vers l'Analyse. Écart assumé avec le bouchon : « Clôturer »
+//   2. Après « Ranger la séance » (la Clôture) : « Séance rangée », récap
+//      court, « Nouvelle séance » et un lien vers l'Analyse. Le bouton dit ce
+//      qui se passe, avec le mot de l'écran d'arrivée (rangée). Écart assumé
+//      avec le bouchon : le bouton
 //      fait seance.close() et reste sur la page ; nav.reset() part sur
 //      « Nouvelle séance » (sinon l'état rangé ne s'afficherait jamais).
 //   3. Aucune série loggée : ce n'est pas une Exécution (CONTEXT.md), rien à
@@ -189,15 +191,15 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
             <p className="text-[14px] leading-[1.4] text-(--muted)">
               {account.offline
                 ? `Hors ligne : la séance reste sur cet appareil et part au retour du réseau${pending ? `, avec ${plural(pending, 'saisie')} en attente` : ''}.`
-                : `${plural(pending, 'saisie')} en cours d'envoi, la Clôture suit.`}
+                : `${plural(pending, 'saisie')} en cours d'envoi, la séance suit.`}
             </p>
           )}
           <PrimaryButton
             onClick={() => close({ duration, bpm: bpmOn ? bpm : null })}
             meta={`${fmtDur(duration)}${bpmOn ? ` · ${bpm} bpm` : ''}`}
-            ariaLabel={`Clôturer la séance, ${duration} minutes${bpmOn ? `, ${bpm} bpm` : ''}`}
+            ariaLabel={`Ranger la séance, ${duration} minutes${bpmOn ? `, ${bpm} bpm` : ''}`}
           >
-            Clôturer
+            Ranger la séance
           </PrimaryButton>
         </>
       }
@@ -212,7 +214,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
 
       <section aria-labelledby="fin-exos">
         <SectionTitle aside={exosAside(recap.count)}>
-          <span id="fin-exos">Exercices</span>
+          <span id="fin-exos">Exos</span>
         </SectionTitle>
         <List label="Exercices de la séance">
           {recap.exos.map((e, i) => (
@@ -278,7 +280,7 @@ function Cloture({ recap, onClosed }: { recap: Recap; onClosed: (c: Closing) => 
           ) : (
             <MeasureLine
               label="BPM moyen"
-              meta="facultatif, lu sur ta montre"
+              meta="facultatif, pouls lu sur ta montre"
               value={<span className="text-[15px] font-normal text-(--muted)">pas noté</span>}
               action={<TextLink tone="muted" onClick={() => setBpmOn(true)}>Ajouter</TextLink>}
             />
@@ -544,7 +546,7 @@ function Rangee({ recap, closing }: { recap: Recap; closing: Closing }) {
         <Fact label="kg soulevés" value={fmtInt(recap.kg)} />
         {closing.bpm !== null && <Fact label="BPM moyen" value={String(closing.bpm)} />}
         {recap.records.map((r) => (
-          <Fact key={r.name} label={r.name} value={<span className="text-(--sig)">{fmt1(r.e1rm)}</span>} aside={<Status v="up" word="record e1RM" />} />
+          <Fact key={r.name} label={r.name} value={<span className="text-(--sig)">{fmt1(r.e1rm)}</span>} aside={<Status v="up" word="nouveau record" />} />
         ))}
       </dl>
       <p role="status" className="px-5 pt-5 text-[15px] leading-[1.45] text-(--muted)">

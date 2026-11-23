@@ -117,12 +117,12 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
       )}
       <div className="flex">
         {empty ? (
-          <PrimaryButton disabled>Ajoute au moins un exercice</PrimaryButton>
+          <PrimaryButton disabled>Ajoute au moins un exo</PrimaryButton>
         ) : dirty ? (
           <PrimaryButton
             onClick={save}
-            over={routine.current ? `Version ${nextV} · le bloc en cours se ferme` : `Version ${nextV}`}
-            ariaLabel={`Enregistrer, version ${nextV}${routine.current ? ', le bloc en cours se ferme' : ''}`}
+            over={routine.current ? `Version ${nextV} · un nouveau bloc commence` : `Version ${nextV}`}
+            ariaLabel={`Enregistrer, version ${nextV}${routine.current ? ', un nouveau bloc commence' : ''}`}
           >
             Enregistrer
           </PrimaryButton>
@@ -166,8 +166,8 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
       {empty ? (
         <EmptyState
           title="Séance vide"
-          body="Ajoute un premier exercice. La séance s'enregistre dès qu'elle en compte un."
-          action={<SecondaryButton onClick={() => setAdding(true)}>Ajouter un exercice</SecondaryButton>}
+          body="Ajoute un premier exo. La séance s'enregistre dès qu'elle en compte un."
+          action={<SecondaryButton onClick={() => setAdding(true)}>Ajouter un exo</SecondaryButton>}
         />
       ) : (
         <>
@@ -216,7 +216,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
           {!reorder && (
             <div className="px-5 pt-4">
               <SecondaryButton onClick={() => setAdding(true)} className="w-full">
-                Ajouter un exercice
+                Ajouter un exo
               </SecondaryButton>
             </div>
           )}
@@ -239,7 +239,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
               <p className="font-medium">Archiver {seance.name} ?</p>
               <p className="mt-1 text-(--muted)">
                 Elle ne se choisit plus en salle. Son historique reste dans l'analyse.
-                {routine.current && ' Le plan de la routine courante change : le bloc en cours se ferme.'}
+                {routine.current && ' Le plan de la routine courante change : un nouveau bloc commence.'}
                 {dirty && ' Tes modifications non enregistrées sont abandonnées.'} Tu pourras la désarchiver.
               </p>
             </Confirm>
@@ -303,7 +303,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
                   nav.back();
                 }}
               >
-                {empty ? 'Ajoute au moins un exercice' : 'Enregistrer et revenir'}
+                {empty ? 'Ajoute au moins un exo' : 'Enregistrer et revenir'}
               </PrimaryButton>
               <SecondaryButton
                 onClick={() => {
@@ -319,7 +319,7 @@ export function SeanceEditor({ seanceId }: { seanceId: string }) {
       >
         <p className="px-5 pb-3 text-[15px] leading-[1.45] text-(--muted)">
           {plural(lines.length, 'changement')} depuis la version {seance.version || 'de départ'}
-          {routine.current ? ". Les enregistrer ferme le bloc en cours." : '.'}
+          {routine.current ? ". Les enregistrer ouvre un nouveau bloc." : '.'}
         </p>
         <ul className="border-t border-(--line)">
           {lines.map((l) => (
@@ -410,7 +410,7 @@ function ItemBlock({
             {state && <span className="font-medium text-(--ink)">· {state}</span>}
           </span>
         </span>
-        <span className="flex-none pt-0.5 text-[15px] text-(--muted)">{open ? 'Replier' : 'Régler'}</span>
+        <span className="flex-none pt-0.5 text-[15px] text-(--muted) underline decoration-1 underline-offset-4">{open ? 'Replier' : 'Régler'}</span>
       </button>
       {open && (
         <div className="pb-2">
@@ -418,6 +418,7 @@ function ItemBlock({
             {(['sets', 'reps', 'rir'] as const).map((k) => (
               <FieldEditor key={k} k={k} value={item[k]} onChange={(f) => onField(k, f)} />
             ))}
+            <p className="px-5 pt-2 text-[14px] leading-[1.4] text-(--faint)">RIR : reps en réserve, celles que tu aurais encore pu faire. RIR 0 : pas une de plus.</p>
           </div>
           <div className="px-5 pt-4">
             <p className="text-[15px] font-semibold text-(--ink)">Note d'instructions</p>
@@ -531,9 +532,9 @@ function CatalogSheet({ open, items, onClose, onPick }: { open: boolean; items: 
     onClose();
   };
   return (
-    <Sheet open={open} title="Ajouter un exercice" onClose={close}>
+    <Sheet open={open} title="Ajouter un exo" onClose={close}>
       <div className="px-5 pb-1">
-        <TextField type="search" label="Rechercher un exercice" hideLabel placeholder="Rechercher un exercice" value={q} onChange={setQ} />
+        <TextField type="search" label="Chercher un exo" hideLabel placeholder="Chercher un exo" value={q} onChange={setQ} />
       </div>
       <div className="overflow-x-auto px-3" style={{ scrollbarWidth: 'none' }}>
         <Choice
@@ -546,7 +547,7 @@ function CatalogSheet({ open, items, onClose, onPick }: { open: boolean; items: 
       </div>
       {shown.length === 0 ? (
         <p className="border-t border-(--line) px-5 py-6 text-[15px] text-(--muted)">
-          Aucun exercice ne correspond{q.trim() ? ` à « ${q.trim()} »` : ''}{muscle !== 'tous' ? ` dans ${muscle}` : ''}.
+          Aucun exo ne correspond{q.trim() ? ` à « ${q.trim()} »` : ''}{muscle !== 'tous' ? ` dans ${muscle}` : ''}.
         </p>
       ) : (
         <List label="Catalogue">

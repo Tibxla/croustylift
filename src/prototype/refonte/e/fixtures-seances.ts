@@ -383,7 +383,7 @@ export function diffLines(saved: PlanItem[], draft: PlanItem[]): string[] {
   }
   const commonSaved = saved.filter((i) => draftIds.has(i.rowId)).map((i) => i.rowId);
   const commonDraft = draft.filter((i) => savedIds.has(i.rowId)).map((i) => i.rowId);
-  if (commonSaved.join() !== commonDraft.join()) lines.push('Ordre des exercices modifié');
+  if (commonSaved.join() !== commonDraft.join()) lines.push('Ordre des exos modifié');
   return lines;
 }
 
@@ -467,5 +467,5 @@ export function routineMeta(r: PlanRoutine): string {
   const active = r.seances.filter((s) => !s.archived);
   const n = `${active.length} séance${active.length > 1 ? 's' : ''}`;
   const last = lastDoneOfRoutine(r);
-  return `${n} · ${last ? `dernière le ${fmtDate(last)}` : 'jamais faite'}`;
+  return `${n} · ${last ? `dernière séance le ${fmtDate(last)}` : 'jamais faite'}`;
 }

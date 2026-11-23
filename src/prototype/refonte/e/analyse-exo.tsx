@@ -47,7 +47,7 @@ export function ExoPage({ id }: { id: string }) {
     <Page>
       <ScreenHeader
         title={exoName(id)}
-        meta={total > 0 ? `e1RM de la 1ʳᵉ série · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
+        meta={total > 0 ? `e1RM de la 1ʳᵉ série, ton max estimé sur une rep · ${total} séance${total > 1 ? 's' : ''}` : 'Aucune série au journal'}
         back={{ label: 'Analyse', onClick: nav.back }}
       />
 
@@ -132,7 +132,7 @@ export function ExoPage({ id }: { id: string }) {
               <Row
                 key={k}
                 lead={k + 1}
-                title={`${fmtKg(s.weightKg)} × ${s.reps} @ RIR ${s.rir}`}
+                title={`${fmtKg(s.weightKg)} × ${s.reps} · RIR ${s.rir}`}
                 meta={k === 0 ? 'point de la courbe' : undefined}
                 valueMeta={`e1RM ${fmt1(setE1rm(s))}`}
               />
@@ -216,7 +216,7 @@ function Facts({ id, curves }: { id: string; curves: Curve[] }) {
         {rec && (
           <Row
             title="Record e1RM"
-            meta={`${fmtKg(rec.best.set.weightKg)} × ${rec.best.set.reps} @ RIR ${rec.best.set.rir} · ${seanceInfo(rec.best.seanceId).name}, ${fmtDate(rec.best.date)}`}
+            meta={`${fmtKg(rec.best.set.weightKg)} × ${rec.best.set.reps} · RIR ${rec.best.set.rir} · ${seanceInfo(rec.best.seanceId).name}, ${fmtDate(rec.best.date)}`}
             value={fmt1(rec.best.e1rm)}
           />
         )}
@@ -236,7 +236,7 @@ function Facts({ id, curves }: { id: string; curves: Curve[] }) {
           <Row
             key={c.seanceId}
             title={`${seanceInfo(c.seanceId).name} · ${routineName(seanceInfo(c.seanceId).routineId)}`}
-            meta={`dernière fois le ${fmtDate(c.points[c.points.length - 1]!.date)}${seanceInfo(c.seanceId).archivedRoutine ? ', routine archivée' : ''}`}
+            meta={`faite le ${fmtDate(c.points[c.points.length - 1]!.date)}${seanceInfo(c.seanceId).archivedRoutine ? ', routine archivée' : ''}`}
             value={fmt1(c.points[c.points.length - 1]!.e1rm)}
             muted
           />

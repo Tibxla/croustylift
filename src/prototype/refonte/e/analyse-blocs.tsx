@@ -29,7 +29,7 @@ import {
   type Execution,
 } from './fixtures-analyse';
 import { fmtDate, fmtPct } from './format';
-import { EmptyState, List, Row, ScreenHeader, SectionTitle, Sheet } from './kit';
+import { EmptyState, List, Row, ScreenHeader, SectionTitle, Sheet, TextLink } from './kit';
 import { useNav } from './shell';
 
 const blockById = (id: string) => BLOCKS.find((b) => b.id === id)!;
@@ -54,7 +54,13 @@ export function AnalyseBlocs({ journal }: { journal: Execution[] }) {
   const [picking, setPicking] = useState<'a' | 'b' | null>(null);
   const live = BLOCKS.filter((b) => blockExecutions(journal, b).length > 0);
   if (live.length < 2) {
-    return <EmptyState title="Un seul bloc pour l'instant" body="Un bloc s'ouvre quand le plan change. Il en faut deux pour comparer des vitesses de progression." />;
+    return (
+      <EmptyState
+        title="Un seul bloc pour l'instant"
+        body="Un bloc dure tant que ta routine ne change pas. Il en faut deux pour comparer : le suivant s'ouvre quand tu modifies tes séances."
+        action={<TextLink onClick={() => nav.go('seances')}>Voir tes séances</TextLink>}
+      />
+    );
   }
   const A = blockById(pair[0]);
   const B = blockById(pair[1]);
@@ -76,7 +82,7 @@ export function AnalyseBlocs({ journal }: { journal: Execution[] }) {
   return (
     <>
       <p className="px-5 pt-5 text-[15px] leading-[1.45] text-(--muted)">
-        On compare des vitesses de progression, pas des niveaux. Chaque pente se lit dans une seule séance du bloc.
+        Un bloc : une période où ta routine n'a pas changé. On compare la vitesse de progression de chaque exo d'un bloc à l'autre, pas le niveau.
       </p>
       <div className="pt-3">
         <List label="Blocs comparés">
