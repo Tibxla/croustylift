@@ -181,10 +181,6 @@ perte), finition.
 
 ### Base et import
 
-- **Sauvegarde dont une routine archivée a été réactivée depuis** : refusée en entier
-  (mineure). L'état final laisserait pour courante une routine archivée. Le message de
-  la base dit quoi faire : définir une autre routine courante, puis réimporter
-  (`docs/export-format.md`).
 - **Réordonnancement des séances : fonction prête, éteinte.** `reorder_seances`
   (migration 0023) est écrite et son appel aussi, derrière `REORDER_SEANCES_RPC`,
   laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
