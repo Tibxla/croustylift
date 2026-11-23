@@ -28,3 +28,8 @@ La liste est blanche parce que l'erreur inverse coûte plus cher. Tenir une coup
 - `flushOps` compte comme non remontée une op partie en quarantaine : l'éditeur de séance passée ne se ferme pas sur une correction que la base a refusée.
 - Quand l'exécution refusée est réaffirmée avec succès plus tard, son entrée est marquée `superseded` : elle reste conservée, mais ne retient plus ses ops filles.
 - Avant de mettre une op en quarantaine sous une session vérifiée, le flush revérifie la session : un refus RLS reçu juste après la chute du jeton ne dit rien de l'op, qui reste en file (ADR 0019).
+
+## Amendements du 2026-11-23 (Lot 3)
+
+- **Identité d'enfilement.** Chaque op reçoit à l'enfilement un UUID (`_uid`), qui remplace le compteur `_seq` comme identité de file. `flushOps` retrouve ses ops par cette identité, en file comme en quarantaine, au lieu de les repérer par leur position dans la quarantaine : avec deux onglets, une purge concurrente pouvait faire passer une correction refusée pour une sauvegarde réussie. `flushOps` rend à part ce qui attend (`pending`) et ce que la base a refusé (`refused`), et l'éditeur de séance passée ne dit plus « pas de réseau » pour un refus.
+- **Un onglet flushe à la fois.** Le flush se fait sous un verrou du navigateur (`navigator.locks`), jamais attendu : verrou pris, la passe ne fait rien, l'autre onglet vide la même file. Un verrou refusé depuis plus d'une minute (onglet figé en pleine passe) est repris.

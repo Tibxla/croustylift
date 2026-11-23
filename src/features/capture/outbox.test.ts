@@ -4,8 +4,11 @@
 // chaque test (reset systématique). AUCUN vrai Supabase : les `SyncFns` sont
 // mockées (vi.fn), on observe ce qui est appelé, dans quel ordre, et ce qui
 // reste en file après échec.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  enqueueTracked,
+  pendingAmong,
+  refusedAmong,
   enqueue,
   flush,
   readQueue,
@@ -25,7 +28,7 @@ import { saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
-const queueNoSeq = () => readQueue().map(({ _seq, _owner, ...op }) => op);
+const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -251,6 +254,123 @@ describe('flush (succès)', () => {
     // (type,id) aurait matché la 2ᵉ op et l'aurait shiftée sans la jouer (1 appel).
     expect(n).toBe(2);
     expect(readQueue()).toEqual([]);
+  });
+
+  it('deux onglets : deux ops de même numéro d’ordre, type et id ne se confondent pas (identité par UUID)', async () => {
+    // Le compteur d'ordre est tenu par onglet : deux onglets peuvent donner le
+    // MÊME `_seq` à deux ops de même (type,id). Repérée par `_seq`, la seconde
+    // était retirée à la place de la première, sans jamais avoir été envoyée.
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 100 });
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 200 });
+    const [first, second] = readQueue();
+    localStorage.setItem('croustylift:outbox', JSON.stringify([first, { ...second, _seq: first!._seq }]));
+
+    const fns = okFns();
+    const sent: (number | null | undefined)[] = [];
+    (fns.updateExecution as ReturnType<typeof vi.fn>).mockImplementation(
+      async (op: { bpmAvg?: number | null }) => {
+        sent.push(op.bpmAvg);
+        // L'autre onglet a déjà envoyé et retiré la première pendant notre requête.
+        if (sent.length === 1) {
+          localStorage.setItem('croustylift:outbox', JSON.stringify(readQueue().slice(1)));
+        }
+      },
+    );
+
+    await flush(fns);
+
+    expect(sent).toEqual([100, 200]);
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('chaque op enfilée reçoit une identité unique, rendue à l’appelant', () => {
+    const a = enqueueTracked({ type: 'deleteSet', id: 's1' });
+    const b = enqueueTracked({ type: 'deleteSet', id: 's1' });
+
+    expect(a).not.toBe(b);
+    expect(readQueue().map((op) => op._uid)).toEqual([a, b]);
+    expect(pendingAmong([a])).toBe(1);
+    expect(pendingAmong([a, b])).toBe(2);
+    expect(refusedAmong([a, b])).toBe(0);
+  });
+
+  it('l’identité de file n’est jamais passée aux fonctions de sync', async () => {
+    enqueue({ type: 'deleteSet', id: 's1' });
+    const fns = okFns();
+
+    await flush(fns);
+
+    expect(fns.calls()).toEqual([{ type: 'deleteSet', id: 's1' }]);
+  });
+});
+
+// --- Un seul onglet flushe à la fois (verrou du navigateur) -------------------
+
+describe('flush : verrou entre onglets', () => {
+  /** Faux `navigator.locks` : `held` simule un autre onglet qui tient le verrou. */
+  function fakeLocks(state: { held: boolean; stolen: number }) {
+    return {
+      request: async (
+        _name: string,
+        options: { ifAvailable?: boolean; steal?: boolean },
+        callback: (lock: object | null) => unknown,
+      ) => {
+        if (options.steal) {
+          state.stolen += 1;
+          state.held = false;
+        }
+        return callback(state.held ? null : {});
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('verrou libre : la passe tourne', async () => {
+    vi.stubGlobal('navigator', { locks: fakeLocks({ held: false, stolen: 0 }) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+  });
+
+  it('verrou pris par un autre onglet : rien n’est envoyé d’ici, la file reste', async () => {
+    vi.stubGlobal('navigator', { locks: fakeLocks({ held: true, stolen: 0 }) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    expect(fns.calls()).toEqual([]);
+    expect(readQueue()).toHaveLength(1);
+  });
+
+  it('verrou refusé depuis plus d’une minute (onglet figé) : il est repris, la file part', async () => {
+    vi.useFakeTimers();
+    const state = { held: true, stolen: 0 };
+    vi.stubGlobal('navigator', { locks: fakeLocks(state) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    await flush(fns);
+    vi.advanceTimersByTime(59_000);
+    await flush(fns);
+    expect(state.stolen).toBe(0);
+    expect(fns.calls()).toEqual([]);
+
+    vi.advanceTimersByTime(2_000);
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(state.stolen).toBe(1);
+  });
+
+  it('sans l’API de verrou : la passe tourne comme avant', async () => {
+    vi.stubGlobal('navigator', {});
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
   });
 });
 

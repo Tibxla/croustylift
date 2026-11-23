@@ -167,11 +167,18 @@ export interface DeleteExecutionOp {
   exerciseIds?: string[];
 }
 
-// `_seq` : identité interne UNIQUE d'une op en file, stampée par `enqueue`. Sert à
-// retirer SANS ambiguïté la tête traitée après l'await du flush — la paire (type,id)
-// n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés sur
-// le même id). Optionnel : une op héritée d'un bundle antérieur n'en a pas (repli
-// sur (type,id) le temps qu'elle soit drainée).
+// `_uid` : identité interne UNIQUE d'une op en file, un UUID posé par `enqueue`.
+// Sert à retirer SANS ambiguïté l'op traitée après l'await du flush, et à
+// retrouver ses propres ops après une passe (`flushOps`) : la paire (type,id)
+// n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés
+// sur le même id). Un UUID et non un compteur : la file est commune aux onglets
+// de l'appareil, et un compteur tenu par onglet pouvait donner le même numéro à
+// deux ops, l'une étant alors retirée à la place de l'autre sans avoir été
+// envoyée (audit sync, constat 11).
+//
+// `_seq` : l'ancien compteur, encore posé (ordre d'enfilement lisible au
+// diagnostic) et seule identité des ops enfilées par un bundle antérieur, sans
+// `_uid`. Une op sans l'un ni l'autre ne se reconnaît qu'en tête par (type,id).
 //
 // `_owner` : id du COMPTE reconnu sur l'appareil à l'enfilement (marqueur
 // local-account), posé par `enqueue`. La file est commune à l'appareil ; sous
@@ -179,7 +186,7 @@ export interface DeleteExecutionOp {
 // saisies de A ne remontent jamais sous B (audit sécurité, constat 1). Une op
 // sans `_owner` vient d'un bundle antérieur : `adoptLegacyOps` l'attribue au
 // compte reconnu au démarrage.
-type Sequenced = { _seq?: number; _owner?: string };
+type Sequenced = { _seq?: number; _owner?: string; _uid?: string };
 
 export type OutboxOp = (
   | UpsertExecutionOp
@@ -425,6 +432,7 @@ function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean
 
 /** Position de l'op `op` ELLE-MÊME dans `queue` (cf. `removeFromQueue`), -1 si absente. */
 function indexInQueue(queue: OutboxOp[], op: OutboxOp): number {
+  if (op._uid !== undefined) return queue.findIndex((o) => o._uid === op._uid);
   if (op._seq !== undefined) {
     return queue.findIndex((o) => o._seq === op._seq && o.type === op.type && o.id === op.id);
   }
@@ -437,10 +445,10 @@ function isQueued(op: OutboxOp): boolean {
 }
 
 /**
- * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_seq`
- * (unique, stampé à l'enqueue), type et id à l'appui. Une op héritée sans `_seq`
- * (file d'un bundle antérieur) ne se reconnaît qu'en TÊTE par (type, id), le
- * temps qu'elle soit drainée.
+ * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_uid`
+ * (UUID posé à l'enqueue) ; à défaut (op d'un bundle antérieur) par `_seq`, type
+ * et id à l'appui ; à défaut encore, en TÊTE seulement par (type, id), le temps
+ * qu'elle soit drainée.
  *
  * Rend `'removed'`, `'absent'` (elle n'y était plus : purgée entre-temps), ou
  * `'unwritable'` : le retrait n'a pas pu être persisté (quota plein), l'op est
@@ -593,33 +601,61 @@ function purgeQuarantineByExecution(executionId: string): void {
 
 // --- Enfilement ---------------------------------------------------------------
 
+let seqCounter = 0;
+
+/** UUID d'enfilement (cf. `_uid`). Repli non cryptographique sur un très vieux runtime. */
+function newUid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /**
  * Ajoute une op en queue de file et persiste immédiatement. L'op est durable
  * dès cet instant : même si l'app meurt avant le flush, elle remontera au
- * prochain montage. Renvoie la nouvelle longueur de file.
+ * prochain montage. Rend l'identité d'enfilement de l'op (`_uid`), par laquelle
+ * l'appelant peut la retrouver après une passe (cf. `isPending`, `isRefused`).
  */
-let seqCounter = 0;
-
-export function enqueue(op: OutboxOp): number {
+export function enqueueTracked(op: OutboxOp): string {
   const queue = readQueue();
-  // Stampe une identité unique monotone. Ré-amorcée sur le max déjà persisté pour
-  // rester unique après un reload (le compteur en mémoire repart à 0, pas la file).
+  // Compteur d'ordre, ré-amorcé sur le max déjà persisté. Il n'identifie plus
+  // l'op (deux onglets peuvent donner le même numéro) : c'est le rôle de `_uid`.
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
   seqCounter = Math.max(seqCounter, maxSeq) + 1;
   // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
   const owner = loadLocalAccount()?.userId;
-  queue.push({ ...op, _seq: seqCounter, ...(owner ? { _owner: owner } : {}) });
+  const uid = newUid();
+  queue.push({ ...op, _seq: seqCounter, _uid: uid, ...(owner ? { _owner: owner } : {}) });
   writeQueue(queue);
-  return queue.length;
+  return uid;
+}
+
+/** Enfile une op (cf. `enqueueTracked`) et renvoie la nouvelle longueur de file. */
+export function enqueue(op: OutboxOp): number {
+  enqueueTracked(op);
+  return readQueue().length;
+}
+
+/** Combien des ops enfilées sous ces identités attendent encore en file ? */
+export function pendingAmong(uids: readonly string[]): number {
+  const ours = new Set(uids);
+  return readQueue().filter((op) => op._uid !== undefined && ours.has(op._uid)).length;
+}
+
+/** Combien des ops enfilées sous ces identités la base a-t-elle refusées (quarantaine) ? */
+export function refusedAmong(uids: readonly string[]): number {
+  const ours = new Set(uids);
+  return readQuarantine().filter((q) => q.op._uid !== undefined && ours.has(q.op._uid)).length;
 }
 
 // --- Flush --------------------------------------------------------------------
 
-/** Retire les champs internes `_seq` et `_owner` (mécanique de file) : la couche
- *  sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique → préserve le
- *  type narrowé. */
-function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner'> {
-  const { _seq: _ignored, _owner: _alsoIgnored, ...rest } = op;
+/** Retire les champs internes `_seq`, `_uid` et `_owner` (mécanique de file) : la
+ *  couche sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique →
+ *  préserve le type narrowé. */
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner' | '_uid'> {
+  const { _seq: _ignored, _owner: _alsoIgnored, _uid: _ignoredToo, ...rest } = op;
   return rest;
 }
 
@@ -663,6 +699,55 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
 // On sérialise via une promesse mémoïsée — les appels en vol partagent le résultat.
 let inFlight: Promise<FlushResult> | null = null;
 
+// ENTRE ONGLETS, la promesse mémoïsée ne suffit pas : chaque onglet a la sienne,
+// sur la même file. Deux passes simultanées pouvaient croiser leurs envois : un
+// onglet envoie puis retire « insertSet X » et « deleteSet X » pendant que
+// l'insertion de l'autre, partie avant, arrive après la suppression et fait
+// revenir la série. Un verrou du navigateur (`navigator.locks`) ne laisse donc
+// flusher qu'un onglet à la fois.
+//
+// Le verrou n'est jamais ATTENDU : s'il est pris, un autre onglet flushe cette
+// même file (et relit la file entre deux ops, donc voit ce qu'on vient
+// d'enfiler) ; la passe d'ici ne fait rien et le dit par son `remaining`.
+// Attendre exposerait à ne plus jamais flusher si l'onglet détenteur est figé
+// par le système en pleine passe. Pour ce cas précis, un verrou refusé depuis
+// plus d'une minute est REPRIS (`steal`) : mieux vaut une passe doublée, que
+// l'idempotence par id rend sans dommage dans presque tous les cas, qu'une file
+// qui ne part plus. Sans l'API (vieux navigateur, tests), la passe tourne sans
+// verrou, comme avant.
+const FLUSH_LOCK = 'croustylift:outbox:flush';
+const FLUSH_LOCK_STEAL_AFTER_MS = 60_000;
+let flushLockRefusedSince: number | null = null;
+
+async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushResult> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks || typeof locks.request !== 'function') return run();
+  const steal =
+    flushLockRefusedSince !== null &&
+    Date.now() - flushLockRefusedSince > FLUSH_LOCK_STEAL_AFTER_MS;
+  let running: Promise<FlushResult> | null = null;
+  try {
+    return await locks.request(
+      FLUSH_LOCK,
+      steal ? { steal: true } : { ifAvailable: true },
+      (lock) => {
+        if (lock === null) {
+          flushLockRefusedSince ??= Date.now();
+          return { remaining: readQueue().length, flushed: 0 };
+        }
+        flushLockRefusedSince = null;
+        running = run();
+        return running;
+      },
+    );
+  } catch (err) {
+    // Verrou repris par un autre onglet pendant notre passe : la demande est
+    // rejetée, mais la passe, elle, continue. C'est son résultat qui compte.
+    if (running) return running;
+    throw err;
+  }
+}
+
 /**
  * Synchronise la file vers Supabase et renvoie l'état après la passe.
  *
@@ -679,11 +764,12 @@ let inFlight: Promise<FlushResult> | null = null;
  * `who` : lecteur de la session vérifiée. Fourni, rien ne part sans compte
  * connecté. Absent (tests de la file seule), aucun contrôle de session ni de compte.
  *
- * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
+ * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé, et un
+ * seul onglet flushe à la fois (cf. `underFlushLock`).
  */
 export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   if (inFlight) return inFlight;
-  inFlight = runFlush(fns, who).finally(() => {
+  inFlight = underFlushLock(() => runFlush(fns, who)).finally(() => {
     inFlight = null;
   });
   return inFlight;

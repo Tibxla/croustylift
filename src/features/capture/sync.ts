@@ -23,10 +23,10 @@ import {
   deleteExerciseNoteByExercise,
 } from '../notes/data';
 import {
-  enqueue,
+  enqueueTracked,
   flush,
-  readQuarantine,
-  readQueue,
+  pendingAmong,
+  refusedAmong,
   type FlushResult,
   type OutboxOp,
   type SyncFns,
@@ -179,39 +179,44 @@ export const syncFns: SyncFns = {
   },
 };
 
+/** Ce qu'il advient d'un lot d'ops soumis par `flushOps`. */
+export interface OpsFlushResult extends FlushResult {
+  /** De NOS ops, celles qui attendent encore en file (réseau, session). */
+  pending: number;
+  /** De NOS ops, celles que la base a refusées (quarantaine) : elles ne partiront pas. */
+  refused: number;
+}
+
 /**
  * Enfile un lot d'ops (dans l'ordre) puis tente un flush immédiat. Les ops sont
  * durables dès l'enqueue (localStorage) : même si le flush échoue (offline),
  * elles remonteront au prochain flush — comme la capture du jour.
  *
- * Renvoie un `remaining` qui ne compte QUE NOS ops (les ids qu'on vient
- * d'enfiler) encore présentes après la passe — PAS le `remaining` GLOBAL du
- * `FlushResult` (BUG M4). Pourquoi : `flush` est mémoïsé (un seul flush à la fois,
- * cf. outbox). Si une passe est déjà en vol, `flush(syncFns)` renvoie SA promesse,
- * dont le `remaining` reflète l'état AU LANCEMENT de cette passe — avant qu'on
- * enfile nos ops. Il pourrait donc valoir `0` alors que NOS ops dorment encore en
- * file (faux succès → l'éditeur de séance se fermerait à tort). En recomptant nos
- * propres ids dans `readQueue()` après l'attente, on obtient l'état réel des ops
- * qu'on a soumises, indépendamment de la passe qui a effectivement tourné.
+ * Le résultat ne compte QUE NOS ops, retrouvées par leur identité d'enfilement
+ * (`_uid`), PAS le `remaining` GLOBAL du `FlushResult` (BUG M4). Pourquoi :
+ * `flush` est mémoïsé (un seul flush à la fois, cf. outbox). Si une passe est
+ * déjà en vol, `flush(syncFns)` renvoie SA promesse, dont le `remaining` reflète
+ * l'état AU LANCEMENT de cette passe — avant qu'on enfile nos ops. Il pourrait
+ * donc valoir `0` alors que NOS ops dorment encore en file (faux succès →
+ * l'éditeur de séance se fermerait à tort).
+ *
+ * `pending` et `refused` sont rendus À PART : une correction que la base a
+ * refusée n'est pas une correction qui attend le réseau, et l'écran ne doit pas
+ * dire « pas de réseau » pour elle. `remaining` reste leur somme (rien de nous
+ * n'est en base tant qu'il n'est pas nul). L'identité d'enfilement est un UUID :
+ * avant, nos ops refusées se repéraient par leur POSITION dans la quarantaine, et
+ * une purge faite par un autre onglet pendant la passe pouvait faire passer une
+ * correction refusée pour une sauvegarde réussie.
  * `flushed` reste celui de la passe (best-effort, purement indicatif).
  */
-export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
-  const ourIds = new Set(ops.map((op) => op.id));
-  const quarantinedBefore = readQuarantine().length;
-  for (const op of ops) enqueue(op);
+export async function flushOps(ops: OutboxOp[]): Promise<OpsFlushResult> {
+  const ours = ops.map((op) => enqueueTracked(op));
   // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
   // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
   const { flushed } = await flushOutbox();
-  // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
-  // Une de nos ops REJETÉE par la base a quitté la file pour la quarantaine :
-  // elle n'est pas en base non plus, ce n'est pas un succès. Elle compte donc
-  // (la quarantaine ne fait que s'allonger : les entrées d'après notre enfilement).
-  const remaining =
-    readQueue().filter((op) => ourIds.has(op.id)).length +
-    readQuarantine()
-      .slice(quarantinedBefore)
-      .filter((q) => ourIds.has(q.op.id)).length;
-  return { remaining, flushed };
+  const pending = pendingAmong(ours);
+  const refused = refusedAmong(ours);
+  return { remaining: pending + refused, pending, refused, flushed };
 }
 
 /**
