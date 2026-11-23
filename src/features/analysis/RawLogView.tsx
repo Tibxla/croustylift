@@ -14,6 +14,7 @@
 import { useState } from 'react';
 import type { RawLogEntry } from './raw-log';
 import { summarizeSession, type SessionSummary } from './session-summary';
+import { formatCount } from './format';
 
 /** 'YYYY-MM-DD' → 'mer. 8 janv. 2026' (date longue lisible, locale fr). */
 function formatDateLong(iso: string): string {
@@ -219,11 +220,11 @@ function SessionHeader({ summary }: { summary: SessionSummary }) {
       <dl className="readout mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-ink-muted">
         <SummaryMetric
           label="séries"
-          value={String(summary.setCount)}
+          value={formatCount(summary.setCount)}
         />
         <SummaryMetric
           label="kg soulevés"
-          value={formatLifted(summary.totalVolumeKg)}
+          value={formatLifted(summary.totalLiftedKg)}
         />
         {summary.durationMin !== null && (
           <SummaryMetric label="durée" value={formatDuration(summary.durationMin)} />
