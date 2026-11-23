@@ -172,6 +172,12 @@ perte), finition.
   après une nouvelle modification. Contournement : quitter puis rouvrir la séance.
   Piste : rendre le bouton dès que les prescriptions redeviennent modifiées
   (`SeanceEditor.tsx`).
+- **Mise à jour retardée d'un tap après l'abandon d'un brouillon de note** (finition).
+  « Quitter » sur un brouillon de note d'instructions, avec une mise à jour en attente :
+  le rechargement de ce changement d'onglet est refusé, le blocage du brouillon ne tombe
+  qu'au démontage. La mise à jour passe au tap suivant ; aucune fuite. Piste : appeler la
+  levée immédiate de `useReloadBlockWhile` à l'abandon confirmé, comme pour les
+  prescriptions.
 
 ### Base et import
 
