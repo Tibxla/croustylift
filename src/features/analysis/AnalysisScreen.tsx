@@ -39,7 +39,7 @@ import {
   zeroLoadHolesLabel,
 } from './unit-label';
 import { periodLabel, rateCaption } from './rate-period';
-import { timeAxis } from './chart-time';
+import { cardTimeAxis } from './chart-time';
 
 /** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
 type AnalysisTab = 'curves' | 'journal';
@@ -365,7 +365,7 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
     ? rateCaption(primary.ratePeriod, primary.weeklyRate !== null, year)
     : null;
   // Même axe temps pour la courbe et les séries 2+ en dessous.
-  const axis = timeAxis(shown.map((sc) => sc.curve));
+  const axis = cardTimeAxis(shown);
   // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []). En
   // multi-séances il suit la séance ACCENT seule : superposer aussi les
   // subordonnées en h-24 gris sur gris serait illisible.
