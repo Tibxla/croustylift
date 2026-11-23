@@ -587,7 +587,7 @@ describe('groupIntoLogicalSets', () => {
 // Édition durée/BPM d'une séance clôturée (PastSessionEditor). On dérive l'op
 // `updateExecution` MINIMALE : seuls les champs réellement changés sont posés
 // (un champ omis = colonne inchangée côté DB ; `bpmAvg: null` = BPM retiré).
-// Durée toujours non-null (décision produit) ; BPM nullable (retirable).
+// Durée et BPM sont retirables : effacés, ils redeviennent « non saisis » (null).
 
 describe('buildExecutionMetricsOp', () => {
   const exec = 'exec-1';
@@ -669,5 +669,27 @@ describe('buildExecutionMetricsOp', () => {
         { bpmAvg: 140, durationMin: null },
       ),
     ).toEqual({ type: 'updateExecution', id: exec, bpmAvg: 140 });
+  });
+
+  it('durée en base puis EFFACÉE : durationMin null explicite, jamais 0, BPM intact', () => {
+    const op = buildExecutionMetricsOp(
+      exec,
+      { bpmAvg: 130, durationMin: 60 },
+      { bpmAvg: 130, durationMin: null },
+    );
+    expect(op).toEqual({ type: 'updateExecution', id: exec, durationMin: null });
+    // La clé est POSÉE : la couche data n'efface la colonne que sur un null explicite.
+    expect(op && 'durationMin' in op).toBe(true);
+    expect(op && 'closedAt' in op).toBe(false);
+  });
+
+  it('durée et BPM effacés ensemble', () => {
+    expect(
+      buildExecutionMetricsOp(
+        exec,
+        { bpmAvg: 130, durationMin: 60 },
+        { bpmAvg: null, durationMin: null },
+      ),
+    ).toEqual({ type: 'updateExecution', id: exec, durationMin: null, bpmAvg: null });
   });
 });

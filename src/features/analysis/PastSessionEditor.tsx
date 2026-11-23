@@ -40,8 +40,9 @@ const WEIGHT_STEP = 2.5;
 const WEIGHT_FINE = 1.25;
 
 // Édition des métriques de fin (durée + BPM) d'une séance CLÔTURÉE. Pas au pouce
-// avec un palier fin (DESIGN.md, comme la clôture). Durée non-null (CHECK DB
-// `> 0`) ; BPM optionnel et nullable.
+// avec un palier fin (DESIGN.md, comme la clôture). Durée et BPM optionnels :
+// repliés, ils sont « non saisis » (`null` en base), y compris une durée déjà
+// enregistrée que l'on retire.
 const DURATION_STEP = 5;
 const DURATION_FINE = 1;
 const DURATION_MIN = 1;
@@ -607,9 +608,9 @@ function DiscardConfirmSheet({
 
 // --- Édition des métriques de fin (durée + BPM) ------------------------------
 //
-// Durée et BPM d'une séance CLÔTURÉE, au pouce (DESIGN.md, jamais d'<input>). La
-// durée est un Stepper toujours visible (non-null) ; le BPM suit le motif optionnel
-// partagé `MetricRow` (replié = non saisi → retiré au save), comme à la clôture.
+// Durée et BPM d'une séance CLÔTURÉE, au pouce (DESIGN.md, jamais d'<input>).
+// Les deux suivent le motif optionnel partagé `MetricRow` (replié = non saisi →
+// retiré au save), comme à la clôture.
 // Bloc « niveau séance », posé au-dessus des cartes d'exos. Steppers sur `bg-surface`
 // (contraste sur le fond `bg-bg` de l'éditeur), comme à la clôture.
 function MetricsEditor({
@@ -943,7 +944,7 @@ function toMetricsState(exec: EditableExecution): MetricsEditState | null {
   };
 }
 
-/** Les métriques éditées sous la forme attendue par `buildExecutionMetricsOp` (BPM replié = retiré). */
+/** Les métriques éditées sous la forme attendue par `buildExecutionMetricsOp` (repliée = retirée). */
 function editedMetrics(m: MetricsEditState): {
   bpmAvg: number | null;
   durationMin: number | null;
