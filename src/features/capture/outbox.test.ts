@@ -13,6 +13,7 @@ import {
   listRefused,
   pendingAmong,
   retryRefused,
+  storageFailing,
   refusedAmong,
   enqueue,
   flush,
@@ -1381,7 +1382,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(readQueue().map((o) => o.id)).toEqual(['set-refuse', 'set-2']);
   });
 
-  it('retrait de la file impossible à persister (quota) : la passe s’arrête, l’op n’est pas rejouée en boucle', async () => {
+  it('retrait de la file impossible à persister (quota) : l’op n’est pas rejouée en boucle, la passe finit en mémoire', async () => {
     enqueue(execOp('exec-1'));
     enqueue(setOp('set-1', 1));
     const fns = okFns();
@@ -1391,14 +1392,121 @@ describe('quarantaine (rejet définitif de la base)', () => {
       if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
       setItem(k, v);
     };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const res = await flush(fns);
 
-    // L'op est passée en base mais son retrait n'a pas pu s'écrire : elle sera
-    // rejouée (sans effet, idempotente) au prochain flush, pas tout de suite.
+    // Le retrait de la première op n'a pas pu s'écrire : le miroir mémoire le
+    // tient, donc elle n'est envoyée qu'UNE fois et la passe continue.
     expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
-    expect(fns.insertSet).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    clearQueue();
+  });
+});
+
+// --- Stockage plein : la file tient en mémoire (audit sync, constat 7) --------
+//
+// Avant : l'écriture refusée était signalée en console et c'est tout. L'op
+// enfilée n'existait nulle part, la bannière disait « Synchronisé ».
+
+describe('stockage plein (quota) : miroir mémoire de la file', () => {
+  /** Le stockage refuse toute écriture de la file tant que `full` est vrai. */
+  function quota(): { full: boolean } {
+    const state = { full: true };
+    const store = globalThis.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string) => {
+      if (state.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    return state;
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    clearQueue();
+    vi.restoreAllMocks();
+  });
+
+  it('l’op enfilée n’est pas perdue : elle est en file, comptée, et le refus est dit', () => {
+    quota();
+
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-1', 's1']);
+    expect(pendingCount()).toBe(2);
+    expect(storageFailing()).toBe(true);
+    // Rien n'a pu être écrit sur l'appareil.
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+  });
+
+  it('le flush envoie ce que tient le miroir', async () => {
+    quota();
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.calls().map((op) => op.id)).toEqual(['exec-1', 's1']);
+    // File vide : la retirer du stockage passe toujours, le miroir est rendu.
+    expect(storageFailing()).toBe(false);
+  });
+
+  it('dès que le stockage accepte de nouveau, la file est persistée et le miroir rendu', () => {
+    const state = quota();
+    enqueue(execOp());
+    expect(storageFailing()).toBe(true);
+
+    state.full = false;
+    enqueue(setOp('s1', 1));
+
+    expect(storageFailing()).toBe(false);
+    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(2);
+  });
+
+  it('le cache de lecture cède la place avant de renoncer au stockage', () => {
+    // Stockage à capacité bornée, déjà rempli par des copies de lecture.
+    const store = globalThis.localStorage as Storage & { removeItem: (k: string) => void };
+    const setItem = store.setItem.bind(store);
+    const removeItem = store.removeItem.bind(store);
+    const sizes = new Map<string, number>();
+    const CAPACITY = 1000;
+    const used = () => [...sizes.values()].reduce((n, size) => n + size, 0);
+    store.setItem = (k: string, v: string) => {
+      if (used() - (sizes.get(k) ?? 0) + v.length > CAPACITY) throw new Error('QuotaExceededError');
+      sizes.set(k, v.length);
+      setItem(k, v);
+    };
+    store.removeItem = (k: string) => {
+      sizes.delete(k);
+      removeItem(k);
+    };
+    // Le polyfill de ce fichier n'énumère pas ses clés : la purge du cache en a besoin.
+    Object.defineProperty(store, 'length', { get: () => sizes.size, configurable: true });
+    (store as unknown as { key: (i: number) => string | null }).key = (i) =>
+      [...sizes.keys()][i] ?? null;
+    localStorage.setItem('croustylift:readcache:user-1:exo-execs:e1', 'x'.repeat(950));
+
+    enqueue(execOp());
+
+    expect(storageFailing()).toBe(false);
+    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(1);
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-execs:e1')).toBeNull();
+  });
+
+  it('« Annuler la séance » agit aussi sur la file tenue en mémoire', () => {
+    quota();
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('s1', 1, 'exec-1'));
+    enqueue(execOp('exec-2'));
+
+    purgeByExecution('exec-1');
+
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-2']);
   });
 });
 

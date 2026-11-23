@@ -148,3 +148,24 @@ describe('arrivalGuardLabel', () => {
     );
   });
 });
+
+describe('syncBannerLabel, stockage plein', () => {
+  it('ne dit jamais « Synchronisé » quand les saisies ne tiennent qu’en mémoire', () => {
+    const { tone, label } = syncBannerLabel({
+      pending: 2,
+      quarantined: 0,
+      online: true,
+      unsaved: true,
+    });
+    expect(tone).toBe('warn');
+    expect(label).toBe(
+      'Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte. 2 en attente d’envoi.',
+    );
+  });
+
+  it('file vide mais séance en cours non sauvegardée : l’avertissement reste', () => {
+    expect(
+      syncBannerLabel({ pending: 0, quarantined: 0, online: true, unsaved: true }).label,
+    ).toBe('Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte.');
+  });
+});

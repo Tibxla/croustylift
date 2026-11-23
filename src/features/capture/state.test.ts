@@ -12,6 +12,7 @@ import {
   isResumable,
   LAUNCH_EXPIRY_MS,
   shouldReanchorLaunch,
+  capturePersistFailing,
   clearCaptureState,
   clearOwnCaptureState,
   hydratedState,
@@ -1188,5 +1189,51 @@ describe('clearOwnCaptureState (purge de la Déconnexion)', () => {
     expect(localStorage.getItem('croustylift:capture:seance-b:2026-11-22')).not.toBeNull();
     // Rien d'autre que le préfixe capture n'est touché.
     expect(localStorage.getItem('croustylift:outbox')).toBe('[]');
+  });
+});
+
+describe('persist, stockage plein', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  it('le refus du stockage est signalé, puis levé dès qu’une sauvegarde passe', () => {
+    const state = initialState(upperA, '2026-11-23');
+    const store = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = store.setItem.bind(localStorage);
+    let full = true;
+    store.setItem = (k, v) => {
+      if (full && k.startsWith('croustylift:capture:')) throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+
+    persist(state);
+    expect(capturePersistFailing()).toBe(true);
+
+    full = false;
+    persist(state);
+    expect(capturePersistFailing()).toBe(false);
+    expect(loadPersisted(upperA, '2026-11-23')?.executionId).toBe(state.executionId);
+  });
+
+  it('les copies de lecture cèdent la place à la séance en cours', () => {
+    const state = initialState(upperA, '2026-11-23');
+    const COPY = 'croustylift:readcache:user-a:exo-execs:e1';
+    localStorage.setItem(COPY, 'copie');
+    const store = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = store.setItem.bind(localStorage);
+    store.setItem = (k, v) => {
+      // Plein tant que la copie de lecture occupe la place.
+      if (localStorage.getItem(COPY) !== null) throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+
+    persist(state);
+
+    expect(capturePersistFailing()).toBe(false);
+    expect(localStorage.getItem(COPY)).toBeNull();
+    expect(loadPersisted(upperA, '2026-11-23')?.executionId).toBe(state.executionId);
   });
 });

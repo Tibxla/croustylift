@@ -4,6 +4,7 @@ import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
 import { loadLocalAccount } from '../../lib/local-account';
+import { clearReadCache } from '../../lib/read-cache';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -664,19 +665,43 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
   }
 }
 
+/** La dernière sauvegarde de l'état de capture a-t-elle été refusée par le stockage ? */
+let persistFailing = false;
+
+/**
+ * Vrai tant que l'état de capture en cours n'a pas pu être écrit sur l'appareil
+ * (stockage plein) : il ne tient qu'en mémoire et ne survivrait pas à la
+ * fermeture de l'app. La bannière de synchro le dit.
+ */
+export function capturePersistFailing(): boolean {
+  return persistFailing;
+}
+
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
-  try {
-    // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
-    // capture d'un compte sous un autre (cf. `loadPersisted`).
-    const ownerId = loadLocalAccount()?.userId;
-    localStorage.setItem(
-      storageKey(state.sessionId, state.date),
-      JSON.stringify(ownerId ? { ...state, ownerId } : state),
-    );
-  } catch {
-    // Quota plein / mode privé : on dégrade silencieusement, la capture reste en mémoire.
+  // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
+  // capture d'un compte sous un autre (cf. `loadPersisted`).
+  const ownerId = loadLocalAccount()?.userId;
+  const key = storageKey(state.sessionId, state.date);
+  const value = JSON.stringify(ownerId ? { ...state, ownerId } : state);
+  const write = (): boolean => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (write()) {
+    persistFailing = false;
+    return;
   }
+  // Quota plein : les copies de lecture cèdent la place (elles se relisent sur
+  // le réseau, pas une séance en cours), puis nouvel essai. Si rien n'y fait,
+  // la capture reste en mémoire et le refus est signalé (bannière), au lieu de
+  // l'ancienne dégradation muette.
+  clearReadCache();
+  persistFailing = !write();
 }
 
 export function clearPersisted(session: Session, date: string): void {

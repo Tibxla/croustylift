@@ -43,6 +43,7 @@ import {
   exerciseNoteOutboxOp,
 } from '../notes/data';
 import {
+  capturePersistFailing,
   captureReducer,
   clearPersisted,
   getDatedNote,
@@ -69,6 +70,7 @@ import {
   quarantineCount,
   purgeByExecution,
   readQueue,
+  storageFailing,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -621,6 +623,8 @@ function CaptureBoard({
   useEffect(() => {
     if (state.closedAt !== null) clearPersisted(session, date);
     else persist(state);
+    // La bannière relit l'état du stockage (plein ou non) après chaque sauvegarde.
+    notifySync();
   }, [state, session, date]);
 
   // --- Synchro via outbox ---------------------------------------------------
@@ -976,6 +980,8 @@ function CaptureBoard({
  *   - vide      → « Synchronisé » (vert, discret) ;
  *   - en ligne  → « N en attente » (info, sync en cours) ;
  *   - hors ligne→ « Hors ligne » (warn).
+ * Par le STOCKAGE : s'il refuse les écritures (plein), la bannière passe à
+ * l'ambre et le dit, la file ne tenant plus qu'en mémoire.
  * Et par la QUARANTAINE (ops rejetées par la base) : tant qu'elle n'est pas vide,
  * jamais « Synchronisé », une ligne ambre le dit (cf. `syncBannerLabel`). Elle
  * est lue ici, pas par les appelants : la bannière la signale partout où elle
@@ -989,10 +995,17 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
     () => quarantineCount(),
     () => 0,
   );
+  // Stockage plein : la file ou la séance en cours ne tiennent qu'en mémoire.
+  const unsaved = useSyncExternalStore(
+    subscribeSync,
+    () => storageFailing() || capturePersistFailing(),
+    () => false,
+  );
   const { tone, label } = syncBannerLabel({
     pending,
     quarantined,
     online: status !== 'offline',
+    unsaved,
   });
   const tones: Record<SyncTone, { dot: string; text: string }> = {
     good: { dot: 'bg-good shadow-[0_0_8px_var(--color-good)]', text: 'text-ink-muted' },

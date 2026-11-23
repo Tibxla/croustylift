@@ -24,8 +24,21 @@ export function syncBannerLabel(input: {
   pending: number;
   quarantined: number;
   online: boolean;
+  /**
+   * Le stockage de l'appareil refuse les écritures (plein) : la file ou la
+   * séance en cours ne tiennent qu'en mémoire. Prime sur tout le reste, en
+   * ambre : fermer l'app maintenant perdrait des saisies.
+   */
+  unsaved?: boolean;
 }): { tone: SyncTone; label: string } {
   const { pending, quarantined, online } = input;
+  if (input.unsaved) {
+    const waiting = pending > 0 ? ` ${pending} en attente d’envoi.` : '';
+    return {
+      tone: 'warn',
+      label: `Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte.${waiting}`,
+    };
+  }
   const refused =
     quarantined > 0
       ? `${refusedSubject(quarantined)}, non envoyée${quarantined > 1 ? 's' : ''}.`
