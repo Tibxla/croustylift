@@ -19,7 +19,7 @@ figure pas n'est pas connu.
   au lancement ; `recharts` avec l'Analyse seulement). Leur hash ne change pas d'un
   déploiement à l'autre : seul le code de l'app est retéléchargé. Chaque chunk a un
   budget gzip, vérifié en CI (`scripts/bundle-size.mjs`, qui fait foi pour les chiffres).
-  Polices restreintes aux sous-ensembles latins.
+  Polices restreintes au sous-ensemble latin de Geist et Geist Mono (59 ko précachés).
 - ✅ **Domaine** : gardes division par zéro (`meanY`) et fourchette inversée (`min>max`).
 - ✅ **Sync/outbox** : reset orphelin compensé (`deleteExecution`), `handleSaveDatedNote`
   sur projection `stateRef` (M6), garde de tête outbox robuste via `_seq`, `mergeProgress`
@@ -207,8 +207,6 @@ perte), finition.
 - **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
   à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
   (14) les fige.
-- **Inter toujours embarquée** (finition) : seconde de pile, environ 133 ko de polices
-  en précache. À caler sur les polices de la refonte visuelle.
 - **Exports sans consommateur** (finition) : `summarizeBlocks`, `describeNoteKind`,
   `loadDatedNote`, `initialState`, `upperA`, et les autres exports sans appelant, pas
   relus.
