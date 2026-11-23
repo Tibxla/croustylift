@@ -10,7 +10,7 @@
 // (régression linéaire %/semaine). Le seul travail propre à ce module est de
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
 import { buildPrimaryCurve, curveUnit } from './primary-curve'
-import { blockKey } from './block'
+import { blockKey, instantMs } from './block'
 import { roundRate, weeklyProgressionRate } from './progression'
 import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from './types'
 
@@ -35,19 +35,14 @@ export interface BlockProgression {
 export interface BlockComparison {
   first: BlockProgression
   second: BlockProgression
+  /** L'unité des deux courbes, celle de l'exo (cf. `curveUnit`). */
+  unit: CurveUnit
   /**
    * Le bloc à la meilleure pente (la plus haute : celle qui monte le plus, ou
    * qui recule le moins), `'tie'` si les pentes affichées sont égales, ou
    * `null` si l'un des deux n'a pas de pente mesurable (pas de verdict trompeur).
    */
   winner: Winner
-}
-
-/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
-function instantMs(ts: string | undefined): number | null {
-  if (ts === undefined) return null
-  const ms = Date.parse(ts)
-  return Number.isNaN(ms) ? null : ms
 }
 
 /**
@@ -76,8 +71,13 @@ function isBeforeBoundary(
  * demi-ouverte `[début, fin)` : la fin est le début du bloc suivant, donc une
  * exécution lancée à cet instant appartient déjà au bloc suivant. Un bloc en
  * cours (`end === null`) capte tout depuis son début.
+ *
+ * Sert aussi à la pente de la carte d'un exo, lue sur le bloc en cours (ADR
+ * 0016, amendement du 2026-11-23). À ne pas refaire : filtrer les POINTS d'une
+ * courbe par date. Une séance faite avant une retouche du plan le même jour
+ * retomberait dans le nouveau bloc (ADR 0001, amendement du 2026-11-23).
  */
-function executionsInBlock(
+export function executionsInBlock(
   executions: ExerciseExecution[],
   exerciseId: string,
   block: Block,
@@ -164,6 +164,7 @@ export function compareBlocks(
   return {
     first: firstProgression,
     second: secondProgression,
+    unit,
     winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
   }
 }
@@ -260,6 +261,7 @@ export function compareBlockSeances(
   return {
     first: firstProgression,
     second: secondProgression,
+    unit,
     winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
   }
 }

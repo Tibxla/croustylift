@@ -14,7 +14,7 @@ import {
   type SeanceInfo,
   type TrainedExercise,
 } from './data';
-import type { ExerciseExecution } from '../../domain/types';
+import type { Block, ExerciseExecution } from '../../domain/types';
 import { detectBlocks } from '../../domain/block';
 import { summarizeBlockSeances } from '../../domain/block-comparison';
 import { buildConfigTimeline } from './config-timeline';
@@ -469,6 +469,112 @@ describe('analyzeExecutions : exo saisi à 0 kg', () => {
     // reps, à une courbe en kilos.
     expect(analysis.seanceCurves.map((c) => c.seanceId)).toEqual(['s-upper']);
     expect(analysis.zeroLoadHoles).toBe(2);
+  });
+});
+
+// Constat D9 de l'audit du 2026-11-22 : la pente du badge couvrait tout
+// l'historique de la séance. Elle porte sur le bloc en cours (ADR 0016,
+// amendement du 2026-11-23).
+describe('analyzeExecutions : la pente porte sur le bloc en cours', () => {
+  /** Jour ISO `start` + `days`. */
+  const plus = (start: string, days: number) =>
+    new Date(Date.parse(start) + days * 86_400_000).toISOString().slice(0, 10);
+  const current = (start: string, startAt?: string): Block => ({
+    configId: 'c2',
+    start,
+    end: null,
+    ...(startAt ? { startAt } : {}),
+  });
+
+  it('20 semaines à plat puis 6 semaines à +2 kg : la pente est celle du nouveau plan', () => {
+    const flat = Array.from({ length: 20 }, (_, i) =>
+      execution(plus('2026-01-05', i * 7), 100, 's-upper'),
+    );
+    const rising = Array.from({ length: 6 }, (_, i) =>
+      execution(plus('2026-05-25', i * 7), 100 + 2 * i, 's-upper'),
+    );
+    const all = [...flat, ...rising];
+
+    const whole = analyzeExecutions(exercise, all, names).seanceCurves[0]!;
+    const scoped = analyzeExecutions(exercise, all, names, current('2026-05-25')).seanceCurves[0]!;
+
+    // Sur tout l'historique, le nouveau plan est noyé : stagnation.
+    expect(whole.weeklyRate!).toBeLessThan(0.5);
+    expect(scoped.weeklyRate!).toBeGreaterThan(1.5);
+    expect(scoped.ratePeriod).toEqual({ since: '2026-05-25', sessions: 6 });
+    // La courbe, elle, garde tout l'historique.
+    expect(scoped.curve).toHaveLength(26);
+  });
+
+  it('bloc trop court : pas de pente, et surtout pas celle de tout l’historique', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+      execution('2026-03-02', 95, 's-upper'),
+      execution('2026-03-09', 97, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, current('2026-03-01')).seanceCurves[0]!;
+    expect(curve.weeklyRate).toBeNull();
+    expect(curve.ratePeriod).toEqual({ since: '2026-03-01', sessions: 2 });
+  });
+
+  it('séance jamais faite depuis le début du bloc : zéro séance, pas de pente', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, current('2026-03-01')).seanceCurves[0]!;
+    expect(curve.weeklyRate).toBeNull();
+    expect(curve.ratePeriod).toEqual({ since: '2026-03-01', sessions: 0 });
+  });
+
+  it('chaque séance a sa pente, lue dans le même bloc', () => {
+    const all = [
+      execution('2026-03-02', 80, 's-upper'),
+      execution('2026-03-09', 82, 's-upper'),
+      execution('2026-03-16', 84, 's-upper'),
+      execution('2026-03-04', 70, 's-fullbody'),
+      execution('2026-02-01', 60, 's-fullbody'),
+    ];
+    const { seanceCurves } = analyzeExecutions(exercise, all, names, current('2026-03-01'));
+    const upper = seanceCurves.find((c) => c.seanceId === 's-upper')!;
+    const fullbody = seanceCurves.find((c) => c.seanceId === 's-fullbody')!;
+    expect(upper.ratePeriod.sessions).toBe(3);
+    expect(upper.weeklyRate!).toBeGreaterThan(0);
+    expect(fullbody.ratePeriod.sessions).toBe(1);
+    expect(fullbody.weeklyRate).toBeNull();
+  });
+
+  it('rattachement par instant : la séance lancée avant la retouche du même jour reste hors du bloc', () => {
+    const before: ExerciseExecution = {
+      ...execution('2026-03-01', 100, 's-upper', 'e-avant'),
+      startedAt: '2026-03-01T17:00:00.000Z',
+    };
+    const after: ExerciseExecution = {
+      ...execution('2026-03-01', 101, 's-upper', 'e-apres'),
+      startedAt: '2026-03-01T19:00:00.000Z',
+    };
+    const curve = analyzeExecutions(
+      exercise,
+      [before, after],
+      names,
+      current('2026-03-01', '2026-03-01T18:30:00.000Z'),
+    ).seanceCurves[0]!;
+    expect(curve.curve).toHaveLength(2);
+    expect(curve.ratePeriod.sessions).toBe(1);
+  });
+
+  it('compte sans aucun bloc : la pente couvre tout l’historique, période sans début', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, null).seanceCurves[0]!;
+    expect(curve.weeklyRate!).toBeGreaterThan(0);
+    expect(curve.ratePeriod).toEqual({ since: null, sessions: 3 });
   });
 });
 

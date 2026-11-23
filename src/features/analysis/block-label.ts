@@ -7,13 +7,7 @@
 // dans les <option> natifs selon l'OS (Android), et le libellé sert aussi là.
 // Pas de tiret long (préférence produit ferme).
 import type { Block } from '../../domain/types'
-
-/** 'YYYY-MM-DD' → 'JJ/MM'. Renvoie l'entrée telle quelle si elle est mal formée. */
-function shortDay(iso: string): string {
-  const [, month, day] = iso.split('-')
-  if (!month || !day) return iso
-  return `${day}/${month}`
-}
+import { shortDay } from './chart-time'
 
 /** Plage de dates lisible d'un bloc, p.ex. « 05/01 · 10/02 » ou « 10/02 · en cours ». */
 export function blockLabel(block: Block): string {

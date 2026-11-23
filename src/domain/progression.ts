@@ -1,8 +1,14 @@
 import type { E1rmPoint } from './types'
 
+/**
+ * Sous ce nombre de points, et d'autant de JOURS distincts, une pente n'est pas
+ * mesurée (cf. `weeklyProgressionRate`).
+ */
+export const MIN_SLOPE_POINTS = 3
+
 export function weeklyProgressionRate(
   points: E1rmPoint[],
-  minPoints = 3,
+  minPoints = MIN_SLOPE_POINTS,
 ): number | null {
   if (points.length < minPoints) {
     return null

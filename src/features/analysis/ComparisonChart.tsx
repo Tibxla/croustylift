@@ -22,20 +22,11 @@ import {
 } from 'recharts';
 import type { Side } from '../../domain/block-comparison';
 import type { CurveUnit } from '../../domain/types';
+import { ACCENT, HAIR, INK_MUTED, LINE, READOUT_TICK } from './chart-style';
+import { measureLabel } from './unit-label';
 import { weekLabel, type WeeklyPoint } from './comparison-series';
 
-const ACCENT = 'var(--color-accent)';
-const LINE = 'var(--color-line)';
-const HAIR = 'var(--color-hair)';
-const INK_MUTED = 'var(--color-ink-muted)';
 
-/** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
-const READOUT_TICK = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  fill: INK_MUTED,
-  fontVariant: 'tabular-nums',
-} as const;
 
 export interface ComparisonChartProps {
   first: WeeklyPoint[];
@@ -46,7 +37,7 @@ export interface ComparisonChartProps {
   firstLabel: string;
   secondLabel: string;
   /** L'unité des deux courbes : 'reps' pour un exo jamais chargé (cf. CurveUnit). */
-  unit?: CurveUnit;
+  unit: CurveUnit;
 }
 
 /** Couleur d'un côté : accent s'il gagne, ink-muted sinon (jamais deux accents). */
@@ -100,7 +91,7 @@ export function ComparisonChart({
   winner,
   firstLabel,
   secondLabel,
-  unit = 'kg',
+  unit,
 }: ComparisonChartProps) {
   const firstColor = colorFor('first', winner);
   const secondColor = colorFor('second', winner);
@@ -110,7 +101,7 @@ export function ComparisonChart({
       <div
         className="h-40 w-full"
         role="img"
-        aria-label={`Comparaison des pentes ${unit === 'reps' ? 'des reps effectives' : 'e1RM'} des blocs ${firstLabel} et ${secondLabel}, par semaine de bloc.`}
+        aria-label={`Comparaison des pentes ${measureLabel(unit)} des blocs ${firstLabel} et ${secondLabel}, par semaine de bloc.`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>

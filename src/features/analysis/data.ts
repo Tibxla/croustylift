@@ -14,6 +14,7 @@ import { afterId, fetchAllRows, inCreationOrder } from '../../lib/fetch-all';
 import { buildPrimaryCurve, curveUnit } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
+import { executionsInBlock } from '../../domain/block-comparison';
 import { detectBlocks } from '../../domain/block';
 import { buildConfigTimeline, type FirstExecutionRow } from './config-timeline';
 import { orderByPlan, planExerciseOrder } from './exercise-order';
@@ -57,8 +58,10 @@ export interface TrainedExercise {
  * (séries 2+), dérivées des seules exécutions de cette séance — un même exo n'a
  * pas la même perf selon le contexte de fatigue de la séance (cf. GLOSSARY.md
  * « Référence », même logique que le scope de la Capture).
- * `weeklyRate` vaut `null` sans assez de points pour ajuster une droite ;
  * `secondaryCurve` est `[]` sans série 2+.
+ *
+ * La COURBE couvre tout l'historique de la séance ; la PENTE ne porte que sur le
+ * bloc en cours (cf. `weeklyRate`).
  */
 export interface SeanceCurve {
   /** Id de la séance (toutes versions), ou `null` si la séance n'est plus résoluble. */
@@ -75,9 +78,29 @@ export interface SeanceCurve {
   label: string;
   curve: E1rmPoint[];
   secondaryCurve: E1rmPoint[];
+  /**
+   * Pente %/semaine sur le BLOC EN COURS (ADR 0016, amendement du 2026-11-23) :
+   * les seules exécutions de cette séance lancées depuis le dernier changement
+   * de plan. `null` sans assez de points dans ce bloc ; jamais de repli sur tout
+   * l'historique, qui noierait le plan actuel sous les précédents.
+   */
   weeklyRate: number | null;
+  /** La période que couvre `weeklyRate`, pour l'écrire à côté du chiffre. */
+  ratePeriod: RatePeriod;
   /** Date du dernier point : départage la séance mise en avant (l'accent). */
   lastDate: string;
+}
+
+/** La période d'une pente : depuis quand, et sur combien de séances. */
+export interface RatePeriod {
+  /**
+   * Jour ISO (heure locale) où s'ouvre le bloc en cours. `null` quand le compte
+   * n'a aucun bloc (ni routine activée, ni séance rattachée à une routine) : la
+   * pente couvre alors tout l'historique, et l'écran le dit.
+   */
+  since: string | null;
+  /** Séances de cette courbe dans la période (ses points). */
+  sessions: number;
 }
 
 /**
@@ -254,11 +277,16 @@ export async function loadExerciseExecutions(
  * forment un groupe « Hors séance » (jamais de donnée écartée en silence). Tri :
  * la séance la plus récemment exécutée d'abord (elle porte l'accent dans l'UI),
  * libellé en départage pour rester stable. Pure : pas d'accès réseau.
+ *
+ * `currentBlock` est le bloc en cours du compte (`null` s'il n'en a aucun) : la
+ * pente de chaque séance se mesure sur ses exécutions de ce bloc, rattachées par
+ * leur instant de lancement comme dans la comparaison de blocs.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
   executions: ExerciseExecution[],
   seances: ReadonlyMap<string, SeanceInfo>,
+  currentBlock: Block | null = null,
 ): ExerciseAnalysis {
   const groups = new Map<string | null, ExerciseExecution[]>();
   for (const execution of executions) {
@@ -283,6 +311,16 @@ export function analyzeExecutions(
     if (info?.routineId) routineIds.add(info.routineId);
     const seanceName =
       seanceId === null ? 'Hors séance' : info?.name ?? '(séance inconnue)';
+    // La pente : le bloc en cours seulement. On filtre les EXÉCUTIONS (par leur
+    // lancement), puis on reconstruit la courbe, plutôt que de couper les points
+    // par date.
+    const blockCurve = currentBlock
+      ? buildPrimaryCurve(
+          executionsInBlock(group, exercise.exerciseId, currentBlock),
+          exercise.exerciseId,
+          unit,
+        )
+      : curve;
     seanceCurves.push({
       seanceId,
       seanceName,
@@ -290,7 +328,11 @@ export function analyzeExecutions(
       label: seanceName,
       curve,
       secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId, unit),
-      weeklyRate: weeklyProgressionRate(curve),
+      weeklyRate: weeklyProgressionRate(blockCurve),
+      ratePeriod: {
+        since: currentBlock?.start ?? null,
+        sessions: blockCurve.length,
+      },
       lastDate: curve[curve.length - 1]?.date ?? '',
     });
   }
@@ -404,6 +446,9 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
  * Charge tous les exos entraînés et calcule leur analyse en une passe, dans
  * l'ordre du plan de la routine courante puis par nom (décision du 2026-09-13).
  *
+ * Les blocs du compte sont lus en parallèle : la pente de chaque carte porte sur
+ * le bloc en cours.
+ *
  * UNE lecture paginée de toutes les séries, regroupée par exo côté client
  * (`groupExecutionRows`). À ne pas refaire : une requête par exo. Trente exos
  * coûtaient une trentaine d'allers-retours en parallèle, après une première
@@ -414,7 +459,7 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
  * (issue #50), le même que partout ailleurs.
  */
 export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
-  const [rows, overrides, planOrder] = await Promise.all([
+  const [rows, overrides, planOrder, blocks] = await Promise.all([
     fetchAllRows<ExecutionSetRow>((after, limit) =>
       afterId(
         supabase.from('performed_sets').select(EXECUTION_SET_SELECT).order('id').limit(limit),
@@ -423,7 +468,10 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
     ),
     loadExerciseOverrides(),
     loadPlanExerciseOrder(),
+    // Le bloc en cours borne la pente de chaque carte (cf. `SeanceCurve.weeklyRate`).
+    loadBlocks(),
   ]);
+  const currentBlock = blocks.find((block) => block.end === null) ?? null;
 
   const grouped = groupExecutionRows(rows);
   const trainedByName: TrainedExercise[] = [...grouped].map(([exerciseId, exercise]) => ({
@@ -433,7 +481,7 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
 
   return orderByPlan(trainedByName, planOrder).map((exercise) => {
     const { executions, seances } = grouped.get(exercise.exerciseId)!;
-    return analyzeExecutions(exercise, executions, seances);
+    return analyzeExecutions(exercise, executions, seances, currentBlock);
   });
 }
 

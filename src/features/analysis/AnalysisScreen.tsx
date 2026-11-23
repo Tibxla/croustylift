@@ -1,6 +1,7 @@
 // La surface « Analyse au calme » : pour chaque exo entraîné, sa progression
-// %/semaine et la courbe e1RM de la 1ʳᵉ série, plus la tendance des séries 2+
-// en dessous (subordonnée). Distincte de la capture (salle).
+// %/semaine sur le BLOC EN COURS et la courbe e1RM de la 1ʳᵉ série (reps
+// effectives pour un exo jamais chargé), plus la tendance des séries 2+ en
+// dessous (subordonnée). Distincte de la capture (salle).
 //
 // Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
 // secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
@@ -31,6 +32,8 @@ import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 import { errorMessage } from '../../lib/error-message';
 import { heroLabel, measureLabel, secondaryLabel, zeroLoadHolesLabel } from './unit-label';
+import { periodLabel, rateCaption } from './rate-period';
+import { timeAxis } from './chart-time';
 
 /** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
 type AnalysisTab = 'curves' | 'journal';
@@ -348,10 +351,15 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
       [...next].filter((k) => allKeys.includes(k)),
     );
   }
-  // Une pente nulle (`null`) malgré des points = pas assez d'exécutions : la
-  // courbe reste le héros, on explique juste l'absence de pente sous le graphe.
-  const slopeUnavailable =
-    primary !== null && primary.weeklyRate === null && primary.curve.length > 0;
+  // La pente porte sur le BLOC EN COURS de la séance accent (ADR 0016,
+  // amendement du 2026-11-23) : on écrit sa période sous le graphe, et quand elle
+  // manque on dit ce qui manque dans ce bloc, sans retomber sur tout l'historique.
+  const year = new Date().getFullYear();
+  const caption = primary
+    ? rateCaption(primary.ratePeriod, primary.weeklyRate !== null, year)
+    : null;
+  // Même axe temps pour la courbe et les séries 2+ en dessous.
+  const axis = timeAxis(shown.map((sc) => sc.curve));
   // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []). En
   // multi-séances il suit la séance ACCENT seule : superposer aussi les
   // subordonnées en h-24 gris sur gris serait illisible.
@@ -367,7 +375,10 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
     <section className="panel rounded-2xl p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <h3 className="text-base font-semibold leading-tight">{name}</h3>
-        <ProgressionBadge weeklyRate={primary?.weeklyRate ?? null} />
+        <ProgressionBadge
+          weeklyRate={primary?.weeklyRate ?? null}
+          period={primary ? periodLabel(primary.ratePeriod, year) : undefined}
+        />
       </div>
 
       {latest != null && (
@@ -391,6 +402,8 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
 
       <E1rmChart
         unit={unit}
+        axis={axis}
+        periodStart={primary?.ratePeriod.since}
         series={shown.map((sc) => ({
           id: curveKey(sc.seanceId),
           name: sc.label,
@@ -406,16 +419,12 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         }}
       />
 
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-2">
         <span className="readout text-[11px] text-ink-faint">
           {measureLabel(unit)} · 1ʳᵉ série
         </span>
-        {slopeUnavailable && (
-          <span className="text-xs text-ink-muted">
-            Pas assez de séances pour la pente.
-          </span>
-        )}
       </div>
+      {caption && <p className="mt-1 text-xs text-ink-muted">{caption}</p>}
 
       {/* Courbe en kilos d'un exo aussi saisi à 0 kg : ces séances-là sont des
           trous, on le dit. */}
@@ -431,7 +440,7 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
             Séries 2+ · {secondaryLabel(unit)}
             {multi ? ` · ${primary.label}` : ''}
           </span>
-          <SecondaryChart curve={primary.secondaryCurve} unit={unit} />
+          <SecondaryChart curve={primary.secondaryCurve} unit={unit} axis={axis} />
         </div>
       )}
 

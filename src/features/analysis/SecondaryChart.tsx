@@ -11,53 +11,21 @@ import {
   ResponsiveContainer,
   Tooltip,
   XAxis,
-  type TooltipContentProps,
+  YAxis,
 } from 'recharts';
+import { dayToTime, timeTick, type TimeAxis } from './chart-time';
+import { secondaryLabel } from './unit-label';
+import { HAIR, INK_MUTED, READOUT_TICK } from './chart-style';
+import { E1rmTooltip } from './E1rmChart';
 import type { CurveUnit, E1rmPoint } from '../../domain/types';
 
-const LINE = 'var(--color-hair)';
-const INK_MUTED = 'var(--color-ink-muted)';
 
-/** Police mono tabulaire pour les chiffres mesurés (axe, tooltip). */
-const READOUT_TICK = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  fill: INK_MUTED,
-  fontVariant: 'tabular-nums',
-} as const;
-
-/** 'YYYY-MM-DD' → 'JJ/MM' (mono, court : l'axe X ne doit jamais déborder). */
-function formatDateTick(iso: string): string {
-  const [, month, day] = iso.split('-');
-  if (!month || !day) return iso;
-  return `${day}/${month}`;
-}
 
 // Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
 // fournit donc vides au typage statique → on les rend partielles.
-function SecondaryTooltip({
-  active,
-  payload,
-  unit,
-}: Partial<TooltipContentProps<number, string>> & { unit: CurveUnit }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const first = payload[0];
-  if (!first) return null;
-  const point = first.payload as E1rmPoint;
-  return (
-    <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
-      <p className="readout text-sm font-medium text-ink-muted">
-        {Math.round(point.e1rm)}
-        <span className="ml-1 text-xs font-normal text-ink-muted">{unit} moy.</span>
-      </p>
-    </div>
-  );
-}
-
 /** Résumé textuel de la courbe pour les lecteurs d'écran (le SVG est muet). */
 function describeCurve(curve: E1rmPoint[], unit: CurveUnit): string {
-  const measure = unit === 'reps' ? 'des reps effectives moyennes' : 'e1RM moyen';
+  const measure = secondaryLabel(unit);
   if (curve.length === 0) return `Tendance ${measure} des séries 2+, aucune donnée.`;
   const values = curve.map((p) => p.e1rm);
   const min = Math.round(Math.min(...values));
@@ -65,23 +33,49 @@ function describeCurve(curve: E1rmPoint[], unit: CurveUnit): string {
   return `Tendance ${measure} des séries 2+ sur ${curve.length} séances, de ${min} à ${max} ${unit}.`;
 }
 
-export function SecondaryChart({ curve, unit = 'kg' }: { curve: E1rmPoint[]; unit?: CurveUnit }) {
+export function SecondaryChart({
+  curve,
+  unit,
+  axis,
+}: {
+  curve: E1rmPoint[];
+  unit: CurveUnit;
+  /**
+   * L'axe temps de la courbe primaire au-dessus : les deux graphes partagent
+   * bornes et graduations, une date tombe à la même abscisse dans les deux.
+   */
+  axis: TimeAxis | null;
+}) {
+  const data = curve.map((p) => ({ ...p, t: dayToTime(p.date) }));
   return (
     <div className="h-24 w-full" role="img" aria-label={describeCurve(curve, unit)}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={curve} margin={{ top: 6, right: 20, bottom: 2, left: -8 }}>
+        <LineChart data={data} margin={{ top: 6, right: 20, bottom: 2, left: -8 }}>
+          {/* Axe temps réel, comme la primaire (cf. chart-time.ts). */}
           <XAxis
-            dataKey="date"
-            tickFormatter={formatDateTick}
+            type="number"
+            dataKey="t"
+            domain={axis?.domain}
+            ticks={axis?.ticks}
+            tickFormatter={timeTick}
             tick={READOUT_TICK}
             tickLine={false}
-            axisLine={{ stroke: LINE }}
+            axisLine={{ stroke: HAIR }}
             minTickGap={24}
             interval="preserveStartEnd"
           />
+          {/* Axe Y muet de la largeur de celui de la primaire : il réserve la
+              même marge, sans quoi les deux tracés seraient décalés. */}
+          <YAxis
+            width={36}
+            tick={false}
+            tickLine={false}
+            axisLine={false}
+            domain={['dataMin - 1', 'dataMax + 1']}
+          />
           <Tooltip
-            content={<SecondaryTooltip unit={unit} />}
-            cursor={{ stroke: LINE, strokeWidth: 1 }}
+            content={<E1rmTooltip unit={`${unit} moy.`} named={false} />}
+            cursor={{ stroke: HAIR, strokeWidth: 1 }}
           />
           <Line
             type="monotone"

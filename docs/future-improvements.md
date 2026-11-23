@@ -96,6 +96,13 @@ figure pas n'est pas connu.
   chargée fait basculer tout l'exo en kilos ; la corriger dans le journal le ramène en
   reps. Seule la saisie du poids du corps lèverait ces limites.
 
+- **Pente de la carte : le bloc en cours, pour toute la routine** (ADR 0016, amendement
+  du 2026-11-23). La pente du badge ne couvre plus que le bloc en cours, période écrite
+  sous le graphe. Une retouche de n'importe quelle séance de la routine courante ouvre
+  un bloc pour toutes (ADR 0001) : chaque carte reste sans pente le temps de refaire
+  trois séances, et le dit. Une période propre à chaque séance l'éviterait, au prix
+  d'une seconde définition du bloc.
+
 ## Résiduels connus du lot 3 (2026-11-23)
 
 Le lot 3 s'est arrêté après une relecture, un tour de corrections et une vérification

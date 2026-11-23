@@ -1,7 +1,7 @@
 import type { ConfigChange, Block } from './types'
 
-/** Instant en millisecondes, ou `null` s'il est absent ou illisible. */
-function instantMs(at: string | undefined): number | null {
+/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
+export function instantMs(at: string | undefined): number | null {
   if (at === undefined) return null
   const ms = Date.parse(at)
   return Number.isNaN(ms) ? null : ms
