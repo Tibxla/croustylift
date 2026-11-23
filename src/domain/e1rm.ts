@@ -26,3 +26,22 @@ export function estimateE1rm(weightKg: number, reps: number, rir: number): numbe
   }
   return weightKg * (1 + (reps + rir - 1) / 30)
 }
+
+/**
+ * e1RM arrondi à 0,01 kg, la précision à laquelle deux e1RM se COMPARENT. Deux
+ * couples poids/reps différents peuvent valoir le même e1RM en rationnels
+ * (87,5 × 5 et 85 × 6 : 99,1666… kg) tout en sortant deux flottants distincts à
+ * un bit près ; comparés bruts, l'un « battait » l'autre.
+ */
+export function roundE1rm(e1rm: number): number {
+  return Math.round(e1rm * 100) / 100
+}
+
+/**
+ * `candidate` bat-il STRICTEMENT `best` ? Comparaison au centième : une égalité
+ * mathématique n'est jamais un dépassement (Référence comme Record, ADR 0010).
+ * Toute comparaison d'e1RM du dépôt passe par ici.
+ */
+export function e1rmBeats(candidate: number, best: number): boolean {
+  return roundE1rm(candidate) > roundE1rm(best)
+}

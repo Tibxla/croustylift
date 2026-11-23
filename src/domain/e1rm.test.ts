@@ -1,4 +1,4 @@
-import { estimateE1rm } from './e1rm'
+import { e1rmBeats, estimateE1rm, roundE1rm } from './e1rm'
 
 describe('estimateE1rm', () => {
   it('applies shifted Epley at RIR 0', () => {
@@ -58,5 +58,24 @@ describe('estimateE1rm', () => {
 
   it('throws when rir is not an integer', () => {
     expect(() => estimateE1rm(100, 5, 1.5)).toThrow(/rir/i)
+  })
+})
+
+describe('comparaison d’e1RM au centième', () => {
+  it('arrondit à 0,01 kg', () => {
+    expect(roundE1rm(99.16666666666667)).toBe(99.17)
+  })
+
+  it('deux e1RM égaux en rationnels ne se battent pas, malgré le bruit flottant', () => {
+    const a = estimateE1rm(87.5, 5, 0)
+    const b = estimateE1rm(85, 6, 0)
+    expect(a).not.toBe(b)
+    expect(e1rmBeats(a, b)).toBe(false)
+    expect(e1rmBeats(b, a)).toBe(false)
+  })
+
+  it('un e1RM strictement supérieur au centième bat l’autre', () => {
+    expect(e1rmBeats(100.01, 100)).toBe(true)
+    expect(e1rmBeats(100, 100.01)).toBe(false)
   })
 })

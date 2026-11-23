@@ -17,7 +17,7 @@
 // Tout est DÉRIVÉ de l'historique, jamais stocké : un record se recalcule depuis
 // les exécutions. Style aligné sur reference.ts (fonctions pures, ExerciseExecution[]).
 import type { ExerciseExecution, PerformedSet } from './types'
-import { estimateE1rm } from './e1rm'
+import { e1rmBeats, estimateE1rm } from './e1rm'
 import { pairSidesByOrder } from './unilateral'
 
 /** Une charge réalisée : poids et reps (le couple d'un record poids×reps). */
@@ -65,7 +65,7 @@ export function personalRecord(
     // logique (paire G/D au même order) vaut son CÔTÉ FAIBLE, cohérent avec la
     // courbe primaire et l'ADR 0005 ; la perf porteuse est la ligne de ce côté.
     for (const { value, set } of seriesE1rms(exec.sets)) {
-      if (bestE1rm === null || value > bestE1rm) {
+      if (bestE1rm === null || e1rmBeats(value, bestE1rm)) {
         bestE1rm = value
         bestE1rmSet = { weightKg: set.weightKg, reps: set.reps }
       }
@@ -151,7 +151,7 @@ function sideRecord(
 
       // e1RM : toutes les séries de CE côté comptent (même règle qu'en bilatéral).
       const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir)
-      if (bestE1rm === null || e1rm > bestE1rm) {
+      if (bestE1rm === null || e1rmBeats(e1rm, bestE1rm)) {
         bestE1rm = e1rm
         bestE1rmSet = { weightKg: s.weightKg, reps: s.reps }
       }
@@ -169,11 +169,13 @@ function sideRecord(
 
 /**
  * La série `set` bat-elle le record d'e1RM ? Strict : un record égalé n'est pas
- * un nouveau record. Un record vierge (null) est toujours battu par une série réelle.
+ * un nouveau record, y compris par un autre couple poids/reps de même e1RM
+ * (comparaison au centième, cf. `e1rmBeats`). Un record vierge (null) est
+ * toujours battu par une série réelle.
  */
 export function isE1rmRecord(record: PersonalRecord, set: PerformedSet): boolean {
   const e1rm = estimateE1rm(set.weightKg, set.reps, set.rir)
-  return record.bestE1rm === null || e1rm > record.bestE1rm
+  return record.bestE1rm === null || e1rmBeats(e1rm, record.bestE1rm)
 }
 
 /**
