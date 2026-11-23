@@ -65,14 +65,9 @@ export function SecondaryChart({
             interval="preserveStartEnd"
           />
           {/* Axe Y muet de la largeur de celui de la primaire : il réserve la
-              même marge, sans quoi les deux tracés seraient décalés. */}
-          <YAxis
-            width={36}
-            tick={false}
-            tickLine={false}
-            axisLine={false}
-            domain={['dataMin - 1', 'dataMax + 1']}
-          />
+              même marge, sans quoi les deux tracés seraient décalés. Échelle
+              par défaut de Recharts (depuis zéro), inchangée. */}
+          <YAxis width={36} tick={false} tickLine={false} axisLine={false} />
           <Tooltip
             content={<E1rmTooltip unit={`${unit} moy.`} named={false} />}
             cursor={{ stroke: HAIR, strokeWidth: 1 }}
