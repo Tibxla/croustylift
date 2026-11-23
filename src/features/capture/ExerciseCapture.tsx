@@ -1048,7 +1048,9 @@ function DatedNoteSection({
   // vidée (on ne referme pas un champ sous les doigts).
   const [open, setOpen] = useState(hasNote);
   if (hasNote && !open) setOpen(true);
-  const { draft, saved, handleChange, flush } = useAutosavedNote(value, onSave);
+  const { draft, saved, handleChange, flush } = useAutosavedNote(value, onSave, {
+    adoptIncoming: true,
+  });
 
   if (!open) {
     return (

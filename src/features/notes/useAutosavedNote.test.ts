@@ -62,6 +62,7 @@ import { shouldAdoptIncomingNote, useAutosavedNote } from './useAutosavedNote';
 type Api = ReturnType<typeof useAutosavedNote>;
 let api: Api;
 let parentValue = '';
+let adoptIncoming = true;
 const saves: string[] = [];
 /** Le parent : enregistre, et rend la nouvelle valeur au champ au rendu suivant. */
 const onSave = (body: string) => {
@@ -77,7 +78,7 @@ function render(): Api {
     engine.state.cursor = 0;
     engine.state.dirty = false;
     engine.state.pending = [];
-    api = hook(parentValue, onSave);
+    api = hook(parentValue, onSave, { adoptIncoming });
     if (engine.state.dirty) continue; // état ajusté pendant le rendu : on rend de nouveau
     for (const run of engine.state.pending.splice(0)) run();
     if (!engine.state.dirty) return api;
@@ -98,6 +99,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   engine.state.slots = [];
   parentValue = '';
+  adoptIncoming = true;
   saves.length = 0;
 });
 
@@ -180,6 +182,17 @@ describe('useAutosavedNote, valeur qui arrive pendant que le champ est monté', 
     expect(saves).toEqual(['épaule raide']);
     // Le parent rend la valeur normalisée : le brouillon, avec son espace, ne bouge pas.
     expect(render().draft).toBe('épaule raide ');
+  });
+
+  it('sans l’option (note d’instructions) : une valeur entrante ne touche jamais le champ', () => {
+    adoptIncoming = false;
+    parentValue = 'prise serrée';
+    expect(render().draft).toBe('prise serrée');
+    // Une lecture partie avant un enregistrement ramène l'ancien texte dans la prop.
+    parentValue = 'ancienne version';
+    expect(render().draft).toBe('prise serrée');
+    unmount();
+    expect(saves).toEqual([]);
   });
 
   it('une seconde arrivée remplace la première tant que le champ reste intact', () => {

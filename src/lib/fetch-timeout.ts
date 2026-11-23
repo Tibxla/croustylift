@@ -22,8 +22,8 @@ export const REQUEST_TIMEOUT_MS = 20_000;
  * quatre fois : environ 87 s avant d'échouer, pour un délai annoncé de 20 s. Un
  * délai dépassé est un abandon : une seule tentative, l'appelant décide de la
  * suite (copie locale, nouvel essai du flush). Une coupure franche (`TypeError`)
- * reste rejouée par la bibliothèque : elle échoue vite, ses rejeux coûtent au
- * plus 7 s d'attente.
+ * reste rejouée par la bibliothèque, avec 7 s d'attente entre ses essais : au
+ * pire, trois échecs francs puis une tentative qui pend, environ 27 s.
  */
 export const TIMEOUT_ERROR_NAME = 'AbortError';
 

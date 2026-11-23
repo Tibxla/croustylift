@@ -31,6 +31,15 @@ const SAVED_FEEDBACK_MS = 1600;
 export function useAutosavedNote(
   initialValue: string,
   onSave: (body: string) => void,
+  /**
+   * `adoptIncoming` : reprendre dans le champ une valeur du parent qui change en
+   * cours de vie (cf. `shouldAdoptIncomingNote`). Activé pour la NOTE DATÉE, dont
+   * la valeur ne bouge que par la saisie ou par une adoption. Laissé éteint pour
+   * la note d'instructions : sa valeur vient d'une copie de lecture qui se
+   * revalide, et une lecture partie avant un enregistrement ne doit jamais
+   * pouvoir ramener l'ancien texte dans le champ.
+   */
+  options: { adoptIncoming?: boolean } = {},
 ): {
   draft: string;
   /** Feedback transitoire « enregistrée » (retombe seul, jamais posé par le flush de démontage). */
@@ -52,7 +61,7 @@ export function useAutosavedNote(
   const [seenValue, setSeenValue] = useState(initialValue);
   if (seenValue !== initialValue) {
     setSeenValue(initialValue);
-    if (shouldAdoptIncomingNote(initialValue, baseline, draft)) {
+    if (options.adoptIncoming === true && shouldAdoptIncomingNote(initialValue, baseline, draft)) {
       setDraft(initialValue);
       setBaseline(initialValue);
     }
