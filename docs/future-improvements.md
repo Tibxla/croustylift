@@ -115,13 +115,6 @@ perte), finition.
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.
 
-### Capture, reprise
-
-- **Brouillon unilatéral réamorcé** (mineure). Une réponse tardive qui ajoute le côté
-  manquant fait basculer le sélecteur de côté, et le brouillon en cours (poids, reps,
-  RIR) est réinitialisé. Piste : tenir le côté choisi pour une partie du brouillon
-  touché (`ExerciseCapture.tsx`).
-
 ### Comptes
 
 - **Invitation : entrer sans avoir défini son mot de passe** (importante, parcours

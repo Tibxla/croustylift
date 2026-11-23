@@ -17,7 +17,7 @@ import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
 import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
-import { seedDraft, shouldReseedDraft } from './capture-seed';
+import { seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
 import { draftE1rm } from './draft-e1rm';
 import { NoteField } from '../notes/NoteField';
 import { useAutosavedNote } from '../notes/useAutosavedNote';
@@ -113,11 +113,49 @@ export function ExerciseCapture({
   // un log/annulation (même déclencheur que le brouillon : exerciseId + loggedCount),
   // pour reproposer le côté qui reste à faire sans jamais le FORCER (l'utilisateur
   // peut basculer). Bilatéral : pas de côté, l'état n'est pas affiché.
+  //
+  // Exception : quand le nombre de séries a bougé par une RÉPONSE TARDIVE de la
+  // base (`historyEpoch`, série arrivée d'ailleurs) et non par un geste, le côté
+  // n'est pas reproposé si l'utilisateur a déjà réglé son brouillon ou choisi
+  // son côté (`shouldReproposeSide`). Sinon le sélecteur basculait sous ses
+  // doigts, et ce changement de côté, pris pour un geste, réinitialisait poids,
+  // reps et RIR en cours de réglage.
   const [selectedSide, setSelectedSide] = useState<Side>(() => defaultSide(progress.sets));
+  // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
+  // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
+  // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
+  // l'historique ne déplace plus ce que l'utilisateur règle.
+  const draftTouchedRef = useRef(false);
+  const touchDraft = useCallback(() => {
+    draftTouchedRef.current = true;
+  }, []);
+  // Côté CHOISI au sélecteur par l'utilisateur pour la saisie en cours : levé
+  // quand une nouvelle saisie commence, comme le marqueur du brouillon.
+  const sideChosenRef = useRef(false);
+  const chooseSide = useCallback((side: Side) => {
+    sideChosenRef.current = true;
+    setSelectedSide(side);
+  }, []);
+  const sideKey = `${exercise.exerciseId}:${loggedCount}:${unilateral}`;
+  const sideKeyRef = useRef(sideKey);
+  const sideEpochRef = useRef(historyEpoch);
   useEffect(() => {
-    if (unilateral) setSelectedSide(defaultSide(progress.sets));
+    const keyChanged = sideKeyRef.current !== sideKey;
+    const fromReality = sideEpochRef.current !== historyEpoch;
+    sideKeyRef.current = sideKey;
+    sideEpochRef.current = historyEpoch;
+    if (!unilateral) return;
+    const repropose = shouldReproposeSide({
+      keyChanged,
+      fromReality,
+      draftTouched: draftTouchedRef.current,
+      sideChosen: sideChosenRef.current,
+    });
+    if (!repropose) return;
+    sideChosenRef.current = false;
+    setSelectedSide(defaultSide(progress.sets));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exercise.exerciseId, loggedCount, unilateral]);
+  }, [sideKey, unilateral, historyEpoch]);
   const currentSide: Side | null = unilateral ? selectedSide : null;
 
   // Badge UNIQUE par série loggée (ADR 0010) : deux axes distincts —
@@ -171,14 +209,6 @@ export function ExerciseCapture({
   const [reps, setReps] = useState(seed.reps);
   const [rir, setRir] = useState(seed.rir);
 
-  // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
-  // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
-  // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
-  // l'historique ne déplace plus ce que l'utilisateur règle.
-  const draftTouchedRef = useRef(false);
-  const touchDraft = useCallback(() => {
-    draftTouchedRef.current = true;
-  }, []);
   // Ce qui ouvre une NOUVELLE saisie : l'exo, le nombre de séries loggées, le côté.
   const draftKey = `${exercise.exerciseId}:${loggedCount}:${currentSide ?? ''}`;
   const seededKeyRef = useRef(draftKey);
@@ -437,7 +467,7 @@ export function ExerciseCapture({
           <SideSelector
             value={currentSide}
             done={sidesDoneAt(progress.sets, currentSetOrder(progress.sets))}
-            onChange={setSelectedSide}
+            onChange={chooseSide}
           />
         </div>
       )}
