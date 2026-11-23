@@ -911,13 +911,13 @@ export async function loadTodayExecution(
   // close. On lit la file aux deux bouts de la lecture, car la réponse est figée
   // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
   // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
-  const pendingBefore = readQueue();
+  const pendingBefore = readOwnQueue();
   try {
     const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
     if (today === null) return null;
     const retired =
       isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
-      isExecutionRetiredInQueue(today.executionId, readQueue());
+      isExecutionRetiredInQueue(today.executionId, readOwnQueue());
     return retired ? null : today;
   } catch {
     return null;
