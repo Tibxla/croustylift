@@ -29,6 +29,7 @@ import { ProgressionBadge } from './ProgressionBadge';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
+import { errorMessage } from '../../lib/error-message';
 
 /** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
 type AnalysisTab = 'curves' | 'journal';
@@ -62,7 +63,7 @@ export function AnalysisScreen() {
         if (!active) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();
@@ -242,7 +243,7 @@ function JournalTab({ onMutated }: { onMutated: () => void }) {
         if (!active) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();

@@ -31,6 +31,7 @@ import { SESSION_DURATION_MAX_MIN } from '../capture/summary';
 import type { OutboxOp } from '../capture/outbox';
 import type { Side } from '../../domain/types';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
+import { errorMessage } from '../../lib/error-message';
 
 /** Raison du blocage de rechargement tenu par des corrections non sauvées d'une séance passée. */
 const PAST_SESSION_DRAFT_BLOCK = 'brouillon-seance-passee';
@@ -174,7 +175,7 @@ export function PastSessionEditor({
         if (!active) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();
@@ -279,7 +280,7 @@ export function PastSessionEditor({
       // remonteront au prochain flush ; on garde l'éditeur ouvert pour réessayer.
       setSave({
         phase: 'error',
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }
@@ -319,7 +320,7 @@ export function PastSessionEditor({
       // remontera au prochain flush. On garde la feuille pour signaler l'échec.
       setDel({
         phase: 'error',
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }

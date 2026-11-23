@@ -104,6 +104,7 @@ import { ExerciseCapture } from './ExerciseCapture';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { buildSummary, elapsedMinutesSince } from './summary';
 import { formatRelativeDay } from './format';
+import { errorMessage } from '../../lib/error-message';
 
 type LoadState =
   | { phase: 'loading' }
@@ -423,7 +424,7 @@ export function CaptureScreen() {
             if (!active() || loadGenRef.current !== gen) return;
             setLoad({
               phase: 'error',
-              message: err instanceof Error ? err.message : String(err),
+              message: errorMessage(err),
             });
           });
         });
@@ -525,7 +526,7 @@ export function CaptureScreen() {
         if (!alive) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();
@@ -550,7 +551,7 @@ export function CaptureScreen() {
           if (!alive) return;
           setLoad({
             phase: 'error',
-            message: err instanceof Error ? err.message : String(err),
+            message: errorMessage(err),
           });
         }
       })();

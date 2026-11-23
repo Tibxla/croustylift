@@ -14,6 +14,7 @@ import { Stepper } from './Stepper';
 import { MetricRow } from './MetricRow';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import { formatCount } from './format';
+import { errorMessage } from '../../lib/error-message';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
@@ -90,7 +91,7 @@ export function SessionEnd({
       await onSave(values);
       setSaved(values);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSaving(false);
     }

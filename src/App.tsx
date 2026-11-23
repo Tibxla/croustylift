@@ -29,6 +29,7 @@ import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
 import { openDiag } from './viewport/watch'
 import { APP_VERSION_LABEL } from './version'
+import { errorMessage } from './lib/error-message'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
 // PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
@@ -229,9 +230,7 @@ function AuthenticatedApp({
           phase: 'error',
           message: offline
             ? "Hors connexion, et aucune copie locale de ton compte sur cet appareil. Repasse en ligne une fois pour l'amorcer."
-            : err instanceof Error
-              ? err.message
-              : String(err),
+            : errorMessage(err),
         })
       }
     })()
@@ -423,7 +422,7 @@ function AuthenticatedApp({
                       }
                       setSignOutIssue({
                         kind: 'error',
-                        message: err instanceof Error ? err.message : String(err),
+                        message: errorMessage(err),
                       })
                     }
                   })()

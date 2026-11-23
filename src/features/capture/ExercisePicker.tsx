@@ -11,6 +11,7 @@ import { deriveExerciseDeviations } from './session-edit';
 import { formatPrescription, formatRange } from './format';
 import { foldAccents } from '../../domain/text';
 import { countLogicalSetsDone } from '../../domain/set-count';
+import { errorMessage } from '../../lib/error-message';
 
 /**
  * Nombre de SÉRIES LOGIQUES faites d'un exo, et non de lignes loggées : en
@@ -418,7 +419,7 @@ function CatalogSheet({
         const data = await loadCatalog();
         if (alive) setRows(data);
       } catch (err) {
-        if (alive) setError(err instanceof Error ? err.message : String(err));
+        if (alive) setError(errorMessage(err));
       }
     })();
     return () => {
@@ -443,7 +444,7 @@ function CatalogSheet({
       const exercise = await loadCatalogExercise({ id: row.id, name: row.name });
       onChosen(exercise);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       setPicking(null);
     }
   };

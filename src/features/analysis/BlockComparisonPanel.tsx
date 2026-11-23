@@ -30,6 +30,7 @@ import { ComparisonChart } from './ComparisonChart';
 import { TrendArrow } from './TrendArrow';
 import { trendColor, trendOf, winnerVerdict } from './trend';
 import { formatRate } from './format';
+import { errorMessage } from '../../lib/error-message';
 
 /** Sous ce nombre de points, une option n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -62,7 +63,7 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
         if (!active) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();
