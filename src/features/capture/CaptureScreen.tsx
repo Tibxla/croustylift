@@ -7,6 +7,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -817,7 +818,6 @@ function CaptureBoard({
   // annulation / une nouvelle séance REMONTENT l'écran (onExitToLaunch) plutôt que
   // de muter la date en place, donc un état sans setter suffit (séance neuve =
   // nouveau board).
-  const initRef = useRef(init);
   const [date] = useState(() => init.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
@@ -876,8 +876,10 @@ function CaptureBoard({
   // en base — sinon un id client neuf (séance neuve) — pour que les nouvelles ops
   // ne créent pas une exécution orpheline décorrélée des séries (bug H1).
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } =
-      initRef.current;
+    // `init` : la prop du PREMIER rendu. Cet initialiseur ne tourne qu'au
+    // montage, il la lit donc telle qu'à l'ouverture, sans passer par une ref
+    // (lue pendant le rendu, elle valait un warning `react-hooks/refs`).
+    const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } = init;
     const fromSupabase = hydratedState(
       initialSession,
       progress,
@@ -893,7 +895,7 @@ function CaptureBoard({
     const versioned = { ...fromSupabase, seanceVersionId };
     // Dernier temps, dans tous les cas : les écritures de séries de cette
     // exécution encore en file (cf. `CaptureInit.queuedOps`).
-    const { queuedOps } = initRef.current;
+    const { queuedOps } = init;
     const withQueued = (built: CaptureState): CaptureState => {
       const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
       return progress === built.progress ? built : { ...built, progress };
@@ -903,7 +905,7 @@ function CaptureBoard({
     // La base a répondu pour cette exécution : elle fait foi pour les séries,
     // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
     // le Journal revenait ici, le cache local étant le plus long.
-    const { pendingSetIds } = initRef.current;
+    const { pendingSetIds } = init;
     if (pendingSetIds === null) return withQueued(merged);
     return withQueued({
       ...merged,
@@ -915,12 +917,20 @@ function CaptureBoard({
   // capturé par les handlers est figé entre deux renders : deux taps « Logger »
   // rapprochés liraient le MÊME state et calculeraient le MÊME set_order, alors
   // que le reducer en pose deux distincts → deux lignes au même order en base.
-  // On tient donc une projection à jour : assignée à chaque render (suit undo /
-  // reset / réhydratation) ET avancée localement par les handlers JUSTE après leur
-  // dispatch, pour que le tap suivant parte de l'état projeté, pas du périmé. Ainsi
-  // l'order (et l'id à annuler) de l'op et celui du reducer coïncident toujours.
+  // On tient donc une projection à jour : recalée sur l'état à chaque rendu
+  // commité (suit undo / reset / réhydratation) ET avancée localement par les
+  // handlers JUSTE après leur dispatch, pour que le tap suivant parte de l'état
+  // projeté, pas du périmé. Ainsi l'order (et l'id à annuler) de l'op et celui
+  // du reducer coïncident toujours.
+  //
+  // Recalée dans un effet de MISE EN PAGE : il passe au commit, avant tout
+  // effet passif et avant que le navigateur ne rende la main, donc avant tout
+  // geste et toute réponse réseau, seuls lecteurs de la projection. L'écrire pendant le rendu valait un warning `react-hooks/refs`,
+  // et aurait posé l'état d'un rendu abandonné.
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useLayoutEffect(() => {
+    stateRef.current = state;
+  });
 
   // Réponse tardive de la base pour CETTE exécution : réconciliée dans l'état,
   // et la projection avancée du même pas (un log suivant part du bon rang). Le

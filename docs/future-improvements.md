@@ -163,9 +163,6 @@ perte), finition.
   logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
   `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de
   sortie, blocages de rechargement, brouillons) n'est vérifié qu'en navigateur.
-- **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
-  à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
-  (14) les fige.
 - **Inter toujours embarquée** (finition) : seconde de pile, environ 133 ko de polices
   en précache. À caler sur les polices de la refonte visuelle.
 - **Exports sans consommateur** (finition) : `summarizeBlocks`, `describeNoteKind`,
