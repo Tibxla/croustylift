@@ -1104,6 +1104,62 @@ export function capturePersistFailing(): boolean {
 }
 
 /**
+ * L'état de capture que le stockage a refusé, RETENU en mémoire tel qu'il devait
+ * être écrit. Sans cela il n'existait que dans le tableau monté : un exo ajouté
+ * à la séance n'alimente pas la file d'écritures, donc rien ne signalait qu'un
+ * rechargement (mise à jour de l'app au changement d'onglet) allait le détruire,
+ * et quitter la Capture le perdait sans nouvel essai. Retenu, il peut être
+ * réécrit plus tard (`retryPersistCaptureState`) et retient le rechargement
+ * tant qu'il ne l'est pas (`hasUnpersistedCaptureState`, pwa/reload-guards).
+ *
+ * Levé dès que l'état est écrit, que sa séance est close, annulée ou supprimée,
+ * ou que le compte est purgé.
+ */
+let unsaved: {
+  key: string;
+  value: string;
+  date: string;
+  executionId: string;
+  exerciseIds: string[];
+} | null = null;
+
+function forgetUnsaved(): void {
+  unsaved = null;
+  persistFailing = false;
+}
+
+/**
+ * Un état de capture ne tient-il qu'en mémoire, faute d'avoir pu être écrit ?
+ * Borné dans le temps : un état d'avant la veille de `today` n'est plus
+ * reprenable (`resolveCaptureDate`), il ne retient donc plus rien. Sans cette
+ * borne, un stockage resté plein sur une séance jamais close retiendrait la
+ * mise à jour de l'app sans fin.
+ */
+export function hasUnpersistedCaptureState(today: string = todayIso()): boolean {
+  return unsaved !== null && unsaved.date >= previousDayIso(today);
+}
+
+/**
+ * Retente d'écrire l'état de capture retenu en mémoire (l'utilisateur a pu
+ * libérer de la place). Rend vrai s'il n'y a plus rien de retenu en sortie.
+ */
+export function retryPersistCaptureState(): boolean {
+  if (unsaved === null) return true;
+  if (typeof localStorage === 'undefined') return false;
+  const { key, value, exerciseIds } = unsaved;
+  const written = writeMakingRoom(() => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, exerciseIds);
+  if (written) forgetUnsaved();
+  return written;
+}
+
+/**
  * Les exos qu'un état de capture porte : ceux de sa disposition (ajoutés ou
  * remplaçants, absents du template), ceux qui ont du réalisé, et l'exo ouvert.
  */
@@ -1136,13 +1192,20 @@ export function persist(state: CaptureState): void {
   // signalé (bannière), au lieu de l'ancienne dégradation muette. Les exos de
   // CET état ne cèdent jamais leurs copies : c'est souvent l'ajout d'un exo qui
   // déclenche l'éviction, avant même que sa disposition soit sur l'appareil.
-  persistFailing = !writeMakingRoom(write, captureStateExerciseIds(state));
+  const exerciseIds = captureStateExerciseIds(state);
+  persistFailing = !writeMakingRoom(write, exerciseIds);
+  // Refusé : l'état est retenu tel qu'il devait être écrit (cf. `unsaved`).
+  unsaved = persistFailing
+    ? { key, value, date: state.date, executionId: state.executionId, exerciseIds }
+    : null;
 }
 
 export function clearPersisted(session: Session, date: string): void {
   // La séance est close ou abandonnée : ses exos n'ont plus à être protégés de
   // l'éviction (cf. cache-eviction).
   forgetEntrustedExercises();
+  // Ni à être réécrits : l'état retenu en mémoire, s'il est le sien, est levé.
+  if (unsaved?.key === storageKey(session.id, date)) forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(storageKey(session.id, date));
@@ -1160,6 +1223,7 @@ export function clearPersisted(session: Session, date: string): void {
  * Clôture et l'Annulation (`clearPersisted`), ciblé par id d'exécution.
  */
 export function clearPersistedExecution(executionId: string): void {
+  if (unsaved?.executionId === executionId) forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     // Collecte avant suppression : retirer en itérant décale les index.
@@ -1188,6 +1252,7 @@ export function clearPersistedExecution(executionId: string): void {
  * reste du storage sont purgés ailleurs).
  */
 export function clearCaptureState(): void {
+  forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     // Collecte avant suppression : retirer en itérant décale les index.
@@ -1209,6 +1274,8 @@ export function clearCaptureState(): void {
  * purge de la Déconnexion ; `clearCaptureState` reste celle du forçage.
  */
 export function clearOwnCaptureState(): void {
+  // L'état retenu en mémoire est celui de la séance en cours du compte reconnu.
+  forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     const owner = loadLocalAccount()?.userId;

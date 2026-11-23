@@ -71,6 +71,7 @@ import {
   nextSetOrder,
   pendingSide,
   persist,
+  retryPersistCaptureState,
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
@@ -982,6 +983,11 @@ function CaptureBoard({
 
   // --- Synchro via outbox ---------------------------------------------------
   const { status, pending } = useSyncStatus();
+
+  // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
+  // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
+  // démonté, le tableau ne le tient plus (cf. `retryPersistCaptureState`).
+  useEffect(() => () => void retryPersistCaptureState(), []);
 
   // L'exécution est enfilée UNE fois par MONTAGE, AVANT son premier set (la FK
   // séries→exécution impose l'ordre, garanti aussi par le FIFO de l'outbox).
