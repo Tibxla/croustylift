@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { dayToTime, shortDay, timeAxis, timeTick, timeToDay } from './chart-time'
+import { cardTimeAxis, dayToTime, shortDay, timeAxis, timeTick, timeToDay } from './chart-time'
+import { analyzeExecutions } from './data'
 
 const DAY = 24 * 60 * 60 * 1000
 const curve = (...dates: string[]) => dates.map((date) => ({ date, e1rm: 100 }))
@@ -52,3 +53,49 @@ describe('axe temps des graphes', () => {
     expect(axis.ticks.map(timeToDay)).toEqual(['2026-01-10'])
   })
 })
+
+// Relecture du second tour du lot 3 : l'axe commun ne couvrait que les primaires.
+describe('axe d’une carte : primaires affichées et séries 2+', () => {
+  const day = (date: string, first: number, second: number) => ({
+    date,
+    exerciseId: 'dips',
+    seanceId: 's1',
+    sets: [
+      { weightKg: first, reps: 8, rir: 0, order: 1 },
+      { weightKg: second, reps: 6, rir: 0, order: 2 },
+    ],
+  })
+
+  it('une date présente dans les seules séries 2+ entre dans l’axe des deux graphes', () => {
+    // Le 01/09, la 1ʳᵉ série est à 0 kg (trou de la primaire) et la 2ᵉ lestée.
+    const { seanceCurves } = analyzeExecutions(
+      { exerciseId: 'dips', name: 'Dips' },
+      [day('2026-09-01', 0, 5), day('2026-09-08', 5, 5), day('2026-09-15', 7.5, 5)],
+      new Map(),
+    )
+    const accent = seanceCurves[0]!
+    expect(accent.curve.map((p) => p.date)).toEqual(['2026-09-08', '2026-09-15'])
+    expect(accent.secondaryCurve[0]!.date).toBe('2026-09-01')
+
+    const axis = cardTimeAxis(seanceCurves)!
+    expect(axis.domain.map(timeToDay)).toEqual(['2026-09-01', '2026-09-15'])
+    // Chaque point des deux graphes tient dans ce domaine : Recharts n'en élargit aucun.
+    for (const p of [...accent.curve, ...accent.secondaryCurve]) {
+      expect(dayToTime(p.date)).toBeGreaterThanOrEqual(axis.domain[0])
+      expect(dayToTime(p.date)).toBeLessThanOrEqual(axis.domain[1])
+    }
+    // Sans le secondaire, l'axe commençait une semaine trop tard.
+    expect(timeToDay(timeAxis([accent.curve])!.domain[0])).toBe('2026-09-08')
+  })
+
+  it('le secondaire compté est celui de l’accent seul, et une carte vide n’a pas d’axe', () => {
+    const point = (date: string) => [{ date, e1rm: 1 }]
+    const axis = cardTimeAxis([
+      { curve: point('2026-02-01'), secondaryCurve: [] },
+      { curve: point('2026-02-10'), secondaryCurve: point('2026-01-01') },
+    ])!
+    expect(axis.domain.map(timeToDay)).toEqual(['2026-02-01', '2026-02-10'])
+    expect(cardTimeAxis([])).toBeNull()
+  })
+})
+

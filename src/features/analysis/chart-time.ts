@@ -70,3 +70,16 @@ export function timeAxis(curves: readonly E1rmPoint[][]): TimeAxis | null {
   )
   return { domain: [min, max], ticks }
 }
+
+/**
+ * L'axe temps d'une carte : celui de ses courbes AFFICHÉES (l'accent en tête) et
+ * du graphe des séries 2+ de l'accent, dessiné dessous. Le secondaire compte : une
+ * séance dont la 1ʳᵉ série est à 0 kg et la 2ᵉ lestée n'a de point que chez lui,
+ * et un axe borné aux seules primaires laissait Recharts élargir le sien, la même
+ * date tombant alors à deux abscisses.
+ */
+export function cardTimeAxis(
+  shown: readonly { curve: E1rmPoint[]; secondaryCurve: E1rmPoint[] }[],
+): TimeAxis | null {
+  return timeAxis([...shown.map((sc) => sc.curve), shown[0]?.secondaryCurve ?? []])
+}
