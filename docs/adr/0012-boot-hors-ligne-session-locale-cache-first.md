@@ -22,7 +22,7 @@ Capture seule (choisir sa séance, saisir avec Références, clôturer). Le jour
 
 ## Amendements du 2026-11-23
 
-- **Autre compte.** « Un autre compte doit passer par le forçage » est maintenant tenu par le code pour la Connexion comme pour l'inscription, et les écritures en attente ne partent que sous le compte qui les a saisies (ADR 0019).
+- **Autre compte.** « Un autre compte doit passer par le forçage » est maintenant tenu par le code pour la Connexion (l'inscription, d'abord gardée de la même façon, a été retirée de l'app : comptes sur invitation, ADR 0019), et les écritures en attente ne partent que sous le compte qui les a saisies (ADR 0019).
 - **Purge.** Le forçage reste la seule porte par laquelle des écritures non synchronisées disparaissent. Les copies de lecture et l'état de capture, eux, partent aussi quand une session validée arrive pour un autre compte et que le précédent n'a plus aucune écriture retenue (ADR 0019).
 - **Saisies refusées.** La Déconnexion est refusée tant que l'appareil retient des écritures, en file ou en quarantaine (ADR 0018).
 - **Copie de lecture.** Plusieurs lectures d'une même clé peuvent être en vol : la copie n'est écrite que sous gardes d'ordre, et l'historique d'un exo est relu après tout flush qui acquitte ses séries (ADR 0020).

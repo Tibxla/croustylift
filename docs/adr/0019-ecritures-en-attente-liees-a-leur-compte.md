@@ -25,3 +25,7 @@ La purge à l'arrivée d'un autre compte s'arrête devant des écritures retenue
 - La garde d'arrivée couvre la Connexion et l'inscription, pas une session ouverte par un lien de récupération : celle-ci arrive par l'événement d'auth, sans passer par `signIn`. Les saisies de l'ancien compte ne remontent pas sous le nouveau et ne sont pas purgées, mais le marqueur passe au nouveau compte dès qu'un événement d'auth porte sa session (`recognizeAccount`).
 - Le lecteur de session vit dans `lib/session-identity`, posé par la couche d'auth. La pagination s'en sert aussi (ADR 0022). Le cache de lecture, lui, garde ses copies sur le marqueur local, pas sur la session. Sans lecteur posé (tests de la file seule), rien n'est vérifié.
 - Amende l'ADR 0012 : le forçage reste la seule porte par laquelle des écritures non synchronisées disparaissent, mais les copies de lecture et l'état de capture d'un compte partent aussi quand un autre compte est reconnu et que le premier n'a plus rien de retenu.
+
+## Amendements du 2026-11-23 (Lot 3)
+
+- **Inscription fermée.** L'app n'a plus d'écran ni de lien « Créer un compte » : l'inscription est désactivée dans le projet Supabase et les comptes viennent par invitation. La garde d'arrivée n'a donc plus à couvrir l'inscription, et les passages ci-dessus qui la citent décrivent l'état d'avant. Un lien d'invitation ouvre une session sans mot de passe : l'invité est envoyé sur l'écran de mot de passe, le même que pour un lien de récupération (`auth/arrival-link`).

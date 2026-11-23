@@ -18,6 +18,11 @@ if (!url || !key) {
   )
 }
 
+// Fragment d'URL à l'arrivée (lien d'invitation ou de récupération), relevé
+// AVANT la création du client : supabase-js le retire de l'URL une fois la
+// session ouverte (cf. auth/arrival-link).
+export const arrivalHash = typeof window === 'undefined' ? '' : window.location.hash
+
 export const supabase = createClient<Database>(url, key)
 
 // Clé localStorage où supabase-js persiste sa session (dérivée du sous-domaine

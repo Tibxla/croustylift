@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
-import { supabase, supabaseAuthStorageKey } from '../lib/supabase'
+import { arrivalHash, supabase, supabaseAuthStorageKey } from '../lib/supabase'
+import { arrivalFromHash } from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
 import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
 import { recognizeAccount } from './account-switch'
@@ -38,11 +39,17 @@ setSessionUserReader(async () => {
 // chargement, avant que le moindre événement d'auth ne réécrive le marqueur.
 adoptLegacyOps()
 
+// Arrivée par lien d'INVITATION : la session s'ouvre par un simple SIGNED_IN,
+// sans PASSWORD_RECOVERY. Le premier événement porteur de session envoie donc
+// l'invité définir son mot de passe (une seule fois par chargement de page).
+let inviteArrivalPending = arrivalFromHash(arrivalHash).kind === 'invite'
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  // Positionné à true dès que Supabase émet PASSWORD_RECOVERY — l'app aiguille
-  // alors vers ResetPasswordScreen, prioritaire sur tout autre écran.
+  // Positionné à true dès que Supabase émet PASSWORD_RECOVERY, ou à l'arrivée par
+  // un lien d'invitation : l'app aiguille alors vers ResetPasswordScreen,
+  // prioritaire sur tout autre écran.
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
   // Marqueur d'identité local (ADR 0012) : qui est reconnu sur cet appareil.
   const [localAccount, setLocalAccount] = useState<LocalAccount | null>(() => loadLocalAccount())
@@ -118,6 +125,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLocalAccount(account)
         setOfflineRecognized(false)
         setSession(nextSession)
+        if (inviteArrivalPending) {
+          inviteArrivalPending = false
+          setIsPasswordRecovery(true)
+        }
         setLoading(false)
         return
       }
@@ -171,14 +182,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const held = foreignPendingWrites(email)
         if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) throw error
-      },
-      signUp: async (email, password) => {
-        // Même garde que la Connexion : sans confirmation d'e-mail, l'inscription
-        // ouvre une session sur-le-champ, par-dessus les saisies d'un autre.
-        const held = foreignPendingWrites(email)
-        if (held > 0) throw new PendingWritesError(held)
-        const { error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
       },
       signOut: async ({ force = false } = {}) => {

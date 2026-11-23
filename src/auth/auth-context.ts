@@ -25,7 +25,11 @@ export interface AuthContextValue {
   session: Session | null
   user: User | null
   loading: boolean
-  /** Vrai quand Supabase a emit PASSWORD_RECOVERY — l'app affiche l'écran de reset. */
+  /**
+   * Vrai quand l'utilisateur doit définir son mot de passe avant d'entrer : lien
+   * de récupération (PASSWORD_RECOVERY) ou lien d'invitation (cf. arrival-link).
+   * L'app affiche alors l'écran de mot de passe.
+   */
   isPasswordRecovery: boolean
   /** Marqueur d'identité local (ADR 0012) : posé à la Connexion, retiré à la Déconnexion. */
   localAccount: LocalAccount | null
@@ -36,7 +40,6 @@ export interface AuthContextValue {
    */
   offlineRecognized: boolean
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string) => Promise<void>
   /**
    * Déconnexion. Jette `PendingWritesError` si des écritures locales attendent
    * encore (ADR 0012) ; `force: true` assume la perte et purge quand même.

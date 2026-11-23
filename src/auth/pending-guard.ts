@@ -1,10 +1,10 @@
-// Garde « écritures en attente d'un autre compte » (ADR 0012), commune à la
-// Connexion et à l'inscription.
+// Garde « écritures en attente d'un autre compte » (ADR 0012) de la Connexion.
+// L'inscription est fermée (comptes sur invitation) : l'écran « Créer un
+// compte », qui contournait cette garde, n'existe plus.
 //
 // Des saisies non synchronisées appartiennent au compte que l'appareil reconnaît
 // (marqueur local-account). Un AUTRE compte ne s'installe pas par-dessus : seul
-// le forçage explicite peut les jeter. Avant, la garde ne couvrait que
-// `signIn` : « Créer un compte » la contournait (audit sync, constat 12).
+// le forçage explicite peut les jeter.
 import { loadLocalAccount } from '../lib/local-account';
 import { heldCount } from '../features/capture/outbox';
 
