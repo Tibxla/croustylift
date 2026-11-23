@@ -14,9 +14,6 @@
 //     (`onReadWritten`, ce que fait la Capture pour l'historique des exos, sans
 //     jamais déplacer une saisie en cours). Sans copie : réseau, et l'échec
 //     remonte à l'appelant.
-//   - `tolerantRead`    : pareil, mais un échec total rend un repli fourni —
-//     pour les lectures datées du jour (exécution en cours, repère « tu
-//     notais ») dont l'absence est un état valide du système.
 //   - `networkFirstRead`: réseau d'abord BORNÉ (3 s), copie locale en secours.
 //     Réservé aux décisions qui exigent le frais après une écriture (le check
 //     de premier lancement : créer sa routine puis la relire doit la voir).
@@ -372,23 +369,6 @@ export function cachedKeys(prefix: string): string[] {
 }
 
 /**
- * `cachedRead` tolérant : un échec TOTAL (pas de copie, pas de réseau) rend le
- * repli fourni au lieu de jeter. Pour les lectures dont l'absence est un état
- * valide (exécution du jour, repère « tu notais » — cf. GLOSSARY.md).
- */
-export async function tolerantRead<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-  fallback: T,
-): Promise<T> {
-  try {
-    return await cachedRead(key, fetcher);
-  } catch {
-    return fallback;
-  }
-}
-
-/**
  * Lecture « réseau d'abord » bornée (3 s), copie locale en secours. À réserver
  * aux décisions qui exigent le frais juste après une écriture (read-after-write),
  * comme le check de premier lancement — un `cachedRead` y servirait la copie
@@ -449,18 +429,4 @@ export function clearReadCache(): void {
   } catch {
     /* no-op */
   }
-}
-
-/**
- * Condensé court et stable d'une liste d'ids (djb2, hex) : clé de cache bornée
- * pour les lectures paramétrées par un ENSEMBLE (ex. toutes les versions d'une
- * séance), insensible à l'ordre.
- */
-export function stableKeyOf(parts: readonly string[]): string {
-  const joined = [...parts].sort().join('|');
-  let hash = 5381;
-  for (let i = 0; i < joined.length; i++) {
-    hash = ((hash << 5) + hash + joined.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(16);
 }

@@ -14,8 +14,6 @@ import {
   refreshRead,
   revalidateReadCache,
   seedRead,
-  stableKeyOf,
-  tolerantRead,
 } from './read-cache';
 import { clearLocalAccount, saveLocalAccount } from './local-account';
 
@@ -105,33 +103,6 @@ describe('cachedRead', () => {
   });
 });
 
-describe('tolerantRead', () => {
-  it('rend le repli quand il n’y a ni copie ni réseau', async () => {
-    await expect(
-      tolerantRead(
-        'k',
-        async () => {
-          throw new Error('offline');
-        },
-        null,
-      ),
-    ).resolves.toBeNull();
-  });
-
-  it('sert la copie plutôt que le repli quand elle existe', async () => {
-    await tolerantRead('k', async () => 'valeur', null);
-    await expect(
-      tolerantRead(
-        'k',
-        async () => {
-          throw new Error('offline');
-        },
-        null,
-      ),
-    ).resolves.toBe('valeur');
-  });
-});
-
 describe('networkFirstRead', () => {
   it('en ligne : rend le frais (jamais la copie) et met la copie à jour', async () => {
     await cachedRead('k', async () => 'périmé');
@@ -205,13 +176,6 @@ describe('clearReadCache', () => {
     }
     expect(rest.some((k) => k.startsWith('croustylift:readcache:'))).toBe(false);
     expect(rest).toContain('croustylift:outbox');
-  });
-});
-
-describe('stableKeyOf', () => {
-  it('est stable et insensible à l’ordre', () => {
-    expect(stableKeyOf(['a', 'b', 'c'])).toBe(stableKeyOf(['c', 'a', 'b']));
-    expect(stableKeyOf(['a', 'b'])).not.toBe(stableKeyOf(['a', 'c']));
   });
 });
 
