@@ -3,6 +3,8 @@ import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { buildCommit } from './scripts/build-commit.mjs'
+
 /** Nom du paquet npm d'un module (`@scope/nom` ou `nom`), ou null hors node_modules. */
 function packageOf(id: string): string | null {
   const marker = '/node_modules/'
@@ -17,14 +19,21 @@ const CHART_PACKAGES =
   /^(recharts|d3-.+|internmap|victory-vendor|decimal\.js-light|eventemitter3|es-toolkit|tiny-invariant|clsx|redux|redux-thunk|@reduxjs\/toolkit|react-redux|reselect|immer|react-is|use-sync-external-store)$/
 
 export default defineConfig({
+  define: {
+    __APP_COMMIT__: JSON.stringify(buildCommit()),
+    __APP_BUILT_AT__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [
     react(),
     tailwindcss(),
     VitePWA({
-      // Mise a jour automatique du service worker sans confirmation utilisateur.
-      // Adapte a un contexte salle de sport : on ne peut pas se permettre un
-      // prompt "Nouvelle version disponible" entre deux series.
-      registerType: 'autoUpdate',
+      // Le nouveau service worker ATTEND : c'est l'app qui décide quand basculer
+      // (src/pwa/register.ts). En `autoUpdate`, il prenait la main sous la page
+      // ouverte et purgeait du précache les chunks de l'ancien build : le premier
+      // tap sur l'Analyse importait alors un fichier disparu. Aucune invite n'est
+      // affichée pour autant (pas de « Nouvelle version disponible » entre deux
+      // séries) : l'app recharge seule à un moment sans saisie en cours.
+      registerType: 'prompt',
       // Les icônes du manifest sont déjà prises par `globPatterns` : sans ceci
       // elles figuraient deux fois dans la liste de précache.
       includeManifestIcons: false,
@@ -35,6 +44,10 @@ export default defineConfig({
       // runtimeCaching ci-dessous.
       workbox: {
         globPatterns: ['**/*.{js,css,html,woff2,woff,ttf,svg,png,ico,webp}'],
+        // Première visite : le service worker prend la page en charge dès son
+        // activation, sans attendre un rechargement (le précache sert aussitôt).
+        // Sans effet sur une mise à jour, qui reste en attente (voir plus haut).
+        clientsClaim: true,
         // Exclure explicitement les appels Supabase du cache SW.
         // La write-queue offline (outbox.ts) gere la persistance des ecritures ;
         // le SW n'a pas a s'en meler.

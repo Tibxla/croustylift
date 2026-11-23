@@ -14,15 +14,37 @@ import { flushOutbox } from './features/capture/sync'
 import { signOutRefusalLabel } from './features/capture/sync-label'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
+import {
+  applyUpdateNow,
+  captureInProgress,
+  maybeApplyUpdate,
+  recoverFromChunkFailure,
+  takeSurfaceAfterReload,
+  useUpdateReady,
+} from './pwa/register'
+import type { SurfaceName } from './pwa/update'
+import { APP_VERSION_LABEL } from './version'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
 // PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
 // « zéro-friction ») : recharts n'est téléchargé qu'à l'ouverture de l'onglet.
+//
+// Si le fichier du chunk est introuvable (build remplacé sous la page, cache vidé
+// par le système), on recharge la page une fois pour retrouver un shell et des
+// chunks cohérents, et on rouvre l'Analyse. La promesse reste alors en suspens :
+// le Suspense affiche son indicateur jusqu'au rechargement. Si le rechargement
+// n'est pas permis (hors ligne, séance en cours, déjà tenté), l'erreur remonte à
+// la frontière d'erreur, qui l'explique.
 const AnalysisScreen = lazy(() =>
-  import('./features/analysis/AnalysisScreen').then((m) => ({ default: m.AnalysisScreen })),
+  import('./features/analysis/AnalysisScreen')
+    .then((m) => ({ default: m.AnalysisScreen }))
+    .catch((err: unknown) => {
+      if (recoverFromChunkFailure('analysis')) return new Promise<never>(() => {})
+      throw err
+    }),
 )
 
-type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
+type Surface = SurfaceName
 
 /**
  * Joue une mise à jour d'état derrière l'API native View Transitions : le passage
@@ -106,7 +128,10 @@ function AuthenticatedApp({
 
   const [check, setCheck] = useState<RoutineCheck>({ phase: 'checking' })
   const [reloadKey, setReloadKey] = useState(0)
-  const [surface, setSurface] = useState<Surface>('capture')
+  // Après un rechargement décidé par l'app (mise à jour, chunk introuvable), on
+  // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
+  const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
+  const updateReady = useUpdateReady()
   // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
   // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
   const [signOutIssue, setSignOutIssue] = useState<
@@ -292,6 +317,29 @@ function AuthenticatedApp({
                   )}
                 </div>
               ) : null}
+              {/* Version du build : le déploiement est manuel, c'est ici qu'on
+                  vérifie depuis le téléphone quel commit tourne. Si une version
+                  plus récente attend, elle s'installe au prochain changement
+                  d'onglet ; le bouton évite d'avoir à le deviner. */}
+              <p className="readout mt-1 text-xs text-ink-faint">Version {APP_VERSION_LABEL}</p>
+              {updateReady && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm text-ink-muted">
+                    {captureInProgress()
+                      ? 'Mise à jour prête, installée après ta séance.'
+                      : 'Mise à jour prête.'}
+                  </p>
+                  {!captureInProgress() && (
+                    <button
+                      type="button"
+                      onClick={() => applyUpdateNow('analysis')}
+                      className="btn btn-secondary h-9 shrink-0 rounded-lg px-3 text-sm"
+                    >
+                      Mettre à jour
+                    </button>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -325,7 +373,13 @@ function AuthenticatedApp({
 
       <BottomNav
         surface={surface}
-        onSelect={(s) => withViewTransition(() => setSurface(s))}
+        onSelect={(s) => {
+          // Une nouvelle version attend ? Le changement d'onglet est le moment
+          // de basculer (l'écran quitté est démonté de toute façon) : la page se
+          // recharge et rouvre l'onglet demandé. Refusé pendant une séance.
+          if (s !== surface && maybeApplyUpdate('surface-change', s)) return
+          withViewTransition(() => setSurface(s))
+        }}
       />
     </main>
   )
@@ -343,7 +397,7 @@ function FullScreenSpinner({ label }: { label: string }) {
   )
 }
 
-// --- Navigation entre les deux surfaces (zone du pouce, bas d'écran) ---------
+// --- Navigation entre les surfaces (zone du pouce, bas d'écran) ---------------
 
 function BottomNav({
   surface,
