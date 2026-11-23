@@ -14,7 +14,9 @@ banc/ : banc d'essai LOCAL (Docker, Postgres jetable), jamais la prod. Ses
 fichiers écrivent (rôles, comptes, lignes) : chacun porte une garde qui
 l'arrête sur un projet Supabase.
 `banc/lancer.sh` rejoue tout l'historique des migrations, passe chaque nouvelle
-migration deux fois dans l'ordre de ORDRE.md, lance les tests de contrôle, puis
-`banc/02_refus.sql`, qui tente pour de bon les écritures interdites sous les
+migration deux fois dans l'ordre de ORDRE.md, lance les tests de contrôle, joue
+`banc/03_import_avant_0021.sql` juste avant la migration 0021 (l'import est
+ouvert au client avant elle et doit tenir seul la règle de la routine
+courante), puis `banc/02_refus.sql`, qui tente pour de bon les écritures interdites sous les
 rôles de l'API, et enfin deux courses entre sessions (archivage et activation
 simultanés).
