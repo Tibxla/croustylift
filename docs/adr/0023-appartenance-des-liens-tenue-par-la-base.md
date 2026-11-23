@@ -1,6 +1,6 @@
 # L'appartenance des liens est tenue par la base, pas par la RLS seule
 
-Une ligne ne se rattache qu'à un parent du même compte, et c'est le schéma qui le garantit. Entre tables possédées (routine, séance, version, exécution et leurs filles), la clé étrangère est composite : `(parent_id, owner_id)` vers `(id, owner_id)`. Vers `exercises`, dont le parent peut être un exo de base sans propriétaire, un trigger refuse tout exo qui n'est ni de base ni au compte de la ligne. Les unicités qui portaient sur un parent (nom de séance dans sa routine, numéro de version dans sa séance, note datée dans son exécution) incluent `owner_id` (migrations 0018, 0019a et 0019b).
+Une ligne ne se rattache qu'à un parent du même compte, et c'est le schéma qui le garantit. Entre tables possédées (routine, séance, version, exécution et leurs filles), la clé étrangère est composite : `(parent_id, owner_id)` vers `(id, owner_id)`. Vers `exercises`, dont le parent peut être un exo de base sans propriétaire, un trigger refuse tout exo qui n'est ni de base ni au compte de la ligne. Les unicités qui portaient sur un parent (nom de séance dans sa routine, numéro de version dans sa séance, note datée dans son exécution) incluent `owner_id` (migrations 0018, 0019a, 0019b et 0019c).
 
 ## Pourquoi
 

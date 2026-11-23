@@ -1,4 +1,4 @@
--- Contrôle de la migration 0019 (lecture seule).
+-- Contrôle de la migration 0019 (lecture seule), à lancer après 0019c.
 select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
   select format('clé composite %s', k.nom) as quoi,
          exists (

@@ -37,22 +37,23 @@
 --    étrangère (classe 23 : quarantaine de l'ADR 0018, jamais de file bloquée).
 --    `exercise_overrides` est traité par la migration 0020 (exo de base requis).
 --
--- DÉROULÉ, pour ne pas bloquer l'app (relecture du 2026-11-23) :
+-- DÉROULÉ, pour ne pas bloquer l'app (relectures du 2026-11-23) :
 --   - 0019a, AVANT ce fichier : les six index, construits sans verrou bloquant.
---   - Transaction 1 (courte) : verrou des tables filles, contrôles, triggers,
---     bascule des clés en NOT VALID (aucun parcours des lignes existantes ; les
---     nouvelles écritures sont vérifiées tout de suite), bascule des unicités.
---   - Transaction 2 : VALIDATE des huit clés, qui parcourt les lignes sous un
---     verrou qui ne bloque ni lectures ni écritures.
---   Chaque transaction borne son attente : `lock_timeout` 5 s (une lecture
---   longue en cours fait échouer la migration au lieu de geler l'app derrière
---   elle ; il suffit de relancer) et `statement_timeout` 60 s.
---   Les verrous des tables filles sont pris AVANT les contrôles : aucune
---   écriture ne peut glisser un lien croisé entre le contrôle et la pose du
---   trigger ou de la clé.
+--   - Ce fichier, une transaction courte :
+--       1. contrôle des liens croisés vers les parents possédés, SANS verrou
+--          (simple lecture ; `VALIDATE`, dans 0019c, refait ce contrôle) ;
+--       2. tous les verrous de la bascule pris d'emblée, en NOWAIT : si une
+--          seule table est occupée, la migration échoue tout de suite (55P03)
+--          sans avoir rien bloqué, et se relance ;
+--       3. sous verrou, seulement ce qui est court : contrôle des liens vers
+--          `exercises` (le trigger ne revérifie pas l'existant), triggers,
+--          bascule des clés en NOT VALID (aucun parcours des lignes ; les
+--          nouvelles écritures sont vérifiées tout de suite), unicités.
+--   - 0019c, APRÈS ce fichier : VALIDATE des huit clés, sous un verrou qui ne
+--     bloque ni lectures ni écritures. Relançable seule.
 --
 -- Rejouable. Aucune donnée modifiée : un lien croisé existant fait échouer la
--- transaction 1 entière, rien n'est appliqué.
+-- transaction entière, rien n'est appliqué.
 --
 -- CONTRÔLE PRÉALABLE (lecture seule). Attendu : 0 sur chaque ligne.
 --
@@ -87,24 +88,50 @@
 --
 -- RISQUE : moyen. C'est la migration la plus structurante du lot : huit clés
 -- étrangères remplacées. Elle n'écrit aucune ligne. À appliquer hors des heures
--- de salle, puis ouvrir l'app et vérifier une séance (lecture du plan, saisie
--- d'une série). Si la transaction 2 échouait (elle ne le peut que sur une
--- dérive), les clés restent posées en NOT VALID et protègent déjà les nouvelles
--- écritures : corriger les lignes signalées, puis relancer ce fichier.
+-- de salle. Pendant la transaction (quelques dizaines de millisecondes sur ces
+-- volumes), les dix tables sont inaccessibles ; un échec NOWAIT se relance.
+-- Enchaîner 0019c, puis ouvrir l'app et vérifier une séance (lecture du plan,
+-- saisie d'une série).
 
--- ============================ Transaction 1 ============================
 begin;
 
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
 
--- Verrous d'abord : plus aucune écriture sur les tables filles jusqu'au commit
--- (les lectures passent). Les contrôles qui suivent voient donc l'état final.
+-- Hors verrou : aucun lien croisé vers un parent possédé. Contrôle de
+-- courtoisie (échouer tôt, avec un message lisible) : c'est 0019c qui fait foi.
+do $$
+declare
+  v_croises int;
+begin
+  select
+      (select count(*) from public.seances s join public.routines r on r.id = s.routine_id where s.owner_id <> r.owner_id)
+    + (select count(*) from public.routine_activations a join public.routines r on r.id = a.routine_id where a.owner_id <> r.owner_id)
+    + (select count(*) from public.seance_versions v join public.seances s on s.id = v.seance_id where v.owner_id <> s.owner_id)
+    + (select count(*) from public.seance_archive_events ev join public.seances s on s.id = ev.seance_id where ev.owner_id <> s.owner_id)
+    + (select count(*) from public.prescriptions p join public.seance_versions v on v.id = p.seance_version_id where p.owner_id <> v.owner_id)
+    + (select count(*) from public.executions e join public.seance_versions v on v.id = e.seance_version_id where e.owner_id <> v.owner_id)
+    + (select count(*) from public.performed_sets ps join public.executions e on e.id = ps.execution_id where ps.owner_id <> e.owner_id)
+    + (select count(*) from public.dated_notes d join public.executions e on e.id = d.execution_id where d.owner_id <> e.owner_id)
+    into v_croises;
+  if v_croises > 0 then
+    raise exception
+      '0019b : % ligne(s) pointent un parent d''un autre compte. Voir le contrôle préalable en tête de fichier.',
+      v_croises;
+  end if;
+end;
+$$;
+
+-- Tous les verrous de la bascule, d'emblée et sans attendre. Retirer une clé
+-- étrangère verrouille la fille ET le parent en exclusif : on les prend tous
+-- ici, pour ne jamais rester à attendre une table en en tenant d'autres.
 lock table
-  public.seances, public.routine_activations, public.seance_versions,
-  public.seance_archive_events, public.prescriptions, public.executions,
-  public.performed_sets, public.dated_notes, public.exercise_notes
-  in share row exclusive mode;
+  public.routines, public.seances, public.seance_versions, public.executions,
+  public.routine_activations, public.seance_archive_events, public.prescriptions,
+  public.performed_sets, public.dated_notes
+  in access exclusive mode nowait;
+-- `exercise_notes` ne reçoit qu'un trigger : écritures bloquées, lectures libres.
+lock table public.exercise_notes in share row exclusive mode nowait;
 
 -- Garde : les six index de 0019a sont là, uniques et valides.
 do $$
@@ -129,21 +156,15 @@ begin
 end;
 $$;
 
--- Garde : aucun lien croisé, ni vers un parent possédé, ni vers un exo perso.
+-- Garde, sous verrou : aucun lien vers l'exo perso d'un autre compte. Le
+-- trigger posé plus bas ne revérifie pas les lignes déjà en base, et rien ne
+-- peut plus s'écrire entre ce contrôle et sa pose.
 do $$
 declare
   v_croises int;
 begin
   select
-      (select count(*) from public.seances s join public.routines r on r.id = s.routine_id where s.owner_id <> r.owner_id)
-    + (select count(*) from public.routine_activations a join public.routines r on r.id = a.routine_id where a.owner_id <> r.owner_id)
-    + (select count(*) from public.seance_versions v join public.seances s on s.id = v.seance_id where v.owner_id <> s.owner_id)
-    + (select count(*) from public.seance_archive_events ev join public.seances s on s.id = ev.seance_id where ev.owner_id <> s.owner_id)
-    + (select count(*) from public.prescriptions p join public.seance_versions v on v.id = p.seance_version_id where p.owner_id <> v.owner_id)
-    + (select count(*) from public.executions e join public.seance_versions v on v.id = e.seance_version_id where e.owner_id <> v.owner_id)
-    + (select count(*) from public.performed_sets ps join public.executions e on e.id = ps.execution_id where ps.owner_id <> e.owner_id)
-    + (select count(*) from public.dated_notes d join public.executions e on e.id = d.execution_id where d.owner_id <> e.owner_id)
-    + (select count(*) from public.prescriptions p join public.exercises x on x.id = p.exercise_id
+      (select count(*) from public.prescriptions p join public.exercises x on x.id = p.exercise_id
         where x.owner_id is not null and x.owner_id <> p.owner_id)
     + (select count(*) from public.performed_sets ps join public.exercises x on x.id = ps.exercise_id
         where x.owner_id is not null and x.owner_id <> ps.owner_id)
@@ -154,7 +175,7 @@ begin
     into v_croises;
   if v_croises > 0 then
     raise exception
-      '0019b : % ligne(s) pointent un parent ou un exo perso d''un autre compte. Voir le contrôle préalable en tête de fichier.',
+      '0019b : % ligne(s) pointent l''exo perso d''un autre compte. Voir le contrôle préalable en tête de fichier.',
       v_croises;
   end if;
 end;
@@ -162,7 +183,7 @@ $$;
 
 -- 1. Clés étrangères composites, remplacées sous le même nom ------------------
 -- NOT VALID : posée sans parcourir les lignes, elle vérifie déjà toute nouvelle
--- écriture. La transaction 2 valide l'existant.
+-- écriture. 0019c valide l'existant.
 
 alter table public.seances drop constraint if exists seances_routine_id_fkey;
 alter table public.seances add constraint seances_routine_id_fkey
@@ -267,24 +288,5 @@ create trigger check_exercise_link before insert or update of exercise_id, user_
 
 -- Les clés étrangères ont changé de forme : PostgREST relit son schéma.
 notify pgrst, 'reload schema';
-
-commit;
-
--- ============================ Transaction 2 ============================
--- Validation de l'existant. VALIDATE ne bloque ni les lectures ni les écritures
--- (verrou SHARE UPDATE EXCLUSIVE sur la fille, ROW SHARE sur le parent).
-begin;
-
-set local lock_timeout = '5s';
-set local statement_timeout = '60s';
-
-alter table public.seances validate constraint seances_routine_id_fkey;
-alter table public.routine_activations validate constraint routine_activations_routine_id_fkey;
-alter table public.seance_versions validate constraint seance_versions_seance_id_fkey;
-alter table public.seance_archive_events validate constraint seance_archive_events_seance_id_fkey;
-alter table public.prescriptions validate constraint prescriptions_seance_version_id_fkey;
-alter table public.executions validate constraint executions_seance_version_id_fkey;
-alter table public.performed_sets validate constraint performed_sets_execution_id_fkey;
-alter table public.dated_notes validate constraint dated_notes_execution_id_fkey;
 
 commit;
