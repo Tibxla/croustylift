@@ -47,6 +47,25 @@ export async function withReloadBlocked<T>(reason: string, fn: () => Promise<T>)
   }
 }
 
+/**
+ * Pose UN blocage sous `reason` et rend sa levée. La levée est idempotente :
+ * l'appeler deux fois (à l'abandon d'un brouillon, puis au démontage de son
+ * écran) ne retire jamais le blocage d'un autre porteur de la même raison.
+ * C'est la brique des brouillons (`useReloadBlockWhile`) : un `unblockReloads`
+ * nu, appelé une fois de trop, lèverait un blocage qui n'est pas le sien, et un
+ * appel oublié interdirait toute mise à jour jusqu'à la fermeture de la page,
+ * sans aucun symptôme.
+ */
+export function holdReloadBlock(reason: string): () => void {
+  blockReloads(reason)
+  let held = true
+  return () => {
+    if (!held) return
+    held = false
+    unblockReloads(reason)
+  }
+}
+
 /** Raisons actuellement posées (une entrée par raison, quel que soit son compte). */
 export function activeBlockers(): string[] {
   return [...counts.keys()]

@@ -10,6 +10,8 @@ const server = vi.hoisted(() => ({
   rpcCalls: [] as { fn: string; args: unknown }[],
   rpcError: null as unknown,
   deleteError: null as unknown,
+  /** Appelé au moment où la requête de suppression part. */
+  onDelete: null as (() => void) | null,
 }));
 
 vi.mock('../../lib/supabase', () => {
@@ -31,7 +33,14 @@ vi.mock('../../lib/supabase', () => {
       return query;
     }
     if (table === 'routines') {
-      return { delete: () => ({ eq: () => Promise.resolve({ error: server.deleteError }) }) };
+      return {
+        delete: () => ({
+          eq: () => {
+            server.onDelete?.();
+            return Promise.resolve({ error: server.deleteError });
+          },
+        }),
+      };
     }
     throw new Error(`table inattendue dans ce test : ${table}`);
   };
@@ -42,13 +51,15 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from, rpc } };
 });
 
-import { deleteRoutine, getCurrentRoutineId, reorderSeancesViaRpc } from './data';
+import { activeBlockers } from '../../pwa/blockers';
+import { PLAN_WRITE_BLOCK, deleteRoutine, getCurrentRoutineId, reorderSeancesViaRpc } from './data';
 
 beforeEach(() => {
   server.activations = [];
   server.rpcCalls = [];
   server.rpcError = null;
   server.deleteError = null;
+  server.onDelete = null;
 });
 
 describe('getCurrentRoutineId', () => {
@@ -111,5 +122,26 @@ describe('deleteRoutine', () => {
     await expect(deleteRoutine('routine-courante')).rejects.toThrow(
       'La routine courante ne se supprime pas. Définis d’abord une autre routine comme courante.',
     );
+  });
+});
+
+describe('écriture du plan et rechargement automatique', () => {
+  it('bloque le rechargement dès l’appel et pendant la requête, le rend à la fin', async () => {
+    let during: string[] = [];
+    server.onDelete = () => {
+      during = activeBlockers();
+    };
+    const pending = deleteRoutine('r1');
+    // Posé en synchrone : un changement d'onglet dans la foulée ne recharge pas.
+    expect(activeBlockers()).toEqual([PLAN_WRITE_BLOCK]);
+    await pending;
+    expect(during).toEqual([PLAN_WRITE_BLOCK]);
+    expect(activeBlockers()).toEqual([]);
+  });
+
+  it('rend le rechargement quand l’écriture est refusée', async () => {
+    server.deleteError = { code: '23503', message: 'violates foreign key constraint' };
+    await expect(deleteRoutine('r1')).rejects.toBeDefined();
+    expect(activeBlockers()).toEqual([]);
   });
 });

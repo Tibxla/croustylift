@@ -47,6 +47,7 @@ import {
   moveRow,
 } from './prescription-edit';
 import { hasPrescriptionChanges, setLeaveGuard } from './seance-dirty';
+import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets, type CountRange } from '../../domain/set-count';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
@@ -198,6 +199,9 @@ export interface PersonalExerciseFormInput {
   unilateral: boolean;
 }
 
+/** Raison du blocage de rechargement tenu par une séance modifiée et non enregistrée. */
+const SEANCE_DRAFT_BLOCK = 'brouillon-seance';
+
 export interface SeanceEditorViewProps {
   seanceName: string;
   initialRows: EditorRow[];
@@ -293,6 +297,12 @@ export function SeanceEditorView({
     });
     return () => setLeaveGuard(null);
   }, [dirty]);
+
+  // Tant que l'éditeur est modifié, aucun rechargement automatique (nouvelle
+  // version en attente) : la saisie ne vit qu'en mémoire. Levé dès qu'il n'est
+  // plus modifié (enregistrement) et au démontage ; `releaseDraft` le lève tout
+  // de suite à l'abandon confirmé (cf. pwa/useReloadBlockWhile).
+  const releaseDraft = useReloadBlockWhile(SEANCE_DRAFT_BLOCK, dirty);
 
   function requestBack() {
     if (dirty) setPendingLeave(() => onBack);
@@ -486,8 +496,11 @@ export function SeanceEditorView({
                     const leave = pendingLeave;
                     setPendingLeave(null);
                     // La garde tombe avec l'écran ; on la retire tout de suite
-                    // pour que la sortie confirmée ne repasse pas par elle.
+                    // pour que la sortie confirmée ne repasse pas par elle. Le
+                    // blocage de rechargement aussi : la saisie est abandonnée,
+                    // et un changement d'onglet peut recharger dans la foulée.
                     setLeaveGuard(null);
+                    releaseDraft();
                     leave();
                   }}
                   className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium text-warn"

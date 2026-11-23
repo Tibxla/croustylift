@@ -18,7 +18,8 @@ vi.mock('../capture/data', () => ({
   listExercises: vi.fn(async () => []),
 }));
 
-import { createFirstRoutine } from './data';
+import { activeBlockers } from '../../pwa/blockers';
+import { FIRST_ROUTINE_BLOCK, createFirstRoutine } from './data';
 import { STARTER_TEMPLATE } from './template';
 import {
   createRoutine,
@@ -135,5 +136,31 @@ describe('createFirstRoutine, noms validés avant toute écriture', () => {
       withTemplate: false,
     });
     expect(createRoutine).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createFirstRoutine et rechargement automatique', () => {
+  const input = { routineName: 'Ma routine', seanceName: 'Push', withTemplate: false };
+
+  it('bloque le rechargement d’une écriture à l’autre, le rend à la fin', async () => {
+    const seen: string[][] = [];
+    vi.mocked(setCurrentRoutine).mockImplementationOnce(async () => {
+      seen.push(activeBlockers());
+    });
+    vi.mocked(createSeance).mockImplementationOnce(async () => {
+      seen.push(activeBlockers());
+      return { id: 'seance-1', name: 'Push' } as never;
+    });
+    const pending = createFirstRoutine(input);
+    expect(activeBlockers()).toEqual([FIRST_ROUTINE_BLOCK]);
+    await pending;
+    expect(seen).toEqual([[FIRST_ROUTINE_BLOCK], [FIRST_ROUTINE_BLOCK]]);
+    expect(activeBlockers()).toEqual([]);
+  });
+
+  it('rend le rechargement quand une écriture échoue en route', async () => {
+    vi.mocked(createSeance).mockRejectedValueOnce(new Error('réseau'));
+    await expect(createFirstRoutine(input)).rejects.toThrow('réseau');
+    expect(activeBlockers()).toEqual([]);
   });
 });

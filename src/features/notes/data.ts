@@ -18,6 +18,10 @@ import { supabase } from '../../lib/supabase';
 import { isBlankNote, normalizeNoteBody } from '../../domain/notes';
 import type { OutboxOp } from '../capture/outbox';
 import { invalidateExerciseNoteCopy } from '../capture/plan-copies';
+import { withReloadBlocked } from '../../pwa/blockers';
+
+/** Raison du blocage de rechargement tenu pendant l'écriture directe d'une note d'instructions. */
+export const NOTE_WRITE_BLOCK = 'ecriture-note-instructions';
 
 // =====================================================================
 // Helper pur (testé) — cf. data.test.ts
@@ -94,10 +98,15 @@ export async function loadExerciseNote(exerciseId: string): Promise<string> {
  * (user_id, exercise_id) : ré-éditer écrase l'unique ligne, sans doublon.
  * Corps vide -> on SUPPRIME la note (pas de ligne blanche à traîner). owner via
  * default auth.uid() ; le corps est normalisé (domain/notes).
+ *
+ * Écriture DIRECTE (authoring, onglet Exercices), hors file d'attente : aucun
+ * rechargement automatique tant qu'elle n'est pas finie, sinon la note serait
+ * perdue sans message. Les notes saisies en Capture passent par la file, qui
+ * survit à un rechargement.
  */
 export async function saveExerciseNote(exerciseId: string, body: string): Promise<void> {
   try {
-    await writeExerciseNote(exerciseId, body);
+    await withReloadBlocked(NOTE_WRITE_BLOCK, () => writeExerciseNote(exerciseId, body));
   } finally {
     // La copie servie à la Capture est périmée (cf. capture/plan-copies).
     invalidateExerciseNoteCopy(exerciseId);

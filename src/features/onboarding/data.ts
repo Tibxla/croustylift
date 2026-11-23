@@ -17,6 +17,7 @@ import {
   type PrescriptionInput,
 } from '../authoring/data';
 import { listExercises } from '../capture/data';
+import { withReloadBlocked } from '../../pwa/blockers';
 import { STARTER_TEMPLATE, firstNameProblem, resolveStarterPrescriptions } from './template';
 
 export {
@@ -66,6 +67,16 @@ export interface FirstRoutineResult {
 export async function createFirstRoutine(
   input: FirstRoutineInput,
 ): Promise<FirstRoutineResult> {
+  // Jusqu'à quatre écritures à la suite : aucun rechargement automatique entre
+  // deux (`withReloadBlocked`, pwa/blockers), sinon une routine courante sans
+  // séance, ou une séance sans son modèle.
+  return withReloadBlocked(FIRST_ROUTINE_BLOCK, () => writeFirstRoutine(input));
+}
+
+/** Raison du blocage de rechargement tenu pendant la création de la première routine. */
+export const FIRST_ROUTINE_BLOCK = 'creation-premiere-routine';
+
+async function writeFirstRoutine(input: FirstRoutineInput): Promise<FirstRoutineResult> {
   // Les DEUX noms sont validés avant la première écriture : sinon la routine
   // était créée et activée avant que la séance soit refusée, ce qui laissait une
   // routine courante vide.

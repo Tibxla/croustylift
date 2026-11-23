@@ -30,6 +30,10 @@ import { unsavedWritesLabel } from '../capture/sync-label';
 import { SESSION_DURATION_MAX_MIN } from '../capture/summary';
 import type { OutboxOp } from '../capture/outbox';
 import type { Side } from '../../domain/types';
+import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
+
+/** Raison du blocage de rechargement tenu par des corrections non sauvées d'une séance passée. */
+const PAST_SESSION_DRAFT_BLOCK = 'brouillon-seance-passee';
 
 const WEIGHT_STEP = 2.5;
 const WEIGHT_FINE = 1.25;
@@ -192,6 +196,11 @@ export function PastSessionEditor({
     return setsDirty || metricsDirty;
   }, [load, executionId]);
 
+  // Corrections non sauvées : aucun rechargement automatique tant qu'elles ne
+  // vivent qu'en mémoire. Levé au démontage ; `releaseDraft` le lève tout de
+  // suite à l'enregistrement réussi et à l'abandon (cf. pwa/useReloadBlockWhile).
+  const releaseDraft = useReloadBlockWhile(PAST_SESSION_DRAFT_BLOCK, dirty);
+
   // Fermeture gardée : si des corrections non sauvées sont en cours (`dirty`), on
   // ouvre une confirmation avant d'abandonner ; sinon on ferme directement (le
   // comportement non destructif d'origine). C'est ce handler qui est câblé sur
@@ -263,6 +272,7 @@ export function PastSessionEditor({
         setSave({ phase: 'error', message: unsavedWritesLabel(result) });
         return;
       }
+      releaseDraft();
       onSaved();
     } catch (err) {
       // Erreur inattendue (pas une simple coupure) : les ops restent durables et
@@ -460,6 +470,7 @@ export function PastSessionEditor({
           onKeepEditing={() => setConfirmClose(false)}
           onDiscard={() => {
             setConfirmClose(false);
+            releaseDraft();
             onClose();
           }}
         />

@@ -39,6 +39,7 @@ import {
 } from '../exercises/deletion-guard';
 import { loadExerciseOverrides } from '../exercises/overrides';
 import { invalidatePlanCopies } from '../capture/plan-copies';
+import { withReloadBlocked } from '../../pwa/blockers';
 import {
   mergeExerciseOverride,
   type ExerciseOverrideValues,
@@ -51,19 +52,30 @@ import {
   type SeanceCatalogEntry,
 } from './duplicate-seance';
 
+/** Raison du blocage de rechargement tenu pendant une écriture du plan. */
+export const PLAN_WRITE_BLOCK = 'ecriture-plan';
+
 /**
  * Enveloppe de TOUTE écriture du plan (routines, séances, versions, exos perso) :
  * une fois l'écriture finie, les copies du plan servies à la Capture sont
  * marquées périmées (cf. capture/plan-copies). Même en échec : une écriture en
  * plusieurs temps peut avoir commencé, et une invalidation de trop ne coûte
  * qu'une lecture réseau.
+ *
+ * Tout rechargement automatique est interdit jusqu'à la fin de l'écriture
+ * (`withReloadBlocked`, pwa/blockers) : plusieurs de ces écritures font deux
+ * requêtes ou plus, et une page rechargée entre deux (changement d'onglet juste
+ * après « Enregistrer », nouvelle version en attente) laisserait l'écriture à
+ * moitié faite. Le blocage est posé en synchrone, à l'appel.
  */
-async function planWrite<T>(write: () => Promise<T>): Promise<T> {
-  try {
-    return await write();
-  } finally {
-    invalidatePlanCopies();
-  }
+function planWrite<T>(write: () => Promise<T>): Promise<T> {
+  return withReloadBlocked(PLAN_WRITE_BLOCK, async () => {
+    try {
+      return await write();
+    } finally {
+      invalidatePlanCopies();
+    }
+  });
 }
 
 export type { SeanceCatalogEntry } from './duplicate-seance';

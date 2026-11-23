@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { activeBlockers, blockReloads, unblockReloads, withReloadBlocked } from './blockers'
+import {
+  activeBlockers,
+  blockReloads,
+  holdReloadBlock,
+  unblockReloads,
+  withReloadBlocked,
+} from './blockers'
 import { reloadAllowed } from './update'
 
 const allowed = () =>
@@ -83,5 +89,25 @@ describe('withReloadBlocked', () => {
     finishOuter()
     await outer
     expect(allowed()).toBe(true)
+  })
+})
+
+describe('holdReloadBlock', () => {
+  it('pose le blocage, la levée rendue le retire', () => {
+    const release = holdReloadBlock('brouillon')
+    expect(allowed()).toBe(false)
+    release()
+    expect(allowed()).toBe(true)
+  })
+
+  it('levée idempotente : deux appels ne retirent pas le blocage d’un autre porteur', () => {
+    const releaseA = holdReloadBlock('brouillon')
+    const releaseB = holdReloadBlock('brouillon')
+    // Abandon puis démontage du même écran : deux levées du même porteur.
+    releaseA()
+    releaseA()
+    expect(activeBlockers()).toEqual(['brouillon'])
+    releaseB()
+    expect(activeBlockers()).toEqual([])
   })
 })
