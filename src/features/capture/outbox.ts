@@ -353,10 +353,14 @@ export function readQueue(): OutboxOp[] {
   const persisted = readPersistedQueue();
   const gap = activeVolatile();
   if (gap === null) return persisted;
-  const present = new Set(persisted.map(opKey));
+  // Une op tenue en mémoire remplace celle de même identité que l'écart retire
+  // (op MODIFIÉE à identité constante, cf. `writeQueue`) ; elle ne double jamais
+  // une op de même identité restée dans la file persistée.
+  const kept = persisted.filter((op) => !gap.removals.has(opKey(op)));
+  const keptKeys = new Set(kept.map(opKey));
   return mergeByEnqueueTime(
-    persisted.filter((op) => !gap.removals.has(opKey(op))),
-    gap.adds.filter((op) => !present.has(opKey(op))),
+    kept,
+    gap.adds.filter((op) => !keptKeys.has(opKey(op))),
   );
 }
 
@@ -439,14 +443,21 @@ function writeQueue(queue: OutboxOp[]): boolean {
         'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
     );
   }
-  // L'écart entre la file voulue et la file persistée, par identité.
+  // L'écart entre la file voulue et la file persistée, par identité. Une op
+  // MODIFIÉE à identité constante (un effacement de note hérité, complété au
+  // démarrage par `adoptLegacyOps`, garde son `_uid`) fait partie de l'écart :
+  // sa version persistée est retirée, sa version voulue tenue en mémoire. Ne
+  // comparer que les identités jetait la modification, et l'op partait dans sa
+  // forme d'avant.
   const persisted = readPersistedQueue();
-  const wanted = new Set(queue.map(opKey));
-  const present = new Set(persisted.map(opKey));
+  const wanted = new Map(queue.map((op) => [opKey(op), JSON.stringify(op)] as const));
+  const present = new Map(persisted.map((op) => [opKey(op), JSON.stringify(op)] as const));
   volatile = {
     storage: localStorage,
-    adds: queue.filter((op) => !present.has(opKey(op))),
-    removals: new Set(persisted.map(opKey).filter((key) => !wanted.has(key))),
+    adds: queue.filter((op) => present.get(opKey(op)) !== JSON.stringify(op)),
+    removals: new Set(
+      [...present.keys()].filter((key) => wanted.get(key) !== present.get(key)),
+    ),
   };
   return false;
 }

@@ -276,6 +276,36 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     expect(readQuarantine()).toEqual([]);
   });
 
+  it('stockage plein au démarrage : le complément, qui ne peut pas s’écrire, tient en mémoire et part quand même', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    server.rows = [historique('texte d’avant')];
+    // Ops d'un bundle qui posait déjà `_uid` : le complément garde cette identité.
+    legacyQueue([
+      { ...legacyWrite, _uid: 'uid-ecriture' },
+      { ...legacyDelete, _uid: 'uid-effacement' },
+    ]);
+    const before = localStorage.getItem('croustylift:outbox');
+    // Le stockage refuse désormais toute écriture de la file (le blob complété est plus gros).
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    adoptLegacyOps();
+    expect(localStorage.getItem('croustylift:outbox')).toBe(before);
+    // La file LUE porte bien l'effacement complété, une seule fois, après l'écriture.
+    expect(readQueue().map((op) => op.type)).toEqual(['upsertDatedNote', 'deleteDatedNote']);
+    expect(readQueue()[1]).toMatchObject({ _uid: 'uid-effacement', executionId: EXEC, exerciseId: EXO });
+
+    const result = await flush(syncFns);
+    expect(result.remaining).toBe(0);
+    // Avant : le repli ne comparait que les identités, jetait le complément, et
+    // l'effacement, resté sur l'id de la file, laissait la note en base.
+    expect(server.rows).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
   it('sans complément, le défaut est bien là : l’effacement par id laisse la note', async () => {
     server.rows = [historique('texte d’avant')];
     legacyQueue([legacyWrite, legacyDelete]);
