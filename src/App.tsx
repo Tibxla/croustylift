@@ -235,7 +235,7 @@ function AuthenticatedApp({
 
         {/* Compte : email + Déconnexion, en pied de l'Analyse — l'écran « au
             calme », consulté assis, hors salle. La Connexion arrive une fois par
-            appareil (cf. CONTEXT.md) : cette action n'a rien à faire dans le
+            appareil (cf. GLOSSARY.md) : cette action n'a rien à faire dans le
             chrome permanent de l'app, où elle volait 56 px à tous les écrans, la
             Capture comprise. App reste propriétaire de l'auth — l'Analyse n'en
             reçoit aucune prop. */}

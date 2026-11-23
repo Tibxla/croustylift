@@ -6,7 +6,7 @@
 //   - RÉEL   : à partir des séries réellement loggées (PerformedSet[]).
 //
 // VOCABULAIRE — on parle de DÉCOMPTE DE SÉRIES, jamais de « volume » : le
-// CONTEXT.md réserve « muscle principal » au regroupement/filtre et proscrit le
+// GLOSSARY.md réserve « muscle principal » au regroupement/filtre et proscrit le
 // terme « volume ». Ici on compte des séries (pondérées) rattachées à chaque
 // muscle PRINCIPAL de l'exo (la LISTE `primary_muscles` d'issue #33, pas le
 // `muscle_group` legacy au singulier).

@@ -9,7 +9,7 @@
 // exécution sans aucune des deux ne produit pas de point ; si AUCUNE n'en a, le
 // résultat est [] et l'UI n'affiche pas de graphe. Pure, sans dépendance réseau.
 //
-// GARDE « exécution vide » (cf. CONTEXT.md « Exécution ») : une exécution SANS
+// GARDE « exécution vide » (cf. GLOSSARY.md « Exécution ») : une exécution SANS
 // série n'est pas une exécution réelle — elle ne produit aucun point, même si elle
 // porte une durée. Sans cette garde, une orpheline (clôture partie à zéro série,
 // cf. fix racine de `handleFinish`) afficherait une durée fantôme sur le graphe

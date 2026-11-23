@@ -4,7 +4,7 @@
 // et exos PERSO (éditables), applique la recherche par nom et le tri français.
 // Source unique de cette logique, testée (cf. exercises-list.test.ts).
 //
-// Rappel CONTEXT.md : un exo de base a owner_id null (catalogue commun) ; un exo
+// Rappel GLOSSARY.md : un exo de base a owner_id null (catalogue commun) ; un exo
 // perso a owner_id = auth.uid(). On ne FILTRE jamais sur owner_id côté client (la
 // RLS scope déjà tout au user) ; owner_id ne sert ici qu'à classer base/perso.
 import type { Database } from '../../lib/database.types';

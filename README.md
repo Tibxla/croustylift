@@ -132,7 +132,7 @@ src/
 
 ## Concepts du domaine
 
-Vocabulaire métier complet dans **[`CONTEXT.md`](./CONTEXT.md)**. En bref :
+Vocabulaire métier complet dans **[`GLOSSARY.md`](./GLOSSARY.md)**. En bref :
 
 - **Série** : une exécution (poids × reps + RIR). En unilatéral, gauche + droite au même rang.
 - **e1RM** : *estimated 1-rep max*, le max théorique à 1 répétition ; la métrique de progression.
@@ -153,7 +153,7 @@ pondéré par les reps, gestion de l'unilatéral, etc.
 |---|---|
 | [`PRODUCT.md`](./PRODUCT.md) | Stratégie produit — qui, quoi, pourquoi |
 | [`DESIGN.md`](./DESIGN.md) | Système visuel — tokens, composants, règles nommées |
-| [`CONTEXT.md`](./CONTEXT.md) | Glossaire du domaine |
+| [`GLOSSARY.md`](./GLOSSARY.md) | Glossaire du domaine |
 | [`docs/adr/`](./docs/adr/) | Décisions d'architecture |
 
 ## Licence

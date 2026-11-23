@@ -1,4 +1,4 @@
-// Vocabulaire du domaine Croustylift (cf. CONTEXT.md et docs/adr/).
+// Vocabulaire du domaine Croustylift (cf. GLOSSARY.md et docs/adr/).
 // Types purs, sans dépendance — partagés par les modules de logique.
 
 /** Fourchette (min, max). Une valeur fixe est représentée par `min === max`. */
@@ -63,7 +63,7 @@ export interface ExerciseExecution {
    * Id de la SÉANCE (le template, à travers toutes ses versions) dont cette
    * exécution est le déroulé. Porte le scope « même séance » des dérivées :
    * Référence en Capture, courbes e1RM par séance en Analyse (un même exo n'a
-   * pas la même perf selon le contexte de fatigue de la séance, cf. CONTEXT.md
+   * pas la même perf selon le contexte de fatigue de la séance, cf. GLOSSARY.md
    * « Référence »). Optionnel : seuls les consommateurs scopés le portent ;
    * absent quand la séance n'est plus résoluble (jointure manquante).
    */

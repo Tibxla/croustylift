@@ -1,4 +1,4 @@
-// Tests des noms uniques (grilling du 2026-09-13, CONTEXT.md « Séance » /
+// Tests des noms uniques (grilling du 2026-09-13, GLOSSARY.md « Séance » /
 // « Routine ») : un nom de séance est unique dans sa routine, un nom de routine
 // dans le compte, casse et espaces en trop ignorés.
 import { describe, expect, it } from 'vitest';

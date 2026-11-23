@@ -62,7 +62,7 @@ describe('personalRecord', () => {
     const executions: ExerciseExecution[] = [
       {
         // 1ʳᵉ série faible, 2ᵉ série plus forte : la 2ᵉ compte AUSSI (un record est
-        // une perf démontrée, quel que soit le rang de la série — cf. CONTEXT.md).
+        // une perf démontrée, quel que soit le rang de la série — cf. GLOSSARY.md).
         date: '2026-01-10',
         exerciseId: 'squat',
         sets: [set(100, 5, 1, 1), set(120, 5, 1, 2)],

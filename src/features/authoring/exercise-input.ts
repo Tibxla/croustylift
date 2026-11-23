@@ -3,7 +3,7 @@
 // Modèle étendu (issue #33) : un exercice porte désormais
 //   - `unilateral` : booléen (mouvement exécuté un côté à la fois) ;
 //   - `primary_muscles` : LISTE de muscles principaux (>= 1), vocabulaire canonique
-//     CONTEXT.md. PAS de muscle secondaire.
+//     GLOSSARY.md. PAS de muscle secondaire.
 //
 // Compat legacy : on conserve `muscle_group` (texte, un seul muscle) car d'autres
 // modules le lisent encore (analyse, picker, affichage des lignes). Pour un exo
@@ -15,7 +15,7 @@
 import type { Database } from '../../lib/database.types';
 
 /**
- * Vocabulaire canonique des 15 groupes musculaires (cf. CONTEXT.md).
+ * Vocabulaire canonique des 15 groupes musculaires (cf. GLOSSARY.md).
  * Source unique : l'UI (filtre/sélecteur) et la validation l'importent d'ici.
  * L'ordre EST le tri canonique d'affichage et de sérialisation des sélections.
  */
@@ -55,7 +55,7 @@ function sortCanonical(muscles: string[]): string[] {
 }
 
 /**
- * Trie une liste de muscles selon l'ordre canonique de CONTEXT.md, sans muter
+ * Trie une liste de muscles selon l'ordre canonique de GLOSSARY.md, sans muter
  * l'entrée. Robuste aux termes hors vocabulaire (rang -1) : on les renvoie en
  * FIN de liste (et non en tête comme un tri naïf sur l'indexOf), pour que
  * l'affichage des décomptes (issue #37) garde toujours les 15 muscles connus

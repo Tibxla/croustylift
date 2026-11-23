@@ -55,7 +55,7 @@ export interface TrainedExercise {
  * La progression d'un exo DANS UNE séance donnée (décision 2026-07-31, issue
  * #67) : sa courbe e1RM (1ʳᵉ série), sa pente %/semaine et sa courbe secondaire
  * (séries 2+), dérivées des seules exécutions de cette séance — un même exo n'a
- * pas la même perf selon le contexte de fatigue de la séance (cf. CONTEXT.md
+ * pas la même perf selon le contexte de fatigue de la séance (cf. GLOSSARY.md
  * « Référence », même logique que le scope de la Capture).
  * `weeklyRate` vaut `null` sans assez de points pour ajuster une droite ;
  * `secondaryCurve` est `[]` sans série 2+.
@@ -602,7 +602,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
 export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
   // On compte les séries par exécution (`performed_sets(count)`) : une exécution
   // SANS série n'est pas un point (garde « exécution vide », cf. buildSessionMetrics
-  // + CONTEXT.md). Sans ce décompte, une orpheline (durée posée mais zéro série)
+  // + GLOSSARY.md). Sans ce décompte, une orpheline (durée posée mais zéro série)
   // s'afficherait sur le graphe alors qu'elle n'apparaît pas au journal.
   type Row = {
     id: string;

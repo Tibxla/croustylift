@@ -186,7 +186,7 @@ describe('reconstructExerciseExecutions', () => {
 // Dérivées d'historique (Référence scopée séance + repli + records all-time).
 // Partie PURE de `loadExerciseHistory` : le scope de séance filtre les lignes par
 // `seance_version_id` (toutes les versions du template) ; les records ignorent le
-// scope. Décisions du 2026-07-29, cf. CONTEXT.md « Référence » / « Record personnel ».
+// scope. Décisions du 2026-07-29, cf. GLOSSARY.md « Référence » / « Record personnel ».
 
 describe('deriveExerciseHistory', () => {
   // Historique sur DEUX séances : Upper (v1 puis v2) et Full Body. L'exo est le

@@ -229,7 +229,7 @@ export function cachedKeys(prefix: string): string[] {
 /**
  * `cachedRead` tolérant : un échec TOTAL (pas de copie, pas de réseau) rend le
  * repli fourni au lieu de jeter. Pour les lectures dont l'absence est un état
- * valide (exécution du jour, repère « tu notais » — cf. CONTEXT.md).
+ * valide (exécution du jour, repère « tu notais » — cf. GLOSSARY.md).
  */
 export async function tolerantRead<T>(
   key: string,

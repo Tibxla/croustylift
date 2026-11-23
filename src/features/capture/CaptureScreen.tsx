@@ -173,7 +173,7 @@ export function CaptureScreen() {
       // l'id de séance (clé localStorage) — la séance est déjà connue ici.
       const { date, restored } = resolveCaptureDate(base);
 
-      // Le scope de la Référence (cf. CONTEXT.md) : TOUTES les versions de la
+      // Le scope de la Référence (cf. GLOSSARY.md) : TOUTES les versions de la
       // séance — l'historique de l'exo traverse les retouches du template.
       const versionIds = await listSeanceVersionIds(seance.id);
 
@@ -864,7 +864,7 @@ function CaptureBoard({
       // retour du réseau.
       //
       // On NE (ré)affirme PLUS l'exécution ici (suppression de `enqueueExecutionOnce`,
-      // fix orphelines) : une exécution n'existe QUE par ses séries (CONTEXT.md
+      // fix orphelines) : une exécution n'existe QUE par ses séries (GLOSSARY.md
       // « Exécution »), et elle est déjà créée au PREMIER log (`enqueueExecutionOnce`
       // dans `handleLog`, durable même offline). Si AUCUNE série n'a été loggée dans
       // CETTE exécution — cas où des séries fantômes restaurées du cache rendent

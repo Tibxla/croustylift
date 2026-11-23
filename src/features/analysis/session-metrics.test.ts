@@ -46,7 +46,7 @@ describe('buildSessionMetrics', () => {
     expect(points.map((p) => p.date)).toEqual(['2026-01-09'])
   })
 
-  it('ignore une exécution SANS série, même avec une durée (orpheline, cf. CONTEXT « exécution vide »)', () => {
+  it('ignore une exécution SANS série, même avec une durée (orpheline, cf. glossaire « exécution vide »)', () => {
     const points = buildSessionMetrics([
       // Durée posée mais aucune série loggée : exécution orpheline (clôture partie
       // à zéro série). Le journal ne la montre pas ; le graphe Cardio non plus.

@@ -13,7 +13,7 @@ lequel `computeRecordFlags` rejoue les séries du jour (un record « running » 
 série après série). Y verser déjà le jour éteindrait le badge d'une série qui vient de
 battre le record, au premier remontage de l'écran — la fusion outbox aurait rendu cette
 bascule systématique en salle, là où rien n'est encore remonté. Le record reste all-time au
-sens du CONTEXT : le jour est rejoué par-dessus, pas oublié.
+sens du glossaire : le jour est rejoué par-dessus, pas oublié.
 
 ## Alternatives écartées
 

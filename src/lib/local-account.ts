@@ -8,7 +8,7 @@
 //
 // Le marqueur est posé à la CONNEXION (session validée par le serveur) et
 // retiré à la DÉCONNEXION volontaire uniquement — jamais par une panne réseau
-// ni un jeton périmé (cf. CONTEXT.md « Session locale » / « Déconnexion »).
+// ni un jeton périmé (cf. GLOSSARY.md « Session locale » / « Déconnexion »).
 // Une révocation côté serveur ne le retire PAS : les données locales survivent
 // jusqu'à la re-Connexion du même compte, ou au forçage explicite (ADR 0012).
 

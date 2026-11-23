@@ -482,11 +482,11 @@ function summarizeRow(row: EditorRow): string {
  * (virgule FR), un seul muscle par ligne pour que les comptes s'alignent en
  * colonne « cadran d'instrument », et AUCUN tiret long (la fourchette s'écrit
  * avec un trait d'union court). On NE parle PAS de « volume » (terme proscrit,
- * cf. CONTEXT.md) : « séries par muscle ».
+ * cf. GLOSSARY.md) : « séries par muscle ».
  */
 function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
   const count = useMemo(() => countPlannedSets(rowsToPlannedExercises(rows)), [rows]);
-  // Muscles présents, dans l'ordre canonique de CONTEXT.md (colonne stable).
+  // Muscles présents, dans l'ordre canonique de GLOSSARY.md (colonne stable).
   const muscles = orderMusclesCanonical(Object.keys(count.byMuscle));
 
   return (

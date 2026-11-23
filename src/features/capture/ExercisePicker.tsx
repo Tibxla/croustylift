@@ -15,7 +15,7 @@ import { countLogicalSetsDone } from '../../domain/set-count';
 /**
  * Nombre de SÉRIES LOGIQUES faites d'un exo, et non de lignes loggées : en
  * UNILATÉRAL une série tient sur deux lignes (gauche + droite au même `order`,
- * cf. CONTEXT.md « Série »), donc `progress.sets.length` double le compte. On
+ * cf. GLOSSARY.md « Série »), donc `progress.sets.length` double le compte. On
  * compte les `order` distincts (`countLogicalSetsDone`), juste pour les deux cas
  * (bilatéral : 1 ligne = 1 order = 1 série). C'est ce compte qu'on compare à la
  * prescription (un nombre de SÉRIES) et qu'on affiche « X/N séries ».

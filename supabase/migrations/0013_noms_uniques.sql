@@ -1,6 +1,6 @@
 -- 0013 — noms uniques : séance dans sa routine, routine dans le compte.
 --
--- Grilling du 2026-09-13 (CONTEXT.md « Séance », « Routine », ADR 0016) : c'est
+-- Grilling du 2026-09-13 (GLOSSARY.md « Séance », « Routine », ADR 0016) : c'est
 -- par son nom qu'on choisit une séance en salle, et l'analyse désigne une séance
 -- par « séance · routine ». Deux « Push » dans une même routine, ou deux routines
 -- « PPL », rendaient ce libellé ambigu.
