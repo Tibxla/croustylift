@@ -147,6 +147,16 @@ export function syncPasswordSetup(session: SetupSession, arrivedByInvite: boolea
   return owed;
 }
 
+/**
+ * Démarrage en SESSION LOCALE (ADR 0012) : la session est invérifiable, il n'y
+ * a que le compte reconnu par l'appareil. L'écran de mot de passe s'impose-t-il
+ * quand même ? Oui si la copie de l'obligation existe pour ce compte. La
+ * première session validée la confirmera ou la lèvera (`syncPasswordSetup`).
+ */
+export function offlineStartSetupOwed(recognized: { userId: string } | null): boolean {
+  return recognized !== null && passwordSetupRequired(recognized.userId);
+}
+
 const PASSWORD_SETUP_PREFIX = 'croustylift:password-setup:';
 
 /** Ce compte doit définir son mot de passe avant d'entrer dans l'app. */

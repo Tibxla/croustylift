@@ -5,6 +5,7 @@ import {
   hasPasswordProof,
   INVITATIONS_SINCE,
   invitedWithoutPassword,
+  offlineStartSetupOwed,
   PASSWORD_SET_KEY,
   passwordSetupRequired,
   requirePasswordSetup,
@@ -196,7 +197,10 @@ describe('obligation de l’invité : les trois parcours', () => {
   it('démarrage en session locale : la copie de l’appareil tient sans session', () => {
     expect(syncPasswordSetup(invite(), true)).toBe(true);
     // Hors ligne, session invérifiable : il n'y a que le compte reconnu à lire.
-    expect(passwordSetupRequired('invite')).toBe(true);
+    expect(offlineStartSetupOwed({ userId: 'invite' })).toBe(true);
+    // Un autre compte reconnu, ou aucun : rien ne s'impose.
+    expect(offlineStartSetupOwed({ userId: 'habitue' })).toBe(false);
+    expect(offlineStartSetupOwed(null)).toBe(false);
     // Retour du réseau, session revalidée, toujours sans mot de passe.
     expect(syncPasswordSetup(invite(), false)).toBe(true);
   });

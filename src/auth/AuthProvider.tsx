@@ -5,8 +5,8 @@ import {
   arrivalFromHash,
   clearPasswordSetup,
   hasPasswordProof,
+  offlineStartSetupOwed,
   PASSWORD_SET_KEY,
-  passwordSetupRequired,
   syncPasswordSetup,
 } from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const recognizeOffline = () => {
       const account = loadLocalAccount()
       if (!account) return
-      if (passwordSetupRequired(account.userId)) setPasswordSetupOwed(true)
+      if (offlineStartSetupOwed(account)) setPasswordSetupOwed(true)
       setOfflineRecognized(true)
     }
 
