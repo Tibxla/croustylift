@@ -27,6 +27,7 @@ import {
   loadPreviousDatedNotes,
   loadSeanceForCapture,
   loadTodayExecution,
+  pruneCaptureCopies,
   type LoadedSeance,
   type SeanceChoice,
   type SeanceHistoryContext,
@@ -151,6 +152,9 @@ function findResumableSeance(seances: SeanceChoice[]): SeanceChoice | null {
   return null;
 }
 
+/** L'éviction des copies périmées n'a lieu qu'une fois par lancement de l'app. */
+let copiesPruned = false;
+
 export function CaptureScreen() {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
@@ -197,7 +201,9 @@ export function CaptureScreen() {
         // L'exécution déjà tenue par l'appareil se relit par son id : elle a pu
         // rester sur une version antérieure de la séance (plan retouché en cours).
         loadTodayExecution(seanceVersionId, date, restored?.executionId ?? null),
-        loadLastSeanceExecution(versionIds, date).then(loadPreviousDatedNotes),
+        loadLastSeanceExecution(seance.id, date).then((last) =>
+          loadPreviousDatedNotes(seance.id, last),
+        ),
       ]);
 
       if (!active()) return;
@@ -274,6 +280,12 @@ export function CaptureScreen() {
     // sans que RIEN ne retente jamais — la file dormait jusqu'à la prochaine
     // séance. Ici, ouvrir l'app suffit à la vider. Idempotent (flush sérialisé).
     void attemptFlush();
+
+    // Ménage des copies de lecture qui ne seront plus lues (une fois par lancement).
+    if (!copiesPruned) {
+      copiesPruned = true;
+      pruneCaptureCopies();
+    }
 
     void (async () => {
       try {

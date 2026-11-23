@@ -213,6 +213,23 @@ export function peekRead<T>(key: string): T | null {
   return readEntry<T>(fullKey(account.userId, key))?.value ?? null;
 }
 
+/**
+ * Retire UNE copie locale (et sa revalidation connue). Pour l'éviction des
+ * copies qui ne seront plus jamais lues (cf. `pruneCaptureCopies`) : sans elle
+ * le cache ne faisait que grossir, sur le quota que l'outbox partage.
+ */
+export function dropRead(key: string): void {
+  const account = loadLocalAccount();
+  if (!account || typeof localStorage === 'undefined') return;
+  const storageKey = fullKey(account.userId, key);
+  revalidators.delete(storageKey);
+  try {
+    localStorage.removeItem(storageKey);
+  } catch {
+    /* no-op */
+  }
+}
+
 /** Les clés (sans l'étiquette de compte) des copies existantes sous `prefix`. */
 export function cachedKeys(prefix: string): string[] {
   const account = loadLocalAccount();

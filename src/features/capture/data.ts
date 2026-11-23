@@ -22,10 +22,10 @@
 import {
   cachedKeys,
   cachedRead,
+  dropRead,
+  networkFirstRead,
   peekRead,
   refreshRead,
-  stableKeyOf,
-  tolerantRead,
 } from '../../lib/read-cache';
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows } from '../../lib/fetch-all';
@@ -89,6 +89,10 @@ export interface LoadedSeance {
 // routine retenue n'a pas de séance : depuis l'onboarding (issue #3) on ne crée
 // plus rien en silence. Un user totalement neuf ne passe d'ailleurs pas par ici,
 // App l'envoie d'abord sur l'écran de premier lancement.
+
+/** Préfixes des copies locales du plan lues par la Capture (cf. `pruneCaptureCopies`). */
+const SEANCE_VERSION_PREFIX = 'seance-version:';
+const SEANCE_TEMPLATE_PREFIX = 'seance-template:';
 
 /** Une séance proposée au choix en Capture : juste de quoi l'afficher et la résoudre. */
 export interface SeanceChoice {
@@ -173,7 +177,7 @@ export async function loadCaptureSource(): Promise<CaptureSource> {
  * arriver : createSeance crée toujours une v1).
  */
 export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSeance> {
-  const versionId = await cachedRead(`seance-version:${seance.id}`, () =>
+  const versionId = await cachedRead(`${SEANCE_VERSION_PREFIX}${seance.id}`, () =>
     getCurrentVersionId(seance.id),
   );
   if (!versionId) {
@@ -372,7 +376,7 @@ export async function loadSeanceForCapture(
 ): Promise<Session> {
   // Cache d'abord (ADR 0012), APRÈS fusion des overrides : la copie locale porte
   // déjà les champs personnalisés, prête à servir hors-ligne telle quelle.
-  return cachedRead(`seance-template:${seanceVersionId}:${seance.id}`, async () => {
+  return cachedRead(`${SEANCE_TEMPLATE_PREFIX}${seanceVersionId}:${seance.id}`, async () => {
     const [{ data, error }, overrides] = await Promise.all([
       supabase
         .from('prescriptions')
@@ -776,69 +780,137 @@ export async function loadExerciseRows(
 /**
  * La DERNIÈRE exécution passée de la séance (`performed_on < beforeDate`, toutes
  * versions confondues) : c'est ELLE seule qui peut porter le repère « Dernière
- * fois tu notais » (cf. GLOSSARY.md « Note datée » — si elle n'a pas de note pour
+ * fois tu notais » (cf. GLOSSARY.md « Note datée » : si elle n'a pas de note pour
  * un exo, rien ne ressort, on ne repêche jamais plus ancien). `beforeDate` = la
  * date ADOPTÉE de la séance du jour : on exclut l'exécution en cours. `null` si
  * la séance n'a jamais été exécutée.
+ *
+ * UNE copie par séance (`last-exec:<séance>`), qui porte la date pour laquelle
+ * elle a été lue. Avant, la clé portait la date et la liste des versions : un
+ * jour nouveau n'avait jamais de copie (repère absent hors ligne) et chaque jour
+ * d'entraînement laissait une clé orpheline. Désormais :
+ *   - copie lue pour CE jour : servie d'abord, revalidée en fond ;
+ *   - copie d'un autre jour : réseau d'abord, borné (3 s) ; en échec, la copie
+ *     sert de secours si son exécution précède bien `beforeDate`. Elle peut alors
+ *     avoir une exécution de retard, le repère affiche sa date.
+ * La séance se filtre côté serveur, par jointure sur `seance_versions` : pas de
+ * liste d'ids de versions dans l'URL.
  */
 export async function loadLastSeanceExecution(
-  seanceVersionIds: readonly string[],
+  seanceId: string,
   beforeDate: string,
 ): Promise<{ id: string; performedOn: string } | null> {
-  if (seanceVersionIds.length === 0) return null;
+  type Copy = { before: string; last: { id: string; performedOn: string } | null };
+  const key = `${LAST_EXECUTION_PREFIX}${seanceId}`;
+  const fetcher = async (): Promise<Copy> => {
+    const { data, error } = await supabase
+      .from('executions')
+      .select('id, performed_on, seance_versions!inner(seance_id)')
+      .eq('seance_versions.seance_id', seanceId)
+      .lt('performed_on', beforeDate)
+      .order('performed_on', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return {
+      before: beforeDate,
+      last: data ? { id: data.id, performedOn: data.performed_on } : null,
+    };
+  };
   // Tolérant (ADR 0012) : le repère « tu notais » est un confort, jamais un
-  // bloqueur — sans copie ni réseau, il n'y a simplement rien à ressortir.
-  return tolerantRead(
-    `last-exec:${stableKeyOf(seanceVersionIds)}:${beforeDate}`,
-    async () => {
-      const { data, error } = await supabase
-        .from('executions')
-        .select('id, performed_on')
-        .in('seance_version_id', [...seanceVersionIds])
-        .lt('performed_on', beforeDate)
-        .order('performed_on', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? { id: data.id, performedOn: data.performed_on } : null;
-    },
-    null,
-  );
+  // bloqueur. Sans copie ni réseau, il n'y a simplement rien à ressortir.
+  try {
+    if (peekRead<Copy>(key)?.before === beforeDate) return (await cachedRead(key, fetcher)).last;
+    const read = await networkFirstRead(key, fetcher);
+    if (read.before === beforeDate) return read.last;
+    // Copie de secours, lue pour un autre jour : valable si elle précède ce jour.
+    return read.last !== null && read.last.performedOn < beforeDate ? read.last : null;
+  } catch {
+    return null;
+  }
 }
+
+/** Préfixes des copies du repère « tu notais », une par séance. */
+const LAST_EXECUTION_PREFIX = 'last-exec:';
+const PREVIOUS_NOTES_PREFIX = 'prev-notes:';
 
 /**
  * Les notes datées portées par la dernière exécution passée de la séance, par
- * exerciseId — la source du repère « Dernière fois tu notais » de CHAQUE exo
+ * exerciseId : la source du repère « Dernière fois tu notais » de CHAQUE exo
  * (une seule requête pour toute la séance, exos ajoutés à la volée compris).
  * Corps vides écartés ; à doublon par exo (garde-fou), la plus récente gagne.
  * `{}` si la séance n'a pas d'exécution passée.
+ *
+ * UNE copie par séance (`prev-notes:<séance>`), qui nomme l'exécution dont elle
+ * vient : elle ne sert que pour cette exécution-là. Avant, la clé portait l'id
+ * de l'exécution et chaque séance faite laissait une clé orpheline.
  */
 export async function loadPreviousDatedNotes(
+  seanceId: string,
   lastExecution: { id: string; performedOn: string } | null,
 ): Promise<Record<string, PreviousDatedNote>> {
   if (!lastExecution) return {};
-  // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution —
-  // sans copie ni réseau, rien ne ressort (cf. GLOSSARY.md « Note datée »).
-  return tolerantRead(
-    `prev-notes:${lastExecution.id}`,
-    async () => {
-      const { data, error } = await supabase
-        .from('dated_notes')
-        .select('exercise_id, body, created_at')
-        .eq('execution_id', lastExecution.id)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
+  type Copy = { executionId: string; notes: Record<string, PreviousDatedNote> };
+  const key = `${PREVIOUS_NOTES_PREFIX}${seanceId}`;
+  const fetcher = async (): Promise<Copy> => {
+    const { data, error } = await supabase
+      .from('dated_notes')
+      .select('exercise_id, body, created_at')
+      .eq('execution_id', lastExecution.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
 
-      const notes: Record<string, PreviousDatedNote> = {};
-      for (const row of data ?? []) {
-        if (row.body.trim() === '') continue;
-        notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
-      }
-      return notes;
-    },
-    {},
-  );
+    const notes: Record<string, PreviousDatedNote> = {};
+    for (const row of data ?? []) {
+      if (row.body.trim() === '') continue;
+      notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
+    }
+    return { executionId: lastExecution.id, notes };
+  };
+  // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution.
+  try {
+    const own = peekRead<Copy>(key)?.executionId === lastExecution.id;
+    const read = own ? await cachedRead(key, fetcher) : await networkFirstRead(key, fetcher);
+    // Une copie de secours d'une AUTRE exécution ne dit rien de celle-ci.
+    return read.executionId === lastExecution.id ? read.notes : {};
+  } catch {
+    return {};
+  }
+}
+
+// --- Éviction des copies de lecture périmées ----------------------------------
+
+/**
+ * Retire les copies de lecture de la Capture qui ne seront plus jamais lues. Le
+ * cache n'avait aucune éviction et partage son quota avec l'outbox. Appelée une
+ * fois par lancement de l'app, à l'arrivée en Capture. Partent :
+ *   - les copies du repère « tu notais » à l'ancien format (une clé par jour et
+ *     par exécution, cf. `loadLastSeanceExecution`) ;
+ *   - les templates des versions de séance qui ne sont plus la version courante,
+ *     sauf celles de `keepVersionIds` (une séance entamée garde le template de
+ *     la version sous laquelle elle est née).
+ * L'historique des exos (`exo-execs`) reste entier : les records all-time en
+ * dérivent, le tronquer les fausserait. Si le stockage sature malgré tout, le
+ * cache entier cède la place aux écritures (cf. outbox, `writeQueue`).
+ */
+export function pruneCaptureCopies(keepVersionIds: readonly string[] = []): void {
+  for (const key of cachedKeys(LAST_EXECUTION_PREFIX)) {
+    // Ancien format : `last-exec:<condensé des versions>:<date>`.
+    if (key.slice(LAST_EXECUTION_PREFIX.length).includes(':')) dropRead(key);
+  }
+  for (const key of cachedKeys(PREVIOUS_NOTES_PREFIX)) {
+    // Ancien format : les notes seules, sans l'exécution dont elles viennent.
+    const copy = peekRead<{ executionId?: unknown }>(key);
+    if (typeof copy?.executionId !== 'string') dropRead(key);
+  }
+  for (const key of cachedKeys(SEANCE_TEMPLATE_PREFIX)) {
+    const [versionId, seanceId] = key.slice(SEANCE_TEMPLATE_PREFIX.length).split(':');
+    if (!versionId || !seanceId || keepVersionIds.includes(versionId)) continue;
+    // Sans copie de la version courante, on ne sait pas : la copie reste.
+    const current = peekRead<string | null>(`${SEANCE_VERSION_PREFIX}${seanceId}`);
+    if (typeof current === 'string' && current !== versionId) dropRead(key);
+  }
 }
 
 // --- Exécution du jour --------------------------------------------------------
