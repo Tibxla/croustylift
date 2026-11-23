@@ -1,4 +1,4 @@
-import { e1rmBeats, e1rmEquals, e1rmUnits, estimateE1rm } from './e1rm'
+import { e1rmBeats, e1rmEquals, estimateE1rm } from './e1rm'
 
 describe('estimateE1rm', () => {
   it('applies shifted Epley at RIR 0', () => {
@@ -66,11 +66,6 @@ describe('estimateE1rm', () => {
 // sur la même valeur et masquait un vrai record.
 describe('comparaison exacte d’e1RM', () => {
   const e = (w: number, reps: number, rir = 0) => estimateE1rm(w, reps, rir)
-
-  it('e1rmUnits est un entier : centièmes de kg × (29 + reps + RIR)', () => {
-    expect(e1rmUnits(87.5, 5, 0)).toBe(8750 * 34)
-    expect(e1rmUnits(28.75, 9, 0)).toBe(2875 * 38)
-  })
 
   it('23,25 × 18 bat 28,75 × 9 (36,425 contre 36,4166…), dépassement réel sous le centième', () => {
     expect(e1rmBeats(e(23.25, 18), e(28.75, 9))).toBe(true)

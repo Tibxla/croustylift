@@ -207,6 +207,9 @@ perte), finition.
 - **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
   à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
   (14) les fige.
-- **Exports sans consommateur** (finition) : `summarizeBlocks`, `describeNoteKind`,
-  `loadDatedNote`, `initialState`, `upperA`, et les autres exports sans appelant, pas
-  relus.
+- **Exports sans consommateur hors tests** (finition) : `loadDatedNote`
+  (`notes/data.ts`), `listRefused` (`capture/outbox.ts`), `initialState`
+  (`capture/state.ts`) et `upperA` (`capture/fixtures.ts`, jeu d'essai de 71 appels
+  de tests, à déplacer dans un fichier de test plutôt qu'à supprimer). Les autres
+  exports sans appelant extérieur servent dans leur propre fichier : ce sont des
+  `export` posés pour les tests, pas du code mort.

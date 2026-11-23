@@ -9,11 +9,8 @@
 //     de la séance, ne déteint pas sur les autres jours.
 //
 // Une note EST du texte libre (contrairement aux séries, 100 % steppers) : la
-// seule logique pure ici est la NORMALISATION du corps et la DISTINCTION des deux
-// types. Pas d'accès DB : la couche data mappe ces helpers vers Supabase.
-
-/** Lequel des deux types de notes du modèle. Discriminant partagé UI + data. */
-export type NoteKind = 'per-exercise' | 'dated'
+// seule logique pure ici est la NORMALISATION du corps. Pas d'accès DB : la
+// couche data mappe ces helpers vers Supabase.
 
 /**
  * Normalise le corps d'une note avant persistance / affichage :
@@ -33,14 +30,4 @@ export function normalizeNoteBody(raw: string): string {
  */
 export function isBlankNote(body: string): boolean {
   return normalizeNoteBody(body) === ''
-}
-
-/** Libellé FR du type de note, pour les en-têtes d'UI (vocabulaire centralisé). */
-export function describeNoteKind(kind: NoteKind): string {
-  switch (kind) {
-    case 'per-exercise':
-      return 'Note de l’exercice'
-    case 'dated':
-      return 'Note du jour'
-  }
 }
