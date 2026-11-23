@@ -26,6 +26,7 @@
 // (owner_id non null), comme le précise docs/export-format.md.
 
 import { EXPORT_FORMAT_VERSION, EXPORT_TABLES, type CollectedData, type Row } from './export';
+import { builtInConstraintViolation } from '../../lib/db-errors';
 
 /** Version de FORMAT courante (= celle de l'export). */
 export const IMPORT_FORMAT_VERSION = EXPORT_FORMAT_VERSION;
@@ -206,17 +207,19 @@ export async function importUserData(client: ImportClient, parsed: ParsedImport)
 }
 
 /**
- * Le message d'un import refusé par la base. Un refus de contrainte vient du
- * FICHIER (référence vers une ligne qu'il ne contient pas, valeur hors bornes) :
- * on le dit en français, sans le nom de la contrainte. L'import est une seule
- * transaction (migration 0024) : rien n'a été écrit.
+ * Le message d'un import refusé par la base. Un refus de contrainte intégré de
+ * Postgres vient du FICHIER (référence vers une ligne qu'il ne contient pas,
+ * valeur hors bornes) : on le dit en français, sans le nom de la contrainte.
+ * L'import est une seule transaction (migration 0024) : rien n'a été écrit. Un
+ * refus de trigger, déjà en français, passe tel quel (cf. lib/db-errors).
  */
 function importRefusalMessage(error: { message: string; code?: string }): string {
-  if (error.code === '23503') {
-    return 'Import refusé : le fichier fait référence à un élément qu’il ne contient pas (exercice, séance ou routine). Rien n’a été importé.';
+  switch (builtInConstraintViolation(error)) {
+    case 'foreign-key':
+      return 'Import refusé : le fichier fait référence à un élément qu’il ne contient pas. Rien n’a été importé.';
+    case 'check':
+      return 'Import refusé : le fichier contient une valeur hors des limites acceptées. Rien n’a été importé.';
+    default:
+      return error.message;
   }
-  if (error.code === '23514') {
-    return 'Import refusé : le fichier contient une valeur hors des limites acceptées (texte trop long, nombre hors bornes). Rien n’a été importé.';
-  }
-  return error.message;
 }

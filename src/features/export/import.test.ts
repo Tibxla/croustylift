@@ -314,5 +314,13 @@ describe('importUserData', () => {
     await expect(importUserData(check.client, routines)).rejects.toThrow(
       /^Import refusé : le fichier contient une valeur hors des limites acceptées.*Rien n’a été importé\.$/,
     );
+    // Un refus de trigger porte le même code, mais son propre message : il passe.
+    const trigger = fakeImportClient({
+      code: '23503',
+      message: 'L’exercice 42 n’est ni un exo de base ni un exo de ce compte.',
+    });
+    await expect(importUserData(trigger.client, routines)).rejects.toThrow(
+      'L’exercice 42 n’est ni un exo de base ni un exo de ce compte.',
+    );
   });
 });

@@ -25,8 +25,28 @@ describe('constraintErrorMessage', () => {
     expect(message).not.toMatch(/check constraint|violates/)
   })
 
-  it('les deux refus ne se disent pas pareil', () => {
-    expect(constraintErrorMessage(pg('23503', ''))).not.toBe(constraintErrorMessage(pg('23514', '')))
+  it('un refus de TRIGGER sous le même code garde son message, déjà en français', () => {
+    // Migrations 0021, 0020 et 0019b : `raise exception ... using errcode`.
+    const archive = pg(
+      '23514',
+      'La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.',
+    )
+    expect(constraintErrorMessage(archive)).toBeNull()
+    expect(translateConstraintError(archive)).toBe(archive)
+    const lien = pg('23503', 'L’exercice 42 n’est ni un exo de base ni un exo de ce compte.')
+    expect(constraintErrorMessage(lien)).toBeNull()
+    expect(translateConstraintError(lien)).toBe(lien)
+  })
+
+  it('suppression d’une ligne encore référencée (23503) : traduite aussi', () => {
+    expect(
+      constraintErrorMessage(
+        pg(
+          '23503',
+          'update or delete on table "exercises" violates foreign key constraint "prescriptions_exercise_id_fkey" on table "prescriptions"',
+        ),
+      ),
+    ).toMatch(/utilisé ailleurs/)
   })
 
   it('toute autre erreur : null (unicité, RLS, réseau, erreur déjà traduite, valeur quelconque)', () => {
@@ -34,7 +54,8 @@ describe('constraintErrorMessage', () => {
     expect(constraintErrorMessage(pg('42501', 'permission denied'))).toBeNull()
     expect(constraintErrorMessage(new TypeError('Failed to fetch'))).toBeNull()
     expect(constraintErrorMessage(new Error('Cette séance a déjà été faite en salle'))).toBeNull()
-    expect(constraintErrorMessage({ code: 23503 })).toBeNull()
+    expect(constraintErrorMessage({ code: 23503, message: 'violates foreign key constraint' })).toBeNull()
+    expect(constraintErrorMessage({ code: '23503' })).toBeNull()
     expect(constraintErrorMessage(null)).toBeNull()
     expect(constraintErrorMessage('23503')).toBeNull()
   })
