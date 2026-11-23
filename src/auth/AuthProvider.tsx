@@ -197,7 +197,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const pending = heldCount()
         if (!force && pending > 0) throw new PendingWritesError(pending, quarantineCount())
 
-        const { error } = await supabase.auth.signOut()
+        // Portée LOCALE : seule la session de CET appareil est révoquée. La
+        // portée par défaut de supabase-js (« global ») déconnectait aussi le
+        // téléphone quand on se déconnectait de l'ordinateur.
+        const { error } = await supabase.auth.signOut({ scope: 'local' })
         if (error) {
           // Hors-ligne, supabase-js REFUSE de retirer sa session locale (l'appel
           // réseau échoue avant sa purge interne). File vide ou forçage : la
