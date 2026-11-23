@@ -194,6 +194,58 @@ export function chunkFailureAction(ctx: ChunkFailureContext): 'reload' | 'report
   return 'reload'
 }
 
+/**
+ * Suit LA demande d'import en cours d'un écran paresseux. `begin` ouvre une
+ * demande (et périme la précédente), `invalidate` la périme : l'utilisateur a
+ * quitté l'écran, ou l'app authentifiée a été démontée (déconnexion). Le rejet
+ * d'un import ne compte que si SA demande est toujours celle en cours.
+ */
+export class ImportRequests {
+  private current: number | null = null
+  private last = 0
+
+  begin(): number {
+    this.last += 1
+    this.current = this.last
+    return this.last
+  }
+
+  invalidate(): void {
+    this.current = null
+  }
+
+  isActive(id: number): boolean {
+    return this.current === id
+  }
+}
+
+// --- Prise de contrôle du service worker ---------------------------------------
+
+/**
+ * Un `controllerchange` signifie-t-il qu'une NOUVELLE version a pris la main
+ * sous une page chargée par l'ancienne ? Oui si la page avait déjà un contrôleur
+ * à son démarrage. Sinon c'est la première installation : le worker prend en
+ * charge une page qu'il n'avait pas servie, et son bundle est déjà le bon.
+ */
+export function isControllerReplacement(hadControllerAtStart: boolean): boolean {
+  return hadControllerAtStart
+}
+
+/**
+ * À l'enregistrement, une mise à jour est-elle DÉJÀ en cours d'installation
+ * (lancée par un autre onglet avant que cette page ne s'abonne) ? La page a
+ * alors manqué `updatefound` : il faut mettre ses chunks paresseux à l'abri tout
+ * de suite. Le rechargement, lui, n'est marqué en attente qu'à la prise de
+ * contrôle (`controllerchange`) : recharger avant resservirait l'ancien bundle.
+ */
+export function updateAlreadyInstalling(registration: {
+  hasController: boolean
+  installing: boolean
+  waiting: boolean
+}): boolean {
+  return registration.hasController && (registration.installing || registration.waiting)
+}
+
 // --- Onglet à rouvrir après le rechargement -----------------------------------
 
 const SURFACES = ['capture', 'analysis', 'seances', 'exercises'] as const

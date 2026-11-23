@@ -5,14 +5,16 @@
 import { useSyncExternalStore } from 'react'
 import { registerSW } from 'virtual:pwa-register'
 import { previousDayIso, todayIso } from '../features/capture/state'
-import { arrivedOnRecoveryLink, RECOVERY_BLOCK } from './recovery'
+import { activeBlockers } from './blockers'
 import {
   CAPTURE_STORAGE_PREFIX,
   chunkFailureAction,
+  isControllerReplacement,
   isCaptureEntryInProgress,
   parseStoredSurface,
   reloadAllowed,
   shouldReload,
+  updateAlreadyInstalling,
   type ReloadGuards,
   type ReloadTrigger,
   type SurfaceName,
@@ -33,26 +35,6 @@ let restoredSurface: SurfaceName | null = null
 /** Charge en mémoire les chunks paresseux de l'app (fourni par App.tsx). */
 let preloadLazyChunks: (() => void) | null = null
 const listeners = new Set<() => void>()
-
-/**
- * Raisons qui interdisent tout rechargement automatique, déclarées par le reste
- * de l'app. Une arrivée par lien de récupération de mot de passe bloque d'emblée.
- */
-const blockers = new Set<string>(arrivedOnRecoveryLink ? [RECOVERY_BLOCK] : [])
-
-/**
- * Interdit les rechargements automatiques tant que `reason` n'est pas levée par
- * `unblockReloads(reason)`. À poser par tout écran qui porte un état que seul la
- * mémoire tient : brouillon non enregistré, flux à usage unique. Idempotent.
- */
-export function blockReloads(reason: string): void {
-  blockers.add(reason)
-}
-
-/** Lève une raison posée par `blockReloads`. Sans effet si elle n'est pas posée. */
-export function unblockReloads(reason: string): void {
-  blockers.delete(reason)
-}
 
 function notify(): void {
   for (const listener of listeners) listener()
@@ -92,7 +74,7 @@ function currentGuards(): ReloadGuards {
   return {
     captureInProgress: captureInProgress(),
     fieldFocused: fieldFocused(),
-    blockers: [...blockers],
+    blockers: activeBlockers(),
   }
 }
 
@@ -195,6 +177,28 @@ export function useUpdateReady(): boolean {
   )
 }
 
+/**
+ * Met à l'abri les chunks paresseux dès qu'une mise à jour s'installe (plusieurs
+ * secondes de téléchargement avant qu'elle ne remplace le précache) : soit on la
+ * voit commencer (`updatefound`), soit elle a commencé avant notre abonnement.
+ * Peut être appelé plusieurs fois pour la même inscription : un import déjà fait
+ * ne coûte rien.
+ */
+function shelterLazyChunks(registration: ServiceWorkerRegistration): void {
+  registration.addEventListener('updatefound', () => {
+    if (navigator.serviceWorker.controller) preloadLazyChunks?.()
+  })
+  if (
+    updateAlreadyInstalling({
+      hasController: navigator.serviceWorker.controller !== null,
+      installing: registration.installing !== null,
+      waiting: registration.waiting !== null,
+    })
+  ) {
+    preloadLazyChunks?.()
+  }
+}
+
 /** À appeler une fois, au démarrage (main.tsx). */
 export function initServiceWorker(): void {
   // Première interaction : au-delà, un rechargement spontané pourrait défaire un
@@ -212,23 +216,42 @@ export function initServiceWorker(): void {
   // pas en plus `vite:preloadError` : Vite l'émet avant ce rejet, pour le même
   // échec, et un écouteur ici rechargerait sans connaître l'onglet visé.
 
+  // Une nouvelle version vient de prendre la main sous cette page : on le note
+  // et on recharge si c'est permis maintenant, sinon au prochain point sûr.
+  const markUpdateActive = () => {
+    if (reloadPending) return
+    reloadPending = true
+    notify()
+    requestReload('activated')
+  }
+
+  // Écouté dès le démarrage, sans dépendre de l'enregistrement : une page ouverte
+  // pendant qu'un autre onglet installe la mise à jour s'abonne trop tard pour
+  // les événements du client d'enregistrement, mais voit toujours son contrôleur
+  // changer. On distingue le remplacement de la première installation.
+  if ('serviceWorker' in navigator) {
+    const hadController = navigator.serviceWorker.controller !== null
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (isControllerReplacement(hadController)) markUpdateActive()
+    })
+    // Même raison pour la mise à l'abri des chunks : `register()` ne rend la
+    // main qu'une fois l'installation en cours terminée (les opérations d'un
+    // même périmètre sont mises en file), donc trop tard. `getRegistration()`,
+    // lui, répond tout de suite.
+    void navigator.serviceWorker
+      .getRegistration()
+      .then((registration) => {
+        if (registration) shelterLazyChunks(registration)
+      })
+      .catch(() => {})
+  }
+
   registerSW({
     immediate: true,
-    onNeedReload() {
-      // Le service worker neuf a pris la main (mise à jour d'ici, ou d'un autre
-      // onglet du navigateur) : la page est sur l'ancien bundle. On recharge si
-      // c'est permis maintenant, sinon au prochain point sûr.
-      reloadPending = true
-      notify()
-      requestReload('activated')
-    },
+    onNeedReload: markUpdateActive,
     onRegisteredSW(_url, registration) {
       if (!registration) return
-      // Une mise à jour s'installe (plusieurs secondes de téléchargement avant
-      // qu'elle ne remplace le précache) : on met à l'abri les chunks paresseux.
-      registration.addEventListener('updatefound', () => {
-        if (navigator.serviceWorker.controller) preloadLazyChunks?.()
-      })
+      shelterLazyChunks(registration)
       // En mode écran d'accueil, iOS garde l'app suspendue des jours : sans
       // navigation, le navigateur ne cherche pas de nouveau service worker. On
       // le lui demande au retour au premier plan.

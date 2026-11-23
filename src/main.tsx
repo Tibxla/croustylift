@@ -7,13 +7,15 @@ import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './auth/AuthProvider'
 import { ErrorBoundary } from './ErrorBoundary'
-import { initServiceWorker } from './pwa/register'
+import { initServiceWorker, requestReload } from './pwa/register'
+import { watchRecoveryLink } from './pwa/recovery-watch'
 import { DiagPanel } from './viewport/DiagPanel'
 import { startViewportWatch } from './viewport/watch'
 
 // Hors de l'arbre React : ces deux services vivent autant que la page et ne
 // doivent pas dépendre d'un écran monté (login, premier lancement, erreur).
 initServiceWorker()
+watchRecoveryLink(() => requestReload('activated'))
 startViewportWatch()
 
 createRoot(document.getElementById('root')!).render(

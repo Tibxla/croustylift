@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isRecoveryUrl } from './recovery'
+import { isRecoveryUrl, recoveryLinkOutcome } from './recovery'
 
 describe('isRecoveryUrl', () => {
   it('lien de récupération Supabase, jetons dans le fragment', () => {
@@ -17,5 +17,20 @@ describe('isRecoveryUrl', () => {
     expect(isRecoveryUrl('https://app.example/#access_token=abc&type=signup')).toBe(false)
     expect(isRecoveryUrl('https://app.example/?diag=1')).toBe(false)
     expect(isRecoveryUrl('pas une adresse')).toBe(false)
+  })
+})
+
+describe('recoveryLinkOutcome', () => {
+  it("tant que le client d'authentification s'initialise, on ne lève rien", () => {
+    expect(recoveryLinkOutcome({ initialized: false, recoverySeen: false })).toBe('wait')
+  })
+
+  it("lien accepté (PASSWORD_RECOVERY) : l'écran de nouveau mot de passe prend le relais", () => {
+    expect(recoveryLinkOutcome({ initialized: true, recoverySeen: true })).toBe('handover')
+    expect(recoveryLinkOutcome({ initialized: false, recoverySeen: true })).toBe('handover')
+  })
+
+  it('lien rejeté ou expiré (initialisation finie, sans PASSWORD_RECOVERY) : blocage levé', () => {
+    expect(recoveryLinkOutcome({ initialized: true, recoverySeen: false })).toBe('release')
   })
 })

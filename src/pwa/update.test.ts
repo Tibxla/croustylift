@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   CHUNK_RELOAD_COOLDOWN_MS,
   chunkFailureAction,
+  ImportRequests,
+  isControllerReplacement,
+  updateAlreadyInstalling,
   isCaptureEntryInProgress,
   isChunkLoadError,
   parseStoredSurface,
@@ -189,5 +192,59 @@ describe('parseStoredSurface', () => {
     expect(parseStoredSurface('capture')).toBe('capture')
     expect(parseStoredSurface('admin')).toBeNull()
     expect(parseStoredSurface(null)).toBeNull()
+  })
+})
+
+describe('ImportRequests', () => {
+  it('la demande ouverte est active tant que rien ne la périme', () => {
+    const requests = new ImportRequests()
+    const id = requests.begin()
+    expect(requests.isActive(id)).toBe(true)
+  })
+
+  it("quitter l'écran ou démonter l'app (déconnexion) périme la demande : son rejet sera ignoré", () => {
+    const requests = new ImportRequests()
+    const id = requests.begin()
+    requests.invalidate()
+    expect(requests.isActive(id)).toBe(false)
+    // Mêmes gardes que la reprise : une demande périmée ne recharge jamais.
+    expect(
+      chunkFailureAction({
+        online: true,
+        requestActive: requests.isActive(id),
+        allowed: true,
+        lastReloadAt: null,
+        now: NOW,
+      }),
+    ).toBe('ignore')
+  })
+
+  it('une nouvelle demande périme la précédente sans la ressusciter', () => {
+    const requests = new ImportRequests()
+    const first = requests.begin()
+    requests.invalidate()
+    const second = requests.begin()
+    expect(requests.isActive(first)).toBe(false)
+    expect(requests.isActive(second)).toBe(true)
+  })
+})
+
+describe('prise de contrôle du service worker', () => {
+  it('première installation : pas un remplacement, rien à recharger', () => {
+    expect(isControllerReplacement(false)).toBe(false)
+  })
+
+  it('la page avait un contrôleur : une nouvelle version a pris la main', () => {
+    expect(isControllerReplacement(true)).toBe(true)
+  })
+
+  it("page ouverte pendant qu'un autre onglet installe : mise à l'abri immédiate", () => {
+    expect(updateAlreadyInstalling({ hasController: true, installing: true, waiting: false })).toBe(true)
+    expect(updateAlreadyInstalling({ hasController: true, installing: false, waiting: true })).toBe(true)
+  })
+
+  it('rien en cours, ou toute première installation : rien à faire', () => {
+    expect(updateAlreadyInstalling({ hasController: true, installing: false, waiting: false })).toBe(false)
+    expect(updateAlreadyInstalling({ hasController: false, installing: true, waiting: false })).toBe(false)
   })
 })

@@ -14,18 +14,17 @@ import { flushOutbox } from './features/capture/sync'
 import { signOutRefusalLabel } from './features/capture/sync-label'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
+import { blockReloads, unblockReloads } from './pwa/blockers'
 import {
-  blockReloads,
   captureInProgress,
   recoverFromChunkFailure,
   requestReload,
   setLazyChunkPreloader,
   takeSurfaceAfterReload,
-  unblockReloads,
   useUpdateReady,
 } from './pwa/register'
-import { RECOVERY_BLOCK } from './pwa/recovery'
-import type { SurfaceName } from './pwa/update'
+import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
+import { ImportRequests, type SurfaceName } from './pwa/update'
 import { openDiag } from './viewport/watch'
 import { APP_VERSION_LABEL } from './version'
 
@@ -38,26 +37,32 @@ import { APP_VERSION_LABEL } from './version'
 // - il est encore sur l'Analyse et un rechargement est permis : on recharge une
 //   fois pour retrouver un shell et des chunks cohérents, et on rouvre l'Analyse
 //   (la promesse reste en suspens, le Suspense tient jusqu'au rechargement) ;
-// - il a quitté l'onglet entre-temps : on ne recharge pas sous ses pieds, et on
-//   oublie l'échec (`React.lazy` le garderait) pour retenter s'il y revient ;
+// - sa demande est périmée (il a quitté l'onglet, ou s'est déconnecté) : on ne
+//   recharge pas sous ses pieds, et on oublie l'échec (`React.lazy` le
+//   garderait) pour retenter s'il y revient ;
 // - sinon (hors ligne, séance en cours, déjà tenté) : l'erreur remonte à la
 //   frontière d'erreur, qui l'explique.
 const importAnalysis = () => import('./features/analysis/AnalysisScreen')
 
-/** Onglet affiché, tenu à jour par AuthenticatedApp pour le rejet d'import ci-dessous. */
-let displayedSurface: SurfaceName = 'capture'
+/**
+ * La demande d'import de l'Analyse en cours : ouverte quand l'import démarre,
+ * périmée par AuthenticatedApp dès que l'utilisateur quitte l'onglet ou que
+ * l'app authentifiée est démontée.
+ */
+const analysisRequests = new ImportRequests()
 
 function createAnalysisScreen() {
-  return lazy(() =>
-    importAnalysis()
+  return lazy(() => {
+    const request = analysisRequests.begin()
+    return importAnalysis()
       .then((m) => ({ default: m.AnalysisScreen }))
       .catch((err: unknown) => {
-        const action = recoverFromChunkFailure('analysis', displayedSurface === 'analysis')
+        const action = recoverFromChunkFailure('analysis', analysisRequests.isActive(request))
         if (action === 'reload') return new Promise<never>(() => {})
         if (action === 'ignore') AnalysisScreen = createAnalysisScreen()
         throw err
-      }),
-  )
+      })
+  })
 }
 let AnalysisScreen = createAnalysisScreen()
 
@@ -118,14 +123,18 @@ function App() {
     useAuth()
 
   // Récupération de mot de passe : aucun rechargement automatique tant que le
-  // flux n'est pas terminé (le lien ne sert qu'une fois). Le blocage est posé dès
-  // l'arrivée par le lien (pwa/recovery.ts, avant que Supabase ne nettoie l'URL)
-  // et confirmé ici par l'événement PASSWORD_RECOVERY ; il est levé quand
-  // l'écran de nouveau mot de passe se referme.
+  // flux n'est pas terminé (le lien ne sert qu'une fois). Un premier blocage est
+  // posé dès l'arrivée par le lien (pwa/blockers.ts, avant que Supabase ne
+  // nettoie l'URL) et levé si le lien n'aboutit pas (pwa/recovery-watch.ts).
+  // S'il aboutit, l'écran de nouveau mot de passe tient ici le sien, et les deux
+  // sont levés quand il se referme.
   useEffect(() => {
     if (!isPasswordRecovery) return
-    blockReloads(RECOVERY_BLOCK)
-    return () => unblockReloads(RECOVERY_BLOCK)
+    blockReloads(RECOVERY_SCREEN_BLOCK)
+    return () => {
+      unblockReloads(RECOVERY_SCREEN_BLOCK)
+      unblockReloads(RECOVERY_LINK_BLOCK)
+    }
   }, [isPasswordRecovery])
 
   if (loading) {
@@ -181,8 +190,11 @@ function AuthenticatedApp({
   // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
   const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
   const updateReady = useUpdateReady()
+  // La demande d'import de l'Analyse ne vaut que tant que cet écran la porte :
+  // elle est périmée au départ de l'onglet et au démontage (déconnexion).
   useEffect(() => {
-    displayedSurface = surface
+    if (surface !== 'analysis') return
+    return () => analysisRequests.invalidate()
   }, [surface])
   // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
   // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
