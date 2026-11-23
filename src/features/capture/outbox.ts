@@ -182,6 +182,14 @@ export interface SyncFns {
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
 }
 
+/**
+ * Lecteur de session passé à `flush` : l'id du compte CONNECTÉ, vérifié à
+ * l'instant (jeton présent et non expiré, ou rafraîchi avec succès). Toute autre
+ * valeur (`null` : pas de session ; `undefined` : aucun lecteur posé) veut dire
+ * « personne de vérifiable » et arrête la passe.
+ */
+export type SessionReader = () => Promise<string | null | undefined>;
+
 /** État renvoyé par `flush` : combien d'ops restent en file après la passe. */
 export interface FlushResult {
   /** Nombre d'ops encore en attente (0 = tout est synchronisé). */
@@ -401,15 +409,15 @@ let inFlight: Promise<FlushResult> | null = null;
  *
  * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
  */
-export function flush(fns: SyncFns): Promise<FlushResult> {
+export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   if (inFlight) return inFlight;
-  inFlight = runFlush(fns).finally(() => {
+  inFlight = runFlush(fns, who).finally(() => {
     inFlight = null;
   });
   return inFlight;
 }
 
-async function runFlush(fns: SyncFns): Promise<FlushResult> {
+async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   // RÉ-ARMEMENT (issue F12) : une op enfilée DANS la fenêtre étroite entre la fin
   // d'une passe et le `finally` qui remet `inFlight` à null n'est pas traitée par
   // cette passe ; un `flush` concurrent reçoit alors ce résultat périmé
@@ -423,7 +431,7 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
   let budget = readQueue().length + 1;
 
   while (true) {
-    const { flushed, drained } = await runFlushOnce(fns);
+    const { flushed, drained } = await runFlushOnce(fns, who);
     totalFlushed += flushed;
     const remaining = readQueue().length;
     // Arrêt sur échec (pas drainé), file vide, ou garde-fou de convergence atteint.
@@ -441,11 +449,28 @@ async function runFlush(fns: SyncFns): Promise<FlushResult> {
  * `drained` = true si la file a été entièrement vidée, false si on s'est arrêté sur
  * un échec (la distinction pilote le ré-armement, cf. `runFlush`).
  */
-async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: boolean }> {
+async function runFlushOnce(
+  fns: SyncFns,
+  who?: SessionReader,
+): Promise<{ flushed: number; drained: boolean }> {
   let queue = readQueue();
   let flushed = 0;
 
   while (queue.length > 0) {
+    // SESSION VÉRIFIÉE avant chaque op (audit sync, constat 4). Sans session,
+    // supabase-js envoie la requête sous la clé publique : la RLS fait alors
+    // toucher 0 ligne à un `update` ou un `delete` SANS erreur, et l'op serait
+    // retirée comme acquittée (clôture, annulation, suppression perdues). On
+    // s'arrête donc comme hors ligne : rien n'est tenté, tout reste en file.
+    // Sans lecteur (tests de la file seule), rien n'est vérifié.
+    let user: string | undefined;
+    if (who) {
+      const connected = await who();
+      if (typeof connected !== 'string') return { flushed, drained: false };
+      user = connected;
+      // La file a pu bouger pendant la lecture de la session.
+      queue = readQueue();
+    }
     const op = queue[0];
     // `queue.length > 0` garantit la tête : on prouve l'index au compilateur sans
     // changer le flux (la file persistée n'est jamais vidée sous nos pieds ici,
@@ -468,6 +493,11 @@ async function runFlushOnce(fns: SyncFns): Promise<{ flushed: number; drained: b
       );
       return { flushed, drained: false };
     }
+    // La session a pu tomber PENDANT la requête (jeton expiré, refresh en échec) :
+    // elle est alors peut-être partie sous la clé publique et a « réussi » à vide.
+    // Dans le doute l'op n'est pas acquittée : elle reste en file, et la rejouer
+    // est sans risque (idempotente par id). Même arrêt que hors ligne.
+    if (who && (await who()) !== user) return { flushed, drained: false };
     // Succès : on relit la file (un enqueue concurrent a pu s'y ajouter) puis on
     // retire l'op qu'on vient de traiter. Mais la tête a pu CHANGER pendant
     // l'`await` : un « Réinitialiser » (`purgeByExecution`) ou un `clearQueue`

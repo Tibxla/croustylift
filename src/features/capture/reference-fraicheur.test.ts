@@ -136,6 +136,7 @@ import { clearQueue, enqueue, pendingCount } from './outbox';
 import { flushOutbox } from './sync';
 import { clearReadCache } from '../../lib/read-cache';
 import { saveLocalAccount } from '../../lib/local-account';
+import { setSessionUserReader } from '../../lib/session-identity';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -199,6 +200,8 @@ beforeEach(async () => {
   server.reads = 0;
   server.clock = 0;
   saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+  // Le flush exige une session vérifiée (posée par AuthProvider en production).
+  setSessionUserReader(async () => 'user-1');
 
   // Séance 1, déjà en base ET dans la copie locale : 20 kg × 8.
   await loggerSerie('exec-1', 'set-1', '2026-11-01', 20);

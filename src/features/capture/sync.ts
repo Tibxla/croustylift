@@ -22,6 +22,7 @@ import {
   deleteExerciseNoteByExercise,
 } from '../notes/data';
 import { enqueue, flush, readQueue, type FlushResult, type OutboxOp, type SyncFns } from './outbox';
+import { sessionUserId } from '../../lib/session-identity';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
 // depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
@@ -146,5 +147,8 @@ export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
  * acquittées sont relues (`refreshTouchedHistory`).
  */
 export function flushOutbox() {
-  return flush(syncFns).finally(refreshTouchedHistory);
+  // Le lecteur de session ferme la porte aux écritures sans compte vérifié : sans
+  // session, une requête part sous la clé publique et un `update`/`delete` est
+  // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
+  return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
 }

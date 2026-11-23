@@ -834,3 +834,74 @@ describe('purgeByExecution', () => {
     expect(readQueue()).toEqual([]);
   });
 });
+
+// --- flush sans session vérifiée (audit sync, constat 4) --------------------
+//
+// Sans session, supabase-js envoie la clé publique : un update ou un delete
+// touche alors 0 ligne SANS erreur, et l'op serait retirée comme acquittée.
+// Le flush reçoit donc un lecteur de session et ne tente rien sans compte.
+
+describe('flush (session vérifiée)', () => {
+  it('sans session, aucune op n’est tentée et la file reste entière', async () => {
+    enqueue({ type: 'updateExecution', id: 'exec-1', closedAt: '2026-06-18T10:00:00Z' });
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    const fns = okFns();
+
+    const res = await flush(fns, async () => null);
+
+    expect(fns.calls()).toEqual([]);
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
+  });
+
+  it('lecteur de session absent côté auth (undefined) : rien n’est tenté non plus', async () => {
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    const fns = okFns();
+
+    const res = await flush(fns, async () => undefined);
+
+    expect(fns.calls()).toEqual([]);
+    expect(res.remaining).toBe(1);
+  });
+
+  it('session présente : la file est vidée comme avant', async () => {
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-1', 1));
+    const fns = okFns();
+
+    const res = await flush(fns, async () => 'user-1');
+
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+  });
+
+  it('session perdue PENDANT une passe : l’op en cours n’est pas acquittée, la suite n’est pas tentée', async () => {
+    enqueue({ type: 'updateExecution', id: 'exec-1', closedAt: '2026-06-18T10:00:00Z' });
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    const fns = okFns();
+    // La session tombe pendant la requête de la 1re op (jeton expiré, refresh en
+    // échec) : la requête a pu partir sous la clé publique et « réussir » à vide.
+    let session: string | null = 'user-1';
+    fns.updateExecution = vi.fn(async () => {
+      session = null;
+    });
+
+    const res = await flush(fns, async () => session);
+
+    expect(fns.updateExecution).toHaveBeenCalledTimes(1);
+    expect(fns.deleteSet).not.toHaveBeenCalled();
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
+  });
+
+  it('la session revenue, les ops gardées repartent dans l’ordre', async () => {
+    enqueue({ type: 'updateExecution', id: 'exec-1', closedAt: '2026-06-18T10:00:00Z' });
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    const fns = okFns();
+    await flush(fns, async () => null);
+
+    const res = await flush(fns, async () => 'user-1');
+
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
+  });
+});
