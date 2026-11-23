@@ -97,7 +97,7 @@ _Avoid_: Modification, correction, erreur
 ### Exécution
 
 **Exécution**:
-Le déroulé réel d'une séance un jour donné : les séries réellement faites, rattachées à la version de séance active ce jour-là. Le diff entre les deux donne les déviations. Une exécution n'existe que par ses séries : sans aucune série loggée, ce n'est pas une exécution — elle n'a sa place ni au journal ni dans les métriques (durée, BPM), qui décrivent toujours une séance réellement faite.
+Le déroulé réel d'une séance un jour donné : les séries réellement faites, rattachées à la version de séance active à ce moment-là. Le diff entre les deux donne les déviations. Une exécution n'existe que par ses séries : sans aucune série loggée, ce n'est pas une exécution — elle n'a sa place ni au journal ni dans les métriques (durée, BPM), qui décrivent toujours une séance réellement faite.
 _Avoid_: Session, séance réalisée (« séance » désigne le template) ; exécution vide (sans série)
 
 **Clôture**:

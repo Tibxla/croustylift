@@ -25,6 +25,8 @@ Le but produit est de comparer des configurations d'entraînement stables (« tr
 - le jour tranche d'abord, l'instant départage le même jour. Une séance hors ligne dont la ligne n'atteint la base que le lendemain ne change donc pas de bloc pour autant. Sans instant d'un côté ou de l'autre, le jour de la coupure appartient au bloc qui s'ouvre ;
 - le jour d'une frontière est son jour local, comme celui des exécutions. Daté en UTC, un plan édité à 00 h 30 à Paris tombait la veille.
 
+Limite assumée : l'instant retenu est le lancement, alors que l'exécution ne naît qu'à sa première série (ADR 0011) et garde la version sous laquelle elle est née (ADR 0021). Si le plan est retouché entre le lancement et la première série, la séance se joue sous la nouvelle version mais reste rangée dans l'ancien bloc. La fenêtre est d'une heure au plus, un lancement sans série expirant au bout d'1 h. La création de la ligne ne ferait pas mieux : après une séance hors ligne, elle date de l'envoi.
+
 Deux blocs peuvent donc naître le même jour et porter chacun des points : un bloc s'identifie par son instant de début, plus par sa date.
 
 **Bloc implicite.** Un compte qui capture avant d'avoir activé une routine (la Capture se replie sur la première routine non archivée) n'avait aucun bloc pour ces séances, écartées de la comparaison sans rien dire. Quand la première exécution du compte précède toute activation, elle ouvre un bloc sur la routine de sa séance, à son jour. C'est la seule exécution que lit la dérivation des blocs ; aucune série n'est lue, une déviation ne crée toujours pas de bloc.

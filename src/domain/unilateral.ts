@@ -60,7 +60,7 @@ export function pairSidesByOrder(sets: PerformedSet[]): SidePair[] {
  *
  * C'est une 3ᵉ convention de comptage, distincte et volontaire :
  *   - `countLogicalSetsDone` (set-count.ts) : orders distincts, un côté seul = 1
- *     (série « entamée ») — pour le décompte logique d'analyse ;
+ *     (série « entamée »), pour savoir si un exo a atteint ses séries prescrites ;
  *   - `countPerformedSets` (set-count.ts) : pondéré par reps, G + D = 2 au total
  *     pour le décompte de séries de la séance (Clôture et Journal) ;
  *   - ici : fraction de série RÉELLEMENT faite, un côté = 0,5 — pour le compteur
