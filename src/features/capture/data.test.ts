@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyPendingSets,
+  copyHoldsDeletedRow,
   decideCaptureSource,
   deriveExerciseHistory,
   resolveCaptureRoutineId,
@@ -475,5 +476,41 @@ describe('deriveExerciseHistory — exclusion de l\'exécution en cours', () => 
   it('sans exclusion, le socle des records absorbe le jour (le comportement d\'avant)', () => {
     const h = deriveExerciseHistory(rows, 'exo-1', versions, false);
     expect(h.personalRecord.bestWeightReps).toEqual({ weightKg: 85, reps: 8 });
+  });
+});
+
+// --- suppression ciblée : quelle copie d'historique contient la ligne ? ------
+
+describe('copyHoldsDeletedRow', () => {
+  const ligne = (id: string | undefined, executionId: string) => ({
+    ...(id !== undefined ? { id } : {}),
+    weight_kg: 80,
+    reps: 8,
+    rir: 2,
+    set_order: 1,
+    side: null,
+    execution_id: executionId,
+    executions: null,
+  });
+  const copie = [ligne('s-1', 'e-1'), ligne('s-2', 'e-2')];
+
+  it('série supprimée présente par son id', () => {
+    expect(copyHoldsDeletedRow(copie, { setIds: ['s-2'], executionIds: [] })).toBe(true);
+  });
+
+  it('exécution supprimée présente par l’execution_id d’une série', () => {
+    expect(copyHoldsDeletedRow(copie, { setIds: [], executionIds: ['e-1'] })).toBe(true);
+  });
+
+  it('ligne absente de la copie : pas concernée', () => {
+    expect(copyHoldsDeletedRow(copie, { setIds: ['s-9'], executionIds: ['e-9'] })).toBe(false);
+    expect(copyHoldsDeletedRow([], { setIds: ['s-1'], executionIds: [] })).toBe(false);
+  });
+
+  it('copie d’ancien format (lignes sans id) : dans le doute, concernée par une série supprimée', () => {
+    const ancienne = [ligne(undefined, 'e-1')];
+    expect(copyHoldsDeletedRow(ancienne, { setIds: ['s-9'], executionIds: [] })).toBe(true);
+    // Une exécution, elle, se compare toujours : pas de doute à lever.
+    expect(copyHoldsDeletedRow(ancienne, { setIds: [], executionIds: ['e-9'] })).toBe(false);
   });
 });

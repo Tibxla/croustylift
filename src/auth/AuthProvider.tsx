@@ -2,16 +2,13 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
 import { supabase, supabaseAuthStorageKey } from '../lib/supabase'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
-import {
-  clearLocalAccount,
-  loadLocalAccount,
-  saveLocalAccount,
-  type LocalAccount,
-} from '../lib/local-account'
+import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
+import { recognizeAccount } from './account-switch'
 import { clearReadCache } from '../lib/read-cache'
 import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
-import { clearQueue, pendingCount } from '../features/capture/outbox'
+import { adoptLegacyOps, clearQueue, heldCount } from '../features/capture/outbox'
+import { foreignPendingWrites } from './pending-guard'
 import { flushOutbox } from '../features/capture/sync'
 import { clearCaptureState } from '../features/capture/state'
 
@@ -30,6 +27,11 @@ setSessionUserReader(async () => {
   const { data } = await supabase.auth.getSession()
   return data.session?.user.id ?? null
 })
+
+// Migration douce de la file d'écritures (audit sécurité, constat 1) : les ops
+// d'un bundle antérieur, sans compte, sont attribuées au compte reconnu ICI, au
+// chargement, avant que le moindre événement d'auth ne réécrive le marqueur.
+adoptLegacyOps()
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -105,7 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           userId: nextSession.user.id,
           email: nextSession.user.email ?? null,
         }
-        saveLocalAccount(account)
+        // Un compte DIFFÉRENT du précédent : ses copies locales sont d'abord
+        // purgées, sauf écritures encore retenues (cf. account-switch).
+        recognizeAccount(account)
         setLocalAccount(account)
         setOfflineRecognized(false)
         setSession(nextSession)
@@ -156,21 +160,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localAccount,
       offlineRecognized,
       signIn: async (email, password) => {
-        const account = loadLocalAccount()
-        if (
-          account &&
-          pendingCount() > 0 &&
-          (account.email ?? '').toLowerCase() !== email.trim().toLowerCase()
-        ) {
-          // Un AUTRE compte veut s'installer par-dessus des écritures non
-          // synchronisées (ex. après révocation) : refus — seul le forçage
-          // explicite peut les jeter (ADR 0012).
-          throw new PendingWritesError(pendingCount())
-        }
+        // Un AUTRE compte veut s'installer par-dessus des écritures non
+        // synchronisées (ex. après révocation) : refus — seul le forçage
+        // explicite peut les jeter (ADR 0012).
+        const held = foreignPendingWrites(email)
+        if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
       },
       signUp: async (email, password) => {
+        // Même garde que la Connexion : sans confirmation d'e-mail, l'inscription
+        // ouvre une session sur-le-champ, par-dessus les saisies d'un autre.
+        const held = foreignPendingWrites(email)
+        if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
       },
@@ -185,7 +187,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           /* hors-ligne ou flush en échec : le blocage ci-dessous tranche */
         }
-        const pending = pendingCount()
+        // Les ops en quarantaine (rejetées par la base) comptent aussi : la
+        // Déconnexion les purgerait, donc seul le forçage peut les jeter.
+        const pending = heldCount()
         if (!force && pending > 0) throw new PendingWritesError(pending)
 
         const { error } = await supabase.auth.signOut()

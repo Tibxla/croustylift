@@ -3,6 +3,7 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
+import { loadLocalAccount } from '../../lib/local-account';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -624,8 +625,15 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
   try {
     const raw = localStorage.getItem(storageKey(session.id, date));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<CaptureState>;
+    const parsed = JSON.parse(raw) as Partial<CaptureState> & { ownerId?: unknown };
     if (parsed.sessionId !== session.id || parsed.date !== date) return null;
+    // État persisté par un AUTRE compte (audit sécurité, constat 1) : ce n'est pas
+    // la capture de celui que l'appareil reconnaît. Il n'est pas restauré, et pas
+    // effacé non plus (son compte le retrouvera). Sans `ownerId` (ancien format),
+    // l'état est tenu pour celui du compte reconnu.
+    if (typeof parsed.ownerId === 'string' && parsed.ownerId !== loadLocalAccount()?.userId) {
+      return null;
+    }
     return {
       sessionId: session.id,
       // CONSERVE l'executionId persisté : un log offline et son upsert d'exécution
@@ -659,7 +667,13 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(storageKey(state.sessionId, state.date), JSON.stringify(state));
+    // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
+    // capture d'un compte sous un autre (cf. `loadPersisted`).
+    const ownerId = loadLocalAccount()?.userId;
+    localStorage.setItem(
+      storageKey(state.sessionId, state.date),
+      JSON.stringify(ownerId ? { ...state, ownerId } : state),
+    );
   } catch {
     // Quota plein / mode privé : on dégrade silencieusement, la capture reste en mémoire.
   }

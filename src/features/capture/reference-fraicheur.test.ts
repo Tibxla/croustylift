@@ -35,6 +35,12 @@ const server = vi.hoisted(() => ({
   /** Nombre de lectures d'historique parties vers le « réseau ». */
   reads: 0,
   clock: 0,
+  /**
+   * Retient la LIVRAISON des lectures d'historique : la réponse est figée au
+   * départ de la requête (état de la base à cet instant) mais n'arrive qu'à
+   * l'ouverture de la vanne. Simule une réponse tardive.
+   */
+  gate: null as Promise<void> | null,
 }));
 
 vi.mock('../../lib/supabase', () => {
@@ -119,7 +125,8 @@ vi.mock('../../lib/supabase', () => {
                       }),
                     error: null,
                   };
-              return Promise.resolve(result).then(resolve, reject);
+              const delivery = server.gate ? server.gate.then(() => result) : Promise.resolve(result);
+              return delivery.then(resolve, reject);
             },
           };
           return query;
@@ -136,6 +143,7 @@ import { clearQueue, enqueue, pendingCount } from './outbox';
 import { flushOutbox } from './sync';
 import { clearReadCache } from '../../lib/read-cache';
 import { saveLocalAccount } from '../../lib/local-account';
+import { setSessionUserReader } from '../../lib/session-identity';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -163,6 +171,7 @@ class MemoryStorage {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const BENCH = 'bench';
+const SQUAT = 'squat';
 const VERSION = 'ver-1';
 
 /** La Référence (série 1) que verrait une séance qui s'ouvre maintenant. */
@@ -173,13 +182,19 @@ async function referenceOuverture(executionEnCours: string): Promise<number | un
 }
 
 /** Logge une série dans une NOUVELLE exécution, comme la Capture (enqueue puis flush). */
-async function loggerSerie(executionId: string, setId: string, date: string, weightKg: number) {
+async function loggerSerie(
+  executionId: string,
+  setId: string,
+  date: string,
+  weightKg: number,
+  exerciseId: string = BENCH,
+) {
   enqueue({ type: 'upsertExecution', id: executionId, seanceVersionId: VERSION, performedOn: date });
   enqueue({
     type: 'insertSet',
     id: setId,
     executionId,
-    exerciseId: BENCH,
+    exerciseId,
     setOrder: 1,
     weightKg,
     reps: 8,
@@ -198,7 +213,10 @@ beforeEach(async () => {
   server.failReads = false;
   server.reads = 0;
   server.clock = 0;
+  server.gate = null;
   saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+  // Le flush exige une session vérifiée (posée par AuthProvider en production).
+  setSessionUserReader(async () => 'user-1');
 
   // Séance 1, déjà en base ET dans la copie locale : 20 kg × 8.
   await loggerSerie('exec-1', 'set-1', '2026-11-01', 20);
@@ -266,5 +284,130 @@ describe('Référence après un flush acquitté', () => {
     expect(server.reads).toBeGreaterThan(lecturesAvant);
     // … et son échec a laissé la copie telle quelle.
     expect(localStorage.getItem(cle)).toBe(avant);
+  });
+
+  // --- suppression ciblée : seules les copies qui CONTIENNENT la ligne --------
+  //
+  // Une suppression ne porte que l'id de sa ligne. Avant, elle relisait (et
+  // posait le seuil de `refreshRead`) sur TOUTES les copies d'historique : la
+  // réponse valide et tardive d'un autre exo pouvait être écartée.
+
+  /** La copie locale de l'historique d'un exo : les ids de ses séries. */
+  function copie(exerciseId: string): string[] {
+    const raw = localStorage.getItem(`croustylift:readcache:user-1:exo-execs:${exerciseId}`);
+    const rows = raw ? (JSON.parse(raw) as { value: { id: string }[] }).value : [];
+    return rows.map((row) => row.id).sort();
+  }
+
+  /** Ouvre une vanne : les lectures parties d'ici là ne répondent qu'à `ouvrir()`. */
+  function retenirLesLectures(): () => void {
+    let ouvrir: () => void = () => {};
+    server.gate = new Promise<void>((resolve) => {
+      ouvrir = resolve;
+    });
+    return () => {
+      ouvrir();
+      server.gate = null;
+    };
+  }
+
+  it('série supprimée d’un exo : la copie d’un AUTRE exo n’est pas relue', async () => {
+    await loggerSerie('exec-2', 'sq-1', '2026-11-08', 100, SQUAT);
+    await loadExerciseRows(SQUAT);
+    await settle();
+    expect(copie(SQUAT)).toEqual(['sq-1']);
+    const lecturesAvant = server.reads;
+
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    await flushOutbox();
+    await settle();
+
+    // Une seule relecture : celle du développé, qui contenait la série.
+    expect(server.reads - lecturesAvant).toBe(1);
+    expect(copie(BENCH)).toEqual([]);
+    expect(copie(SQUAT)).toEqual(['sq-1']);
+  });
+
+  it('série supprimée d’un exo : la réponse tardive et valide d’un autre exo sème quand même sa copie', async () => {
+    await loggerSerie('exec-2', 'sq-1', '2026-11-08', 100, SQUAT);
+    await loadExerciseRows(SQUAT);
+    await settle();
+    // Une série de squat faite ailleurs est en base ; une revalidation de fond
+    // de la copie du squat part et tarde à répondre.
+    server.sets.set('sq-2', {
+      id: 'sq-2',
+      execution_id: 'exec-2',
+      exercise_id: SQUAT,
+      set_order: 2,
+      weight_kg: 105,
+      reps: 5,
+      rir: 1,
+      side: null,
+    });
+    const ouvrir = retenirLesLectures();
+    await loadExerciseRows(SQUAT);
+    await settle();
+
+    // Pendant ce temps, une série du DÉVELOPPÉ est annulée puis acquittée, et le
+    // réseau tombe pour les lectures qui suivent.
+    server.failReads = true;
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    await flushOutbox();
+    await settle();
+    ouvrir();
+    await settle();
+
+    // La réponse tardive du squat n'a pas été écartée par la suppression.
+    expect(copie(SQUAT)).toEqual(['sq-1', 'sq-2']);
+  });
+
+  it('exécution supprimée : seules les copies qui en contiennent une série sont relues', async () => {
+    await loggerSerie('exec-2', 'sq-1', '2026-11-08', 100, SQUAT);
+    await loadExerciseRows(SQUAT);
+    await settle();
+    const lecturesAvant = server.reads;
+
+    // exec-1 ne contient qu'une série de développé.
+    enqueue({ type: 'deleteExecution', id: 'exec-1' });
+    await flushOutbox();
+    await settle();
+
+    expect(server.reads - lecturesAvant).toBe(1);
+    expect(copie(BENCH)).toEqual([]);
+    expect(copie(SQUAT)).toEqual(['sq-1']);
+  });
+
+  it('série acquittée puis annulée alors que sa relecture est encore en vol : elle ne revient pas', async () => {
+    // La relecture qui suit l'acquittement de set-2 part (elle contient set-2)
+    // et tarde : la copie ne contient donc pas encore la série.
+    const ouvrir = retenirLesLectures();
+    await loggerSerie('exec-2', 'set-2', '2026-11-08', 31.25);
+    await settle();
+    expect(copie(BENCH)).toEqual(['set-1']);
+
+    // Annulation acquittée entre-temps : aucune copie ne CONTIENT set-2, mais la
+    // session sait de quel exo elle venait.
+    enqueue({ type: 'deleteSet', id: 'set-2' });
+    await flushOutbox();
+    await settle();
+    ouvrir();
+    await settle();
+
+    expect(copie(BENCH)).toEqual(['set-1']);
+    expect(await referenceOuverture('exec-3')).toBe(20);
+  });
+
+  it('exécution acquittée puis supprimée alors que sa relecture est encore en vol : ses séries ne reviennent pas', async () => {
+    const ouvrir = retenirLesLectures();
+    await loggerSerie('exec-2', 'set-2', '2026-11-08', 31.25);
+    await settle();
+
+    enqueue({ type: 'deleteExecution', id: 'exec-2' });
+    await flushOutbox();
+    await settle();
+    ouvrir();
+    await settle();
+
+    expect(copie(BENCH)).toEqual(['set-1']);
   });
 });

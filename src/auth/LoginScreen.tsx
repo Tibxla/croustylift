@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { PendingWritesError } from './auth-context'
-import { pendingCount } from '../features/capture/outbox'
+import { heldCount } from '../features/capture/outbox'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
 
@@ -60,7 +60,9 @@ export function LoginScreen() {
   // Des écritures locales attendent encore leur synchro (révocation, session
   // retirée…) : on l'affiche AVANT le formulaire — se reconnecter avec le même
   // compte les remontera, un autre compte exige le forçage (ADR 0012).
-  const pendingWrites = localAccount ? pendingCount() : 0
+  // Ops en quarantaine comprises : la garde d'un autre compte les compte aussi,
+  // et la purge proposée ici est leur seule sortie.
+  const pendingWrites = localAccount ? heldCount() : 0
 
   const isSignup = mode === 'signup'
 
