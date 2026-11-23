@@ -23,6 +23,7 @@
 // identité (rowId) pour rester éditable indépendamment.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClusterStepper } from '../capture/ClusterStepper';
+import { formatCount } from '../capture/format';
 import { listExercises } from '../capture/data';
 import { NoteField } from '../notes/NoteField';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
@@ -531,13 +532,9 @@ function fmtField(v: FieldValue): string {
  * fixe), sinon « 1,8-2,4 » (trait d'union court, jamais de tiret long, cf.
  * DESIGN.md). Les bornes égales après arrondi s'affichent en valeur unique.
  */
-function fmtCount(value: number): string {
-  return value.toFixed(1).replace('.', ',');
-}
-
 function fmtCountRange(range: CountRange): string {
-  const min = fmtCount(range.min);
-  const max = fmtCount(range.max);
+  const min = formatCount(range.min);
+  const max = formatCount(range.max);
   return min === max ? min : `${min}-${max}`;
 }
 

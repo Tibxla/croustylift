@@ -18,10 +18,6 @@ export function formatRate(rate: number): string {
   return digits
 }
 
-/**
- * Un décompte de séries fractionnaire (ADR 0006) : une décimale, virgule. Même
- * forme que la fin de séance (« Séries loggées 5,8 »).
- */
-export function formatCount(value: number): string {
-  return value.toFixed(1).replace('.', ',')
-}
+// Le décompte de séries fractionnaire (« Séries loggées 5,8 ») a une seule
+// définition, partagée avec la fin de séance : features/capture/format.ts.
+export { formatCount } from '../capture/format'

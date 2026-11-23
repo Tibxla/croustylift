@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Stepper } from './Stepper';
 import { MetricRow } from './MetricRow';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
+import { formatCount } from './format';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
@@ -63,15 +64,6 @@ const BPM_FINE = 1;
 
 function intFormat(value: number): string {
   return String(Math.round(value));
-}
-
-/**
- * Format d'un décompte de séries FRACTIONNAIRE (issue #60, pondération par reps) :
- * une décimale, virgule décimale FR (jamais de point, jamais de tiret long, cf.
- * DESIGN.md). Ex. « 1,8 ».
- */
-function fmtCount(value: number): string {
-  return value.toFixed(1).replace('.', ',');
 }
 
 export function SessionEnd({
@@ -244,7 +236,7 @@ function SummaryCard({
       <div className="surface-card rounded-2xl px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Séries loggées</p>
         <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-          {fmtCount(summary.totalSets)}
+          {formatCount(summary.totalSets)}
         </p>
       </div>
       {durationMin != null && (
@@ -295,7 +287,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
               <div className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
                 <span className="readout shrink-0 text-[13px] tabular-nums text-ink">
-                  {fmtCount(value)}
+                  {formatCount(value)}
                 </span>
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2">
