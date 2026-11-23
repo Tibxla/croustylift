@@ -47,6 +47,13 @@ export const SIG_PRESETS: { name: string; hex: string }[] = [
   { name: 'Turquoise', hex: '#44d1c6' },
   { name: 'Ciel', hex: '#6cc0ff' },
   { name: 'Rose', hex: '#ff94b4' },
+  // Ajoutées le 23/11 à la demande de l'utilisateur (« toutes les couleurs, le
+  // rouge par exemple ») : toutes ≥ 5,3:1 sur le fond et sur la feuille.
+  { name: 'Rouge', hex: '#ff5d5d' },
+  { name: 'Orange', hex: '#ff8a3d' },
+  { name: 'Magenta', hex: '#f27ad6' },
+  { name: 'Violet', hex: '#b59cff' },
+  { name: 'Bleu', hex: '#7ea6ff' },
 ];
 
 const FREE_L = 0.78;
