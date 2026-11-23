@@ -10,6 +10,7 @@
 import {
   deleteExecutionById,
   deleteSetById,
+  exercisesHoldingRows,
   refreshExerciseRows,
   updateExecution,
   upsertExecution,
@@ -32,8 +33,29 @@ import { sessionUserId } from '../../lib/session-identity';
 // ni clôture ni métriques de fin, et la date d'une exécution ne change jamais
 // après coup (elle arrive avec ses premières séries, qui déclenchent la relecture).
 const touchedExercises = new Set<string>();
-// Une suppression ne porte que l'id de sa ligne : on relit toutes les copies.
-let touchedAll = false;
+// Les séries acquittées PAR CETTE SESSION : de quel exo et de quelle exécution.
+// Une suppression ne porte que l'id de sa ligne ; on retrouve ses exos dans les
+// copies qui la CONTIENNENT (`exercisesHoldingRows`), mais une série tout juste
+// acquittée peut ne pas y être encore (sa relecture est en vol, et sa réponse
+// la ramènerait après coup) : cette mémoire désigne alors son exo. Bornée à la
+// session (quelques dizaines d'ids), jamais persistée.
+const ackedSets = new Map<string, { exerciseId: string; executionId: string }>();
+
+/**
+ * Une suppression vient d'être acquittée : marque à relire les seuls exos
+ * concernés (copies qui contiennent la ligne, plus la mémoire de session). Les
+ * autres copies ne sont ni relues ni marquées d'un seuil : la réponse tardive
+ * d'un exo sans rapport reste valide.
+ */
+function touchDeleted(deleted: { setIds: string[]; executionIds: string[] }): void {
+  for (const exerciseId of exercisesHoldingRows(deleted)) touchedExercises.add(exerciseId);
+  for (const [setId, acked] of ackedSets) {
+    if (deleted.setIds.includes(setId) || deleted.executionIds.includes(acked.executionId)) {
+      touchedExercises.add(acked.exerciseId);
+      ackedSets.delete(setId);
+    }
+  }
+}
 
 /**
  * Relit en fond les copies d'historique que la passe vient de rendre périmées
@@ -41,9 +63,8 @@ let touchedAll = false;
  * retour de cette lecture, et un échec réseau laisse simplement la copie.
  */
 function refreshTouchedHistory(): void {
-  if (!touchedAll && touchedExercises.size === 0) return;
-  const target = touchedAll ? 'all' : [...touchedExercises];
-  touchedAll = false;
+  if (touchedExercises.size === 0) return;
+  const target = [...touchedExercises];
   touchedExercises.clear();
   void refreshExerciseRows(target);
 }
@@ -75,10 +96,11 @@ export const syncFns: SyncFns = {
       side: op.side,
     });
     touchedExercises.add(op.exerciseId);
+    ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
   },
   deleteSet: async (op) => {
     await deleteSetById(op.id);
-    touchedAll = true;
+    touchDeleted({ setIds: [op.id], executionIds: [] });
   },
   updateExecution: (op) =>
     updateExecution({
@@ -102,7 +124,7 @@ export const syncFns: SyncFns = {
   deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
-    touchedAll = true;
+    touchDeleted({ setIds: [], executionIds: [op.id] });
   },
 };
 

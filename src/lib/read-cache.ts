@@ -200,6 +200,17 @@ export async function refreshRead<T>(key: string, fetcher: () => Promise<T>): Pr
   }
 }
 
+/**
+ * La copie locale d'une clé, telle quelle, SANS lecture réseau ni revalidation ;
+ * `null` si absente ou illisible. Pour décider d'après son contenu (ex. quelles
+ * copies contiennent une ligne supprimée), pas pour servir un écran.
+ */
+export function peekRead<T>(key: string): T | null {
+  const account = loadLocalAccount();
+  if (!account) return null;
+  return readEntry<T>(fullKey(account.userId, key))?.value ?? null;
+}
+
 /** Les clés (sans l'étiquette de compte) des copies existantes sous `prefix`. */
 export function cachedKeys(prefix: string): string[] {
   const account = loadLocalAccount();

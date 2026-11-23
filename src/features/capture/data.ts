@@ -22,6 +22,7 @@
 import {
   cachedKeys,
   cachedRead,
+  peekRead,
   refreshRead,
   stableKeyOf,
   tolerantRead,
@@ -602,20 +603,50 @@ function exerciseRowsKey(exerciseId: string): string {
 }
 
 /**
- * Relit depuis le réseau la copie locale de l'historique des exos donnés, ou de
- * TOUTES les copies existantes (`'all'` : une suppression ne porte que l'id de
- * sa ligne, pas l'exo). Appelée après un flush qui a fait passer des séries
- * (cf. sync.ts) : une fois acquittées, elles quittent l'outbox et la Référence
- * de la séance suivante ne les verrait plus que dans une copie à jour. En échec
- * réseau la copie reste telle quelle (la revalidation de fond rattrapera).
+ * Relit depuis le réseau la copie locale de l'historique des exos donnés.
+ * Appelée après un flush qui a fait passer des séries (cf. sync.ts) : une fois
+ * acquittées, elles quittent l'outbox et la Référence de la séance suivante ne
+ * les verrait plus que dans une copie à jour. En échec réseau la copie reste
+ * telle quelle (la revalidation de fond rattrapera).
  */
-export async function refreshExerciseRows(exerciseIds: readonly string[] | 'all'): Promise<void> {
-  const ids =
-    exerciseIds === 'all'
-      ? cachedKeys(EXERCISE_ROWS_PREFIX).map((key) => key.slice(EXERCISE_ROWS_PREFIX.length))
-      : exerciseIds;
+export async function refreshExerciseRows(exerciseIds: readonly string[]): Promise<void> {
   await Promise.all(
-    ids.map((id) => refreshRead(exerciseRowsKey(id), () => fetchExerciseRows(id))),
+    exerciseIds.map((id) => refreshRead(exerciseRowsKey(id), () => fetchExerciseRows(id))),
+  );
+}
+
+/**
+ * Les exos dont la copie locale d'historique CONTIENT une des lignes supprimées
+ * (une série par son id, une exécution par l'`execution_id` de ses séries). Une
+ * suppression ne porte que l'id de sa ligne, pas l'exo : c'est le contenu des
+ * copies qui dit lesquelles sont périmées. Les autres ne sont pas à relire, et
+ * surtout pas à marquer d'un seuil (`refreshRead`), qui écarterait la réponse
+ * valide et tardive d'une lecture en cours sur un exo sans rapport.
+ */
+export function exercisesHoldingRows(deleted: {
+  setIds: readonly string[];
+  executionIds: readonly string[];
+}): string[] {
+  return cachedKeys(EXERCISE_ROWS_PREFIX)
+    .filter((key) =>
+      copyHoldsDeletedRow(peekRead<PerformedSetWithExecutionRow[]>(key) ?? [], deleted),
+    )
+    .map((key) => key.slice(EXERCISE_ROWS_PREFIX.length));
+}
+
+/**
+ * La copie contient-elle une des lignes supprimées ? Une ligne SANS id (copie
+ * écrite avant ce champ) ne peut pas être comparée à une série supprimée : dans
+ * le doute elle compte comme la contenant, la copie sera relue.
+ */
+export function copyHoldsDeletedRow(
+  rows: readonly PerformedSetWithExecutionRow[],
+  deleted: { setIds: readonly string[]; executionIds: readonly string[] },
+): boolean {
+  return rows.some(
+    (row) =>
+      deleted.executionIds.includes(row.execution_id) ||
+      (deleted.setIds.length > 0 && (row.id === undefined || deleted.setIds.includes(row.id))),
   );
 }
 
