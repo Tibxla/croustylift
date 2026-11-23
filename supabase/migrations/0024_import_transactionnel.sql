@@ -37,8 +37,17 @@
 -- l'état restauré, et l'Analyse (qui rejoue le journal) compterait une séance
 -- que le plan masque, ou l'inverse. En fin d'import, chaque séance du fichier
 -- est donc RAPPROCHÉE : si son dernier événement ne dit pas son état
--- `archived_at`, un événement correctif daté de la restauration est ajouté. Sans
--- divergence, rien n'est écrit.
+-- `archived_at`, un événement correctif est ajouté. Sans divergence, rien n'est
+-- écrit, et réimporter n'ajoute donc rien.
+--   - « Dernier » s'entend comme dans l'Analyse : par `occurred_at`, puis par
+--     `id` à égalité (elle lit le journal trié par id et le retrie par date).
+--   - Le correctif est daté APRÈS verrouillage des séances, à l'horloge réelle
+--     (`clock_timestamp()`, pas l'heure de début de la transaction), et toujours
+--     strictement après l'événement qu'il corrige : un archivage validé par un
+--     autre appareil pendant l'import ne peut pas se retrouver « après » lui.
+--   - Un événement du fichier daté dans le futur est ramené à l'instant de
+--     l'import : la base date elle-même ses événements, une date future ne
+--     peut venir que d'un fichier retouché, et elle primerait indéfiniment.
 --
 -- Appel côté client : `supabase.rpc('import_user_data', { p_data })`.
 --
@@ -165,6 +174,19 @@ begin
         using errcode = '22023';
     end if;
 
+    -- Journal : aucun événement daté dans le futur.
+    if v_table = 'seance_archive_events' then
+      select jsonb_agg(
+        case
+          when jsonb_typeof(l.ligne) = 'object'
+               and (l.ligne ->> 'occurred_at')::timestamptz > clock_timestamp()
+            then jsonb_set(l.ligne, '{occurred_at}', to_jsonb(clock_timestamp()))
+          else l.ligne
+        end
+      ) into v_rows
+      from jsonb_array_elements(v_rows) as l(ligne);
+    end if;
+
     if v_table = 'dated_notes' then
       delete from public.dated_notes d
         using jsonb_populate_recordset(null::public.dated_notes, v_rows) f
@@ -187,13 +209,24 @@ begin
   -- Rapprochement du journal et de l'état : un événement correctif par séance
   -- du fichier dont le dernier événement contredit `archived_at`.
   if jsonb_typeof(p_data -> 'seances') = 'array' then
+    -- Les séances du fichier sont verrouillées : aucun archivage concurrent ne
+    -- peut plus s'intercaler entre la lecture du journal et le correctif.
+    perform 1 from public.seances s
+      where s.id in (
+        select (l.ligne ->> 'id')::uuid
+        from jsonb_array_elements(p_data -> 'seances') as l(ligne)
+      )
+      order by s.id
+      for update;
+
     insert into public.seance_archive_events (owner_id, seance_id, archived, occurred_at)
-    select s.owner_id, s.id, s.archived_at is not null, now()
+    select s.owner_id, s.id, s.archived_at is not null,
+           greatest(clock_timestamp(), dernier.occurred_at + interval '1 microsecond')
     from public.seances s
     left join lateral (
-      select e.archived from public.seance_archive_events e
+      select e.archived, e.occurred_at from public.seance_archive_events e
       where e.seance_id = s.id
-      order by e.occurred_at desc, e.created_at desc
+      order by e.occurred_at desc, e.id desc
       limit 1
     ) dernier on true
     where s.id in (
