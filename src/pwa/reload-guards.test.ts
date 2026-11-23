@@ -11,7 +11,15 @@ import {
   type SyncFns,
 } from '../features/capture/outbox'
 import { blockReloads, unblockReloads } from './blockers'
-import { currentBlockers, UNPERSISTED_WRITES_BLOCK } from './reload-guards'
+import {
+  clearPersisted,
+  hasUnpersistedCaptureState,
+  initialState,
+  loadPersisted,
+  persist,
+} from '../features/capture/state'
+import { upperA } from '../features/capture/fixtures'
+import { currentBlockers, UNPERSISTED_CAPTURE_BLOCK, UNPERSISTED_WRITES_BLOCK } from './reload-guards'
 import { shouldReload } from './update'
 
 class MemoryStorage {
@@ -224,5 +232,104 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     expect(currentBlockers()).toEqual(['brouillon-seance', UNPERSISTED_WRITES_BLOCK])
     unblockReloads('brouillon-seance')
     expect(currentBlockers()).toEqual([UNPERSISTED_WRITES_BLOCK])
+  })
+})
+
+// Un exo ajouté à la séance n'alimente pas la file : il ne vit que dans l'état
+// de capture. Stockage plein, cet état n'est pas écrit ; la garde voyait une
+// file durable, aucune séance sur l'appareil, et laissait recharger.
+describe('currentBlockers : état de la séance tenu en mémoire', () => {
+  /** Le stockage refuse d'écrire l'état de capture tant que `full` est vrai. */
+  function captureQuota(): { full: boolean } {
+    const state = { full: true }
+    const store = globalThis.localStorage
+    const setItem = store.setItem.bind(store)
+    store.setItem = (k: string, v: string) => {
+      if (state.full && k.startsWith('croustylift:capture:')) throw new Error('QuotaExceededError')
+      setItem(k, v)
+    }
+    return state
+  }
+  const today = new Date()
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const withAddedExercise = (date = iso(today)) => ({
+    ...initialState(upperA, date),
+    layout: [{ kind: 'added' as const, exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+  })
+
+  afterEach(() => {
+    // Lève l'état retenu d'un test à l'autre (module à mémoire).
+    clearPersisted(upperA, iso(today))
+    const old = new Date(today)
+    old.setDate(old.getDate() - 3)
+    clearPersisted(upperA, iso(old))
+  })
+
+  it('état écrit normalement : rien ne retient le rechargement', () => {
+    persist(withAddedExercise())
+    expect(currentBlockers()).toEqual([])
+    expect(wouldReload()).toBe(true)
+  })
+
+  it('exo ajouté, état refusé par le stockage, file vide : rechargement refusé', () => {
+    captureQuota()
+    persist(withAddedExercise())
+    expect(loadPersisted(upperA, iso(today))).toBeNull()
+    expect(currentBlockers()).toEqual([UNPERSISTED_CAPTURE_BLOCK])
+    expect(wouldReload()).toBe(false)
+  })
+
+  it('place libérée : la demande retente l’écriture, l’état est sur l’appareil, le rechargement passe', () => {
+    const quota = captureQuota()
+    persist(withAddedExercise())
+    expect(wouldReload()).toBe(false)
+
+    quota.full = false
+    expect(wouldReload()).toBe(true)
+    // Le rechargement ne perd rien : la disposition se relit.
+    expect(loadPersisted(upperA, iso(today))?.layout?.[0]?.exerciseId).toBe('curl')
+    expect(hasUnpersistedCaptureState()).toBe(false)
+  })
+
+  it('stockage toujours plein : le refus tient, demande après demande', () => {
+    captureQuota()
+    persist(withAddedExercise())
+    expect(wouldReload()).toBe(false)
+    expect(wouldReload()).toBe(false)
+  })
+
+  it('séance close ou annulée : plus rien à retenir, sans attendre le stockage', () => {
+    captureQuota()
+    persist(withAddedExercise())
+    expect(wouldReload()).toBe(false)
+    clearPersisted(upperA, iso(today))
+    expect(currentBlockers()).toEqual([])
+    expect(wouldReload()).toBe(true)
+  })
+
+  it('un état écrit ensuite avec succès lève le blocage', () => {
+    const quota = captureQuota()
+    persist(withAddedExercise())
+    quota.full = false
+    persist(withAddedExercise())
+    expect(currentBlockers()).toEqual([])
+  })
+
+  it('état d’avant la veille, plus reprenable : il ne retient pas la mise à jour sans fin', () => {
+    captureQuota()
+    const old = new Date(today)
+    old.setDate(old.getDate() - 3)
+    persist(withAddedExercise(iso(old)))
+    expect(hasUnpersistedCaptureState()).toBe(false)
+    expect(wouldReload()).toBe(true)
+  })
+
+  it('les deux raisons s’ajoutent : file et état en mémoire', () => {
+    quota()
+    captureQuota()
+    enqueue(execOp)
+    persist(withAddedExercise())
+    expect(currentBlockers()).toEqual([UNPERSISTED_WRITES_BLOCK, UNPERSISTED_CAPTURE_BLOCK])
   })
 })

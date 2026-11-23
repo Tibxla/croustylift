@@ -2,7 +2,7 @@
 // décision (`currentGuards`, register.ts). Sans DOM ni service worker, donc
 // testable.
 //
-// Deux sources :
+// Trois sources :
 //   - ce que le reste de l'app DÉCLARE (`blockReloads`, blockers.ts) : brouillon
 //     non enregistré, écriture directe en cours, récupération de mot de passe ;
 //   - ce que la file d'écritures de la Capture tient en MÉMOIRE seulement. Quand
@@ -10,16 +10,24 @@
 //     nulle part (repli mémoire, features/capture/outbox.ts). La séance close,
 //     plus rien ne signalait une séance en cours : avec une mise à jour en
 //     attente, le changement d'onglet rechargeait la page et détruisait les
-//     séries et la clôture pas encore envoyées. Ce n'est pas un blocage posé
-//     puis levé à la main : il est lu dans la file, donc vrai exactement tant
-//     que ces ops existent, et faux dès qu'elles sont écrites sur l'appareil ou
-//     acquittées par la base. Chaque question retente d'abord cette écriture.
+//     séries et la clôture pas encore envoyées ;
+//   - l'ÉTAT de la séance en cours quand le stockage l'a refusé
+//     (features/capture/state.ts) : un exo ajouté à la séance ne passe pas par
+//     la file, il ne vit que là.
+// Les deux dernières ne sont pas des blocages posés puis levés à la main : elles
+// sont lues à la source, donc vraies exactement tant que ces données n'existent
+// qu'en mémoire, et fausses dès qu'elles sont écrites sur l'appareil (ou, pour
+// la file, acquittées par la base ; pour l'état, sa séance close). Chaque
+// question retente d'abord l'écriture.
 
 import { hasUnpersistedOps, retryPersistQueue } from '../features/capture/outbox'
+import { hasUnpersistedCaptureState, retryPersistCaptureState } from '../features/capture/state'
 import { activeBlockers } from './blockers'
 
 /** Des écritures en attente ne tiennent qu'en mémoire (stockage de l'appareil plein). */
 export const UNPERSISTED_WRITES_BLOCK = 'ecritures-non-persistees'
+/** L'état de la séance en cours ne tient qu'en mémoire (stockage de l'appareil plein). */
+export const UNPERSISTED_CAPTURE_BLOCK = 'seance-non-persistee'
 
 /**
  * Toutes les raisons qui interdisent de recharger maintenant.
@@ -31,7 +39,16 @@ export const UNPERSISTED_WRITES_BLOCK = 'ecritures-non-persistees'
  * réévaluée dans le même appel ; elle tient si l'appareil refuse toujours.
  */
 export function currentBlockers(): string[] {
-  const declared = activeBlockers()
+  const blockers = activeBlockers()
   if (hasUnpersistedOps()) retryPersistQueue()
-  return hasUnpersistedOps() ? [...declared, UNPERSISTED_WRITES_BLOCK] : declared
+  if (hasUnpersistedOps()) blockers.push(UNPERSISTED_WRITES_BLOCK)
+  // Même règle pour l'état de la séance en cours : un exo ajouté n'alimente pas
+  // la file, il ne vit que dans cet état. Refusé par le stockage, il est retenu
+  // en mémoire (features/capture/state.ts) : on retente de l'écrire, et le
+  // rechargement attend tant qu'il reste volatile. Levé dès qu'il est écrit ou
+  // que sa séance est close ; borné à la veille, pour ne jamais retenir la mise
+  // à jour sans fin.
+  if (hasUnpersistedCaptureState()) retryPersistCaptureState()
+  if (hasUnpersistedCaptureState()) blockers.push(UNPERSISTED_CAPTURE_BLOCK)
+  return blockers
 }

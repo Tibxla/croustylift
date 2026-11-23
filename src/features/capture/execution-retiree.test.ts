@@ -259,6 +259,43 @@ describe('loadTodayExecution et les écritures de notes en attente', () => {
   });
 });
 
+// Les écritures de séries se relèvent comme le reste, aux deux bouts de la
+// lecture : la Capture les rejoue sur la réponse, partie avant elles.
+describe('loadTodayExecution et les écritures de séries en attente', () => {
+  const serie = (id: string, setOrder: number): OutboxOp => ({
+    type: 'insertSet',
+    id,
+    executionId: 'exec-1',
+    exerciseId: 'bench',
+    setOrder,
+    weightKg: 80,
+    reps: 8,
+    rir: 2,
+  });
+
+  it('rend, dans l’ordre de la file, celles d’avant la lecture (même acquittées pendant le trajet) et celles enfilées pendant', async () => {
+    enqueue({ type: 'deleteSet', id: 'a' });
+    enqueue(serie('b', 1));
+    server.duringRead = () => {
+      clearQueue(); // un autre onglet a tout envoyé pendant le trajet
+      enqueue(serie('c', 2)); // et le Journal a écrit de nouveau
+    };
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(today!.pendingSetOps.map((op) => `${op.type}:${op.id}`)).toEqual([
+      'deleteSet:a',
+      'insertSet:b',
+      'insertSet:c',
+    ]);
+    // Valeurs et rangs complets, pas seulement les ids.
+    expect(today!.pendingSetOps[1]).toMatchObject({ setOrder: 1, weightKg: 80 });
+  });
+
+  it('rien en file : aucune écriture à rejouer', async () => {
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(today!.pendingSetOps).toEqual([]);
+  });
+});
+
 describe('loadTodayExecutionWithin', () => {
   it('réponse dans le budget : c’est la vraie réponse, rien de tardif', async () => {
     server.openExecutionId = 'exec-1';

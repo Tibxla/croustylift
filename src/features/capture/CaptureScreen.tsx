@@ -71,6 +71,7 @@ import {
   nextSetOrder,
   pendingSide,
   persist,
+  retryPersistCaptureState,
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
@@ -91,6 +92,7 @@ import {
   readOwnQueue,
   readQueue,
   storageFailing,
+  unionOfQueueReads,
   type OutboxOp,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
@@ -387,7 +389,10 @@ export function CaptureScreen() {
           today && restored && today.executionId === restored.executionId
             ? today.pendingSetIds
             : null,
-        queuedOps: readOwnQueue(),
+        // Avec celles que la lecture du jour a relevées à ses deux bouts : une
+        // écriture acquittée pendant son trajet n'est plus en file, et la
+        // réponse, partie avant, ne la porte pas.
+        queuedOps: unionOfQueueReads(today?.pendingSetOps ?? [], readOwnQueue()),
       };
       initRef.current = init;
       setLoad({
@@ -476,6 +481,9 @@ export function CaptureScreen() {
             // (`lateToday.pendingNoteKeys`) puis à l'arrivée : un effacement
             // acquitté pendant le trajet a vidé la file, la réponse, partie
             // avant, porte encore la note.
+            // Les écritures de séries qui chevauchent la lecture sont rejouées
+            // sur le réalisé réconcilié, valeurs et rangs complets.
+            queuedOps: unionOfQueueReads(lateToday.pendingSetOps, readOwnQueue()),
             datedNotes: lateToday.datedNotes,
             pendingNoteKeys: [
               ...lateToday.pendingNoteKeys,
@@ -975,6 +983,11 @@ function CaptureBoard({
 
   // --- Synchro via outbox ---------------------------------------------------
   const { status, pending } = useSyncStatus();
+
+  // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
+  // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
+  // démonté, le tableau ne le tient plus (cf. `retryPersistCaptureState`).
+  useEffect(() => () => void retryPersistCaptureState(), []);
 
   // L'exécution est enfilée UNE fois par MONTAGE, AVANT son premier set (la FK
   // séries→exécution impose l'ordre, garanti aussi par le FIFO de l'outbox).

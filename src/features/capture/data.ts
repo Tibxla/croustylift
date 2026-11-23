@@ -50,7 +50,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { readOwnQueue, type OutboxOp } from './outbox';
+import { readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -1063,6 +1063,16 @@ export interface TodayExecution {
    * à l'arrivée. Une note effacée ainsi est déjà retirée de `datedNotes`.
    */
   pendingNoteKeys: string[];
+  /**
+   * Les écritures de SÉRIES (insertions, corrections, suppressions) en file
+   * pendant la lecture, relevées avant et après, dans l'ordre de la file. La
+   * réponse est figée à son départ : elle porte les valeurs et les rangs
+   * d'AVANT ces écritures, même acquittées pendant le trajet. Elles sont donc
+   * réappliquées par-dessus (`applyQueuedSets`, state.ts), avec leurs valeurs
+   * complètes : sans cela une renumérotation faite dans le Journal était
+   * défaite par la réponse, et la série suivante laissait un trou de rang.
+   */
+  pendingSetOps: OutboxOp[];
 }
 
 /**
@@ -1129,6 +1139,9 @@ export async function loadTodayExecution(
       // pendant le trajet (par cet onglet ou un autre) a vidé la file, et la
       // réponse porte encore la note.
       pendingNoteKeys: [...new Set(pendingDatedNoteKeys(pending, today.executionId))],
+      pendingSetOps: unionOfQueueReads(pendingBefore, pendingAfter).filter(
+        (op) => op.type === 'insertSet' || op.type === 'deleteSet',
+      ),
     };
   } catch {
     return null;
@@ -1363,6 +1376,7 @@ async function fetchTodayExecution(
     // Remplis par `loadTodayExecution`, qui tient la file.
     pendingSetIds: [],
     pendingNoteKeys: [],
+    pendingSetOps: [],
   };
 }
 

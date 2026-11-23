@@ -1722,6 +1722,60 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
   });
 });
 
+// Le Journal supprime A et décale B et C aux rangs 1 et 2 ; la Capture reprend
+// ces valeurs depuis la file. Une lecture partie AVANT arrive ensuite : elle
+// porte encore A, et B et C aux rangs 2 et 3. Elle défaisait la renumérotation,
+// et la série suivante prenait le rang 4 en laissant un trou.
+describe('réponse tardive et renumérotation faite dans le Journal', () => {
+  const ps = (order: number) => ({ weightKg: 80, reps: 8, rir: 2, order });
+  const insert = (id: string, setOrder: number) =>
+    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2 }) as const;
+  const journal = [{ type: 'deleteSet', id: 'a' } as const, insert('b', 1), insert('c', 2)];
+  /** Le tableau monté, déjà à jour de la file : B au rang 1, C au rang 2. */
+  const mounted = (): CaptureState => ({
+    ...initialState(upperA, '2026-11-24'),
+    executionId: 'exec-1',
+    progress: { bench: { sets: [ps(1), ps(2)], setIds: ['b', 'c'], skipped: false } },
+  });
+  /** La réponse tardive : l'état de la base d'avant les écritures du Journal. */
+  const late = {
+    type: 'reconcile-progress' as const,
+    base: { bench: { sets: [ps(1), ps(2), ps(3)], setIds: ['a', 'b', 'c'] } },
+    pendingSetIds: ['b', 'c'],
+    knownAtDeparture: ['a', 'b', 'c'],
+  };
+  const rangs = (state: CaptureState) =>
+    state.progress.bench?.sets.map((s, i) => `${state.progress.bench?.setIds[i]}@${s.order}`);
+
+  it('sans les écritures en file, la réponse reprend ses rangs d’avant (le défaut)', () => {
+    expect(rangs(captureReducer(mounted(), late))).toEqual(['b@2', 'c@3']);
+  });
+
+  it('les écritures qui chevauchent la lecture sont rejouées : B et C gardent les rangs 1 et 2', () => {
+    const next = captureReducer(mounted(), { ...late, queuedOps: [...journal] });
+    expect(rangs(next)).toEqual(['b@1', 'c@2']);
+    // La série suivante prend le rang 3, sans trou.
+    const logged = captureReducer(next, {
+      type: 'log-set',
+      exerciseId: 'bench',
+      setId: 'd',
+      set: { weightKg: 80, reps: 8, rir: 2 },
+    });
+    expect(rangs(logged)).toEqual(['b@1', 'c@2', 'd@3']);
+  });
+
+  it('même quand l’état local ignorait A : la suppression en file la retire de la réponse', () => {
+    const next = captureReducer(mounted(), { ...late, knownAtDeparture: ['b', 'c'], queuedOps: [...journal] });
+    expect(rangs(next)).toEqual(['b@1', 'c@2']);
+  });
+
+  it('une correction de valeur faite dans le Journal survit aussi à la réponse', () => {
+    const corrected = { ...insert('b', 1), weightKg: 85 };
+    const next = captureReducer(mounted(), { ...late, queuedOps: [journal[0]!, corrected, journal[2]!] });
+    expect(next.progress.bench?.sets[0]).toMatchObject({ weightKg: 85, order: 1 });
+  });
+});
+
 // Adoption tardive d'une exécution trouvée en base : jugée sur l'état COURANT du
 // tableau. Stockage plein, sa copie enregistrée n'a pas suivi et paraissait
 // intacte : l'adoption remontait le tableau en jetant l'exo ouvert ou ajouté.
