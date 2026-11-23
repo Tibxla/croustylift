@@ -21,6 +21,10 @@ Le nom reste réservé parce que l'analyse désigne une séance par « séance �
 
 ## Conséquences
 
-- La routine courante ne s'archive pas : il faut d'abord en définir une autre.
+- La routine courante ne s'archive pas : il faut d'abord en définir une autre. La base refuse les écritures qui la violeraient (migration 0021) : archiver la routine courante, définir comme courante une routine archivée, et supprimer la routine courante quand la précédente est archivée.
 - Archiver ou désarchiver une séance de la routine courante change la configuration du template et coupe un bloc. La timeline des blocs doit donc lire ces gestes comme des événements datés, conservés tous les deux : une simple date d'archivage effacée au désarchivage réécrirait les blocs passés.
 - Aucune exécution ne peut plus perdre sa séance par suppression. Au 2026-09-13, la base n'en compte aucune (0 sur 79) : le groupe « Hors séance » de l'analyse n'a plus de source.
+
+## Amendement du 2026-11-23
+
+Le journal des archivages de séance ne se réécrit plus : son propriétaire peut le lire et y insérer, plus le modifier ni le vider (migration 0022). L'insertion reste ouverte parce que deux écrivains en ont besoin, le trigger d'archivage et la restauration d'une sauvegarde, qui rend au journal ses dates d'origine. Pendant une restauration, le trigger n'écrit rien : l'état et le journal viennent du fichier. Un événement daté de l'import n'est ajouté que si le journal fusionné contredit l'état restauré (migration 0024).

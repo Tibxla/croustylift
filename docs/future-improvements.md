@@ -50,16 +50,9 @@ qui a été fait et des décisions actées.
 - **Import JSON et noms uniques (migration 0013)** : l'import upserte par `id`. Restaurer
   sa propre sauvegarde ne heurte rien (mêmes ids), mais importer dans un compte qui porte
   déjà une routine du même nom sous un autre id lève une violation d'unicité (23505),
-  remontée brute par l'import. Cas marginal (restauration croisée entre comptes) ; piste
-  si ça arrive : traduire l'erreur dans `ImportButton` et proposer de renommer.
-
-- **Import JSON et journal des archivages (migration 0014)** : restaurer une sauvegarde
-  dont l'état `archived_at` d'une séance diffère de la base déclenche le trigger
-  d'archivage (événement daté de la restauration) PUIS upserte les événements du
-  fichier : un événement en double est possible, donc une coupure de bloc de plus à
-  la date de l'import. Restaurer sa sauvegarde la plus récente ne le déclenche pas
-  (même état). Piste si ça gêne : désactiver l'écriture d'événement quand l'upsert
-  vient de l'import.
+  remontée brute par l'import, qui n'écrit alors rien (transaction unique, migration
+  0024). Cas marginal ; piste si ça arrive : traduire l'erreur dans `ImportButton` et
+  proposer de renommer.
 
 - **Séance retouchée en plein entraînement** : une exécution garde la version de séance
   sous laquelle elle est née (`upsertExecution` est une insertion seule, sa réaffirmation
