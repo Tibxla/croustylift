@@ -4,8 +4,17 @@
 // chaque test (reset systématique). AUCUN vrai Supabase : les `SyncFns` sont
 // mockées (vi.fn), on observe ce qui est appelé, dans quel ordre, et ce qui
 // reste en file après échec.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+  abandonRefused,
+  clearOwnQueue,
+  heldCounts,
+  enqueueTracked,
+  listRefused,
+  pendingAmong,
+  retryRefused,
+  storageFailing,
+  refusedAmong,
   enqueue,
   flush,
   readQueue,
@@ -21,11 +30,11 @@ import {
   type OutboxOp,
   type InsertSetOp,
 } from './outbox';
-import { saveLocalAccount } from '../../lib/local-account';
+import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
-const queueNoSeq = () => readQueue().map(({ _seq, _owner, ...op }) => op);
+const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -251,6 +260,143 @@ describe('flush (succès)', () => {
     // (type,id) aurait matché la 2ᵉ op et l'aurait shiftée sans la jouer (1 appel).
     expect(n).toBe(2);
     expect(readQueue()).toEqual([]);
+  });
+
+  it('deux onglets : deux ops de même numéro d’ordre, type et id ne se confondent pas (identité par UUID)', async () => {
+    // Le compteur d'ordre est tenu par onglet : deux onglets peuvent donner le
+    // MÊME `_seq` à deux ops de même (type,id). Repérée par `_seq`, la seconde
+    // était retirée à la place de la première, sans jamais avoir été envoyée.
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 100 });
+    enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 200 });
+    const [first, second] = readQueue();
+    localStorage.setItem('croustylift:outbox', JSON.stringify([first, { ...second, _seq: first!._seq }]));
+
+    const fns = okFns();
+    const sent: (number | null | undefined)[] = [];
+    (fns.updateExecution as ReturnType<typeof vi.fn>).mockImplementation(
+      async (op: { bpmAvg?: number | null }) => {
+        sent.push(op.bpmAvg);
+        // L'autre onglet a déjà envoyé et retiré la première pendant notre requête.
+        if (sent.length === 1) {
+          localStorage.setItem('croustylift:outbox', JSON.stringify(readQueue().slice(1)));
+        }
+      },
+    );
+
+    await flush(fns);
+
+    expect(sent).toEqual([100, 200]);
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('chaque op enfilée reçoit une identité unique, rendue à l’appelant', () => {
+    const a = enqueueTracked({ type: 'deleteSet', id: 's1' });
+    const b = enqueueTracked({ type: 'deleteSet', id: 's1' });
+
+    expect(a).not.toBe(b);
+    expect(readQueue().map((op) => op._uid)).toEqual([a, b]);
+    expect(pendingAmong([a])).toBe(1);
+    expect(pendingAmong([a, b])).toBe(2);
+    expect(refusedAmong([a, b])).toBe(0);
+  });
+
+  it('l’identité de file n’est jamais passée aux fonctions de sync', async () => {
+    enqueue({ type: 'deleteSet', id: 's1' });
+    const fns = okFns();
+
+    await flush(fns);
+
+    expect(fns.calls()).toEqual([{ type: 'deleteSet', id: 's1' }]);
+  });
+});
+
+describe('enqueue : étiquette de compte quand le marqueur n’a pas pu être écrit', () => {
+  it('l’op porte le compte reconnu en mémoire, et part sous lui', async () => {
+    // Quota plein au moment de la Connexion : le marqueur n'est pas persisté.
+    const storage = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = storage.setItem.bind(localStorage);
+    storage.setItem = (k, v) => {
+      if (k === 'croustylift:account') throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+
+    enqueue(execOp());
+
+    expect(readQueue()[0]?._owner).toBe('user-a');
+    const fns = okFns();
+    expect(await flush(fns, async () => 'user-a')).toEqual({ remaining: 0, flushed: 1 });
+    clearLocalAccount();
+  });
+});
+
+// --- Un seul onglet flushe à la fois (verrou du navigateur) -------------------
+
+describe('flush : verrou entre onglets', () => {
+  /** Faux `navigator.locks` : `held` simule un autre onglet qui tient le verrou. */
+  function fakeLocks(state: { held: boolean; stolen: number }) {
+    return {
+      request: async (
+        _name: string,
+        options: { ifAvailable?: boolean; steal?: boolean },
+        callback: (lock: object | null) => unknown,
+      ) => {
+        if (options.steal) {
+          state.stolen += 1;
+          state.held = false;
+        }
+        return callback(state.held ? null : {});
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('verrou libre : la passe tourne', async () => {
+    vi.stubGlobal('navigator', { locks: fakeLocks({ held: false, stolen: 0 }) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+  });
+
+  it('verrou pris par un autre onglet : rien n’est envoyé d’ici, la file reste', async () => {
+    vi.stubGlobal('navigator', { locks: fakeLocks({ held: true, stolen: 0 }) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    expect(fns.calls()).toEqual([]);
+    expect(readQueue()).toHaveLength(1);
+  });
+
+  it('verrou refusé depuis plus d’une minute (onglet figé) : il est repris, la file part', async () => {
+    vi.useFakeTimers();
+    const state = { held: true, stolen: 0 };
+    vi.stubGlobal('navigator', { locks: fakeLocks(state) });
+    enqueue(execOp());
+    const fns = okFns();
+
+    await flush(fns);
+    vi.advanceTimersByTime(59_000);
+    await flush(fns);
+    expect(state.stolen).toBe(0);
+    expect(fns.calls()).toEqual([]);
+
+    vi.advanceTimersByTime(2_000);
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(state.stolen).toBe(1);
+  });
+
+  it('sans l’API de verrou : la passe tourne comme avant', async () => {
+    vi.stubGlobal('navigator', {});
+    enqueue(execOp());
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
   });
 });
 
@@ -1236,7 +1382,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(readQueue().map((o) => o.id)).toEqual(['set-refuse', 'set-2']);
   });
 
-  it('retrait de la file impossible à persister (quota) : la passe s’arrête, l’op n’est pas rejouée en boucle', async () => {
+  it('retrait de la file impossible à persister (quota) : l’op n’est pas rejouée en boucle, la passe finit en mémoire', async () => {
     enqueue(execOp('exec-1'));
     enqueue(setOp('set-1', 1));
     const fns = okFns();
@@ -1246,14 +1392,125 @@ describe('quarantaine (rejet définitif de la base)', () => {
       if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
       setItem(k, v);
     };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const res = await flush(fns);
 
-    // L'op est passée en base mais son retrait n'a pas pu s'écrire : elle sera
-    // rejouée (sans effet, idempotente) au prochain flush, pas tout de suite.
+    // Le retrait de la première op n'a pas pu s'écrire : le miroir mémoire le
+    // tient, donc elle n'est envoyée qu'UNE fois et la passe continue.
     expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
-    expect(fns.insertSet).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    clearQueue();
+  });
+});
+
+// --- Stockage plein : la file tient en mémoire (audit sync, constat 7) --------
+//
+// Avant : l'écriture refusée était signalée en console et c'est tout. L'op
+// enfilée n'existait nulle part, la bannière disait « Synchronisé ».
+
+describe('stockage plein (quota) : miroir mémoire de la file', () => {
+  /** Le stockage refuse toute écriture de la file tant que `full` est vrai. */
+  function quota(): { full: boolean } {
+    const state = { full: true };
+    const store = globalThis.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string) => {
+      if (state.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    return state;
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    clearQueue();
+    vi.restoreAllMocks();
+  });
+
+  it('l’op enfilée n’est pas perdue : elle est en file, comptée, et le refus est dit', () => {
+    quota();
+
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-1', 's1']);
+    expect(pendingCount()).toBe(2);
+    expect(storageFailing()).toBe(true);
+    // Rien n'a pu être écrit sur l'appareil.
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+  });
+
+  it('le flush envoie ce que tient le miroir', async () => {
+    quota();
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.calls().map((op) => op.id)).toEqual(['exec-1', 's1']);
+    // File vide : la retirer du stockage passe toujours, le miroir est rendu.
+    expect(storageFailing()).toBe(false);
+  });
+
+  it('dès que le stockage accepte de nouveau, la file est persistée et le miroir rendu', () => {
+    const state = quota();
+    enqueue(execOp());
+    expect(storageFailing()).toBe(true);
+
+    state.full = false;
+    enqueue(setOp('s1', 1));
+
+    expect(storageFailing()).toBe(false);
+    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(2);
+  });
+
+  it('le cache de lecture cède la place avant de renoncer au stockage', () => {
+    // Stockage à capacité bornée, déjà rempli par des copies de lecture.
+    const store = globalThis.localStorage as Storage & { removeItem: (k: string) => void };
+    const setItem = store.setItem.bind(store);
+    const removeItem = store.removeItem.bind(store);
+    const sizes = new Map<string, number>();
+    const CAPACITY = 1000;
+    const used = () => [...sizes.values()].reduce((n, size) => n + size, 0);
+    store.setItem = (k: string, v: string) => {
+      if (used() - (sizes.get(k) ?? 0) + v.length > CAPACITY) throw new Error('QuotaExceededError');
+      sizes.set(k, v.length);
+      setItem(k, v);
+    };
+    store.removeItem = (k: string) => {
+      sizes.delete(k);
+      removeItem(k);
+    };
+    // Le polyfill de ce fichier n'énumère pas ses clés : la purge du cache en a besoin.
+    Object.defineProperty(store, 'length', { get: () => sizes.size, configurable: true });
+    (store as unknown as { key: (i: number) => string | null }).key = (i) =>
+      [...sizes.keys()][i] ?? null;
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    localStorage.setItem(
+      'croustylift:readcache:user-1:exo-execs:e1',
+      JSON.stringify({ v: 1, value: 'x'.repeat(850) }),
+    );
+
+    enqueue(execOp());
+
+    expect(storageFailing()).toBe(false);
+    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(1);
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-execs:e1')).toBeNull();
+  });
+
+  it('« Annuler la séance » agit aussi sur la file tenue en mémoire', () => {
+    quota();
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('s1', 1, 'exec-1'));
+    enqueue(execOp('exec-2'));
+
+    purgeByExecution('exec-1');
+
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-2']);
   });
 });
 
@@ -1329,3 +1586,165 @@ describe('purgeByExecution et quarantaine', () => {
   });
 });
 
+
+// --- Saisies refusées : lister, renvoyer, abandonner --------------------------
+
+describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () => {
+  const rejection = { code: '23514', message: 'rejet de la base', details: '', hint: '' };
+
+  beforeEach(() => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** Une série refusée par la base, puis une série acceptée derrière elle. */
+  async function refuseOneSet(): Promise<SyncFns & { calls: () => OutboxOp[] }> {
+    enqueue(execOp());
+    enqueue(setOp('set-refuse', 1));
+    enqueue(setOp('set-ok', 2));
+    const fns = okFns();
+    (fns.insertSet as ReturnType<typeof vi.fn>).mockImplementation(async (op: InsertSetOp) => {
+      if (op.id === 'set-refuse') throw rejection;
+    });
+    await flush(fns);
+    return fns;
+  }
+
+  it('liste les saisies refusées avec leur raison et une identité', async () => {
+    await refuseOneSet();
+
+    const refused = listRefused();
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ reason: '23514 : rejet de la base' });
+    expect(refused[0]?.op).toMatchObject({ type: 'insertSet', id: 'set-refuse' });
+    expect(typeof refused[0]?.refusalId).toBe('string');
+  });
+
+  it('renvoyer : la saisie repart en file et passe si la base l’accepte', async () => {
+    await refuseOneSet();
+    const [refused] = listRefused();
+
+    expect(retryRefused(refused!.refusalId)).toBe(true);
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue().map((op) => op.id)).toEqual(['set-refuse']);
+
+    const fns = okFns();
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(fns.calls().map((op) => op.id)).toEqual(['set-refuse']);
+  });
+
+  it('renvoyer une saisie que la base refuse encore : elle revient en quarantaine', async () => {
+    const fns = await refuseOneSet();
+
+    retryRefused(listRefused()[0]!.refusalId);
+    await flush(fns);
+
+    expect(readQueue()).toEqual([]);
+    expect(listRefused().map((q) => q.op.id)).toEqual(['set-refuse']);
+  });
+
+  it('abandonner : la saisie quitte la quarantaine sans jamais partir', async () => {
+    await refuseOneSet();
+
+    expect(abandonRefused(listRefused()[0]!.refusalId)).toBe(true);
+
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue()).toEqual([]);
+    expect(heldCount()).toBe(0);
+  });
+
+  it('identité inconnue : rien ne bouge', async () => {
+    await refuseOneSet();
+
+    expect(retryRefused('inconnue')).toBe(false);
+    expect(abandonRefused('inconnue')).toBe(false);
+    expect(quarantineCount()).toBe(1);
+  });
+
+  it('renvoyer une exécution refusée renvoie avec elle les saisies qui en dépendaient, dans l’ordre', async () => {
+    enqueue(execOp('exec-refusee'));
+    enqueue(setOp('s1', 1, 'exec-refusee'));
+    enqueue(setOp('s2', 2, 'exec-refusee'));
+    enqueue({ type: 'updateExecution', id: 'exec-refusee', closedAt: '2026-11-23T10:00:00Z' });
+    const fns = okFns();
+    (fns.upsertExecution as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      throw rejection;
+    });
+    await flush(fns);
+    expect(quarantineCount()).toBe(4);
+    const parent = listRefused().find((q) => q.op.type === 'upsertExecution')!;
+
+    expect(retryRefused(parent.refusalId)).toBe(true);
+
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
+      'upsertExecution:exec-refusee',
+      'insertSet:s1',
+      'insertSet:s2',
+      'updateExecution:exec-refusee',
+    ]);
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 4 });
+  });
+
+  it('les saisies refusées d’un autre compte ne sont ni listées, ni renvoyées, ni abandonnées', async () => {
+    await refuseOneSet();
+    const id = listRefused()[0]!.refusalId;
+    saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
+
+    expect(listRefused()).toEqual([]);
+    expect(retryRefused(id)).toBe(false);
+    expect(abandonRefused(id)).toBe(false);
+    expect(quarantineCount()).toBe(1);
+  });
+});
+
+// --- Ce que l'appareil retient, par compte ------------------------------------
+
+describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
+  const foreignOp = { type: 'deleteSet', id: 'serie-de-b', _owner: 'user-b', _uid: 'uid-b' };
+  const foreignRefused = {
+    op: { type: 'deleteSet', id: 'refus-de-b', _owner: 'user-b', _uid: 'uid-b2' },
+    reason: '23503 : rejet',
+    at: '2026-11-22T10:00:00Z',
+  };
+
+  beforeEach(() => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    // Le compte B a laissé une saisie en file et une saisie refusée.
+    localStorage.setItem('croustylift:outbox', JSON.stringify([foreignOp]));
+    localStorage.setItem('croustylift:outbox:quarantine', JSON.stringify([foreignRefused]));
+  });
+
+  it('sépare ce qui est au compte reconnu de ce qui est à un autre', () => {
+    enqueue(execOp());
+
+    expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
+    // Le compteur global, lui, compte toujours tout.
+    expect(heldCount()).toBe(3);
+  });
+
+  it('une op sans compte (bundle antérieur) est tenue pour celle du compte reconnu', () => {
+    localStorage.setItem(
+      'croustylift:outbox',
+      JSON.stringify([foreignOp, { type: 'deleteSet', id: 'heritee', _seq: 1 }]),
+    );
+
+    expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
+  });
+
+  it('la purge de la Déconnexion ne jette que ses propres écritures, jamais celles d’un autre', () => {
+    enqueue(execOp());
+    enqueue(setOp('s1', 1));
+
+    clearOwnQueue();
+
+    expect(readQueue()).toEqual([foreignOp]);
+    expect(readQuarantine()).toEqual([foreignRefused]);
+    expect(heldCounts()).toEqual({ own: 0, ownRefused: 0, foreign: 2 });
+  });
+
+  it('seul le forçage (clearQueue) jette tout', () => {
+    clearQueue();
+    expect(heldCount()).toBe(0);
+  });
+});

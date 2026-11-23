@@ -451,7 +451,7 @@ function CatalogSheet({
   const title = target.mode === 'swap' ? `Remplacer ${target.name}` : 'Ajouter un exercice';
 
   return (
-    <div className="fixed inset-0 z-30 flex flex-col">
+    <div className="fixed inset-0 z-30 flex flex-col" role="dialog" aria-modal="true" aria-label={title}>
       {/* Fond cliquable pour fermer. */}
       <button
         type="button"

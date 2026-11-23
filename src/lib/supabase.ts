@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './database.types'
+import { fetchWithTimeout } from './fetch-timeout'
 
 const url = import.meta.env.VITE_SUPABASE_URL
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
@@ -18,7 +19,17 @@ if (!url || !key) {
   )
 }
 
-export const supabase = createClient<Database>(url, key)
+// Fragment d'URL à l'arrivée (lien d'invitation ou de récupération), relevé
+// AVANT la création du client : supabase-js le retire de l'URL une fois la
+// session ouverte (cf. auth/arrival-link).
+export const arrivalHash = typeof window === 'undefined' ? '' : window.location.hash
+
+// Toute requête du client est bornée dans le temps (cf. lib/fetch-timeout) : sans
+// cela un `fetch` qui pend retient la passe de flush en cours et tous les
+// flush suivants.
+export const supabase = createClient<Database>(url, key, {
+  global: { fetch: fetchWithTimeout() },
+})
 
 // Clé localStorage où supabase-js persiste sa session (dérivée du sous-domaine
 // du projet, cf. SupabaseClient). Utilisée UNIQUEMENT comme purge de secours à

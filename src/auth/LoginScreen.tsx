@@ -1,14 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { PendingWritesError } from './auth-context'
-import { heldCount } from '../features/capture/outbox'
+import { heldCounts } from '../features/capture/outbox'
+import { heldWritesNotice } from '../features/capture/sync-label'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
+import { arrivalHash } from '../lib/supabase'
+import { arrivalFromHash } from './arrival-link'
 
-type Mode = 'signin' | 'signup' | 'forgot'
+/** Le lien d'e-mail suivi pour arriver ici a-t-il été refusé (expiré, déjà utilisé) ? */
+const linkFailed = arrivalFromHash(arrivalHash).failed
 
-/** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
-const MIN_PASSWORD_LENGTH = 10
+type Mode = 'signin' | 'forgot'
 
 /** Traduit les messages d'erreur Supabase courants en français lisible. */
 function frenchError(message: string): string {
@@ -18,15 +21,6 @@ function frenchError(message: string): string {
   }
   if (m.includes('email not confirmed')) {
     return 'Email non confirmé. Vérifie ta boîte de réception.'
-  }
-  if (m.includes('user already registered') || m.includes('already been registered')) {
-    // Message non-énumérant : ne pas confirmer l'existence d'une adresse (cohérent
-    // avec le login neutre). Supabase n'ouvre pas de session si l'email existe déjà ;
-    // l'utilisateur reçoit un mail s'il s'agit bien d'un compte connu.
-    return "Si un compte peut être créé, tu recevras un email pour confirmer."
-  }
-  if (m.includes('password should be at least')) {
-    return `Le mot de passe est trop court (${MIN_PASSWORD_LENGTH} caractères minimum).`
   }
   if (m.includes('unable to validate email') || m.includes('invalid email')) {
     return 'Adresse email invalide.'
@@ -38,7 +32,7 @@ function frenchError(message: string): string {
 }
 
 export function LoginScreen() {
-  const { signIn, signUp, localAccount, forgetLocalData } = useAuth()
+  const { signIn, localAccount, forgetLocalData } = useAuth()
   // TOUS les hooks AVANT le moindre return conditionnel (règle des Hooks). Avant,
   // le `if (mode === 'forgot') return …` précédait ces useState : passer en mode
   // « mot de passe oublié » rendait MOINS de hooks que le render précédent et
@@ -48,7 +42,6 @@ export function LoginScreen() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [info, setInfo] = useState<string | null>(null)
   // Étape de confirmation du forçage de purge (ADR 0012) : deux gestes distincts,
   // jamais un OK réflexe, la perte est nommée avant d'être possible.
   const [confirmPurge, setConfirmPurge] = useState(false)
@@ -62,28 +55,21 @@ export function LoginScreen() {
   // compte les remontera, un autre compte exige le forçage (ADR 0012).
   // Ops en quarantaine comprises : la garde d'un autre compte les compte aussi,
   // et la purge proposée ici est leur seule sortie.
-  const pendingWrites = localAccount ? heldCount() : 0
-
-  const isSignup = mode === 'signup'
+  // Elles sont dites PAR COMPTE (ADR 0019) : celles du compte reconnu, et celles
+  // d'un autre compte passé sur l'appareil, que sa Déconnexion n'a pas jetées.
+  const counts = heldCounts()
+  const pendingNotice = heldWritesNotice({
+    own: counts.own,
+    foreign: counts.foreign,
+    email: localAccount?.email ?? null,
+  })
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    setInfo(null)
-    if (isSignup && password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Le mot de passe est trop court (${MIN_PASSWORD_LENGTH} caractères minimum).`)
-      return
-    }
     setSubmitting(true)
     try {
-      if (isSignup) {
-        await signUp(email, password)
-        // Si « Confirm email » est actif côté Supabase, aucune session n'est ouverte
-        // immédiatement : on guide l'utilisateur. Sinon onAuthStateChange prend le relais.
-        setInfo('Compte créé. Vérifie ta boîte de réception pour confirmer.')
-      } else {
-        await signIn(email, password)
-      }
+      await signIn(email, password)
     } catch (err) {
       if (err instanceof PendingWritesError) {
         // Autre compte par-dessus des saisies non synchronisées : refus (ADR 0012).
@@ -100,17 +86,12 @@ export function LoginScreen() {
 
   return (
     <AuthShell
-      title={isSignup ? 'Crée ton compte.' : 'Bon retour.'}
+      title="Bon retour."
       subtitle="Capture en salle. Progresse au calme."
     >
-      {pendingWrites > 0 && (
+      {pendingNotice && (
         <div className="surface-card mb-6 rounded-[14px] px-4 py-3.5 text-left">
-          <p className="text-sm text-ink">
-            {pendingWrites} saisie{pendingWrites > 1 ? 's' : ''} de{' '}
-            <span className="font-medium">{localAccount?.email ?? 'ton compte'}</span> attend
-            {pendingWrites > 1 ? 'ent' : ''} encore la synchronisation. Connecte-toi avec ce
-            compte pour les envoyer.
-          </p>
+          <p className="text-sm text-ink">{pendingNotice}</p>
           {confirmPurge ? (
             <div className="mt-3 flex flex-col gap-2">
               <p className="text-xs text-warn">
@@ -170,8 +151,7 @@ export function LoginScreen() {
             id="password"
             value={password}
             onChange={setPassword}
-            autoComplete={isSignup ? 'new-password' : 'current-password'}
-            minLength={isSignup ? MIN_PASSWORD_LENGTH : undefined}
+            autoComplete="current-password"
           />
         </div>
 
@@ -195,47 +175,31 @@ export function LoginScreen() {
             {error}
           </p>
         )}
-        {info && !error && <p className="text-sm text-accent-ink">{info}</p>}
+        {linkFailed && !error && (
+          <p className="text-sm text-ink-muted">
+            Ce lien a expiré ou a déjà servi. Demande un nouveau lien avec « Mot de passe
+            oublié », ou une nouvelle invitation.
+          </p>
+        )}
 
         <button
           type="submit"
           disabled={submitting || !email || !password}
           className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
         >
-          {submitting
-            ? isSignup
-              ? 'Création du compte…'
-              : 'Connexion…'
-            : isSignup
-              ? 'Créer mon compte'
-              : 'Se connecter'}
+          {submitting ? 'Connexion…' : 'Se connecter'}
         </button>
       </form>
 
-      {!isSignup && (
-        <button
-          type="button"
-          onClick={() => setMode('forgot')}
-          className="mt-5 block w-full rounded text-center text-sm font-medium text-accent-ink transition active:text-accent"
-        >
-          Mot de passe oublié&#8239;?
-        </button>
-      )}
-
-      <p className="mt-6 text-center text-sm text-ink-muted">
-        {isSignup ? 'Déjà un compte ?' : 'Pas encore de compte ?'}{' '}
-        <button
-          type="button"
-          onClick={() => {
-            setMode(isSignup ? 'signin' : 'signup')
-            setError(null)
-            setInfo(null)
-          }}
-          className="rounded font-medium text-accent-ink transition active:text-accent"
-        >
-          {isSignup ? 'Se connecter' : 'Créer un compte'}
-        </button>
-      </p>
+      {/* Pas de lien « Créer un compte » : l'inscription est fermée, les comptes
+          viennent par invitation (le lien d'e-mail mène à l'écran de mot de passe). */}
+      <button
+        type="button"
+        onClick={() => setMode('forgot')}
+        className="mt-5 block w-full rounded text-center text-sm font-medium text-accent-ink transition active:text-accent"
+      >
+        Mot de passe oublié&#8239;?
+      </button>
     </AuthShell>
   )
 }

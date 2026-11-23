@@ -2,7 +2,7 @@
 // testable sans DOM (environment: 'node').
 
 import { describe, expect, it } from 'vitest';
-import { seedDraft } from './capture-seed';
+import { seedDraft, shouldReseedDraft } from './capture-seed';
 import type { Prescription, PerformedSet } from '../../domain/types';
 
 const range = (min: number, max: number) => ({ min, max });
@@ -227,5 +227,20 @@ describe('seedDraft — repli cross-séances (préremplissage seul, décision 20
       loggedSets: [],
     });
     expect(seed.weightKg).toBe(20);
+  });
+});
+
+describe('shouldReseedDraft', () => {
+  it('déclencheur explicite (exo, série loggée ou annulée, côté) : toujours, touché ou non', () => {
+    expect(shouldReseedDraft('explicit', false)).toBe(true);
+    expect(shouldReseedDraft('explicit', true)).toBe(true);
+  });
+
+  it('historique rafraîchi, brouillon intact : le préremplissage suit', () => {
+    expect(shouldReseedDraft('history', false)).toBe(true);
+  });
+
+  it('historique rafraîchi, brouillon touché : il ne bouge pas', () => {
+    expect(shouldReseedDraft('history', true)).toBe(false);
   });
 });

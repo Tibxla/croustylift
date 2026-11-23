@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
 
-/** Longueur minimale du mot de passe, alignée sur la politique Supabase et le signup. */
+/** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
 const MIN_PASSWORD_LENGTH = 10
 
 /** Traduit les erreurs Supabase de mise à jour en français lisible. */
@@ -15,11 +15,16 @@ function frenchError(message: string): string {
     return 'Le nouveau mot de passe doit être différent de l’ancien.'
   }
   if (m.includes('session') || m.includes('expired') || m.includes('token')) {
-    return 'Le lien de réinitialisation a expiré. Demande un nouveau lien.'
+    return 'Le lien a expiré. Demande un nouveau lien.'
   }
   return 'Une erreur est survenue. Réessaie.'
 }
 
+/**
+ * Écran de définition du mot de passe, commun aux deux arrivées par lien
+ * d'e-mail : récupération (mot de passe oublié) et invitation (premier mot de
+ * passe d'un compte créé depuis le tableau de bord, l'inscription étant fermée).
+ */
 export function ResetPasswordScreen() {
   const { updatePassword, clearPasswordRecovery } = useAuth()
   const [password, setPassword] = useState('')
@@ -61,10 +66,10 @@ export function ResetPasswordScreen() {
         mark={false}
         footer={false}
         titleSize={30}
-        title="Mot de passe mis à jour."
-        subtitle="Ton mot de passe a été changé. Tu es maintenant connecté."
+        title="Mot de passe enregistré."
+        subtitle="Tu es maintenant connecté."
       >
-        <span className="sr-only">Réinitialisation terminée.</span>
+        <span className="sr-only">Mot de passe enregistré.</span>
       </AuthShell>
     )
   }
@@ -74,12 +79,12 @@ export function ResetPasswordScreen() {
       mark={false}
       footer={false}
       titleSize={30}
-      title="Nouveau mot de passe."
+      title="Ton mot de passe."
       subtitle={`Choisis un mot de passe d’au moins ${MIN_PASSWORD_LENGTH} caractères.`}
     >
       <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
         <div>
-          <FieldLabel htmlFor="new-password">Nouveau mot de passe</FieldLabel>
+          <FieldLabel htmlFor="new-password">Mot de passe</FieldLabel>
           <PasswordField
             id="new-password"
             value={password}
@@ -125,7 +130,7 @@ export function ResetPasswordScreen() {
           disabled={submitting || !password || !confirm}
           className="btn btn-primary h-14 w-full rounded-2xl text-base"
         >
-          {submitting ? 'Mise à jour…' : 'Mettre à jour le mot de passe'}
+          {submitting ? 'Enregistrement…' : 'Enregistrer le mot de passe'}
         </button>
       </form>
     </AuthShell>

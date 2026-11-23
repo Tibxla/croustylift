@@ -22,11 +22,20 @@
 import {
   cachedKeys,
   cachedRead,
+  dropRead,
+  networkFirstRead,
+  onReadWritten,
   peekRead,
   refreshRead,
-  stableKeyOf,
-  tolerantRead,
 } from '../../lib/read-cache';
+import {
+  CAPTURE_SOURCE_KEY,
+  EXERCISE_NOTE_PREFIX,
+  EXERCISES_KEY,
+  SEANCE_TEMPLATE_PREFIX,
+  SEANCE_VERSION_IDS_PREFIX,
+  SEANCE_VERSION_PREFIX,
+} from './plan-copies';
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows } from '../../lib/fetch-all';
 import type { Database } from '../../lib/database.types';
@@ -145,7 +154,7 @@ export function resolveCaptureRoutineId(
  */
 export async function loadCaptureSource(): Promise<CaptureSource> {
   // Cache d'abord (ADR 0012) : l'arrivée en salle ne dépend pas du réseau.
-  return cachedRead('capture-source', async () => {
+  return cachedRead(CAPTURE_SOURCE_KEY, async () => {
     const [currentRoutineId, routines] = await Promise.all([
       getCurrentRoutineId(),
       listRoutines(),
@@ -173,7 +182,7 @@ export async function loadCaptureSource(): Promise<CaptureSource> {
  * arriver : createSeance crée toujours une v1).
  */
 export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSeance> {
-  const versionId = await cachedRead(`seance-version:${seance.id}`, () =>
+  const versionId = await cachedRead(`${SEANCE_VERSION_PREFIX}${seance.id}`, () =>
     getCurrentVersionId(seance.id),
   );
   if (!versionId) {
@@ -188,7 +197,7 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
  * des retouches du même template, l'historique de l'exo les traverse toutes.
  */
 export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
-  return cachedRead(`seance-version-ids:${seanceId}`, async () => {
+  return cachedRead(`${SEANCE_VERSION_IDS_PREFIX}${seanceId}`, async () => {
     // Append-only (une version par édition) : lu en entier, page par page (cf.
     // lib/fetch-all) — une version manquante sortirait ses exécutions du
     // périmètre de la Référence.
@@ -235,15 +244,56 @@ export async function listExercises(): Promise<ExerciseRow[]> {
  * d'AVANT leur propre modification.
  */
 export async function listExercisesForCapture(): Promise<ExerciseRow[]> {
-  return cachedRead('exercises', listExercises);
+  return cachedRead(EXERCISES_KEY, listExercises);
 }
 
 /**
  * Note d'instructions d'un exo, « cache d'abord » pour la CAPTURE (ADR 0012).
  * Même partage des rôles que le catalogue : les éditeurs lisent en direct.
+ *
+ * Une note éditée EN CAPTURE passe par l'outbox : tant que son écriture attend,
+ * c'est elle qui fait foi, par-dessus la copie (`applyPendingExerciseNote`).
+ * Sans cela la note corrigée revenait à son ancien texte au remontage, et la
+ * retaper depuis l'ancien texte écrasait la correction. Une fois acquittée, sa
+ * valeur est posée dans la copie (cf. sync.ts).
  */
 export async function loadExerciseNoteCached(exerciseId: string): Promise<string> {
-  return cachedRead(`exo-note:${exerciseId}`, () => loadExerciseNote(exerciseId));
+  const pending = pendingExerciseNote(readOwnQueue(), exerciseId);
+  try {
+    const body = await cachedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, () =>
+      loadExerciseNote(exerciseId),
+    );
+    // La file est relue APRÈS la lecture : une édition a pu arriver entre-temps.
+    return applyPendingExerciseNote(body, readOwnQueue(), exerciseId);
+  } catch (err) {
+    // Ni copie ni réseau, mais une édition en attente : son texte est connu.
+    if (pending !== null) return pending;
+    throw err;
+  }
+}
+
+/**
+ * Le corps que la file d'écritures donne à la note d'instructions de l'exo : sa
+ * DERNIÈRE op (`upsertExerciseNote` pose le corps, `deleteExerciseNote` le
+ * vide). `null` si aucune op ne la vise. Pur.
+ */
+export function pendingExerciseNote(ops: readonly OutboxOp[], exerciseId: string): string | null {
+  let body: string | null = null;
+  for (const op of ops) {
+    if (op.id !== exerciseId) continue;
+    if (op.type === 'upsertExerciseNote') body = op.body;
+    else if (op.type === 'deleteExerciseNote') body = '';
+  }
+  return body;
+}
+
+/** La note lue, sauf si une écriture encore en file la remplace. Pur. */
+export function applyPendingExerciseNote(
+  body: string,
+  ops: readonly OutboxOp[],
+  exerciseId: string,
+): string {
+  return pendingExerciseNote(ops, exerciseId) ?? body;
 }
 
 // --- Ajout / swap d'un exo à la volée (issue #36) -----------------------------
@@ -372,7 +422,7 @@ export async function loadSeanceForCapture(
 ): Promise<Session> {
   // Cache d'abord (ADR 0012), APRÈS fusion des overrides : la copie locale porte
   // déjà les champs personnalisés, prête à servir hors-ligne telle quelle.
-  return cachedRead(`seance-template:${seanceVersionId}:${seance.id}`, async () => {
+  return cachedRead(`${SEANCE_TEMPLATE_PREFIX}${seanceVersionId}:${seance.id}`, async () => {
     const [{ data, error }, overrides] = await Promise.all([
       supabase
         .from('prescriptions')
@@ -771,74 +821,196 @@ export async function loadExerciseRows(
   return applyPendingSets(rows, readOwnQueue(), exerciseId);
 }
 
+/**
+ * Les dérivées d'historique d'un exo relues SANS réseau, depuis la copie locale
+ * fusionnée avec les écritures en attente : de quoi rejouer la dérivation d'un
+ * écran déjà monté quand la copie vient de changer (cf. `onExerciseRowsWritten`).
+ * `null` si la copie est ABSENTE (purgée, stockage plein) : l'appelant ne touche
+ * alors à rien, une copie qui manque n'est pas un historique vide.
+ */
+export function peekExerciseHistory(
+  exerciseId: string,
+  seanceVersionIds: readonly string[],
+  unilateral: boolean,
+  currentExecutionId: string | null,
+): ExerciseHistory | null {
+  const rows = peekRead<PerformedSetWithExecutionRow[]>(exerciseRowsKey(exerciseId));
+  if (rows === null) return null;
+  return deriveExerciseHistory(
+    applyPendingSets(rows, readOwnQueue(), exerciseId),
+    exerciseId,
+    seanceVersionIds,
+    unilateral,
+    currentExecutionId,
+  );
+}
+
+/**
+ * S'abonne aux copies d'historique d'exo dont le contenu change (revalidation de
+ * fond, relecture d'après acquittement) : `listener` reçoit l'id de l'exo. Rend
+ * la fonction de désabonnement.
+ */
+export function onExerciseRowsWritten(listener: (exerciseId: string) => void): () => void {
+  return onReadWritten((key) => {
+    if (key.startsWith(EXERCISE_ROWS_PREFIX)) listener(key.slice(EXERCISE_ROWS_PREFIX.length));
+  });
+}
+
+/** Les dérivées d'historique telles qu'un exo de séance les porte (champs optionnels ou nuls). */
+type LooseExerciseHistory = { [K in keyof ExerciseHistory]?: ExerciseHistory[K] | null };
+
+/**
+ * Deux jeux de dérivées d'historique disent-ils la même chose ? Chaque série
+ * acquittée réécrit la copie de son exo : la dérivation est rejouée souvent,
+ * mais l'écran ne doit être re-rendu que si le résultat DIFFÈRE. Pur.
+ */
+export function sameExerciseHistory(a: LooseExerciseHistory, b: LooseExerciseHistory): boolean {
+  const shape = (h: LooseExerciseHistory) =>
+    JSON.stringify([
+      h.reference ?? null,
+      h.fallbackReference ?? null,
+      h.personalRecord ?? null,
+      h.personalRecordBySide ?? null,
+    ]);
+  return shape(a) === shape(b);
+}
+
 // --- Note datée reportée (repère « Dernière fois tu notais : … ») -------------
 
 /**
  * La DERNIÈRE exécution passée de la séance (`performed_on < beforeDate`, toutes
  * versions confondues) : c'est ELLE seule qui peut porter le repère « Dernière
- * fois tu notais » (cf. GLOSSARY.md « Note datée » — si elle n'a pas de note pour
+ * fois tu notais » (cf. GLOSSARY.md « Note datée » : si elle n'a pas de note pour
  * un exo, rien ne ressort, on ne repêche jamais plus ancien). `beforeDate` = la
  * date ADOPTÉE de la séance du jour : on exclut l'exécution en cours. `null` si
  * la séance n'a jamais été exécutée.
+ *
+ * UNE copie par séance (`last-exec:<séance>`), qui porte la date pour laquelle
+ * elle a été lue. Avant, la clé portait la date et la liste des versions : un
+ * jour nouveau n'avait jamais de copie (repère absent hors ligne) et chaque jour
+ * d'entraînement laissait une clé orpheline. Désormais :
+ *   - copie lue pour CE jour : servie d'abord, revalidée en fond ;
+ *   - copie d'un autre jour : réseau d'abord, borné (3 s) ; en échec, la copie
+ *     sert de secours si son exécution précède bien `beforeDate`. Elle peut alors
+ *     avoir une exécution de retard, le repère affiche sa date.
+ * La séance se filtre côté serveur, par jointure sur `seance_versions` : pas de
+ * liste d'ids de versions dans l'URL.
  */
 export async function loadLastSeanceExecution(
-  seanceVersionIds: readonly string[],
+  seanceId: string,
   beforeDate: string,
 ): Promise<{ id: string; performedOn: string } | null> {
-  if (seanceVersionIds.length === 0) return null;
+  type Copy = { before: string; last: { id: string; performedOn: string } | null };
+  const key = `${LAST_EXECUTION_PREFIX}${seanceId}`;
+  const fetcher = async (): Promise<Copy> => {
+    const { data, error } = await supabase
+      .from('executions')
+      .select('id, performed_on, seance_versions!inner(seance_id)')
+      .eq('seance_versions.seance_id', seanceId)
+      .lt('performed_on', beforeDate)
+      .order('performed_on', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return {
+      before: beforeDate,
+      last: data ? { id: data.id, performedOn: data.performed_on } : null,
+    };
+  };
   // Tolérant (ADR 0012) : le repère « tu notais » est un confort, jamais un
-  // bloqueur — sans copie ni réseau, il n'y a simplement rien à ressortir.
-  return tolerantRead(
-    `last-exec:${stableKeyOf(seanceVersionIds)}:${beforeDate}`,
-    async () => {
-      const { data, error } = await supabase
-        .from('executions')
-        .select('id, performed_on')
-        .in('seance_version_id', [...seanceVersionIds])
-        .lt('performed_on', beforeDate)
-        .order('performed_on', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? { id: data.id, performedOn: data.performed_on } : null;
-    },
-    null,
-  );
+  // bloqueur. Sans copie ni réseau, il n'y a simplement rien à ressortir.
+  try {
+    if (peekRead<Copy>(key)?.before === beforeDate) return (await cachedRead(key, fetcher)).last;
+    const read = await networkFirstRead(key, fetcher);
+    if (read.before === beforeDate) return read.last;
+    // Copie de secours, lue pour un autre jour : valable si elle précède ce jour.
+    return read.last !== null && read.last.performedOn < beforeDate ? read.last : null;
+  } catch {
+    return null;
+  }
 }
+
+/** Préfixes des copies du repère « tu notais », une par séance. */
+const LAST_EXECUTION_PREFIX = 'last-exec:';
+const PREVIOUS_NOTES_PREFIX = 'prev-notes:';
 
 /**
  * Les notes datées portées par la dernière exécution passée de la séance, par
- * exerciseId — la source du repère « Dernière fois tu notais » de CHAQUE exo
+ * exerciseId : la source du repère « Dernière fois tu notais » de CHAQUE exo
  * (une seule requête pour toute la séance, exos ajoutés à la volée compris).
  * Corps vides écartés ; à doublon par exo (garde-fou), la plus récente gagne.
  * `{}` si la séance n'a pas d'exécution passée.
+ *
+ * UNE copie par séance (`prev-notes:<séance>`), qui nomme l'exécution dont elle
+ * vient : elle ne sert que pour cette exécution-là. Avant, la clé portait l'id
+ * de l'exécution et chaque séance faite laissait une clé orpheline.
  */
 export async function loadPreviousDatedNotes(
+  seanceId: string,
   lastExecution: { id: string; performedOn: string } | null,
 ): Promise<Record<string, PreviousDatedNote>> {
   if (!lastExecution) return {};
-  // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution —
-  // sans copie ni réseau, rien ne ressort (cf. GLOSSARY.md « Note datée »).
-  return tolerantRead(
-    `prev-notes:${lastExecution.id}`,
-    async () => {
-      const { data, error } = await supabase
-        .from('dated_notes')
-        .select('exercise_id, body, created_at')
-        .eq('execution_id', lastExecution.id)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
+  type Copy = { executionId: string; notes: Record<string, PreviousDatedNote> };
+  const key = `${PREVIOUS_NOTES_PREFIX}${seanceId}`;
+  const fetcher = async (): Promise<Copy> => {
+    const { data, error } = await supabase
+      .from('dated_notes')
+      .select('exercise_id, body, created_at')
+      .eq('execution_id', lastExecution.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
 
-      const notes: Record<string, PreviousDatedNote> = {};
-      for (const row of data ?? []) {
-        if (row.body.trim() === '') continue;
-        notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
-      }
-      return notes;
-    },
-    {},
-  );
+    const notes: Record<string, PreviousDatedNote> = {};
+    for (const row of data ?? []) {
+      if (row.body.trim() === '') continue;
+      notes[row.exercise_id] = { body: row.body, performedOn: lastExecution.performedOn };
+    }
+    return { executionId: lastExecution.id, notes };
+  };
+  // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution.
+  try {
+    const own = peekRead<Copy>(key)?.executionId === lastExecution.id;
+    const read = own ? await cachedRead(key, fetcher) : await networkFirstRead(key, fetcher);
+    // Une copie de secours d'une AUTRE exécution ne dit rien de celle-ci.
+    return read.executionId === lastExecution.id ? read.notes : {};
+  } catch {
+    return {};
+  }
+}
+
+// --- Éviction des copies de lecture périmées ----------------------------------
+
+/**
+ * Retire les copies de lecture de la Capture qui ne seront plus jamais lues. Le
+ * cache n'avait aucune éviction et partage son quota avec l'outbox. Appelée une
+ * fois par lancement de l'app, à l'arrivée en Capture. Partent :
+ *   - les copies du repère « tu notais » à l'ancien format (une clé par jour et
+ *     par exécution, cf. `loadLastSeanceExecution`) ;
+ *   - les templates des versions de séance qui ne sont plus la version courante,
+ *     sauf celles de `keepVersionIds` (une séance entamée garde le template de
+ *     la version sous laquelle elle est née).
+ * L'historique des exos (`exo-execs`) reste entier : les records all-time en
+ * dérivent, le tronquer les fausserait. Si le stockage sature malgré tout, le
+ * cache entier cède la place aux écritures (cf. outbox, `writeQueue`).
+ */
+export function pruneCaptureCopies(keepVersionIds: readonly string[] = []): void {
+  for (const key of cachedKeys(LAST_EXECUTION_PREFIX)) {
+    // Ancien format : `last-exec:<condensé des versions>:<date>`.
+    if (key.slice(LAST_EXECUTION_PREFIX.length).includes(':')) dropRead(key);
+  }
+  for (const key of cachedKeys(PREVIOUS_NOTES_PREFIX)) {
+    // Ancien format : les notes seules, sans l'exécution dont elles viennent.
+    const copy = peekRead<{ executionId?: unknown }>(key);
+    if (typeof copy?.executionId !== 'string') dropRead(key);
+  }
+  for (const key of cachedKeys(SEANCE_TEMPLATE_PREFIX)) {
+    const [versionId, seanceId] = key.slice(SEANCE_TEMPLATE_PREFIX.length).split(':');
+    if (!versionId || !seanceId || keepVersionIds.includes(versionId)) continue;
+    // Sans copie de la version courante, on ne sait pas : la copie reste.
+    const current = peekRead<string | null>(`${SEANCE_VERSION_PREFIX}${seanceId}`);
+    if (typeof current === 'string' && current !== versionId) dropRead(key);
+  }
 }
 
 // --- Exécution du jour --------------------------------------------------------
@@ -861,6 +1033,13 @@ export async function loadPreviousDatedNotes(
 export interface TodayExecution {
   executionId: string;
   /**
+   * La version de séance sous laquelle l'exécution est NÉE (elle n'en change
+   * jamais, ADR 0021). Peut différer de la version courante si le plan a été
+   * retouché depuis : c'est son template que la Capture doit afficher. `null`
+   * pour une ligne héritée sans version.
+   */
+  seanceVersionId: string | null;
+  /**
    * Lancement (epoch ms) pour reprendre le chrono (ADR 0011), borné par `created_at`
    * (le lancement ne peut être postérieur au 1er log). Toujours défini : à défaut de
    * `started_at` en base (legacy / valeur dérivée), retombe sur `created_at`.
@@ -868,6 +1047,13 @@ export interface TodayExecution {
   startedAt: number;
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
+  /**
+   * Les séries dont l'INSERTION attendait en file pendant la lecture (file lue
+   * avant et après). La réponse ne les porte pas forcément : à la reprise, une
+   * série locale absente de `progress` n'est gardée que si elle est ici, sinon
+   * c'est qu'elle a été supprimée ailleurs (cf. `reconcileProgress`, state.ts).
+   */
+  pendingSetIds: string[];
 }
 
 /**
@@ -881,16 +1067,17 @@ export interface TodayExecution {
  * base (annulation, idempotence). `null` si aucune exécution ce jour-là.
  */
 export async function loadTodayExecution(
-  seanceVersionId: string,
+  seanceId: string,
   date: string,
   /**
    * L'exécution que l'appareil tient DÉJÀ en cours (état de capture restauré), ou
-   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : elle garde
-   * la version de séance sous laquelle elle est née (`upsertExecution` est une
-   * insertion seule), donc une recherche par version courante ne la retrouverait
-   * plus après une retouche du plan en pleine séance, et ses séries écrites
-   * ailleurs (journal) manqueraient à la reprise. Sans état local, on cherche
-   * l'exécution ouverte du jour pour cette version.
+   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : ses séries
+   * écrites ailleurs (journal) manqueraient sinon à la reprise. Sans état local
+   * (autre appareil, stockage vidé), on cherche l'exécution ouverte du jour pour
+   * la SÉANCE, toutes versions confondues : une exécution garde la version sous
+   * laquelle elle est née (`upsertExecution` est une insertion seule), donc une
+   * recherche par version courante ne la retrouvait plus après une retouche du
+   * plan, et la suite de la séance ouvrait une seconde exécution.
    */
   localExecutionId: string | null = null,
 ): Promise<TodayExecution | null> {
@@ -908,20 +1095,90 @@ export async function loadTodayExecution(
   // Annulation et suppression effacent l'état local dès le geste, alors que leur
   // écriture attend peut-être encore dans l'outbox. Une exécution que la file
   // clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait déjà
-  // close. On lit la file aux deux bouts de la lecture, car la réponse est figée
+  // close. Une série qu'elle supprime est de même retirée du réalisé relu
+  // (`withoutPendingDeletions`). On lit la file aux deux bouts de la lecture, car la réponse est figée
   // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
   // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
   const pendingBefore = readOwnQueue();
   try {
-    const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
+    const today = await fetchTodayExecution(seanceId, date, localExecutionId);
     if (today === null) return null;
+    const pendingAfter = readOwnQueue();
     const retired =
       isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
-      isExecutionRetiredInQueue(today.executionId, readOwnQueue());
-    return retired ? null : today;
+      isExecutionRetiredInQueue(today.executionId, pendingAfter);
+    if (retired) return null;
+    // Même décalage pour une SÉRIE annulée : elle a quitté l'état local dès le
+    // geste, son `deleteSet` attend peut-être encore, et la base la porte
+    // toujours. Rendue telle quelle, elle revenait à l'écran au remontage (la
+    // fusion garde la liste la plus longue) et faussait le rang de la suivante.
+    const pending = [...pendingBefore, ...pendingAfter];
+    return {
+      ...withoutPendingDeletions(today, pending),
+      pendingSetIds: [...new Set(pending.filter((op) => op.type === 'insertSet').map((op) => op.id))],
+    };
   } catch {
     return null;
   }
+}
+
+/** Budget d'attente de l'exécution du jour à l'ouverture d'une séance (ADR 0012). */
+export const TODAY_READ_BUDGET_MS = 3000;
+
+/**
+ * `loadTodayExecution`, BORNÉE : au-delà de `budgetMs` la séance s'ouvre sans
+ * attendre la base. C'est la seule lecture sans copie locale du chemin
+ * d'ouverture ; hors ligne avec un jeton expiré elle tenait l'écran une
+ * vingtaine de secondes (le temps que supabase-js renonce à rafraîchir le
+ * jeton), et sans fin sur un wifi zombie.
+ *
+ * Un délai dépassé N'EST PAS une absence : `today` vaut alors `null` faute de
+ * réponse, et `late` porte la lecture toujours en vol, pour que l'appelant
+ * puisse appliquer sa réponse quand elle arrive. `late` est `null` quand la
+ * lecture a répondu dans le budget (`today` est alors la vraie réponse).
+ */
+export async function loadTodayExecutionWithin(
+  seanceId: string,
+  date: string,
+  localExecutionId: string | null,
+  budgetMs: number = TODAY_READ_BUDGET_MS,
+): Promise<{ today: TodayExecution | null; late: Promise<TodayExecution | null> | null }> {
+  const read = loadTodayExecution(seanceId, date, localExecutionId);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = Symbol('délai dépassé');
+  const budget = new Promise<typeof timedOut>((resolve) => {
+    timer = setTimeout(() => resolve(timedOut), budgetMs);
+  });
+  const first = await Promise.race([read, budget]);
+  clearTimeout(timer);
+  return first === timedOut ? { today: null, late: read } : { today: first, late: null };
+}
+
+/**
+ * Le réalisé relu en base, moins les séries que la file d'écritures supprime
+ * (`deleteSet` en attente). Un exo qui n'a plus aucune série sort du réalisé.
+ * Pur : l'appelant passe la file lue avant ET après la lecture réseau.
+ */
+export function withoutPendingDeletions(
+  today: TodayExecution,
+  pendingOps: readonly OutboxOp[],
+): TodayExecution {
+  const deleted = new Set(
+    pendingOps.filter((op) => op.type === 'deleteSet').map((op) => op.id),
+  );
+  if (deleted.size === 0) return today;
+  const progress: Record<string, HydratedProgress> = {};
+  for (const [exerciseId, entry] of Object.entries(today.progress)) {
+    const kept = entry.setIds
+      .map((id, index) => ({ id, set: entry.sets[index] }))
+      .filter(
+        (row): row is { id: string; set: PerformedSet } =>
+          row.set !== undefined && !deleted.has(row.id),
+      );
+    if (kept.length === 0) continue;
+    progress[exerciseId] = { sets: kept.map((r) => r.set), setIds: kept.map((r) => r.id) };
+  }
+  return { ...today, progress };
 }
 
 /**
@@ -943,18 +1200,27 @@ export function isExecutionRetiredInQueue(
 
 /** Lecture Supabase brute de l'exécution du jour (cf. loadTodayExecution). */
 async function fetchTodayExecution(
-  seanceVersionId: string,
+  seanceId: string,
   date: string,
   localExecutionId: string | null,
 ): Promise<TodayExecution | null> {
-  const base = supabase.from('executions').select('id, started_at, created_at');
-  // L'exécution tenue par l'appareil se relit par son id, sans filtre de version
-  // (cf. loadTodayExecution) ; sinon, l'exécution du jour de la version courante.
-  // Les gardes « en cours » ci-dessous valent pour les deux lectures.
+  // La séance se filtre CÔTÉ SERVEUR, par jointure sur `seance_versions` : toutes
+  // ses versions d'un coup, sans liste d'ids dans l'URL (une séance très
+  // versionnée dépassait la taille d'URL admise et la lecture échouait).
+  // L'exécution tenue par l'appareil se relit par son id (cf. loadTodayExecution),
+  // sans jointure ; sinon, l'exécution ouverte du jour de la séance, quelle que
+  // soit sa version. Les gardes « en cours » ci-dessous valent pour les deux.
   const scoped =
     localExecutionId !== null
-      ? base.eq('id', localExecutionId)
-      : base.eq('seance_version_id', seanceVersionId).eq('performed_on', date);
+      ? supabase
+          .from('executions')
+          .select('id, started_at, created_at, seance_version_id')
+          .eq('id', localExecutionId)
+      : supabase
+          .from('executions')
+          .select('id, started_at, created_at, seance_version_id, seance_versions!inner(seance_id)')
+          .eq('seance_versions.seance_id', seanceId)
+          .eq('performed_on', date);
   const { data: exec, error: execErr } = await scoped
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
     // `closed_at` en base (ADR 0009), donc une séance déjà RANGÉE ce jour-là est
@@ -1048,9 +1314,12 @@ async function fetchTodayExecution(
   const startedMs = exec.started_at ? new Date(exec.started_at).getTime() : null;
   return {
     executionId: exec.id,
+    seanceVersionId: exec.seance_version_id,
     startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,
+    // Rempli par `loadTodayExecution`, qui tient la file.
+    pendingSetIds: [],
   };
 }
 
@@ -1149,6 +1418,20 @@ export async function loadExecutionForEdit(
 
 // --- Écriture idempotente (rejouable par l'outbox) ----------------------------
 //
+// LIGNES TOUCHÉES : `update` et `delete` demandent les lignes qu'ils touchent
+// (`.select('id')`) et en rendent le nombre. PostgREST ne signale pas un `update`
+// ou un `delete` qui ne trouve rien ; avant, on ne pouvait donc pas distinguer
+// une écriture appliquée d'une écriture à vide. Ce que vaut « 0 ligne » :
+//   - une suppression à 0 ligne est un succès idempotent (ligne déjà absente) ;
+//   - une mise à jour d'exécution à 0 ligne est un succès sans effet, tracé. Sous
+//     l'outbox elle ne peut vouloir dire que « cette exécution n'existe pas en
+//     base » : la session est vérifiée avant et après chaque op (ADR 0019, donc
+//     pas de requête sous clé publique), la création précède dans la file (FIFO),
+//     et une création refusée emmène ses ops filles en quarantaine (ADR 0018).
+//     Une exécution absente ne peut pas non plus être reprise à tort : la lecture
+//     de reprise ne la trouvera pas davantage. Elle ne doit donc ni bloquer la
+//     file ni partir en quarantaine.
+//
 // Toutes ces fonctions sont IDEMPOTENTES par `id` (UUID client, cf. ADR 0003) :
 // l'outbox peut les rejouer sans crainte de doublon ni d'effet de bord. Elles
 // sont les `SyncFns` consommées par `flush()` ; le mapping op→fonction se fait
@@ -1224,17 +1507,25 @@ export async function upsertSet(params: {
 
 /**
  * Supprime une série par son id (« annuler »). Idempotent : supprimer une ligne
- * déjà absente ne fait rien et ne lève pas (delete par id ciblé).
+ * déjà absente ne fait rien et ne lève pas (delete par id ciblé). Rend le nombre
+ * de lignes touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès.
  */
-export async function deleteSetById(id: string): Promise<void> {
-  const { error } = await supabase.from('performed_sets').delete().eq('id', id);
+export async function deleteSetById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('performed_sets').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }
 
 /**
  * Pose les métriques de fin (BPM moyen, durée) sur l'exécution, par id. Update
  * idempotent : rejouer pose les mêmes valeurs. Un champ omis (`undefined`)
  * laisse la colonne inchangée plutôt que de l'effacer.
+ *
+ * Rend le nombre de lignes touchées. ZÉRO LIGNE reste un succès, y compris pour
+ * une clôture : cela veut dire que l'exécution n'existe pas en base pour ce
+ * compte (cf. « LIGNES TOUCHÉES »), donc qu'il n'y a rien à clore ni rien que la
+ * reprise puisse adopter. C'est le cas voulu d'une clôture sans série envoyée
+ * (cf. `handleFinish`). Le cas est tracé en console, pas avalé.
  */
 export async function updateExecution(params: {
   id: string;
@@ -1243,17 +1534,30 @@ export async function updateExecution(params: {
   /** Horodatage de clôture (ISO) : matérialise une séance « rangée » (ADR 0009) ;
    *  `loadTodayExecution` filtre dessus pour ne pas réhydrater une exécution close. */
   closedAt?: string | null;
-}): Promise<void> {
+}): Promise<number> {
   const patch: Database['public']['Tables']['executions']['Update'] = {};
   if (params.bpmAvg !== undefined) patch.bpm_avg = params.bpmAvg;
   if (params.durationMin !== undefined) patch.duration_min = params.durationMin;
   if (params.closedAt !== undefined) patch.closed_at = params.closedAt;
 
   // Rien à poser : on évite un update vide (no-op réseau).
-  if (Object.keys(patch).length === 0) return;
+  if (Object.keys(patch).length === 0) return 0;
 
-  const { error } = await supabase.from('executions').update(patch).eq('id', params.id);
+  const { data, error } = await supabase
+    .from('executions')
+    .update(patch)
+    .eq('id', params.id)
+    .select('id');
   if (error) throw error;
+  const touched = data?.length ?? 0;
+  if (touched === 0) {
+    // Voulu, pas avalé : la console dit quelle écriture n'a rien trouvé.
+    console.warn(
+      `[sync] mise à jour de l'exécution ${params.id} sans effet : la ligne n'existe pas en base` +
+        (params.closedAt ? ' (clôture sans objet).' : '.'),
+    );
+  }
+  return touched;
 }
 
 /**
@@ -1263,7 +1567,8 @@ export async function updateExecution(params: {
  * efface les séries et notes datées filles. Idempotent : supprimer une exécution
  * déjà absente ne fait rien et ne lève pas (delete par id ciblé, RLS scopé).
  */
-export async function deleteExecutionById(id: string): Promise<void> {
-  const { error } = await supabase.from('executions').delete().eq('id', id);
+export async function deleteExecutionById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('executions').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }

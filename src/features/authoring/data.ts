@@ -38,6 +38,7 @@ import {
   type ExerciseReferenceCounts,
 } from '../exercises/deletion-guard';
 import { loadExerciseOverrides } from '../exercises/overrides';
+import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   mergeExerciseOverride,
   type ExerciseOverrideValues,
@@ -49,6 +50,21 @@ import {
   toDuplicatedPrescriptions,
   type SeanceCatalogEntry,
 } from './duplicate-seance';
+
+/**
+ * Enveloppe de TOUTE écriture du plan (routines, séances, versions, exos perso) :
+ * une fois l'écriture finie, les copies du plan servies à la Capture sont
+ * marquées périmées (cf. capture/plan-copies). Même en échec : une écriture en
+ * plusieurs temps peut avoir commencé, et une invalidation de trop ne coûte
+ * qu'une lecture réseau.
+ */
+async function planWrite<T>(write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } finally {
+    invalidatePlanCopies();
+  }
+}
 
 export type { SeanceCatalogEntry } from './duplicate-seance';
 
@@ -181,13 +197,15 @@ export async function createPersonalExercise(input: {
   primaryMuscles: string[];
   unilateral?: boolean;
 }): Promise<ExerciseRow> {
-  const { data, error } = await supabase
-    .from('exercises')
-    .insert(buildPersonalExerciseInsert(input))
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data;
+  return planWrite(async () => {
+    const { data, error } = await supabase
+      .from('exercises')
+      .insert(buildPersonalExerciseInsert(input))
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data;
+  });
 }
 
 /**
@@ -202,14 +220,16 @@ export async function updatePersonalExercise(
   id: string,
   input: { name: string; primaryMuscles: string[]; unilateral?: boolean },
 ): Promise<ExerciseRow> {
-  const { data, error } = await supabase
-    .from('exercises')
-    .update(buildPersonalExerciseUpdate(input))
-    .eq('id', id)
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data;
+  return planWrite(async () => {
+    const { data, error } = await supabase
+      .from('exercises')
+      .update(buildPersonalExerciseUpdate(input))
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data;
+  });
 }
 
 /**
@@ -260,19 +280,21 @@ export async function countExerciseReferences(
  * retraduit en message lisible plutôt que de remonter l'erreur SQL brute.
  */
 export async function deletePersonalExercise(id: string): Promise<void> {
-  const counts = await countExerciseReferences(id);
-  const block = describeReferenceBlock(counts);
-  if (block) throw new Error(block);
+  return planWrite(async () => {
+    const counts = await countExerciseReferences(id);
+    const block = describeReferenceBlock(counts);
+    if (block) throw new Error(block);
 
-  const { error } = await supabase.from('exercises').delete().eq('id', id);
-  if (error) {
-    if (isForeignKeyViolation(error)) {
-      throw new Error(
-        'Impossible de supprimer cet exercice : il est encore utilisé ailleurs. Retire-le de tes séances avant de réessayer ; ton historique reste intact.',
-      );
+    const { error } = await supabase.from('exercises').delete().eq('id', id);
+    if (error) {
+      if (isForeignKeyViolation(error)) {
+        throw new Error(
+          'Impossible de supprimer cet exercice : il est encore utilisé ailleurs. Retire-le de tes séances avant de réessayer ; ton historique reste intact.',
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 /**
@@ -326,25 +348,29 @@ export async function listRoutines(): Promise<RoutineRow[]> {
 
 /** Crée une routine. owner_id via default auth.uid(). */
 export async function createRoutine(input: { name: string }): Promise<RoutineRow> {
-  const { data, error } = await supabase
-    .from('routines')
-    .insert({ name: input.name })
-    .select('*')
-    .single();
-  if (error) throw nameConflictError(error, 'routine', input.name);
-  return data;
+  return planWrite(async () => {
+    const { data, error } = await supabase
+      .from('routines')
+      .insert({ name: input.name })
+      .select('*')
+      .single();
+    if (error) throw nameConflictError(error, 'routine', input.name);
+    return data;
+  });
 }
 
 /** Renomme une routine. */
 export async function renameRoutine(id: string, name: string): Promise<RoutineRow> {
-  const { data, error } = await supabase
-    .from('routines')
-    .update({ name })
-    .eq('id', id)
-    .select('*')
-    .single();
-  if (error) throw nameConflictError(error, 'routine', name);
-  return data;
+  return planWrite(async () => {
+    const { data, error } = await supabase
+      .from('routines')
+      .update({ name })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw nameConflictError(error, 'routine', name);
+    return data;
+  });
 }
 
 /**
@@ -354,15 +380,23 @@ export async function renameRoutine(id: string, name: string): Promise<RoutineRo
  * (ADR 0017). L'UI ne propose d'ailleurs que l'archivage dans ce cas.
  */
 export async function deleteRoutine(id: string): Promise<void> {
-  const { error } = await supabase.from('routines').delete().eq('id', id);
-  if (error) {
-    if (isForeignKeyViolation(error)) {
-      throw new Error(
-        'Cette routine a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
-      );
+  return planWrite(async () => {
+    const { error } = await supabase.from('routines').delete().eq('id', id);
+    if (error) {
+      // La base refuse de supprimer la routine courante (check, 23514).
+      if ((error as { code?: unknown }).code === '23514') {
+        throw new Error(
+          'La routine courante ne se supprime pas. Définis d’abord une autre routine comme courante.',
+        );
+      }
+      if (isForeignKeyViolation(error)) {
+        throw new Error(
+          'Cette routine a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 /**
@@ -371,22 +405,26 @@ export async function deleteRoutine(id: string): Promise<void> {
  * on relit la routine courante juste avant, pour refuser avec un message clair.
  */
 export async function archiveRoutine(id: string): Promise<void> {
-  if ((await getCurrentRoutineId()) === id) {
-    throw new Error(
-      'La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.',
-    );
-  }
-  const { error } = await supabase
-    .from('routines')
-    .update({ archived_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
+  return planWrite(async () => {
+    if ((await getCurrentRoutineId()) === id) {
+      throw new Error(
+        'La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.',
+      );
+    }
+    const { error } = await supabase
+      .from('routines')
+      .update({ archived_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+  });
 }
 
 /** Désarchive une routine : elle revient dans la liste, prête à redevenir courante. */
 export async function unarchiveRoutine(id: string): Promise<void> {
-  const { error } = await supabase.from('routines').update({ archived_at: null }).eq('id', id);
-  if (error) throw error;
+  return planWrite(async () => {
+    const { error } = await supabase.from('routines').update({ archived_at: null }).eq('id', id);
+    if (error) throw error;
+  });
 }
 
 /**
@@ -435,17 +473,27 @@ export async function loadPlanHistory(): Promise<{
  * chaque activation est un point de la timeline qui sert à dériver les blocs.
  */
 export async function setCurrentRoutine(routineId: string): Promise<void> {
-  const { error } = await supabase
-    .from('routine_activations')
-    .insert({ routine_id: routineId });
-  if (error) throw error;
+  return planWrite(async () => {
+    const { error } = await supabase
+      .from('routine_activations')
+      .insert({ routine_id: routineId });
+    if (error) throw error;
+  });
 }
 
-/** Id de la routine courante = activation la plus récente, ou null si aucune. */
+/**
+ * Id de la routine courante = activation la plus récente d'une routine NON
+ * ARCHIVÉE, ou null si aucune. Les activations des routines archivées sont
+ * ignorées : supprimer la routine courante (jamais exécutée) emporte ses
+ * activations en cascade, et l'activation précédente, celle d'une routine
+ * archivée depuis, remontait alors comme courante. Une routine archivée ne peut
+ * pas être courante (ADR 0017). Filtre côté serveur, par jointure.
+ */
 export async function getCurrentRoutineId(): Promise<string | null> {
   const { data, error } = await supabase
     .from('routine_activations')
-    .select('routine_id')
+    .select('routine_id, routines!inner(archived_at)')
+    .is('routines.archived_at', null)
     .order('activated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -481,34 +529,38 @@ export async function createSeance(
   routineId: string,
   input: { name: string },
 ): Promise<SeanceRow> {
-  const existing = await listSeances(routineId);
-  const position = nextPosition(existing.map((s) => s.position));
+  return planWrite(async () => {
+    const existing = await listSeances(routineId);
+    const position = nextPosition(existing.map((s) => s.position));
 
-  const { data: seance, error: seanceErr } = await supabase
-    .from('seances')
-    .insert({ routine_id: routineId, name: input.name, position })
-    .select('*')
-    .single();
-  if (seanceErr) throw nameConflictError(seanceErr, 'seance', input.name);
+    const { data: seance, error: seanceErr } = await supabase
+      .from('seances')
+      .insert({ routine_id: routineId, name: input.name, position })
+      .select('*')
+      .single();
+    if (seanceErr) throw nameConflictError(seanceErr, 'seance', input.name);
 
-  const { error: versionErr } = await supabase
-    .from('seance_versions')
-    .insert({ seance_id: seance.id, version: 1 });
-  if (versionErr) throw versionErr;
+    const { error: versionErr } = await supabase
+      .from('seance_versions')
+      .insert({ seance_id: seance.id, version: 1 });
+    if (versionErr) throw versionErr;
 
-  return seance;
+    return seance;
+  });
 }
 
 /** Renomme une séance. */
 export async function renameSeance(id: string, name: string): Promise<SeanceRow> {
-  const { data, error } = await supabase
-    .from('seances')
-    .update({ name })
-    .eq('id', id)
-    .select('*')
-    .single();
-  if (error) throw nameConflictError(error, 'seance', name);
-  return data;
+  return planWrite(async () => {
+    const { data, error } = await supabase
+      .from('seances')
+      .update({ name })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw nameConflictError(error, 'seance', name);
+    return data;
+  });
 }
 
 /**
@@ -517,15 +569,17 @@ export async function renameSeance(id: string, name: string): Promise<SeanceRow>
  * s'archive (ADR 0017).
  */
 export async function deleteSeance(id: string): Promise<void> {
-  const { error } = await supabase.from('seances').delete().eq('id', id);
-  if (error) {
-    if (isForeignKeyViolation(error)) {
-      throw new Error(
-        'Cette séance a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
-      );
+  return planWrite(async () => {
+    const { error } = await supabase.from('seances').delete().eq('id', id);
+    if (error) {
+      if (isForeignKeyViolation(error)) {
+        throw new Error(
+          'Cette séance a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
 }
 
 /**
@@ -535,11 +589,13 @@ export async function deleteSeance(id: string): Promise<void> {
  * blocs rejoue (archiver une séance de la routine courante coupe un bloc).
  */
 export async function archiveSeance(id: string): Promise<void> {
-  const { error } = await supabase
-    .from('seances')
-    .update({ archived_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
+  return planWrite(async () => {
+    const { error } = await supabase
+      .from('seances')
+      .update({ archived_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+  });
 }
 
 /**
@@ -548,41 +604,83 @@ export async function archiveSeance(id: string): Promise<void> {
  * pendant l'archivage, les séances actives ont pu être réordonnées sans elle.
  */
 export async function unarchiveSeance(id: string): Promise<void> {
-  const { data: seance, error: readErr } = await supabase
-    .from('seances')
-    .select('routine_id')
-    .eq('id', id)
-    .single();
-  if (readErr) throw readErr;
-  const siblings = await listSeances(seance.routine_id);
-  const position = nextPosition(siblings.filter((s) => s.id !== id).map((s) => s.position));
+  return planWrite(async () => {
+    const { data: seance, error: readErr } = await supabase
+      .from('seances')
+      .select('routine_id')
+      .eq('id', id)
+      .single();
+    if (readErr) throw readErr;
+    const siblings = await listSeances(seance.routine_id);
+    const position = nextPosition(siblings.filter((s) => s.id !== id).map((s) => s.position));
 
-  const { error } = await supabase
-    .from('seances')
-    .update({ archived_at: null, position })
-    .eq('id', id);
-  if (error) throw error;
+    const { error } = await supabase
+      .from('seances')
+      .update({ archived_at: null, position })
+      .eq('id', id);
+    if (error) throw error;
+  });
 }
+
+/**
+ * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Tant
+ * que la migration n'est pas appliquée, la fonction n'existe pas : le drapeau
+ * reste FAUX et le réordonnancement garde son ancien chemin (une mise à jour
+ * par séance). À passer à vrai une fois la migration appliquée en prod.
+ */
+export const REORDER_SEANCES_RPC = false;
 
 /**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
  * (index 0 = première). `orderedIds` doit lister les séances de la routine ;
- * les positions sont réassignées 0..n-1. Une mise à jour par séance (pas de bulk
- * upsert pour ne pas risquer d'écrire owner_id via un upsert mal formé).
+ * les positions sont réassignées 0..n-1.
+ *
+ * Deux chemins, choisis par `REORDER_SEANCES_RPC` : la RPC transactionnelle
+ * (`reorderSeancesViaRpc`), ou, tant qu'elle n'est pas en base, une mise à jour
+ * par séance, en série et sans transaction (pas de bulk upsert pour ne pas
+ * risquer d'écrire owner_id via un upsert mal formé).
  */
 export async function reorderSeances(
-  _routineId: string,
+  routineId: string,
   orderedIds: string[],
 ): Promise<void> {
-  for (let position = 0; position < orderedIds.length; position++) {
-    const id = orderedIds[position];
-    if (id === undefined) continue;
-    const { error } = await supabase
-      .from('seances')
-      .update({ position })
-      .eq('id', id);
-    if (error) throw error;
-  }
+  return planWrite(async () => {
+    if (REORDER_SEANCES_RPC) {
+      await reorderSeancesViaRpc(routineId, orderedIds);
+      return;
+    }
+    for (let position = 0; position < orderedIds.length; position++) {
+      const id = orderedIds[position];
+      if (id === undefined) continue;
+      const { error } = await supabase
+        .from('seances')
+        .update({ position })
+        .eq('id', id);
+      if (error) throw error;
+    }
+  });
+}
+
+/**
+ * Réordonne les séances d'une routine en UNE transaction côté serveur :
+ * `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`, qui
+ * refuse (22023) un id en double ou hors de la routine. La fonction n'est pas
+ * encore dans `database.types.ts` (migration 0023 à appliquer) : d'où le cast
+ * local, à retirer quand les types seront régénérés.
+ */
+export async function reorderSeancesViaRpc(
+  routineId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    fn: 'reorder_seances',
+    args: { p_routine_id: string; p_seance_ids: string[] },
+  ) => PromiseLike<{ error: unknown }>;
+  const { error } = await rpc('reorder_seances', {
+    p_routine_id: routineId,
+    p_seance_ids: orderedIds,
+  });
+  if (error) throw error;
 }
 
 // =====================================================================
@@ -686,23 +784,25 @@ export async function saveSeanceVersion(
   seanceId: string,
   prescriptions: PrescriptionInput[],
 ): Promise<string> {
-  const currentMax = await currentMaxVersion(seanceId);
-  const version = nextVersionNumber(currentMax);
+  return planWrite(async () => {
+    const currentMax = await currentMaxVersion(seanceId);
+    const version = nextVersionNumber(currentMax);
 
-  const { data: created, error: versionErr } = await supabase
-    .from('seance_versions')
-    .insert({ seance_id: seanceId, version })
-    .select('id')
-    .single();
-  if (versionErr) throw versionErr;
+    const { data: created, error: versionErr } = await supabase
+      .from('seance_versions')
+      .insert({ seance_id: seanceId, version })
+      .select('id')
+      .single();
+    if (versionErr) throw versionErr;
 
-  if (prescriptions.length > 0) {
-    const rows = prescriptions.map((p) => prescriptionInputToRow(created.id, p));
-    const { error: prescErr } = await supabase.from('prescriptions').insert(rows);
-    if (prescErr) throw prescErr;
-  }
+    if (prescriptions.length > 0) {
+      const rows = prescriptions.map((p) => prescriptionInputToRow(created.id, p));
+      const { error: prescErr } = await supabase.from('prescriptions').insert(rows);
+      if (prescErr) throw prescErr;
+    }
 
-  return created.id;
+    return created.id;
+  });
 }
 
 // =====================================================================
@@ -745,12 +845,20 @@ export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
   const currentVersionIds = [...currentVersionIdBySeance(versions).values()];
   let prescriptions: { seance_version_id: string }[] = [];
   if (currentVersionIds.length > 0) {
-    const { data, error } = await supabase
-      .from('prescriptions')
-      .select('seance_version_id')
-      .in('seance_version_id', currentVersionIds);
-    if (error) throw error;
-    prescriptions = data ?? [];
+    // Lecture paginée (cf. lib/fetch-all) : au-delà de 1000 prescriptions
+    // courantes, une seule requête était tronquée en silence et les compteurs
+    // du catalogue sortaient incomplets.
+    prescriptions = await fetchAllRows<{ id: string; seance_version_id: string }>((after, limit) =>
+      afterId(
+        supabase
+          .from('prescriptions')
+          .select('id, seance_version_id')
+          .in('seance_version_id', currentVersionIds)
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    );
   }
 
   return buildSeanceCatalog({
@@ -782,12 +890,14 @@ export async function duplicateSeance(
   sourceSeanceId: string,
   name: string,
 ): Promise<SeanceRow> {
-  const source = await loadSeanceEditor(sourceSeanceId);
-  const prescriptions = toDuplicatedPrescriptions(source);
+  return planWrite(async () => {
+    const source = await loadSeanceEditor(sourceSeanceId);
+    const prescriptions = toDuplicatedPrescriptions(source);
 
-  const seance = await createSeance(routineId, { name });
-  if (prescriptions.length > 0) {
-    await saveSeanceVersion(seance.id, prescriptions);
-  }
-  return seance;
+    const seance = await createSeance(routineId, { name });
+    if (prescriptions.length > 0) {
+      await saveSeanceVersion(seance.id, prescriptions);
+    }
+    return seance;
+  });
 }

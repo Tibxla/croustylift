@@ -364,11 +364,13 @@ export function diffSetsToOps(
 export function buildExecutionMetricsOp(
   executionId: string,
   original: { bpmAvg: number | null; durationMin: number | null },
-  edited: { bpmAvg: number | null; durationMin: number },
+  edited: { bpmAvg: number | null; durationMin: number | null },
 ): UpdateExecutionOp | null {
   const op: UpdateExecutionOp = { type: 'updateExecution', id: executionId };
   let changed = false;
-  if (edited.durationMin !== original.durationMin) {
+  // Durée `null` = NON SAISIE dans l'éditeur (séance close sans durée, laissée
+  // telle quelle) : on n'écrit alors aucune durée, jamais une valeur inventée.
+  if (edited.durationMin !== null && edited.durationMin !== original.durationMin) {
     op.durationMin = edited.durationMin;
     changed = true;
   }

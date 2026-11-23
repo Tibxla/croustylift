@@ -94,3 +94,46 @@ describe('createFirstRoutine — atomicité (résolution AVANT écriture)', () =
     expect(saveSeanceVersion).not.toHaveBeenCalled();
   });
 });
+
+describe('createFirstRoutine, noms validés avant toute écriture', () => {
+  const nothingWritten = () => {
+    expect(createRoutine).not.toHaveBeenCalled();
+    expect(setCurrentRoutine).not.toHaveBeenCalled();
+    expect(createSeance).not.toHaveBeenCalled();
+    expect(saveSeanceVersion).not.toHaveBeenCalled();
+  };
+
+  it('nom de séance trop long : ni routine ni activation (pas de routine courante vide)', async () => {
+    await expect(
+      createFirstRoutine({
+        routineName: 'Ma routine',
+        seanceName: 'x'.repeat(81),
+        withTemplate: false,
+      }),
+    ).rejects.toThrow('Le nom de la séance est trop long (80 caractères au plus).');
+    nothingWritten();
+  });
+
+  it('nom de séance vide : rien n’est écrit', async () => {
+    await expect(
+      createFirstRoutine({ routineName: 'Ma routine', seanceName: '   ', withTemplate: false }),
+    ).rejects.toThrow('Donne un nom à ta séance.');
+    nothingWritten();
+  });
+
+  it('nom de routine hors borne : rien n’est écrit', async () => {
+    await expect(
+      createFirstRoutine({ routineName: 'x'.repeat(81), seanceName: 'Upper', withTemplate: false }),
+    ).rejects.toThrow('Le nom de la routine est trop long (80 caractères au plus).');
+    nothingWritten();
+  });
+
+  it('80 caractères tout rond : accepté', async () => {
+    await createFirstRoutine({
+      routineName: 'x'.repeat(80),
+      seanceName: 'y'.repeat(80),
+      withTemplate: false,
+    });
+    expect(createRoutine).toHaveBeenCalledTimes(1);
+  });
+});

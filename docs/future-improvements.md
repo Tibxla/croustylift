@@ -52,10 +52,10 @@ cause. Ce n'est pas une liste de tâches.
   d'historique de son exo est relue depuis le réseau, à la fin de tout flush, sans attendre
   la relance (`refreshExerciseRows`, ADR 0020). Les lectures d'une même clé pouvant se
   croiser, la copie ne s'écrit que sous gardes d'ordre : dernière réponse écrite, seuil
-  posé par la relecture d'après acquittement, purge et compte. Le retard résiduel ne
-  concerne que les lectures qui n'ont pas de source locale équivalente. Piste si ça
-  devenait gênant : réchauffer les copies des séances de la routine courante après un
-  flush au boot.
+  posé par la relecture d'après acquittement, purge et compte. Une copie en retard d'une
+  série écrite ailleurs est rattrapée par sa revalidation de fond, et la Capture montée
+  suit ce changement sans remontage (ADR 0020, amendement du 2026-11-23). Reste : hors
+  ligne, rien ne revalide, la copie garde son retard jusqu'au retour du réseau.
 
 - **Protection « mots de passe compromis » (advisor `auth_leaked_password_protection`)** :
   fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée
@@ -71,11 +71,16 @@ cause. Ce n'est pas une liste de tâches.
 
 - **Séance retouchée en plein entraînement** : une exécution garde la version de séance
   sous laquelle elle est née (`upsertExecution` est une insertion seule, sa réaffirmation
-  ne réécrit ni version, ni date, ni lancement). L'appareil qui tient
-  la séance relit son exécution par son id (`loadTodayExecution`, id de l'état local),
-  quelle que soit sa version. Conséquence assumée : un lancement réancré hors ligne sur
-  une exécution déjà en base n'atteint plus `started_at`.
+  ne réécrit ni version, ni date, ni lancement). La Capture remontée recharge le template
+  de cette version-là (`adoptedVersionId`), et l'appareil qui tient la séance relit son
+  exécution par son id. Sans état local (autre appareil, stockage vidé), l'exécution
+  ouverte du jour se retrouve par séance, toutes versions confondues. Reste, sans effet
+  démontré : un lancement réancré hors ligne sur une exécution déjà en base n'atteint plus
+  `started_at` (le réancrage ne vise qu'une exécution pas encore née, ADR 0011).
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
   n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
-  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture.
+  sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. Une
+  clôture ou une suppression sortie de la file relève les lignes qu'elle a touchées : zéro
+  ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
+  (ADR 0021, amendement du 2026-11-23).

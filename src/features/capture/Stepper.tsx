@@ -4,7 +4,7 @@
 // "numeric") — jamais le clavier texte alpha.
 import { useCallback, useState } from 'react';
 
-import { parseTypedValue } from './stepper-utils';
+import { parseTypedValue, roundWeightKg } from './stepper-utils';
 
 interface StepperProps {
   /** Libellé du champ (ex. « Poids »), aussi utilisé pour l'aria-label des boutons. */
@@ -70,7 +70,8 @@ export function Stepper({
   const [draft, setDraft] = useState<string | null>(null);
 
   const clamp = useCallback(
-    (n: number) => Math.min(max, Math.max(min, Math.round(n * 1000) / 1000)),
+    // Au centième (précision du poids en base) : sans effet sur des entiers.
+    (n: number) => Math.min(max, Math.max(min, roundWeightKg(n))),
     [min, max],
   );
 

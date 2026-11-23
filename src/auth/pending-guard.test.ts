@@ -1,5 +1,5 @@
-// Garde « écritures en attente d'un autre compte », commune à la Connexion et à
-// l'inscription (ADR 0012 ; audit sync, constat 12).
+// Garde « écritures en attente d'un autre compte » de la Connexion (ADR 0012 ;
+// audit sync, constat 12).
 import { describe, it, expect, beforeEach } from 'vitest';
 import { foreignPendingWrites } from './pending-guard';
 import { saveLocalAccount } from '../lib/local-account';

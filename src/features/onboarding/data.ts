@@ -17,13 +17,14 @@ import {
   type PrescriptionInput,
 } from '../authoring/data';
 import { listExercises } from '../capture/data';
-import { STARTER_TEMPLATE, resolveStarterPrescriptions } from './template';
+import { STARTER_TEMPLATE, firstNameProblem, resolveStarterPrescriptions } from './template';
 
 export {
   isFirstLaunch,
   STARTER_TEMPLATE,
   DEFAULT_ROUTINE_NAME,
   resolveStarterPrescriptions,
+  FIRST_NAME_MAX_LENGTH,
   type StarterExercise,
   type StarterTemplate,
 } from './template';
@@ -65,6 +66,13 @@ export interface FirstRoutineResult {
 export async function createFirstRoutine(
   input: FirstRoutineInput,
 ): Promise<FirstRoutineResult> {
+  // Les DEUX noms sont validés avant la première écriture : sinon la routine
+  // était créée et activée avant que la séance soit refusée, ce qui laissait une
+  // routine courante vide.
+  const problem =
+    firstNameProblem('routine', input.routineName) ?? firstNameProblem('séance', input.seanceName);
+  if (problem) throw new Error(problem);
+
   // Résolution AVANT écriture : on construit les prescriptions du modèle (et on
   // jette si le catalogue de base est incomplet) tant que rien n'est encore créé.
   let prescriptions: PrescriptionInput[] | null = null;

@@ -22,7 +22,10 @@ export interface SessionEndValues {
 /** Récap sobre de l'exécution close : exos faits / total + décompte des séries. */
 export interface SessionSummary {
   sessionName: string;
+  /** Exos dont le minimum prescrit est atteint. Un exo passé n'en fait pas partie. */
   exercisesDone: number;
+  /** Exos explicitement passés, sans égard à leurs séries : affichés à part. */
+  exercisesSkipped: number;
   exercisesTotal: number;
   /**
    * Total des séries selon la règle de décompte pondérée par reps (issue #60,
@@ -232,6 +235,11 @@ function SummaryCard({
           {summary.exercisesDone}
           <span className="text-base text-ink-muted">/{summary.exercisesTotal}</span>
         </p>
+        {summary.exercisesSkipped > 0 && (
+          <p className="mt-0.5 text-xs text-ink-muted">
+            dont {summary.exercisesSkipped} passé{summary.exercisesSkipped > 1 ? 's' : ''}
+          </p>
+        )}
       </div>
       <div className="surface-card rounded-2xl px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Séries loggées</p>

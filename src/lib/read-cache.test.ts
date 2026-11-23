@@ -8,9 +8,12 @@ import {
   cachedKeys,
   cachedRead,
   clearReadCache,
+  invalidateReads,
   networkFirstRead,
+  onReadWritten,
   refreshRead,
   revalidateReadCache,
+  seedRead,
   stableKeyOf,
   tolerantRead,
 } from './read-cache';
@@ -342,5 +345,222 @@ describe('ordre des réponses et garde de compte', () => {
     expect(cachedKeys('exo-execs:')).toEqual(['exo-execs:c']);
     saveLocalAccount({ userId: 'user-1', email: null });
     expect(cachedKeys('exo-execs:').sort()).toEqual(['exo-execs:a', 'exo-execs:b']);
+  });
+});
+
+// Une écriture faite depuis l'app (plan édité, exo renommé) rend des copies
+// périmées. Elles ne sont pas jetées (hors ligne, la Capture doit s'ouvrir) mais
+// marquées : la lecture suivante passe par le réseau, la copie en secours.
+describe('invalidateReads', () => {
+  const key = (k: string) => `croustylift:readcache:user-1:${k}`;
+
+  it('une copie invalidée n’est plus servie d’abord : le réseau passe avant', async () => {
+    await cachedRead('capture-source', async () => 'ancien plan');
+    invalidateReads(['capture-source']);
+
+    await expect(cachedRead('capture-source', async () => 'nouveau plan')).resolves.toBe(
+      'nouveau plan',
+    );
+    // La copie est de nouveau fraîche : servie d'abord à la lecture suivante.
+    await expect(
+      cachedRead('capture-source', () => new Promise<string>(() => {})),
+    ).resolves.toBe('nouveau plan');
+  });
+
+  it('hors ligne, la copie invalidée sert de secours (la Capture s’ouvre quand même)', async () => {
+    await cachedRead('capture-source', async () => 'ancien plan');
+    invalidateReads(['capture-source']);
+
+    await expect(
+      cachedRead('capture-source', async () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    ).resolves.toBe('ancien plan');
+    // Toujours périmée : la lecture suivante retente le réseau.
+    await expect(cachedRead('capture-source', async () => 'nouveau plan')).resolves.toBe(
+      'nouveau plan',
+    );
+  });
+
+  it('réseau qui pend : la copie invalidée est servie après le délai borné', async () => {
+    await cachedRead('capture-source', async () => 'ancien plan');
+    invalidateReads(['capture-source']);
+    vi.useFakeTimers();
+
+    const read = cachedRead('capture-source', () => new Promise<string>(() => {}));
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(read).resolves.toBe('ancien plan');
+  });
+
+  it('le marquage survit au rechargement de l’app (il est dans la copie)', async () => {
+    await cachedRead('capture-source', async () => 'ancien plan');
+    invalidateReads(['capture-source']);
+
+    expect(JSON.parse(localStorage.getItem(key('capture-source')) ?? '{}')).toMatchObject({
+      value: 'ancien plan',
+      stale: true,
+    });
+  });
+
+  it('vaut pour un préfixe : toutes les copies qui commencent par lui', async () => {
+    await cachedRead('seance-template:v1:s1', async () => 'A');
+    await cachedRead('seance-template:v1:s2', async () => 'B');
+    await cachedRead('exo-execs:e1', async () => 'historique');
+    invalidateReads(['seance-template:']);
+
+    await expect(cachedRead('seance-template:v1:s1', async () => 'A2')).resolves.toBe('A2');
+    await expect(cachedRead('seance-template:v1:s2', async () => 'B2')).resolves.toBe('B2');
+    // Hors préfixe : toujours servie d'abord.
+    await expect(cachedRead('exo-execs:e1', async () => 'autre')).resolves.toBe('historique');
+  });
+
+  it('une réponse partie avant l’invalidation ne remet pas la copie à neuf', async () => {
+    await cachedRead('capture-source', async () => 'ancien plan');
+    let answer!: (value: string) => void;
+    // Revalidation de fond, encore en vol au moment de l'écriture du plan.
+    void cachedRead('capture-source', () => new Promise<string>((resolve) => (answer = resolve)));
+    invalidateReads(['capture-source']);
+    answer('ancien plan');
+    await settle();
+
+    await expect(cachedRead('capture-source', async () => 'nouveau plan')).resolves.toBe(
+      'nouveau plan',
+    );
+  });
+
+  it('une première lecture encore en vol à l’invalidation ne sème pas de copie', async () => {
+    let answer!: (value: string) => void;
+    const first = cachedRead('exercises', () => new Promise<string>((resolve) => (answer = resolve)));
+    invalidateReads(['exercises']);
+    answer('ancien catalogue');
+    await first;
+
+    expect(localStorage.getItem(key('exercises'))).toBeNull();
+  });
+
+  it('n’écarte que les clés invalidées : une autre lecture en vol sème sa copie', async () => {
+    let answer!: (value: string) => void;
+    const note = cachedRead('exo-note:e1', () => new Promise<string>((resolve) => (answer = resolve)));
+    invalidateReads(['capture-source', 'seance-template:']);
+    answer('note de l’exo');
+    await note;
+
+    expect(JSON.parse(localStorage.getItem(key('exo-note:e1')) ?? '{}')).toMatchObject({
+      value: 'note de l’exo',
+    });
+  });
+});
+
+// Valeur d'une écriture acquittée, posée dans la copie sans relecture réseau.
+describe('seedRead', () => {
+  it('la valeur posée est servie d’abord à la lecture suivante', async () => {
+    await cachedRead('exo-note:e1', async () => 'ancienne note');
+    seedRead('exo-note:e1', 'note corrigée');
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note corrigée',
+    );
+  });
+
+  it('une lecture partie avant ne remet pas l’ancienne valeur', async () => {
+    await cachedRead('exo-note:e1', async () => 'ancienne note');
+    let answer!: (value: string) => void;
+    // Revalidation de fond partie AVANT l'écriture, qui répondra après.
+    void cachedRead('exo-note:e1', () => new Promise<string>((resolve) => (answer = resolve)));
+    seedRead('exo-note:e1', 'note corrigée');
+    answer('ancienne note');
+    await settle();
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note corrigée',
+    );
+  });
+
+  it('une lecture partie après, elle, écrit la copie', async () => {
+    seedRead('exo-note:e1', 'note corrigée');
+    await cachedRead('exo-note:e1', async () => 'note éditée ailleurs');
+    await settle();
+
+    await expect(cachedRead('exo-note:e1', () => new Promise<string>(() => {}))).resolves.toBe(
+      'note éditée ailleurs',
+    );
+  });
+
+  it('n’écrit rien sous un autre compte que celui de l’écriture', () => {
+    seedRead('exo-note:e1', 'note du compte A', 'user-a');
+
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-note:e1')).toBeNull();
+  });
+
+  it('écrit sous le compte de l’écriture quand c’est bien lui qui est reconnu', () => {
+    seedRead('exo-note:e1', 'ma note', 'user-1');
+
+    expect(localStorage.getItem('croustylift:readcache:user-1:exo-note:e1')).not.toBeNull();
+  });
+});
+
+// Abonnement aux copies dont le contenu change (Référence suivie en direct).
+describe('onReadWritten', () => {
+  it('prévient quand une revalidation écrit une valeur différente, avec la clé sans compte', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    await cachedRead('exo-execs:e1', async () => ['a', 'b']);
+    await settle();
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+  });
+
+  it('une copie réécrite à l’identique ne prévient personne', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+
+    expect(written).toEqual([]);
+    off();
+  });
+
+  it('une réponse supplantée (non écrite) ne prévient pas : l’écran ne recule pas', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a', 'supprimée']);
+    let answer!: (value: string[]) => void;
+    // Revalidation partie AVANT la relecture d'après acquittement.
+    void cachedRead('exo-execs:e1', () => new Promise<string[]>((resolve) => (answer = resolve)));
+    const written: string[][] = [];
+    const off = onReadWritten(() =>
+      written.push(JSON.parse(localStorage.getItem('croustylift:readcache:user-1:exo-execs:e1')!).value),
+    );
+    await refreshRead('exo-execs:e1', async () => ['a']);
+    answer(['a', 'supprimée']);
+    await settle();
+
+    expect(written).toEqual([['a']]);
+    off();
+  });
+
+  it('une purge ou une invalidation ne sont pas des écritures', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    invalidateReads(['exo-execs:']);
+    clearReadCache();
+
+    expect(written).toEqual([]);
+    off();
+  });
+
+  it('après désabonnement, plus de notification', async () => {
+    const written: string[] = [];
+    onReadWritten((key) => written.push(key))();
+
+    await cachedRead('exo-execs:e1', async () => ['a']);
+
+    expect(written).toEqual([]);
   });
 });

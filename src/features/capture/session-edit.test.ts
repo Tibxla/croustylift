@@ -9,8 +9,11 @@ import {
   addExercise,
   swapExercise,
   deriveExerciseDeviations,
+  layoutEditOf,
+  replayLayout,
   templateExerciseIds,
 } from './session-edit';
+import type { LayoutEdit } from './state';
 
 // --- Fabriques ---------------------------------------------------------------
 
@@ -130,5 +133,134 @@ describe('deriveExerciseDeviations', () => {
       },
       { kind: 'added', exerciseId: 'curl', name: 'Curl biceps' },
     ]);
+  });
+});
+
+// --- Rejeu de la disposition au remontage (signalement utilisateur 3) ----------
+
+describe('replayLayout', () => {
+  const curl = mkExercise('curl', 'Curl');
+  const dips = mkExercise('dips', 'Dips');
+  const catalog: Record<string, SessionExercise> = {
+    curl,
+    dips,
+    'bench-press': mkExercise('bench-press', 'Développé couché'),
+  };
+  const resolve = (edit: LayoutEdit) => catalog[edit.exerciseId] ?? null;
+  const ids = (session: Session) => session.exercises.map((e) => e.exerciseId);
+
+  /** Joue les gestes en direct, comme l'écran, et rend la séance et son journal. */
+  function live(gestures: [SessionExercise, string?][]): { session: Session; layout: LayoutEdit[] } {
+    let session = baseSession();
+    const layout: LayoutEdit[] = [];
+    for (const [exercise, replaces] of gestures) {
+      session = replaces ? swapExercise(session, replaces, exercise) : addExercise(session, exercise);
+      layout.push(layoutEditOf(exercise, replaces));
+    }
+    return { session, layout };
+  }
+
+  it('sans geste : le template tel quel', () => {
+    expect(replayLayout(baseSession(), [], resolve)).toEqual(baseSession());
+  });
+
+  it('un exo ajouté revient à la fin, marqué ajouté', () => {
+    const { session, layout } = live([[curl]]);
+
+    const replayed = replayLayout(baseSession(), layout, resolve);
+
+    expect(replayed).toEqual(session);
+    expect(ids(replayed)).toEqual(['bench-press', 'seated-row', 'curl']);
+    expect(replayed.exercises[2]?.origin).toBe('added');
+  });
+
+  it('un exo remplacé revient à la place de celui qu’il remplace', () => {
+    const { session, layout } = live([[dips, 'bench-press']]);
+
+    const replayed = replayLayout(baseSession(), layout, resolve);
+
+    expect(replayed).toEqual(session);
+    expect(ids(replayed)).toEqual(['dips', 'seated-row']);
+    expect(replayed.exercises[0]).toMatchObject({ origin: 'swapped', swappedFrom: 'bench-press' });
+  });
+
+  it('A remplacé par B puis A réajouté : A garde sa place d’ajout (il ne disparaît pas)', () => {
+    const { session, layout } = live([[dips, 'bench-press'], [catalog['bench-press']!]]);
+
+    const replayed = replayLayout(baseSession(), layout, resolve);
+
+    expect(replayed).toEqual(session);
+    expect(ids(replayed)).toEqual(['dips', 'seated-row', 'bench-press']);
+  });
+
+  it('plusieurs gestes : même liste que le direct', () => {
+    const { session, layout } = live([[curl], [dips, 'seated-row']]);
+    expect(replayLayout(baseSession(), layout, resolve)).toEqual(session);
+  });
+
+  it('les déviations se dérivent toujours du template seul', () => {
+    const { layout } = live([[curl], [dips, 'bench-press']]);
+    const replayed = replayLayout(baseSession(), layout, resolve);
+
+    expect(deriveExerciseDeviations(templateExerciseIds(baseSession()), replayed)).toEqual([
+      { kind: 'swapped', exerciseId: 'dips', name: 'Dips', replacedExerciseId: 'bench-press' },
+      { kind: 'added', exerciseId: 'curl', name: 'Curl' },
+    ]);
+  });
+
+  it('un exo ajouté entré au plan depuis : la ligne du template l’emporte, pas de doublon', () => {
+    const template: Session = {
+      ...baseSession(),
+      exercises: [...baseSession().exercises, mkExercise('curl', 'Curl (au plan)')],
+    };
+
+    const replayed = replayLayout(template, [layoutEditOf(curl)], resolve);
+
+    expect(ids(replayed)).toEqual(['bench-press', 'seated-row', 'curl']);
+    expect(replayed.exercises[2]?.name).toBe('Curl (au plan)');
+    expect(replayed.exercises[2]?.origin).toBeUndefined();
+  });
+
+  it('un remplaçant déjà présent dans le template ne donne pas deux fois le même exo', () => {
+    const template: Session = {
+      ...baseSession(),
+      exercises: [...baseSession().exercises, dips],
+    };
+
+    const replayed = replayLayout(template, [layoutEditOf(dips, 'bench-press')], resolve);
+
+    expect(ids(replayed)).toEqual(['bench-press', 'seated-row', 'dips']);
+  });
+
+  it('un remplacement dont la cible a quitté le plan devient un ajout', () => {
+    const template: Session = { ...baseSession(), exercises: [mkExercise('seated-row', 'Tirage')] };
+
+    const replayed = replayLayout(template, [layoutEditOf(dips, 'bench-press')], resolve);
+
+    expect(ids(replayed)).toEqual(['seated-row', 'dips']);
+    expect(replayed.exercises[1]?.origin).toBe('added');
+  });
+
+  it('un exo dont la lecture a échoué est laissé de côté à ce montage, les autres reviennent', () => {
+    const { layout } = live([[curl], [dips, 'bench-press']]);
+
+    const replayed = replayLayout(baseSession(), layout, (edit) =>
+      edit.exerciseId === 'curl' ? null : resolve(edit),
+    );
+
+    expect(ids(replayed)).toEqual(['dips', 'seated-row']);
+  });
+
+  it('layoutEditOf garde de quoi reconstruire l’exo sans relire le catalogue', () => {
+    expect(
+      layoutEditOf({ ...curl, unilateral: true, primaryMuscles: ['biceps'] }, 'bench-press'),
+    ).toEqual({
+      kind: 'swapped',
+      exerciseId: 'curl',
+      name: 'Curl',
+      unilateral: true,
+      primaryMuscles: ['biceps'],
+      replaces: 'bench-press',
+    });
   });
 });

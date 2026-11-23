@@ -37,6 +37,7 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   loadExerciseOverrides,
   upsertExerciseOverride,
@@ -139,11 +140,21 @@ export function ExercisesScreen() {
         reload();
       }}
       onSaveOverride={async (id, value) => {
-        await upsertExerciseOverride(id, value);
+        // Les templates et le catalogue servis à la Capture portent les champs
+        // personnalisés : leurs copies sont périmées.
+        try {
+          await upsertExerciseOverride(id, value);
+        } finally {
+          invalidatePlanCopies();
+        }
         reload();
       }}
       onResetOverride={async (id) => {
-        await resetExerciseOverride(id);
+        try {
+          await resetExerciseOverride(id);
+        } finally {
+          invalidatePlanCopies();
+        }
         reload();
       }}
       onLoadNote={loadExerciseNote}

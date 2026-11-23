@@ -22,7 +22,13 @@ Capture seule (choisir sa séance, saisir avec Références, clôturer). Le jour
 
 ## Amendements du 2026-11-23
 
-- **Autre compte.** « Un autre compte doit passer par le forçage » est maintenant tenu par le code pour la Connexion comme pour l'inscription, et les écritures en attente ne partent que sous le compte qui les a saisies (ADR 0019).
+- **Autre compte.** « Un autre compte doit passer par le forçage » est maintenant tenu par le code pour la Connexion (l'inscription, d'abord gardée de la même façon, a été retirée de l'app : comptes sur invitation, ADR 0019), et les écritures en attente ne partent que sous le compte qui les a saisies (ADR 0019).
 - **Purge.** Le forçage reste la seule porte par laquelle des écritures non synchronisées disparaissent. Les copies de lecture et l'état de capture, eux, partent aussi quand une session validée arrive pour un autre compte et que le précédent n'a plus aucune écriture retenue (ADR 0019).
 - **Saisies refusées.** La Déconnexion est refusée tant que l'appareil retient des écritures, en file ou en quarantaine (ADR 0018).
 - **Copie de lecture.** Plusieurs lectures d'une même clé peuvent être en vol : la copie n'est écrite que sous gardes d'ordre, et l'historique d'un exo est relu après tout flush qui acquitte ses séries (ADR 0020).
+
+## Amendements du 2026-11-23 (Lot 3)
+
+- **Ouverture d'une séance bornée.** La seule lecture sans copie du chemin d'ouverture, l'exécution du jour, est bornée à 3 s (`loadTodayExecutionWithin`) : hors ligne avec un jeton expiré elle tenait l'écran une vingtaine de secondes, et sans fin sur un wifi zombie. Un délai dépassé n'est pas une absence : sans état local, la réponse tardive est appliquée si rien n'a encore été saisi sous l'id provisoire. Avec un état local, la réponse tardive qui concerne son exécution est remise au tableau monté, qui réconcilie son réalisé par identifiant sans se remonter (ADR 0021). Sans état local, l'adoption n'a lieu que si le tableau provisoire est intact : dès que l'utilisateur a ouvert, ajouté, remplacé ou passé un exo, il garde son exécution provisoire, comme hors ligne. Toute requête du client a par ailleurs un délai maximal de 20 s (`lib/fetch-timeout`).
+- **Copies périmées par une écriture locale.** Une écriture du plan faite depuis l'app marque ses copies périmées (`invalidateReads`) : la lecture suivante passe par le réseau, borné à 3 s, la copie restant le secours hors ligne.
+- **Stockage plein.** Quand le stockage refuse une écriture, les copies de lecture non essentielles cèdent la place à la file et à la séance en cours ; celles du chemin d'ouverture de la Capture ne sont jamais évincées, pour qu'elle se rouvre hors ligne. Si cela ne suffit pas, les saisies tiennent en mémoire et la bannière le dit (ADR 0018).

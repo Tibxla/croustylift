@@ -1,6 +1,6 @@
 // Panneau de capture d'un exo. Nom = roi ; « dernière fois » = co-roi à battre ;
 // saisie par steppers au pouce ; « Logger la série » en 1 tap.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { estimateE1rm } from '../../domain/e1rm';
 import {
   currentSetOrder,
@@ -16,7 +16,8 @@ import type { PerformedSet, Side } from '../../domain/types';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { ClusterStepper } from './ClusterStepper';
-import { seedDraft } from './capture-seed';
+import { REPS_MAX, RIR_MAX, WEIGHT_MAX_KG } from './stepper-utils';
+import { seedDraft, shouldReseedDraft } from './capture-seed';
 import { draftE1rm } from './draft-e1rm';
 import { NoteField } from '../notes/NoteField';
 import { useAutosavedNote } from '../notes/useAutosavedNote';
@@ -49,6 +50,8 @@ interface ExerciseCaptureProps {
   total?: number;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
+  /** Incrémenté quand le réalisé change sans geste de l'utilisateur (réponse tardive de la base). */
+  historyEpoch?: number;
   onUndoLast: () => void;
   onSkip: () => void;
   onBack: () => void;
@@ -81,6 +84,7 @@ export function ExerciseCapture({
   position,
   total,
   datedNote,
+  historyEpoch = 0,
   onUndoLast,
   onSkip,
   onBack,
@@ -157,20 +161,49 @@ export function ExerciseCapture({
         loggedSets: progress.sets,
         side: currentSide ?? undefined,
       }),
+    // La référence et son repli sont dans les dépendances : ils peuvent changer
+    // sous l'écran (Référence suivie en direct, cf. CaptureScreen).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [exercise.exerciseId, loggedCount, currentSide],
+    [exercise.exerciseId, loggedCount, currentSide, reference, exercise.fallbackReference],
   );
 
   const [weightKg, setWeightKg] = useState(seed.weightKg);
   const [reps, setReps] = useState(seed.reps);
   const [rir, setRir] = useState(seed.rir);
 
-  // Quand on change d'exo ou qu'on logge/annule une série, on ré-amorce le brouillon.
+  // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
+  // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
+  // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
+  // l'historique ne déplace plus ce que l'utilisateur règle.
+  const draftTouchedRef = useRef(false);
+  const touchDraft = useCallback(() => {
+    draftTouchedRef.current = true;
+  }, []);
+  // Ce qui ouvre une NOUVELLE saisie : l'exo, le nombre de séries loggées, le côté.
+  const draftKey = `${exercise.exerciseId}:${loggedCount}:${currentSide ?? ''}`;
+  const seededKeyRef = useRef(draftKey);
+
+  // Ré-amorce le brouillon (cf. `shouldReseedDraft`) : toujours quand une nouvelle
+  // saisie commence (changement d'exo, série loggée ou annulée, changement de
+  // côté), et le marqueur est alors levé ; quand seul l'historique a changé
+  // sous l'écran, seulement si le brouillon est intact.
+  //
+  // `historyEpoch` : quand il change, le réalisé vient d'être réconcilié avec une
+  // réponse tardive de la base (série arrivée d'ailleurs). Le nombre de séries a
+  // pu bouger sans geste de l'utilisateur : c'est un changement d'historique,
+  // pas une nouvelle saisie, donc un brouillon touché reste en place.
+  const seededEpochRef = useRef(historyEpoch);
   useEffect(() => {
+    const fromReality = seededEpochRef.current !== historyEpoch;
+    seededEpochRef.current = historyEpoch;
+    const trigger = seededKeyRef.current === draftKey || fromReality ? 'history' : 'explicit';
+    seededKeyRef.current = draftKey;
+    if (!shouldReseedDraft(trigger, draftTouchedRef.current)) return;
+    if (trigger === 'explicit') draftTouchedRef.current = false;
     setWeightKg(seed.weightKg);
     setReps(seed.reps);
     setRir(seed.rir);
-  }, [seed]);
+  }, [seed, draftKey, historyEpoch]);
 
   // Remonte le brouillon courant vers la barre d'action fixe (qui commit le log).
   // Pour un exo unilatéral, on y joint le côté CHOISI (issue #63) : c'est ce côté
@@ -411,7 +444,15 @@ export function ExerciseCapture({
 
       {/* Cluster instrument : POIDS (hero) + REPS / RIR (deux colonnes), steppers
           ronds au pouce. La saisie tapée (pavé numérique, issue #58) est conservée. */}
-      <div className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]">
+      <div
+        // Toute interaction dans la zone des steppers marque le brouillon touché,
+        // AVANT qu'une valeur soit validée (les événements sont pris en capture).
+        onPointerDownCapture={touchDraft}
+        onKeyDownCapture={touchDraft}
+        onFocusCapture={touchDraft}
+        onInputCapture={touchDraft}
+        className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]"
+      >
         <ClusterStepper
           label="Poids"
           variant="hero"
@@ -420,14 +461,15 @@ export function ExerciseCapture({
           step={WEIGHT_STEP}
           fineStep={WEIGHT_FINE}
           min={0}
+          max={WEIGHT_MAX_KG}
           format={formatWeight}
           onChange={setWeightKg}
         />
         <div className="my-4 h-px bg-hair" />
         <div className="flex items-stretch gap-3">
-          <ClusterStepper label="Reps" variant="compact" value={reps} step={1} min={1} onChange={setReps} />
+          <ClusterStepper label="Reps" variant="compact" value={reps} step={1} min={1} max={REPS_MAX} onChange={setReps} />
           <div className="w-px shrink-0 bg-hair" />
-          <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} onChange={setRir} />
+          <ClusterStepper label="RIR" variant="compact" value={rir} step={1} min={0} max={RIR_MAX} onChange={setRir} />
         </div>
         {liveE1rm !== null && (
           <div
@@ -585,7 +627,7 @@ export function ExerciseCapture({
           onClick={() => setRecapOpen(true)}
           className="btn btn-secondary text-ink-muted mt-4 h-11 w-full rounded-xl text-sm font-medium"
         >
-          Exo terminé — voir le récap
+          Exo terminé, voir le récap
         </button>
       )}
 
@@ -667,7 +709,12 @@ function ExerciseRecapSheet({
     // z-40 : AU-DESSUS de la nav (z-30) — sinon la nav recouvre les actions du bas
     // de la feuille (« Revenir à la liste »). La feuille couvre la nav, c'est voulu
     // (on est concentré sur le récap).
-    <div className="fixed inset-0 z-40 flex flex-col">
+    <div
+      className="fixed inset-0 z-40 flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Récap de l’exercice"
+    >
       {/* Fond cliquable = « Continuer l'exo » (fermer sans quitter l'exo). */}
       <button
         type="button"

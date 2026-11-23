@@ -17,6 +17,7 @@
 import { supabase } from '../../lib/supabase';
 import { isBlankNote, normalizeNoteBody } from '../../domain/notes';
 import type { OutboxOp } from '../capture/outbox';
+import { invalidateExerciseNoteCopy } from '../capture/plan-copies';
 
 // =====================================================================
 // Helper pur (testé) — cf. data.test.ts
@@ -95,6 +96,15 @@ export async function loadExerciseNote(exerciseId: string): Promise<string> {
  * default auth.uid() ; le corps est normalisé (domain/notes).
  */
 export async function saveExerciseNote(exerciseId: string, body: string): Promise<void> {
+  try {
+    await writeExerciseNote(exerciseId, body);
+  } finally {
+    // La copie servie à la Capture est périmée (cf. capture/plan-copies).
+    invalidateExerciseNoteCopy(exerciseId);
+  }
+}
+
+async function writeExerciseNote(exerciseId: string, body: string): Promise<void> {
   if (isBlankNote(body)) {
     const { error } = await supabase
       .from('exercise_notes')
@@ -160,10 +170,14 @@ export async function upsertDatedNote(params: {
   if (error) throw error;
 }
 
-/** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
-export async function deleteDatedNoteById(id: string): Promise<void> {
-  const { error } = await supabase.from('dated_notes').delete().eq('id', id);
+/**
+ * Supprime une note datée par son id (corps vidé). Idempotent (delete par id).
+ * Rend le nombre de lignes touchées : 0 (note déjà absente) reste un succès.
+ */
+export async function deleteDatedNoteById(id: string): Promise<number> {
+  const { data, error } = await supabase.from('dated_notes').delete().eq('id', id).select('id');
   if (error) throw error;
+  return data?.length ?? 0;
 }
 
 // =====================================================================
@@ -199,10 +213,12 @@ export async function upsertExerciseNoteRow(params: {
  * plus une ligne par exo) : delete par `exercise_id`, idempotent (sans effet si
  * aucune ligne). Consommé par l'outbox (SyncFns).
  */
-export async function deleteExerciseNoteByExercise(exerciseId: string): Promise<void> {
-  const { error } = await supabase
+export async function deleteExerciseNoteByExercise(exerciseId: string): Promise<number> {
+  const { data, error } = await supabase
     .from('exercise_notes')
     .delete()
-    .eq('exercise_id', exerciseId);
+    .eq('exercise_id', exerciseId)
+    .select('exercise_id');
   if (error) throw error;
+  return data?.length ?? 0;
 }

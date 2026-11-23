@@ -650,4 +650,24 @@ describe('buildExecutionMetricsOp', () => {
     );
     expect(op).toEqual({ type: 'updateExecution', id: exec, durationMin: 60 });
   });
+
+  it('séance close sans durée, durée non touchée : aucune op de durée', () => {
+    expect(
+      buildExecutionMetricsOp(
+        exec,
+        { bpmAvg: null, durationMin: null },
+        { bpmAvg: null, durationMin: null },
+      ),
+    ).toBeNull();
+  });
+
+  it('séance close sans durée, seul le BPM est ajouté : la durée n’est pas inventée', () => {
+    expect(
+      buildExecutionMetricsOp(
+        exec,
+        { bpmAvg: null, durationMin: null },
+        { bpmAvg: 140, durationMin: null },
+      ),
+    ).toEqual({ type: 'updateExecution', id: exec, bpmAvg: 140 });
+  });
 });
