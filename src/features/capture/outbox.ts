@@ -28,7 +28,7 @@
 import type { Side } from '../../domain/types';
 import { loadLocalAccount } from '../../lib/local-account';
 
-/** Crée (ou ré-affirme) l'exécution du jour. Idempotent via upsert par id. */
+/** Crée l'exécution du jour. Insertion seule par id : la réaffirmer ne réécrit rien. */
 export interface UpsertExecutionOp {
   type: 'upsertExecution';
   id: string;
@@ -38,7 +38,8 @@ export interface UpsertExecutionOp {
   /**
    * Horodatage du LANCEMENT (ISO), ADR 0011 : la valeur du chrono « lancement →
    * clôture », posée au 1er set (la ligne naît alors). Absent = legacy (pas de
-   * chrono durable). Idempotent : ré-affirmer repose le même started_at.
+   * chrono durable). Écrit à la naissance de la ligne seulement : une
+   * réaffirmation ne touche pas le started_at déjà en base (ADR 0021).
    */
   startedAt?: string;
 }

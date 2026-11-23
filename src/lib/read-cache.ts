@@ -33,9 +33,11 @@
 //
 // LIMITE ASSUMÉE (cf. docs/future-improvements.md) : la revalidation ne sait
 // rejouer que les lectures déjà VUES dans la session en cours (registre
-// mémoire). Une copie jamais revalidée depuis la dernière synchro peut servir
-// une Référence en retard d'une exécution — même classe d'imprécision que le
-// last-write-wins déjà accepté (ADR 0003).
+// mémoire). La Référence n'en dépend plus pour ce qui est écrit d'ici : l'outbox
+// est fusionnée tant qu'une série attend (ADR 0014), et la copie d'historique
+// de l'exo est relue dès l'acquittement (`refreshRead`, ADR 0020). Reste en
+// retard, jusqu'à sa prochaine revalidation, une copie dont les lignes ont
+// changé ailleurs (autre appareil).
 import { loadLocalAccount } from './local-account';
 
 const PREFIX = 'croustylift:readcache';
@@ -272,8 +274,8 @@ export async function networkFirstRead<T>(
 
 /**
  * Rejoue toutes les revalidations connues de la session (no-op hors-ligne).
- * Appelée après un flush d'outbox réussi (App) : la Référence hors-ligne de la
- * prochaine séance intègre ainsi celle qui vient d'être synchronisée.
+ * Appelée après un flush d'outbox réussi (App). L'historique des exos touchés
+ * par le flush est en plus relu par `flushOutbox` lui-même, sous seuil (sync.ts).
  */
 export function revalidateReadCache(): void {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;

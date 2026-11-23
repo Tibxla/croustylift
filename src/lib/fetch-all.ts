@@ -7,12 +7,11 @@
 // seuil, dans un ordre non garanti.
 //
 // Ici : pagination PAR CURSEUR sur `id` (clé unique de toutes les tables), en
-// boucle jusqu'à la page vide : chaque page demande « les lignes d'id supérieur
-// au dernier reçu ». Deux choses à ne pas refaire :
-//   - une pagination par OFFSET (`.range()`) : une écriture arrivée entre deux
-//     pages décale la fenêtre — une ligne supprimée en fait sauter une autre,
-//     une ligne insérée en fait relire une. Le curseur, lui, ne dépend que de la
-//     dernière ligne reçue ;
+// boucle jusqu'à une page courte : chaque page demande « les lignes d'id
+// supérieur au dernier reçu ». À ne pas refaire : une pagination par OFFSET
+// (`.range()`). Une écriture arrivée entre deux pages décale la fenêtre : une
+// ligne supprimée en fait sauter une autre, une ligne insérée en fait relire
+// une. Le curseur, lui, ne dépend que de la dernière ligne reçue.
 // On s'arrête sur une page « courte » (moins de lignes que demandé) : c'est la
 // fin, SANS requête de plus. Une page vide en plus coûtait un aller-retour qui,
 // coupé, faisait échouer une lecture pourtant complète (Capture sans copie au
