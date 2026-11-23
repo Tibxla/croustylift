@@ -73,6 +73,7 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
+  applyQueuedSets,
   reconcileProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
@@ -86,8 +87,10 @@ import {
   pendingCount,
   quarantineCount,
   purgeByExecution,
+  readOwnQueue,
   readQueue,
   storageFailing,
+  type OutboxOp,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -173,6 +176,13 @@ interface CaptureInit {
    * longueur, qui n'est que le repli sans réponse (cf. `reconcileProgress`).
    */
   pendingSetIds: string[] | null;
+  /**
+   * La file d'écritures du compte, lue à l'ouverture : ses écritures de séries
+   * pour cette exécution sont appliquées au réalisé final (`applyQueuedSets`),
+   * que la base ait répondu ou non. Une série ajoutée depuis le Journal et pas
+   * encore envoyée entre ainsi dans le tableau, et son rang est pris.
+   */
+  queuedOps: OutboxOp[];
 }
 
 /**
@@ -372,6 +382,7 @@ export function CaptureScreen() {
           today && restored && today.executionId === restored.executionId
             ? today.pendingSetIds
             : null,
+        queuedOps: readOwnQueue(),
       };
       initRef.current = init;
       setLoad({
@@ -875,17 +886,24 @@ function CaptureBoard({
     // L'exécution porte la version de séance adoptée au chargement ; un état
     // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
     const versioned = { ...fromSupabase, seanceVersionId };
-    if (!restored) return versioned;
+    // Dernier temps, dans tous les cas : les écritures de séries de cette
+    // exécution encore en file (cf. `CaptureInit.queuedOps`).
+    const { queuedOps } = initRef.current;
+    const withQueued = (built: CaptureState): CaptureState => {
+      const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
+      return progress === built.progress ? built : { ...built, progress };
+    };
+    if (!restored) return withQueued(versioned);
     const merged = mergeProgress(versioned, restored);
     // La base a répondu pour cette exécution : elle fait foi pour les séries,
     // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
     // le Journal revenait ici, le cache local étant le plus long.
     const { pendingSetIds } = initRef.current;
-    if (pendingSetIds === null) return merged;
-    return {
+    if (pendingSetIds === null) return withQueued(merged);
+    return withQueued({
       ...merged,
       progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
-    };
+    });
   });
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`

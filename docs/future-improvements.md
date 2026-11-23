@@ -120,11 +120,6 @@ perte), finition.
 
 ### Capture, reprise
 
-- **Insertion en file absente du calcul de rang** (mineure). Une série ajoutée depuis
-  le Journal à une exécution ouverte, encore en file à la reprise, n'entre pas dans le
-  réalisé de la Capture : la série suivante peut reprendre son rang. Piste : appliquer
-  à la réponse les insertions en file de l'exécution avant de calculer le rang
-  (`capture/data.ts`).
 - **Brouillon unilatéral réamorcé** (mineure). Une réponse tardive qui ajoute le côté
   manquant fait basculer le sélecteur de côté, et le brouillon en cours (poids, reps,
   RIR) est réinitialisé. Piste : tenir le côté choisi pour une partie du brouillon

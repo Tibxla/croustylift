@@ -3,6 +3,7 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
+import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
 import { writeMakingRoom } from './cache-eviction';
 
@@ -570,6 +571,91 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     datedNotes,
     closedAt: null,
   };
+}
+
+/**
+ * Applique au réalisé les écritures de SÉRIES de l'exécution `executionId` qui
+ * attendent encore en file, dans l'ordre de la file : `insertSet` pose la série
+ * (ou remplace celle du même id), `deleteSet` la retire.
+ *
+ * Pourquoi : une série peut être ajoutée à l'exécution en cours depuis le
+ * Journal. Tant que son insertion attend (hors ligne surtout), elle n'est ni en
+ * base ni dans l'état de la Capture, qui ne connaît que ses propres saisies : le
+ * tableau repris l'ignorait, et la série suivante prenait SON rang (deux lignes
+ * au même rang en base une fois la file vidée). Vaut que la base ait répondu ou
+ * non. Une série déjà présente n'est pas doublée, une série de la Capture dont
+ * la suppression attend sort.
+ *
+ * Les séries d'un exo touché sont retriées par rang, puis gauche avant droite,
+ * comme à la réhydratation. `skipped` est conservé. Rend `progress` lui-même si
+ * la file ne change rien. Pur.
+ */
+export function applyQueuedSets(
+  progress: Record<string, ExerciseProgress>,
+  ops: readonly OutboxOp[],
+  executionId: string,
+): Record<string, ExerciseProgress> {
+  // Séries par id, exo par exo ; une série sans id (cache d'ancien format) garde
+  // une clé de position et ne peut être ni remplacée ni retirée par la file.
+  const rows = new Map<string, { exerciseId: string; set: PerformedSet; id: string | null }>();
+  for (const [exerciseId, entry] of Object.entries(progress)) {
+    entry.sets.forEach((set, index) => {
+      const id = entry.setIds[index] ?? null;
+      rows.set(id ?? `sans-id:${exerciseId}:${index}`, { exerciseId, set, id });
+    });
+  }
+  const touched = new Set<string>();
+  for (const op of ops) {
+    if (op.type === 'insertSet') {
+      if (op.executionId !== executionId) continue;
+      const set: PerformedSet = {
+        weightKg: op.weightKg,
+        reps: op.reps,
+        rir: op.rir,
+        order: op.setOrder,
+        ...(op.side ? { side: op.side } : {}),
+      };
+      const known = rows.get(op.id);
+      if (known && known.exerciseId === op.exerciseId && sameSet(known.set, set)) continue;
+      if (known) touched.add(known.exerciseId);
+      rows.set(op.id, { exerciseId: op.exerciseId, set, id: op.id });
+      touched.add(op.exerciseId);
+    } else if (op.type === 'deleteSet') {
+      const known = rows.get(op.id);
+      if (!known) continue;
+      rows.delete(op.id);
+      touched.add(known.exerciseId);
+    }
+  }
+  if (touched.size === 0) return progress;
+
+  const out: Record<string, ExerciseProgress> = { ...progress };
+  for (const exerciseId of touched) {
+    const mine = [...rows.values()]
+      .filter((row) => row.exerciseId === exerciseId)
+      .sort(
+        (a, b) =>
+          a.set.order - b.set.order ||
+          (a.set.side === 'right' ? 1 : 0) - (b.set.side === 'right' ? 1 : 0),
+      );
+    const skipped = progress[exerciseId]?.skipped ?? false;
+    if (mine.length === 0 && !skipped) {
+      delete out[exerciseId];
+      continue;
+    }
+    out[exerciseId] = { sets: mine.map((r) => r.set), setIds: mine.map((r) => r.id), skipped };
+  }
+  return out;
+}
+
+function sameSet(a: PerformedSet, b: PerformedSet): boolean {
+  return (
+    a.weightKg === b.weightKg &&
+    a.reps === b.reps &&
+    a.rir === b.rir &&
+    a.order === b.order &&
+    (a.side ?? null) === (b.side ?? null)
+  );
 }
 
 /**

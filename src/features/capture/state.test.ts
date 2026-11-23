@@ -17,6 +17,7 @@ import {
   capturePersistFailing,
   persistedVersionIds,
   pruneStaleCaptureStates,
+  applyQueuedSets,
   reconcileDatedNotes,
   reconcileProgress,
   clearCaptureState,
@@ -1560,6 +1561,86 @@ describe('reconcileProgress (la base fait foi, plus les écritures en attente)',
     expect(next.activeExerciseId).toBe('bench');
     expect(next.layout).toEqual(state.layout);
     expect(next.executionId).toBe('exec-1');
+  });
+});
+
+// Une série ajoutée depuis le Journal à l'exécution en cours, encore en file :
+// ni la base ni l'état de la Capture ne la portent. Le tableau repris l'ignorait
+// et la série suivante prenait son rang.
+describe('applyQueuedSets (écritures de séries en file appliquées au réalisé)', () => {
+  const ps = (order: number, side?: 'left' | 'right') => ({ weightKg: 80, reps: 8, rir: 2, order, ...(side ? { side } : {}) });
+  const insert = (id: string, setOrder: number, over: Record<string, unknown> = {}) =>
+    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2, ...over }) as const;
+  const tableau = (ids: (string | null)[], skipped = false) => ({
+    bench: { sets: ids.map((_, i) => ps(i + 1)), setIds: ids, skipped },
+  });
+  const nextOrder = (progress: Record<string, { sets: { order: number }[] }>) =>
+    Math.max(0, ...(progress.bench?.sets.map((s) => s.order) ?? [])) + 1;
+
+  it('base muette (hors ligne) : la série du Journal entre, le rang suivant est le 3', () => {
+    // La Capture a loggé le rang 1 ; le Journal a ajouté le rang 2, encore en file.
+    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1), insert('s2-journal', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
+    expect(progress.bench?.sets.map((s) => s.order)).toEqual([1, 2]);
+    expect(nextOrder(progress)).toBe(3);
+  });
+
+  it('base répondue sans la série (pas encore envoyée) : elle entre aussi', () => {
+    // Réalisé réconcilié avec la base : rang 1 seulement.
+    const reconciled = reconcileProgress(tableau(['s1']), { bench: { sets: [ps(1)], setIds: ['s1'] } }, {
+      pendingSetIds: ['s2-journal'],
+    });
+    const progress = applyQueuedSets(reconciled, [insert('s2-journal', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
+    expect(nextOrder(progress)).toBe(3);
+  });
+
+  it('tableau vide, série en file sur un exo jamais ouvert : l’exo apparaît avec sa série', () => {
+    const progress = applyQueuedSets({}, [insert('s1-journal', 1, { exerciseId: 'squat' })], 'exec-1');
+    expect(progress.squat).toEqual({ sets: [ps(1)], setIds: ['s1-journal'], skipped: false });
+  });
+
+  it('une série déjà au tableau n’est pas doublée, et rien ne change', () => {
+    const before = tableau(['s1', 's2']);
+    expect(applyQueuedSets(before, [insert('s1', 1), insert('s2', 2)], 'exec-1')).toBe(before);
+  });
+
+  it('une correction en file (même id, autres valeurs) remplace la série', () => {
+    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1, { weightKg: 85 })], 'exec-1');
+    expect(progress.bench?.sets).toEqual([{ ...ps(1), weightKg: 85 }]);
+    expect(progress.bench?.setIds).toEqual(['s1']);
+  });
+
+  it('ordre de la file : insérée puis supprimée, la série ne revient pas', () => {
+    const before = tableau(['s1']);
+    const progress = applyQueuedSets(before, [insert('s2', 2), { type: 'deleteSet', id: 's2' }], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1']);
+  });
+
+  it('une suppression en file retire une série du tableau ; l’exo vide sort, sauf s’il est passé', () => {
+    expect(applyQueuedSets(tableau(['s1']), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({});
+    expect(applyQueuedSets(tableau(['s1'], true), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({
+      bench: { sets: [], setIds: [], skipped: true },
+    });
+  });
+
+  it('les séries d’une AUTRE exécution ne sont pas prises', () => {
+    const before = tableau(['s1']);
+    expect(applyQueuedSets(before, [insert('ailleurs', 2, { executionId: 'exec-2' })], 'exec-1')).toBe(before);
+  });
+
+  it('unilatéral : retri par rang puis gauche avant droite', () => {
+    const before = {
+      curl: { sets: [ps(1, 'left'), ps(2, 'left')], setIds: ['l1', 'l2'], skipped: false },
+    };
+    const progress = applyQueuedSets(before, [insert('r1', 1, { exerciseId: 'curl', side: 'right' })], 'exec-1');
+    expect(progress.curl?.setIds).toEqual(['l1', 'r1', 'l2']);
+    expect(progress.curl?.sets.map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
+  });
+
+  it('une série sans id (cache d’ancien format) reste en place', () => {
+    const progress = applyQueuedSets(tableau([null]), [insert('s2', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual([null, 's2']);
   });
 });
 
