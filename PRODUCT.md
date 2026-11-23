@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Thibaud et quelques amis proches (petit cercle, pas un produit commercial). Deux contextes d'usage opposés :
+Son auteur et quelques amis proches (petit cercle, pas un produit commercial). Deux contextes d'usage opposés :
 
 - **En salle, sur iPhone** — entre deux séries, fatigué, souvent une seule main libre, sous néons, réseau peu fiable. Besoin : logger ce qu'il vient de faire en un geste, sans réfléchir.
 - **Au calme, sur téléphone ou PC** — posé, après coup. Besoin : comprendre s'il progresse vraiment.
@@ -15,7 +15,7 @@ Le job : capturer son entraînement sans friction, et savoir honnêtement s'il p
 
 ## Product Purpose
 
-Un tracker de musculation qui sépare radicalement deux moments : une **capture** minimale et increvable en salle, et une **analyse** riche au calme. Il existe parce que les trackers existants forcent à se battre avec l'app au pire moment (fatigué, pressé) et noient la vraie question — « est-ce que je progresse ? » — sous des données brutes. Succès = Thibaud et ses potes loggent chaque série sans y penser, et lisent leur progression réelle d'un coup d'œil. Budget 0 €, multi-utilisateur, offline-first.
+Un tracker de musculation qui sépare radicalement deux moments : une **capture** minimale et increvable en salle, et une **analyse** riche au calme. Il existe parce que les trackers existants forcent à se battre avec l'app au pire moment (fatigué, pressé) et noient la vraie question — « est-ce que je progresse ? » — sous des données brutes. Succès = l'auteur et ses potes loggent chaque série sans y penser, et lisent leur progression réelle d'un coup d'œil. Budget 0 €, multi-utilisateur, offline-first.
 
 ## Brand Personality
 
