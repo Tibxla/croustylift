@@ -27,21 +27,50 @@ export function estimateE1rm(weightKg: number, reps: number, rir: number): numbe
   return weightKg * (1 + (reps + rir - 1) / 30)
 }
 
+// --- Comparaison EXACTE de deux e1RM -------------------------------------------
+//
+// e1RM = poids × (29 + reps + RIR) / 30. Avec le poids en centièmes de kg, la
+// quantité `centièmes × (29 + reps + RIR)` est un ENTIER, et deux e1RM se
+// comparent en comparant ces entiers : ni flottant, ni arrondi.
+//
+// À ne pas refaire :
+//   - comparer les flottants bruts : 87,5 × 5 et 85 × 6 valent le même e1RM
+//     (99,1666… kg) mais deux flottants distincts à un bit près, et le second
+//     « battait » le premier ;
+//   - arrondir au centième avant de comparer : 28,75 × 9 (36,4166…) et
+//     23,25 × 18 (36,425) retombaient sur 36,42, et un vrai record disparaissait.
+// L'arrondi reste l'affaire de l'affichage, jamais de la comparaison.
+
 /**
- * e1RM arrondi à 0,01 kg, la précision à laquelle deux e1RM se COMPARENT. Deux
- * couples poids/reps différents peuvent valoir le même e1RM en rationnels
- * (87,5 × 5 et 85 × 6 : 99,1666… kg) tout en sortant deux flottants distincts à
- * un bit près ; comparés bruts, l'un « battait » l'autre.
+ * La mesure entière d'une série : centièmes de kg × (29 + reps + RIR), soit
+ * 3000 fois son e1RM. Deux séries ont le même e1RM si et seulement si elles ont
+ * la même mesure.
  */
-export function roundE1rm(e1rm: number): number {
-  return Math.round(e1rm * 100) / 100
+export function e1rmUnits(weightKg: number, reps: number, rir: number): number {
+  return Math.round(weightKg * 100) * (29 + reps + rir)
 }
 
 /**
- * `candidate` bat-il STRICTEMENT `best` ? Comparaison au centième : une égalité
- * mathématique n'est jamais un dépassement (Référence comme Record, ADR 0010).
- * Toute comparaison d'e1RM du dépôt passe par ici.
+ * La mesure entière d'un e1RM déjà calculé par `estimateE1rm`. Le produit par
+ * 3000 retombe sur l'entier exact : l'erreur flottante (de l'ordre de 1e-9 à
+ * cette échelle) est très loin du demi qu'il faudrait pour changer d'entier.
+ * Ce n'est pas un arrondi de la valeur, c'est la relecture de l'entier d'origine.
+ */
+function unitsOf(e1rm: number): number {
+  return Math.round(e1rm * 3000)
+}
+
+/**
+ * `candidate` bat-il STRICTEMENT `best` ? Comparaison exacte : une égalité
+ * mathématique n'est jamais un dépassement, et un dépassement réel, même sous le
+ * centième de kg, en est un (Référence comme Record, ADR 0010). Les deux
+ * arguments sont des e1RM rendus par `estimateE1rm`.
  */
 export function e1rmBeats(candidate: number, best: number): boolean {
-  return roundE1rm(candidate) > roundE1rm(best)
+  return unitsOf(candidate) > unitsOf(best)
+}
+
+/** Deux e1RM rendus par `estimateE1rm` sont-ils mathématiquement égaux ? */
+export function e1rmEquals(a: number, b: number): boolean {
+  return unitsOf(a) === unitsOf(b)
 }

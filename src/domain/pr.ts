@@ -170,7 +170,7 @@ function sideRecord(
 /**
  * La série `set` bat-elle le record d'e1RM ? Strict : un record égalé n'est pas
  * un nouveau record, y compris par un autre couple poids/reps de même e1RM
- * (comparaison au centième, cf. `e1rmBeats`). Un record vierge (null) est
+ * (comparaison exacte, sans arrondi, cf. `e1rmBeats`). Un record vierge (null) est
  * toujours battu par une série réelle.
  */
 export function isE1rmRecord(record: PersonalRecord, set: PerformedSet): boolean {

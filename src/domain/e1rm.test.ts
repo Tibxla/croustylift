@@ -1,4 +1,4 @@
-import { e1rmBeats, estimateE1rm, roundE1rm } from './e1rm'
+import { e1rmBeats, e1rmEquals, e1rmUnits, estimateE1rm } from './e1rm'
 
 describe('estimateE1rm', () => {
   it('applies shifted Epley at RIR 0', () => {
@@ -61,21 +61,40 @@ describe('estimateE1rm', () => {
   })
 })
 
-describe('comparaison d’e1RM au centième', () => {
-  it('arrondit à 0,01 kg', () => {
-    expect(roundE1rm(99.16666666666667)).toBe(99.17)
+// Comparaison EXACTE, en entiers : poids en centièmes de kg × (29 + reps + RIR).
+// Ni flottant ni arrondi : un arrondi au centième rabattait 36,4166… et 36,425
+// sur la même valeur et masquait un vrai record.
+describe('comparaison exacte d’e1RM', () => {
+  const e = (w: number, reps: number, rir = 0) => estimateE1rm(w, reps, rir)
+
+  it('e1rmUnits est un entier : centièmes de kg × (29 + reps + RIR)', () => {
+    expect(e1rmUnits(87.5, 5, 0)).toBe(8750 * 34)
+    expect(e1rmUnits(28.75, 9, 0)).toBe(2875 * 38)
   })
 
-  it('deux e1RM égaux en rationnels ne se battent pas, malgré le bruit flottant', () => {
-    const a = estimateE1rm(87.5, 5, 0)
-    const b = estimateE1rm(85, 6, 0)
-    expect(a).not.toBe(b)
-    expect(e1rmBeats(a, b)).toBe(false)
-    expect(e1rmBeats(b, a)).toBe(false)
+  it('23,25 × 18 bat 28,75 × 9 (36,425 contre 36,4166…), dépassement réel sous le centième', () => {
+    expect(e1rmBeats(e(23.25, 18), e(28.75, 9))).toBe(true)
+    expect(e1rmBeats(e(28.75, 9), e(23.25, 18))).toBe(false)
   })
 
-  it('un e1RM strictement supérieur au centième bat l’autre', () => {
-    expect(e1rmBeats(100.01, 100)).toBe(true)
-    expect(e1rmBeats(100, 100.01)).toBe(false)
+  it('87,5 × 5 et 85 × 6 à RIR 0 sont à égalité, malgré le bruit flottant', () => {
+    expect(e(87.5, 5)).not.toBe(e(85, 6))
+    expect(e1rmBeats(e(87.5, 5), e(85, 6))).toBe(false)
+    expect(e1rmBeats(e(85, 6), e(87.5, 5))).toBe(false)
+    expect(e1rmEquals(e(85, 6), e(87.5, 5))).toBe(true)
+    // À RIR 2 les deux ne sont plus égales : 85 × 37 contre 87,5 × 36.
+    expect(e1rmBeats(e(87.5, 5, 2), e(85, 6, 2))).toBe(true)
+  })
+
+  it('égalité exacte sur la frontière du demi-centième (5,775 kg des deux côtés)', () => {
+    // 5,25 × 4 et 4,95 × 6 : 525 × 33 = 495 × 35 = 17 325.
+    expect(e1rmBeats(e(5.25, 4), e(4.95, 6))).toBe(false)
+    expect(e1rmBeats(e(4.95, 6), e(5.25, 4))).toBe(false)
+    expect(e1rmEquals(e(5.25, 4), e(4.95, 6))).toBe(true)
+  })
+
+  it('un centième de charge en plus suffit à battre', () => {
+    expect(e1rmBeats(e(100.01, 1), e(100, 1))).toBe(true)
+    expect(e1rmEquals(e(100.01, 1), e(100, 1))).toBe(false)
   })
 })

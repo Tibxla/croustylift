@@ -361,4 +361,12 @@ describe('record d’e1RM à égalité entre deux couples poids/reps', () => {
     )
     expect(isE1rmRecord(record, set(100.01, 1, 0))).toBe(true)
   })
+
+  it('un dépassement réel sous le centième est un record (23,25 × 18 après 28,75 × 9)', () => {
+    const record = personalRecord(
+      [{ date: '2026-01-10', exerciseId: 'squat', sets: [set(28.75, 9, 0)] }],
+      'squat',
+    )
+    expect(isE1rmRecord(record, set(23.25, 18, 0))).toBe(true)
+  })
 })
