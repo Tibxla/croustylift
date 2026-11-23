@@ -32,6 +32,7 @@ vi.mock('./outbox', async (importOriginal) => {
 vi.mock('./data', () => ({
   deleteExecutionById: vi.fn(),
   deleteSetById: vi.fn(),
+  refreshExerciseRows: vi.fn(async () => undefined),
   updateExecution: vi.fn(),
   upsertExecution: vi.fn(),
   upsertSet: vi.fn(),

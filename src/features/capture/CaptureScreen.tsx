@@ -64,15 +64,15 @@ import {
 } from './state';
 import {
   enqueue,
-  flush,
   pendingCount,
   purgeByExecution,
   readQueue,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
-// `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces.
-import { syncFns } from './sync';
+// `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces. On
+// passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
+import { flushOutbox } from './sync';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
@@ -493,7 +493,7 @@ function subscribeSync(cb: () => void): () => void {
 /** Tente un flush puis notifie l'UI (longueur de file potentiellement changée). */
 async function attemptFlush(): Promise<void> {
   try {
-    await flush(syncFns);
+    await flushOutbox();
   } finally {
     notifySync();
   }
