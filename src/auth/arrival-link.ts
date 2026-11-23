@@ -40,21 +40,26 @@ export function arrivalFromHash(hash: string): ArrivalLink {
 // (`invitedWithoutPassword`), sans rien écrire à l'arrivée :
 //   - `invited_at` : posé par le serveur d'auth à l'invitation, jamais retiré
 //     (accepter le lien ne pose que `email_confirmed_at`) ;
-//   - `user_metadata.password_set` : écrit par l'app DANS LA MÊME REQUÊTE que le
-//     mot de passe (`updateUser({ password, data })`, une seule transaction côté
-//     serveur). L'obligation n'est donc levée que si le mot de passe est
-//     enregistré, et l'est sur tous les appareils.
-// Le serveur ne sait pas dire « ce compte n'a pas de mot de passe » : à
-// l'acceptation d'une invitation il en tire un au hasard, que personne ne
-// connaît. D'où le marqueur.
+//   - la revendication `amr` du jeton d'accès : les méthodes par lesquelles la
+//     session a été ouverte. Une session ouverte par un lien porte `otp`, une
+//     session ouverte par mot de passe porte `password`. Le serveur la recalcule
+//     à chaque émission du jeton, rafraîchissement compris.
+// La SEULE preuve qu'un mot de passe connu de son titulaire existe est donc une
+// session ouverte avec lui. Rien que le client puisse écrire n'en tient lieu :
+// un marqueur dans `user_metadata`, que le titulaire d'une session invitée peut
+// poser lui-même sans définir de mot de passe, levait l'obligation (relecture
+// du second tour). Le serveur, lui, ne sait pas dire « ce compte n'a pas de mot
+// de passe » : à l'acceptation d'une invitation il en tire un au hasard.
+//
+// Définir son mot de passe se fait donc en deux temps (`definePassword`) :
+// l'enregistrer, puis ouvrir une session AVEC lui. C'est cette session qui lève
+// l'obligation.
 //
 // Aucun faux positif n'est permis : l'écran de mot de passe prime sur toute
-// l'app (App.tsx). Deux preuves qu'un mot de passe connu existe lèvent
-// l'obligation : le marqueur, et une session OUVERTE PAR MOT DE PASSE (méthode
-// `password` dans la revendication `amr` du jeton d'accès ; une session ouverte
-// par un lien porte `otp`). Et les comptes invités avant que l'app ne tienne
-// cette obligation (`INVITATIONS_SINCE`) en sont exemptés : ils sont entrés sous
-// l'ancien régime, sans marqueur, parfois avec un mot de passe défini depuis.
+// l'app (App.tsx). Un compte qui se connecte par mot de passe a sa preuve. Et
+// les comptes invités avant que l'app ne tienne cette obligation
+// (`INVITATIONS_SINCE`) en sont exemptés : ils sont entrés sous l'ancien régime,
+// parfois avec une session ouverte par lien et un mot de passe défini depuis.
 //
 // Le drapeau écrit sur l'appareil reste, comme COPIE : il sert l'arrivée même
 // (fragment `type=invite`, avant toute autre lecture) et le démarrage en session
@@ -62,23 +67,16 @@ export function arrivalFromHash(hash: string): ArrivalLink {
 // serveur à chaque session validée (`syncPasswordSetup`). Il n'est pas une
 // donnée du compte : la purge de Déconnexion ne le retire pas.
 
-/** Clé de `user_metadata` : le mot de passe a été défini par son titulaire. */
-export const PASSWORD_SET_KEY = 'password_set';
-
 /**
  * Les invitations envoyées à partir de cette date portent l'obligation côté
- * serveur. Avant, l'app ne la tenait pas : ces comptes n'ont pas de marqueur.
+ * serveur. Avant, l'app ne la tenait pas.
  */
 export const INVITATIONS_SINCE = Date.parse('2026-11-23T00:00:00Z');
 
 /** Ce que l'obligation lit d'une session supabase-js. */
 export interface SetupSession {
   access_token: string;
-  user: {
-    id: string;
-    invited_at?: string | null;
-    user_metadata?: Record<string, unknown> | null;
-  };
+  user: { id: string; invited_at?: string | null };
 }
 
 /**
@@ -105,12 +103,45 @@ export function sessionAuthMethods(accessToken: string): string[] {
   }
 }
 
-/** Preuve qu'un mot de passe connu de son titulaire existe pour ce compte. */
+/**
+ * Preuve qu'un mot de passe connu de son titulaire existe : cette session a été
+ * ouverte avec lui. Lue dans le jeton signé par le serveur, pas dans une donnée
+ * que le client peut écrire.
+ */
 export function hasPasswordProof(session: SetupSession): boolean {
-  return (
-    session.user.user_metadata?.[PASSWORD_SET_KEY] === true ||
-    sessionAuthMethods(session.access_token).includes('password')
-  );
+  return sessionAuthMethods(session.access_token).includes('password');
+}
+
+/** Ce que `definePassword` demande au client d'auth (supabase-js, ou un faux en test). */
+export interface PasswordAuth {
+  updateUser(attributes: { password: string }): Promise<{ error: unknown }>;
+  signInWithPassword(credentials: {
+    email: string;
+    password: string;
+  }): Promise<{ error: unknown }>;
+}
+
+/**
+ * Définit le mot de passe du compte, puis ouvre une session AVEC lui : c'est
+ * elle qui porte la preuve (`amr: password`) et lève l'obligation de l'invité.
+ *
+ * Si l'ouverture échoue (réseau coupé entre les deux requêtes), le mot de passe
+ * est déjà enregistré : l'écran reste, et la nouvelle tentative reçoit du
+ * serveur « même mot de passe ». Ce refus-là est donc franchi, la connexion qui
+ * suit prouvant que le mot de passe saisi est bien celui du compte.
+ */
+export async function definePassword(
+  auth: PasswordAuth,
+  email: string | null | undefined,
+  password: string,
+): Promise<void> {
+  const { error } = await auth.updateUser({ password });
+  if (error && (error as { code?: unknown }).code !== 'same_password') throw error;
+  if (!email) {
+    throw new Error('Compte sans adresse e-mail : impossible de vérifier le mot de passe.');
+  }
+  const signIn = await auth.signInWithPassword({ email, password });
+  if (signIn.error) throw signIn.error;
 }
 
 /**
@@ -131,8 +162,8 @@ export function invitedWithoutPassword(session: SetupSession): boolean {
  *
  * `arrivedByInvite` : le fragment de CE chargement de page était une invitation.
  * Vrai si le serveur le dit, si le lien vient de le dire, ou si l'appareil l'a
- * retenu d'un chargement précédent ; faux, toujours, dès qu'une preuve de mot
- * de passe existe. La copie de l'appareil est réalignée au passage (écriture
+ * retenu d'un chargement précédent ; faux, toujours, dès que la session a été
+ * ouverte par mot de passe. La copie de l'appareil est réalignée au passage (écriture
  * sans garantie : stockage plein, elle manque, et le serveur fait foi).
  */
 export function syncPasswordSetup(session: SetupSession, arrivedByInvite: boolean): boolean {

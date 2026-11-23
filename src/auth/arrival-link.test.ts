@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   arrivalFromHash,
   clearPasswordSetup,
+  definePassword,
   hasPasswordProof,
   INVITATIONS_SINCE,
   invitedWithoutPassword,
   offlineStartSetupOwed,
-  PASSWORD_SET_KEY,
   passwordSetupRequired,
   requirePasswordSetup,
   sessionAuthMethods,
@@ -92,7 +92,7 @@ const AVANT = new Date(INVITATIONS_SINCE - 86_400_000).toISOString();
 
 /** La session d'un invité, telle que supabase-js la restaure. */
 function invite(over: Partial<SetupSession['user']> = {}, access_token = parLien): SetupSession {
-  return { access_token, user: { id: 'invite', invited_at: APRES, user_metadata: {}, ...over } };
+  return { access_token, user: { id: 'invite', invited_at: APRES, ...over } };
 }
 
 /** Un stockage d'appareil ; `plein` : toute écriture est refusée. */
@@ -135,10 +135,13 @@ describe('invitedWithoutPassword : ce que le serveur tient', () => {
     expect(invitedWithoutPassword(invite())).toBe(true);
   });
 
-  it('levée par le marqueur écrit avec le mot de passe', () => {
-    const session = invite({ user_metadata: { [PASSWORD_SET_KEY]: true } });
-    expect(hasPasswordProof(session)).toBe(true);
-    expect(invitedWithoutPassword(session)).toBe(false);
+  it('un marqueur écrit par le client dans user_metadata ne lève RIEN', () => {
+    // Le titulaire d'une session invitée peut écrire ses métadonnées sans définir
+    // de mot de passe (relecture du second tour) : ce n'est pas une preuve.
+    const session = invite({ user_metadata: { password_set: true } } as never);
+    expect(hasPasswordProof(session)).toBe(false);
+    expect(invitedWithoutPassword(session)).toBe(true);
+    expect(syncPasswordSetup(session, false)).toBe(true);
   });
 
   it('levée par une session ouverte par mot de passe (preuve qu’il existe)', () => {
@@ -156,11 +159,6 @@ describe('invitedWithoutPassword : ce que le serveur tient', () => {
     expect(invitedWithoutPassword(invite({ invited_at: AVANT }))).toBe(false);
   });
 
-  it('un marqueur qui n’est pas exactement vrai ne lève rien', () => {
-    expect(invitedWithoutPassword(invite({ user_metadata: { [PASSWORD_SET_KEY]: 'true' } }))).toBe(
-      true,
-    );
-  });
 });
 
 // Les trois parcours qui laissaient entrer un invité sans mot de passe tant que
@@ -207,9 +205,8 @@ describe('obligation de l’invité : les trois parcours', () => {
 
   it('levée partout par l’enregistrement du mot de passe, copie comprise', () => {
     expect(syncPasswordSetup(invite(), true)).toBe(true);
-    // Le marqueur revient dans la session après `updateUser({ password, data })`,
-    // ici ou sur un autre appareil.
-    const apres = invite({ user_metadata: { [PASSWORD_SET_KEY]: true } });
+    // `definePassword` ouvre une session avec le mot de passe : elle porte la preuve.
+    const apres = invite({}, parMotDePasse);
     expect(syncPasswordSetup(apres, false)).toBe(false);
     expect(passwordSetupRequired('invite')).toBe(false);
   });
@@ -217,7 +214,7 @@ describe('obligation de l’invité : les trois parcours', () => {
   it('aucun faux positif : compte ordinaire, session par lien de récupération', () => {
     const ordinaire: SetupSession = {
       access_token: parLien,
-      user: { id: 'habitue', user_metadata: {} },
+      user: { id: 'habitue' },
     };
     expect(syncPasswordSetup(ordinaire, false)).toBe(false);
     expect(passwordSetupRequired('habitue')).toBe(false);
@@ -227,5 +224,52 @@ describe('obligation de l’invité : les trois parcours', () => {
     requirePasswordSetup('invite');
     expect(syncPasswordSetup(invite({}, parMotDePasse), false)).toBe(false);
     expect(passwordSetupRequired('invite')).toBe(false);
+  });
+});
+
+describe('definePassword : enregistrer, puis prouver par une connexion', () => {
+  const MEME = { code: 'same_password', message: 'New password should be different from the old password.' };
+  function auth(over: { update?: unknown; signIn?: unknown } = {}) {
+    const calls: string[] = [];
+    return {
+      calls,
+      updateUser: async (attributes: { password: string }) => {
+        calls.push(`update:${Object.keys(attributes).join(',')}`);
+        return { error: over.update ?? null };
+      },
+      signInWithPassword: async (c: { email: string; password: string }) => {
+        calls.push(`signIn:${c.email}:${c.password}`);
+        return { error: over.signIn ?? null };
+      },
+    };
+  }
+
+  it('enregistre le mot de passe seul, puis ouvre une session avec lui', async () => {
+    const a = auth();
+    await definePassword(a, 'invite@example.com', 'un-mot-de-passe');
+    expect(a.calls).toEqual(['update:password', 'signIn:invite@example.com:un-mot-de-passe']);
+  });
+
+  it('enregistrement refusé : pas de connexion, l’erreur remonte', async () => {
+    const refus = { code: 'weak_password', message: 'Password should be at least 10 characters.' };
+    const a = auth({ update: refus });
+    await expect(definePassword(a, 'invite@example.com', 'court')).rejects.toBe(refus);
+    expect(a.calls).toEqual(['update:password']);
+  });
+
+  it('connexion en échec après l’enregistrement : l’erreur remonte, l’obligation reste', async () => {
+    const coupure = new TypeError('Failed to fetch');
+    const a = auth({ signIn: coupure });
+    await expect(definePassword(a, 'invite@example.com', 'un-mot-de-passe')).rejects.toBe(coupure);
+  });
+
+  it('nouvelle tentative après cette coupure : « même mot de passe » est franchi', async () => {
+    const a = auth({ update: MEME });
+    await definePassword(a, 'invite@example.com', 'un-mot-de-passe');
+    expect(a.calls).toEqual(['update:password', 'signIn:invite@example.com:un-mot-de-passe']);
+  });
+
+  it('sans adresse, rien ne peut être prouvé : erreur', async () => {
+    await expect(definePassword(auth(), null, 'un-mot-de-passe')).rejects.toThrow(/adresse/);
   });
 });
