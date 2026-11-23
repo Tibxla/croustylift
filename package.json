@@ -11,11 +11,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 16",
     "typecheck": "tsc -b",
     "test": "vitest",
     "test:run": "vitest run",
-    "contrast": "node scripts/contrast.mjs"
+    "contrast": "node scripts/contrast.mjs",
+    "size": "node scripts/bundle-size.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.2.9",
