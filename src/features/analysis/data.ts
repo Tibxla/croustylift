@@ -566,6 +566,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     exercises: { name: string } | null;
     executions: {
       performed_on: string;
+      created_at: string;
       bpm_avg: number | null;
       duration_min: number | null;
       seance_versions: {
@@ -583,7 +584,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
         supabase
           .from('performed_sets')
           .select(
-            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
+            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
           )
           .order('id')
           .limit(limit),
@@ -602,6 +603,8 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
         {
           executionId: row.execution_id,
           date: execution.performed_on,
+          // Départage deux exécutions du même jour (la plus récente en tête).
+          createdAt: execution.created_at,
           exerciseId: row.exercise_id,
           exerciseName: overriddenName(
             row.exercises?.name ?? '(exercice inconnu)',
@@ -668,6 +671,7 @@ export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
       bpmAvg: row.bpm_avg === null ? null : Number(row.bpm_avg),
       durationMin: row.duration_min === null ? null : Number(row.duration_min),
       hasSets: (row.performed_sets?.[0]?.count ?? 0) > 0,
+      createdAt: row.created_at,
     })),
   );
 }

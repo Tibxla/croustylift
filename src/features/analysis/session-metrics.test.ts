@@ -82,4 +82,12 @@ describe('buildSessionMetrics', () => {
   it('renvoie [] pour une entrée vide', () => {
     expect(buildSessionMetrics([])).toEqual([])
   })
+
+  it('deux exécutions le même jour : dans l’ordre de création, quel que soit l’ordre d’arrivée', () => {
+    const morning = exec({ durationMin: 45, createdAt: '2026-01-08T07:00:00+00:00' })
+    const evening = exec({ durationMin: 70, createdAt: '2026-01-08T18:00:00+00:00' })
+
+    expect(buildSessionMetrics([evening, morning]).map((p) => p.durationMin)).toEqual([45, 70])
+    expect(buildSessionMetrics([morning, evening]).map((p) => p.durationMin)).toEqual([45, 70])
+  })
 })
