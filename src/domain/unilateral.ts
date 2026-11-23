@@ -10,12 +10,10 @@
 // unilatérale est donc l'e1RM le PLUS BAS des deux côtés sur la 1ʳᵉ série. Logique
 // pure (aucun Supabase), réutilisée par buildPrimaryCurve.
 //
-// LIMITE CONNUE :
-//   - Log brut (issue #27/#32) : les séries unilatérales s'y affichent en deux
-//     lignes au même order, sans libellé de côté (RawLogSet n'a pas `side`).
-// L'édition d'une séance passée (issue #38) gère DÉSORMAIS le côté : `side` est
-// porté de bout en bout (chargement -> diff -> outbox -> DB) et `reorderSets`
-// recompacte par SÉRIE LOGIQUE pour garder G/D appariés (cf. past-session-edit).
+// Le côté est porté de bout en bout : le journal libelle chaque ligne G/D
+// (`RawLogSet.side`), et l'édition d'une séance passée (issue #38) le conserve
+// (chargement -> diff -> outbox -> DB), `reorderSets` recompactant par SÉRIE
+// LOGIQUE pour garder G/D appariés (cf. past-session-edit).
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet, Side } from './types'
 
@@ -64,7 +62,7 @@ export function pairSidesByOrder(sets: PerformedSet[]): SidePair[] {
  *   - `countLogicalSetsDone` (set-count.ts) : orders distincts, un côté seul = 1
  *     (série « entamée ») — pour le décompte logique d'analyse ;
  *   - `countPerformedSets` (set-count.ts) : pondéré par reps, G + D = 2 au total
- *     — pour le volume d'analyse ;
+ *     — pour le décompte de séries de la séance (Clôture et Journal) ;
  *   - ici : fraction de série RÉELLEMENT faite, un côté = 0,5 — pour le compteur
  *     de progression de la vue capture, qui se lit « faites / prévu ».
  */
