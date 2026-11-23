@@ -100,11 +100,6 @@ perte), finition.
 
 ### Notes datées
 
-- **Réponse tardive qui réaffiche une note effacée** (mineure). Si un autre onglet
-  acquitte l'effacement pendant que la réponse de la base, qui porte encore la note,
-  est en route, la Capture l'adopte de nouveau. Piste : passer au rapprochement les
-  écritures de notes relevées avant et après la lecture, comme pour les séries
-  (`reconcileDatedNotes`).
 - **Note adoptée visible à la réouverture seulement** (finition). Une note adoptée par
   une réponse tardive pendant que le panneau de l'exo est ouvert n'apparaît dans le
   champ qu'à sa réouverture. Sans perte : une saisie faite entre-temps est écrite sur la

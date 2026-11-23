@@ -458,9 +458,16 @@ export function CaptureScreen() {
             knownAtDeparture,
             // Les notes datées aussi : une note écrite ailleurs (autre appareil,
             // ancien client) que l'état local ignore est adoptée ; une note
-            // locale ou en attente d'envoi n'est jamais touchée.
+            // locale ou en attente d'envoi n'est jamais touchée. Les écritures
+            // de notes se relèvent comme les séries, avant et après la lecture
+            // (`lateToday.pendingNoteKeys`) puis à l'arrivée : un effacement
+            // acquitté pendant le trajet a vidé la file, la réponse, partie
+            // avant, porte encore la note.
             datedNotes: lateToday.datedNotes,
-            pendingNoteKeys: pendingDatedNoteKeys(queue, restored.executionId),
+            pendingNoteKeys: [
+              ...lateToday.pendingNoteKeys,
+              ...pendingDatedNoteKeys(queue, restored.executionId),
+            ],
           });
         });
       }
