@@ -26,9 +26,9 @@ import {
   describeIncident,
   detectViewportAnomaly,
   isIosStandalone,
-  isRepairable,
   nextReference,
   parseIncidentLog,
+  shouldAttemptRepair,
   type ViewportIncident,
   type ViewportReference,
   type ViewportSample,
@@ -46,6 +46,8 @@ let reference: ViewportReference | null = null
 let active = false
 let timer: number | undefined
 let lastRepairAt = 0
+/** Relevé sur lequel la dernière remesure a échoué (voir `shouldAttemptRepair`). */
+let failedOn: ViewportSample | null = null
 let lastCheck = 'aucun contrôle'
 
 interface DiagState {
@@ -143,12 +145,13 @@ function check(trigger: string): void {
   const at = new Date().toISOString()
   lastCheck = `${at} ${trigger} : ${anomaly ?? 'rien'}`
   if (anomaly === null) {
+    failedOn = null
     if (diag.open) refreshDiag()
     return
   }
   const usedReference = reference
   const now = Date.now()
-  if (!isRepairable(anomaly) || now - lastRepairAt < REPAIR_COOLDOWN_MS) {
+  if (!shouldAttemptRepair(anomaly, before, failedOn) || now - lastRepairAt < REPAIR_COOLDOWN_MS) {
     logIncident({ at, trigger, anomaly, reference: usedReference, before, after: null, repaired: null })
     if (diag.open) refreshDiag()
     return
@@ -161,6 +164,7 @@ function check(trigger: string): void {
       const after = sampleViewport()
       reference = nextReference(reference, after)
       const repaired = detectViewportAnomaly(after, reference, isFieldFocused()) === null
+      failedOn = repaired ? null : after
       logIncident({ at, trigger, anomaly, reference: usedReference, before, after, repaired })
       if (diag.open) refreshDiag()
     }),

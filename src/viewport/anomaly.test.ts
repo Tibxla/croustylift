@@ -5,6 +5,8 @@ import {
   detectViewportAnomaly,
   isIosStandalone,
   isRepairable,
+  sameReading,
+  shouldAttemptRepair,
   nextReference,
   parseIncidentLog,
   type ViewportIncident,
@@ -82,6 +84,35 @@ describe('detectViewportAnomaly', () => {
     const ancien = { ...SAIN, visualHeight: null, visualOffsetTop: null, visualScale: null }
     expect(detectViewportAnomaly(ancien, REF, false)).toBeNull()
     expect(detectViewportAnomaly({ ...ancien, innerHeight: 873 }, REF, false)).toBe('retrecie')
+  })
+})
+
+describe('shouldAttemptRepair', () => {
+  const retrecie = { ...SAIN, innerHeight: 873, visualHeight: 873 }
+
+  it('première anomalie réparable : on tente', () => {
+    expect(shouldAttemptRepair('retrecie', retrecie, null)).toBe(true)
+  })
+
+  it('jamais pour un zoom ni sans anomalie', () => {
+    expect(shouldAttemptRepair('zoomee', retrecie, null)).toBe(false)
+    expect(shouldAttemptRepair(null, SAIN, null)).toBe(false)
+  })
+
+  it("la remesure a déjà échoué sur ce relevé : on ne la rejoue pas", () => {
+    expect(shouldAttemptRepair('retrecie', retrecie, retrecie)).toBe(false)
+    expect(shouldAttemptRepair('retrecie', { ...retrecie, innerHeight: 874 }, retrecie)).toBe(false)
+  })
+
+  it('le relevé a changé depuis l’échec : on retente', () => {
+    expect(shouldAttemptRepair('retrecie', { ...retrecie, innerHeight: 850, visualHeight: 850 }, retrecie)).toBe(true)
+    expect(shouldAttemptRepair('decalee', { ...SAIN, visualOffsetTop: 59 }, retrecie)).toBe(true)
+  })
+
+  it('sameReading compare à la tolérance près, et distingue un visualViewport absent', () => {
+    expect(sameReading(SAIN, { ...SAIN, visualHeight: 930 })).toBe(true)
+    expect(sameReading(SAIN, { ...SAIN, visualHeight: null })).toBe(false)
+    expect(sameReading(SAIN, { ...SAIN, innerWidth: 932 })).toBe(false)
   })
 })
 

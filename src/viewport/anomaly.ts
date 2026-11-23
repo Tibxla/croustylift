@@ -93,6 +93,35 @@ export function isRepairable(anomaly: ViewportAnomaly | null): boolean {
   return anomaly !== null && anomaly !== 'zoomee'
 }
 
+/** Deux relevés décrivent-ils la même fenêtre (à la tolérance près) ? */
+export function sameReading(a: ViewportSample, b: ViewportSample): boolean {
+  const close = (x: number | null, y: number | null) =>
+    x === null || y === null ? x === y : Math.abs(x - y) <= VIEWPORT_TOLERANCE_PX
+  return (
+    a.innerWidth === b.innerWidth &&
+    close(a.innerHeight, b.innerHeight) &&
+    close(a.visualHeight, b.visualHeight) &&
+    close(a.visualOffsetTop, b.visualOffsetTop)
+  )
+}
+
+/**
+ * Faut-il tenter une remesure pour ce relevé anormal ? Non si la dernière
+ * tentative a échoué sur le MÊME relevé : la manœuvre masque puis réaffiche
+ * l'app (animations rejouées, défilements remis en place), et si elle ne
+ * corrige pas la fenêtre sur cet appareil, la rejouer à chaque fermeture du
+ * clavier ne ferait que clignoter. `failedOn` est remis à null dès qu'un
+ * contrôle trouve la fenêtre saine, ou que le relevé change.
+ */
+export function shouldAttemptRepair(
+  anomaly: ViewportAnomaly | null,
+  sample: ViewportSample,
+  failedOn: ViewportSample | null,
+): boolean {
+  if (!isRepairable(anomaly)) return false
+  return failedOn === null || !sameReading(sample, failedOn)
+}
+
 export interface PlatformInfo {
   userAgent: string
   platform: string
