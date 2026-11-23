@@ -45,6 +45,34 @@ beforeEach(async () => {
 });
 
 describe('recognizeAccount', () => {
+  const PREFS_A = 'croustylift:prefs:user-a:hidden-curves:exo-1';
+
+  it('un autre compte arrive : les préférences d’affichage de l’ancien sont purgées', () => {
+    localStorage.setItem(PREFS_A, JSON.stringify(['e1rm']));
+
+    recognizeAccount(compteB);
+
+    expect(localStorage.getItem(PREFS_A)).toBeNull();
+  });
+
+  it('les préférences de l’ancien partent même si ses écritures retenues gardent le reste', () => {
+    localStorage.setItem(PREFS_A, JSON.stringify(['e1rm']));
+    enqueue({ type: 'deleteSet', id: 'serie-1' });
+
+    recognizeAccount(compteB);
+
+    expect(localStorage.getItem(PREFS_A)).toBeNull();
+    expect(localStorage.getItem(CAPTURE_A)).not.toBeNull();
+  });
+
+  it('le même compte revient : ses préférences restent', () => {
+    localStorage.setItem(PREFS_A, JSON.stringify(['e1rm']));
+
+    recognizeAccount({ ...compteA });
+
+    expect(localStorage.getItem(PREFS_A)).not.toBeNull();
+  });
+
   it('un autre compte arrive, file vide : copies de lecture et capture de l’ancien purgées', () => {
     recognizeAccount(compteB);
 

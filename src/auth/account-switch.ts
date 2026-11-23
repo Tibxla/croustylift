@@ -14,21 +14,28 @@
 // son id, ne lui sont pas servies.
 import { loadLocalAccount, saveLocalAccount, type LocalAccount } from '../lib/local-account';
 import { clearReadCache } from '../lib/read-cache';
+import { clearLocalPrefs } from '../lib/local-prefs';
 import { heldCount } from '../features/capture/outbox';
 import { clearCaptureState } from '../features/capture/state';
 
 /**
  * Pose (ou ré-affirme) le marqueur pour `next`. Si c'est un compte DIFFÉRENT de
  * celui reconnu jusque-là et que ce dernier n'a plus d'écriture retenue, purge
- * d'abord ses copies de lecture et son état de capture. `clearReadCache` vide
+ * d'abord ses copies de lecture et son état de capture ; ses préférences
+ * d'affichage partent dans tous les cas. `clearReadCache` vide
  * aussi le registre de revalidation et neutralise les lectures encore en vol :
  * aucune ne ressèmera une copie sous l'ancien compte.
  */
 export function recognizeAccount(next: LocalAccount): void {
   const previous = loadLocalAccount();
-  if (previous && previous.userId !== next.userId && heldCount() === 0) {
-    clearCaptureState();
-    clearReadCache();
+  if (previous && previous.userId !== next.userId) {
+    // Préférences d'affichage du précédent : pas des saisies, rien à retenir.
+    // Elles partent toujours, même quand ses écritures retenues gardent le reste.
+    clearLocalPrefs();
+    if (heldCount() === 0) {
+      clearCaptureState();
+      clearReadCache();
+    }
   }
   saveLocalAccount(next);
 }
