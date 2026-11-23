@@ -46,6 +46,7 @@ import {
   rowsToPlannedExercises,
   moveRow,
 } from './prescription-edit';
+import { hasPrescriptionChanges, setLeaveGuard } from './seance-dirty';
 import { countPlannedSets, type CountRange } from '../../domain/set-count';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
@@ -231,6 +232,14 @@ export function SeanceEditorView({
   makeRowId,
 }: SeanceEditorViewProps) {
   const [rows, setRows] = useState<EditorRow[]>(initialRows);
+  // Dernières lignes ENREGISTRÉES : la base de comparaison du drapeau « modifié ».
+  // Elle avance à chaque enregistrement réussi, sinon le retour différé qui suit
+  // demanderait de confirmer la perte d'une saisie déjà enregistrée.
+  const [savedRows, setSavedRows] = useState<EditorRow[]>(initialRows);
+  const dirty = hasPrescriptionChanges(savedRows, rows);
+  // Navigation en attente de confirmation (retour ou changement d'onglet), tant
+  // que des modifications ne sont pas enregistrées.
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   // Notes d'instructions par exo (issue #26), éditées et sauvegardées à part du
   // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même
   // exo (exercise_notes est unique par exo).
@@ -271,6 +280,19 @@ export function SeanceEditorView({
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
     };
   }, []);
+
+  // Garde de sortie (cf. seance-dirty) : tant que l'éditeur est modifié, toute
+  // navigation qui le ferait disparaître passe par la confirmation ci-dessous.
+  useEffect(() => {
+    if (!dirty) return;
+    setLeaveGuard((proceed) => setPendingLeave(() => proceed));
+    return () => setLeaveGuard(null);
+  }, [dirty]);
+
+  function requestBack() {
+    if (dirty) setPendingLeave(() => onBack);
+    else onBack();
+  }
 
   function updateRow(rowId: string, key: FieldKey, next: FieldValue) {
     setRows((prev) =>
@@ -314,6 +336,7 @@ export function SeanceEditorView({
     setSave({ busy: true, error: null, done: false });
     try {
       await onSave(rows);
+      setSavedRows(rows);
       setSave({ busy: false, error: null, done: true });
       // Laisse la confirmation visible un instant, puis retour.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
@@ -342,7 +365,7 @@ export function SeanceEditorView({
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-40 pt-3">
-      <BackButton label="Retour aux séances" onClick={onBack} />
+      <BackButton label="Retour aux séances" onClick={requestBack} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         {seanceName}
@@ -418,14 +441,16 @@ export function SeanceEditorView({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={empty || save.busy}
+                disabled={empty || save.busy || !dirty}
                 className="btn btn-primary h-12 flex-1 rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
               >
                 {save.busy
                   ? 'Enregistrement…'
                   : empty
                     ? 'Ajoute au moins un exercice'
-                    : 'Enregistrer'}
+                    : dirty
+                      ? 'Enregistrer'
+                      : 'Aucune modification'}
               </button>
             )}
           </div>
@@ -433,6 +458,38 @@ export function SeanceEditorView({
             <p className="readout mt-2 break-words text-xs text-warn" role="alert">
               {save.error}
             </p>
+          )}
+          {/* Confirmation INLINE avant de perdre une saisie (jamais window.confirm). */}
+          {pendingLeave && (
+            <div className="mt-2 rounded-xl bg-surface-2/60 p-3" role="alertdialog" aria-label="Modifications non enregistrées">
+              <p className="text-sm text-ink">Quitter sans enregistrer ?</p>
+              <p className="mt-0.5 text-xs text-ink-muted">
+                Tes modifications de cette séance seront perdues.
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingLeave(null)}
+                  className="btn btn-secondary h-11 flex-1 rounded-xl px-4 text-sm font-medium"
+                >
+                  Continuer l&apos;édition
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const leave = pendingLeave;
+                    setPendingLeave(null);
+                    // La garde tombe avec l'écran ; on la retire tout de suite
+                    // pour que la sortie confirmée ne repasse pas par elle.
+                    setLeaveGuard(null);
+                    leave();
+                  }}
+                  className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium text-warn"
+                >
+                  Quitter
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
