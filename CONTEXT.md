@@ -15,8 +15,12 @@ L'état « reconnu sur cet appareil » qui suit une Connexion et persiste jusqu'
 _Avoid_: Session (ambigu avec « séance » en salle), token
 
 **Déconnexion**:
-L'acte volontaire de retirer la Session locale de l'appareil, qui purge les données locales du compte. Seule façon de perdre la reconnaissance : une panne de réseau ou un jeton périmé n'y suffisent jamais. Refusée tant que des écritures locales attendent la synchronisation — sauf forçage explicite qui assume la perte.
+L'acte volontaire de retirer la Session locale de l'appareil, qui purge les données locales du compte. Seule façon de perdre la reconnaissance : une panne de réseau ou un jeton périmé n'y suffisent jamais. Refusée tant que l'appareil retient des écritures, en attente de synchronisation ou refusées par le serveur, sauf forçage explicite qui assume la perte.
 _Avoid_: Logout, expiration (une session locale n'expire pas d'elle-même)
+
+**Saisie refusée**:
+Une écriture (série, note, clôture, suppression) que le serveur a rejetée pour de bon : la renvoyer telle quelle échouerait encore. Elle n'est ni en base ni en attente. L'appareil la garde de côté, la bannière de synchro annonce « n saisie(s) refusée(s) par le serveur » au lieu de « Synchronisé », et les saisies suivantes continuent de partir. Une saisie dont l'envoi a échoué faute de réseau n'est pas refusée : elle attend. Les saisies refusées comptent parmi ce qui bloque la Déconnexion.
+_Avoid_: Erreur de synchro (trop large), saisie perdue (elle est conservée) ; « quarantaine » est le nom technique du même état (ADR 0018), pas un mot d'interface
 
 ### Exercices
 
@@ -113,5 +117,9 @@ Note libre attachée à une exécution (un exo un jour donné) : contexte d'une 
 _Avoid_: Commentaire, log
 
 **Décompte de séries**:
-Nombre de séries d'une séance, au total et par muscle principal, pondéré par les reps : une série compte `min(reps, 5) / 5` (pleine à 5 reps ou plus, partielle en deçà). Calculé sur le prévu (prescriptions) comme sur le réel (séries loggées). Une série unilatérale compte 2 au total (les deux côtés) et le côté faible par muscle. Sert à comparer des configurations (« triceps 2 séries vs 4 »), jamais à mesurer un volume.
+Nombre de séries d'une séance, au total et par muscle principal, pondéré par les reps : une série compte `min(reps, 5) / 5` (pleine à 5 reps ou plus, partielle en deçà). Calculé sur le prévu (prescriptions) comme sur le réel (séries loggées). Une série unilatérale compte 2 au total (les deux côtés) et le côté faible par muscle. Sert à comparer des configurations (« triceps 2 séries vs 4 »), jamais à mesurer un volume. À ne pas confondre avec le nombre de séries d'une ligne d'exercice : la ligne affiche ses séries logiques, entières et sans pondération, et une paire gauche/droite y vaut 1. « 3 séries » sur un exo unilatéral pèsent donc jusqu'à 6 au total de la séance et 3 par muscle.
 _Avoid_: Volume, tonnage, charge totale
+
+**kg soulevés**:
+La somme poids × reps de toutes les séries de travail d'une exécution, affichée au récap de la séance dans le journal. Sur un exo unilatéral, les deux côtés comptent, chacun pour son poids et ses reps (décision du 2026-11-23) : le bras gauche a soulevé sa charge, le droit aussi. Sans pondération ni plafond de reps, et jamais ventilés par muscle : c'est une mesure de la séance entière, distincte du Décompte de séries, qui compte des séries et reste le seul outil pour comparer des configurations.
+_Avoid_: Volume, tonnage, charge totale (trop vagues, et « volume » appelle une lecture par muscle que le produit refuse)
