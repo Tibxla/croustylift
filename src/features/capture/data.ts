@@ -850,6 +850,16 @@ export interface TodayExecution {
 export async function loadTodayExecution(
   seanceVersionId: string,
   date: string,
+  /**
+   * L'exécution que l'appareil tient DÉJÀ en cours (état de capture restauré), ou
+   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : elle garde
+   * la version de séance sous laquelle elle est née (`upsertExecution` est une
+   * insertion seule), donc une recherche par version courante ne la retrouverait
+   * plus après une retouche du plan en pleine séance, et ses séries écrites
+   * ailleurs (journal) manqueraient à la reprise. Sans état local, on cherche
+   * l'exécution ouverte du jour pour cette version.
+   */
+  localExecutionId: string | null = null,
 ): Promise<TodayExecution | null> {
   // Tolérant SANS copie locale (ADR 0012) : hors-ligne, `null` suffit — le
   // réalisé LOCAL du jour (state.ts, fusionné par mergeProgress, qui PRIME pour
@@ -870,7 +880,7 @@ export async function loadTodayExecution(
   // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
   const pendingBefore = readQueue();
   try {
-    const today = await fetchTodayExecution(seanceVersionId, date);
+    const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
     if (today === null) return null;
     const retired =
       isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
@@ -902,12 +912,17 @@ export function isExecutionRetiredInQueue(
 async function fetchTodayExecution(
   seanceVersionId: string,
   date: string,
+  localExecutionId: string | null,
 ): Promise<TodayExecution | null> {
-  const { data: exec, error: execErr } = await supabase
-    .from('executions')
-    .select('id, started_at, created_at')
-    .eq('seance_version_id', seanceVersionId)
-    .eq('performed_on', date)
+  const base = supabase.from('executions').select('id, started_at, created_at');
+  // L'exécution tenue par l'appareil se relit par son id, sans filtre de version
+  // (cf. loadTodayExecution) ; sinon, l'exécution du jour de la version courante.
+  // Les gardes « en cours » ci-dessous valent pour les deux lectures.
+  const scoped =
+    localExecutionId !== null
+      ? base.eq('id', localExecutionId)
+      : base.eq('seance_version_id', seanceVersionId).eq('performed_on', date);
+  const { data: exec, error: execErr } = await scoped
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
     // `closed_at` en base (ADR 0009), donc une séance déjà RANGÉE ce jour-là est
     // exclue ici → on repart vierge, sans la ressusciter ni y rattacher un nouveau
