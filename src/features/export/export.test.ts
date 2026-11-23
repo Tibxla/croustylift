@@ -5,16 +5,21 @@ import {
   buildExport,
   collectUserData,
   serializeExport,
+  withoutRowsNewerThanTheirParent,
   type CollectedData,
   type ExportClient,
+  type ExportPage,
   type Row,
 } from './export';
+import { setSessionUserReader } from '../../lib/session-identity';
 
 // --- Mock minimal du client Supabase ----------------------------------------
 //
-// `collectUserData` ne dépend QUE de `client.from(table).select('*')`. On mocke
-// donc juste cette chaîne : un faux client renvoie, par table, les lignes voulues
-// (ou une erreur, pour vérifier la remontée). Aucun import de `lib/supabase`.
+// `collectUserData` ne dépend QUE de `client.from(table).select('*').order('id')
+// [.gt('id', curseur)].limit(n)`. On mocke donc juste cette chaîne : un faux client renvoie,
+// par table, la fenêtre demandée des lignes voulues, PLAFONNÉE comme PostgREST
+// (`maxRows`, 1000 par défaut), ou une erreur pour vérifier la remontée. Aucun
+// import de `lib/supabase`.
 
 /** Données collectées toutes vides (chaque table -> []), pour les cas « vide ». */
 function emptyCollected(): CollectedData {
@@ -24,21 +29,61 @@ function emptyCollected(): CollectedData {
 
 function fakeClient(
   byTable: Partial<Record<string, { data?: unknown[]; error?: { message: string } }>>,
+  maxRows = 1000,
 ): ExportClient {
   return {
     from(table: string) {
       return {
         select(_columns: string) {
-          const result = byTable[table] ?? { data: [] };
-          return Promise.resolve({
-            data: result.data ?? null,
-            error: result.error ?? null,
-          });
+          return {
+            order(_column: string) {
+              let after: string | null = null;
+              const page: ExportPage = {
+                gt(_col, value) {
+                  after = value;
+                  return page;
+                },
+                limit(count) {
+                  const result = byTable[table] ?? { data: [] };
+                  const rows = (result.data ?? []) as { id: string }[];
+                  return Promise.resolve({
+                    data: result.data
+                      ? [...rows]
+                          .sort((a, b) => (a.id < b.id ? -1 : 1))
+                          .filter((row) => after === null || row.id > after)
+                          .slice(0, Math.min(count, maxRows))
+                      : null,
+                    error: result.error ?? null,
+                  });
+                },
+              };
+              return page;
+            },
+          };
         },
       };
     },
   };
 }
+
+describe('collectUserData : garde de compte', () => {
+  it('compte changé pendant l’export : la collecte échoue, pas de sauvegarde mêlée', async () => {
+    let user = 'compte-A';
+    setSessionUserReader(async () => user);
+    const sets = Array.from({ length: 5 }, (_, i) => ({ id: `ps-${i}` }));
+    const client = fakeClient({ performed_sets: { data: sets } }, 2);
+    const original = client.from.bind(client);
+    client.from = (table: string) => {
+      if (table === 'dated_notes') user = 'compte-B';
+      return original(table);
+    };
+    try {
+      await expect(collectUserData(client)).rejects.toThrow(/compte connecté a changé/);
+    } finally {
+      setSessionUserReader(null);
+    }
+  });
+});
 
 describe('EXPORT_TABLES', () => {
   it('couvre toutes les tables scopées à l utilisateur', () => {
@@ -84,6 +129,16 @@ describe('collectUserData', () => {
     expect(collected.routines).toEqual([{ id: 'r1', name: 'Ma routine' }]);
     expect(collected.seances).toEqual([{ id: 's1', name: 'Upper A' }]);
     expect(collected.performed_sets).toEqual([{ id: 'ps1', weight_kg: 80 }]);
+  });
+
+  it('au-delà du plafond de 1000 lignes : la table est exportée EN ENTIER', async () => {
+    const sets = Array.from({ length: 2400 }, (_, i) => ({
+      id: `ps-${String(i).padStart(4, '0')}`,
+      weight_kg: 80,
+    }));
+    const collected = await collectUserData(fakeClient({ performed_sets: { data: sets } }));
+    expect(collected.performed_sets).toHaveLength(2400);
+    expect(collected.performed_sets).toEqual(sets);
   });
 
   it('cas vide : chaque table -> tableau vide', async () => {
@@ -185,3 +240,45 @@ describe('serializeExport', () => {
     expect(JSON.parse(json)).toEqual(out);
   });
 });
+
+describe('withoutRowsNewerThanTheirParent', () => {
+  const empty = () =>
+    Object.fromEntries(EXPORT_TABLES.map((t) => [t, [] as Row[]])) as CollectedData;
+
+  it('série écrite pendant l’export, exécution absente : écartée, la sauvegarde reste restaurable', () => {
+    const data = empty();
+    data.executions = [{ id: 'e1', seance_version_id: null }];
+    data.performed_sets = [
+      { id: 's1', execution_id: 'e1' },
+      { id: 's2', execution_id: 'e-arrivee-pendant-export' },
+    ];
+    data.dated_notes = [{ id: 'n1', execution_id: 'e-arrivee-pendant-export' }];
+    const out = withoutRowsNewerThanTheirParent(data);
+    expect(out.performed_sets.map((r) => r.id)).toEqual(['s1']);
+    expect(out.dated_notes).toEqual([]);
+  });
+
+  it('en cascade : une version absente écarte ses exécutions, puis leurs séries', () => {
+    const data = empty();
+    data.seance_versions = [];
+    data.executions = [
+      { id: 'e1', seance_version_id: 'v-nouvelle' },
+      { id: 'e2', seance_version_id: null },
+    ];
+    data.performed_sets = [
+      { id: 's1', execution_id: 'e1' },
+      { id: 's2', execution_id: 'e2' },
+    ];
+    const out = withoutRowsNewerThanTheirParent(data);
+    expect(out.executions.map((r) => r.id)).toEqual(['e2']);
+    expect(out.performed_sets.map((r) => r.id)).toEqual(['s2']);
+  });
+
+  it('sauvegarde cohérente : rien n’est retiré', () => {
+    const data = empty();
+    data.routines = [{ id: 'r1' }];
+    data.seances = [{ id: 'se1', routine_id: 'r1' }];
+    expect(withoutRowsNewerThanTheirParent(data)).toEqual(data);
+  });
+});
+

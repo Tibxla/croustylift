@@ -21,6 +21,7 @@
 // d'ÉDITION (authoring, journal), elles, lisent toujours le réseau en direct.
 import { cachedRead, stableKeyOf, tolerantRead } from '../../lib/read-cache';
 import { supabase } from '../../lib/supabase';
+import { afterId, fetchAllRows } from '../../lib/fetch-all';
 import type { Database } from '../../lib/database.types';
 import type { ExerciseExecution, PerformedSet, Side } from '../../domain/types';
 import { lastReference } from '../../domain/reference';
@@ -181,12 +182,21 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
  */
 export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
   return cachedRead(`seance-version-ids:${seanceId}`, async () => {
-    const { data, error } = await supabase
-      .from('seance_versions')
-      .select('id')
-      .eq('seance_id', seanceId);
-    if (error) throw error;
-    return (data ?? []).map((row) => row.id);
+    // Append-only (une version par édition) : lu en entier, page par page (cf.
+    // lib/fetch-all) — une version manquante sortirait ses exécutions du
+    // périmètre de la Référence.
+    const rows = await fetchAllRows<{ id: string }>((after, limit) =>
+      afterId(
+        supabase
+          .from('seance_versions')
+          .select('id')
+          .eq('seance_id', seanceId)
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    );
+    return rows.map((row) => row.id);
   });
 }
 
@@ -575,23 +585,39 @@ async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetW
   // copie locale hors-ligne. Elle peut être en retard d'une exécution faite
   // ailleurs (cas résiduel ADR 0003) ; la revalidation post-flush (App) la met à
   // jour dès que la séance du jour est remontée.
-  return cachedRead(`exo-execs:${exerciseId}`, async () => {
-    const { data, error } = await supabase
-      .from('performed_sets')
-      .select(
-        'id, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
-      )
-      .eq('exercise_id', exerciseId)
-      // Ordre explicite : sans lui, l'ordre des lignes n'est pas garanti. Le
-      // domaine (`lastReference`) départage à `performed_on` égal par `created_at`
-      // (reprise / 2 séances le même jour) — un tri déterministe ici rend ce
-      // tie-break stable entre deux chargements.
-      .order('performed_on', { referencedTable: 'executions' })
-      .order('created_at', { referencedTable: 'executions' });
-    if (error) throw error;
+  return cachedRead(exerciseRowsKey(exerciseId), () => fetchExerciseRows(exerciseId));
+}
 
-    return (data ?? []) as unknown as PerformedSetWithExecutionRow[];
-  });
+/** Clé de la copie locale de l'historique d'un exo. */
+const EXERCISE_ROWS_PREFIX = 'exo-execs:';
+function exerciseRowsKey(exerciseId: string): string {
+  return `${EXERCISE_ROWS_PREFIX}${exerciseId}`;
+}
+
+/** Lecture Supabase brute de l'historique d'un exo (cf. loadExerciseExecutions). */
+function fetchExerciseRows(exerciseId: string): Promise<PerformedSetWithExecutionRow[]> {
+  // TOUT l'historique de l'exo, donc lecture paginée (cf. lib/fetch-all) : un
+  // exo très pratiqué passe le plafond de 1000 lignes de PostgREST, et la
+  // Référence comme les records se dérivaient alors d'un historique tronqué.
+  return fetchAllRows<PerformedSetWithExecutionRow & { id: string }>((after, limit) =>
+    afterId(
+      supabase
+        .from('performed_sets')
+        .select(
+          'id, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_version_id )',
+        )
+        .eq('exercise_id', exerciseId)
+        // Tri par `id` seul, exigé par la pagination au curseur. L'ordre
+        // chronologique des EXÉCUTIONS (performed_on puis created_at de
+        // l'exécution, dont `lastReference` a besoin pour départager deux séances
+        // du même jour) est posé côté client par `applyPendingSets`, par où
+        // passent toutes les lectures ; l'ordre des séries DANS une exécution, par
+        // leur `set_order` (le domaine trie, il ne se fie pas à l'ordre des lignes).
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
 }
 
 // --- Dérivées d'historique (Référence scopée séance + records all-time) -------

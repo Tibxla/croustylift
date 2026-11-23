@@ -8,8 +8,10 @@ import {
   getDatedNote,
   statusOf,
   initialState,
+  isExecutionStarted,
   isResumable,
   LAUNCH_EXPIRY_MS,
+  shouldReanchorLaunch,
   clearCaptureState,
   hydratedState,
   mergeProgress,
@@ -916,6 +918,79 @@ describe('isResumable (ADR 0011 : expiration d’un lancement)', () => {
     const expired = mkState({ startedAt: NOW - (LAUNCH_EXPIRY_MS + 1) });
     expect(isResumable(recent, NOW)).toBe(true);
     expect(isResumable(expired, NOW)).toBe(false);
+  });
+});
+
+// --- Chrono : jamais réancré une fois l'exécution née (ADR 0011) -------------
+//
+// Bug : le réancrage testait une ref de MONTAGE (« aucune op d'exécution enfilée
+// depuis ce montage »), remise à zéro à chaque changement d'onglet. Sur une
+// séance de plus d'1 h, la série suivant un passage par l'Analyse réancrait
+// `startedAt` et l'upsert réécrivait `started_at` en base : 1 h 30 de séance
+// devenaient 25 min.
+
+describe('isExecutionStarted (l’exécution existe déjà, en base ou en file)', () => {
+  const fresh = mkState({ executionId: 'exec-1' });
+
+  it('lancement sans rien : pas encore née', () => {
+    expect(isExecutionStarted(fresh, null, [])).toBe(false);
+  });
+
+  it('une série dans l’état restauré : née', () => {
+    const withSet = captureReducer(fresh, {
+      type: 'log-set',
+      exerciseId: 'bench-press',
+      setId: 's1',
+      set: set1,
+    });
+    expect(isExecutionStarted(withSet, null, [])).toBe(true);
+  });
+
+  it('une note datée dans l’état restauré : née (la note a enfilé l’exécution)', () => {
+    const withNote = captureReducer(fresh, {
+      type: 'set-dated-note',
+      exerciseId: 'bench-press',
+      noteId: 'n1',
+      body: 'épaule sensible',
+    });
+    expect(isExecutionStarted(withNote, null, [])).toBe(true);
+  });
+
+  it('exécution du jour réhydratée de la base sous le même id : née', () => {
+    expect(isExecutionStarted(fresh, 'exec-1', [])).toBe(true);
+  });
+
+  it('son upsertExecution attend encore en outbox : née', () => {
+    expect(isExecutionStarted(fresh, null, [{ type: 'upsertExecution', id: 'exec-1' }])).toBe(true);
+  });
+
+  it('une AUTRE exécution en base ou en file ne compte pas', () => {
+    expect(isExecutionStarted(fresh, 'exec-autre', [])).toBe(false);
+    expect(
+      isExecutionStarted(fresh, null, [
+        { type: 'upsertExecution', id: 'exec-autre' },
+        // Même id mais autre type d'op (une suppression) : pas une naissance.
+        { type: 'deleteExecution', id: 'exec-1' },
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe('shouldReanchorLaunch', () => {
+  const NOW = 2_000_000_000_000;
+  const launchedLongAgo = mkState({ startedAt: NOW - (LAUNCH_EXPIRY_MS + 5 * 60_000) });
+
+  it('lancement expiré SANS exécution : on réancre sur le premier set (ADR 0011)', () => {
+    expect(shouldReanchorLaunch(launchedLongAgo, false, NOW)).toBe(true);
+  });
+
+  it('séance de plus d’1 h déjà entamée, écran remonté : JAMAIS réancrée', () => {
+    expect(shouldReanchorLaunch(launchedLongAgo, true, NOW)).toBe(false);
+  });
+
+  it('lancement récent : pas de réancrage', () => {
+    const recent = mkState({ startedAt: NOW - (LAUNCH_EXPIRY_MS - 1) });
+    expect(shouldReanchorLaunch(recent, false, NOW)).toBe(false);
   });
 });
 

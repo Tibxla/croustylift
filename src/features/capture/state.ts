@@ -220,6 +220,47 @@ export function isResumable(state: CaptureState, now = Date.now()): boolean {
 }
 
 /**
+ * L'exécution de cet état existe-t-elle DÉJÀ — en base, ou enfilée vers elle ?
+ * Vrai si l'état porte une série ou une note datée (toutes deux n'ont pu naître
+ * qu'en enfilant l'exécution), si l'exécution du jour a été réhydratée de la
+ * base sous le même id, ou si son `upsertExecution` attend encore en outbox.
+ *
+ * C'est LA question qui garde le chrono (ADR 0011), posée au montage de l'écran.
+ * L'ancienne garde était une ref de montage (« aucune op d'exécution enfilée
+ * depuis CE montage »), remise à zéro à chaque changement d'onglet : sur une
+ * séance de plus d'1 h, la série suivante réancrait `startedAt` et l'upsert
+ * réécrivait `started_at` en base — 1 h 30 de séance devenaient 25 min.
+ *
+ * `pendingOps` : la file de l'outbox (seuls `type` et `id` sont lus, pour ne pas
+ * faire dépendre ce module de la forme des ops).
+ */
+export function isExecutionStarted(
+  state: CaptureState,
+  hydratedExecutionId: string | null,
+  pendingOps: readonly { type: string; id: string }[],
+): boolean {
+  if (totalLoggedSets(state) > 0) return true;
+  if (Object.keys(state.datedNotes).length > 0) return true;
+  if (hydratedExecutionId !== null && hydratedExecutionId === state.executionId) return true;
+  return pendingOps.some((op) => op.type === 'upsertExecution' && op.id === state.executionId);
+}
+
+/**
+ * Faut-il RÉANCRER le chrono sur le set qu'on logge (ADR 0011) ? Seulement si le
+ * lancement a expiré (plus d'1 h) ET que l'exécution n'est pas encore née : un
+ * lancement oublié, jamais suivi d'un set. Une séance entamée garde son
+ * lancement, quel que soit son âge et quel que soit le nombre de remontages —
+ * l'`upsertExecution` de ré-affirmation repose alors le MÊME `started_at`.
+ */
+export function shouldReanchorLaunch(
+  state: CaptureState,
+  executionStarted: boolean,
+  now = Date.now(),
+): boolean {
+  return !executionStarted && now - state.startedAt > LAUNCH_EXPIRY_MS;
+}
+
+/**
  * Résout la séance de capture à reprendre au montage, gérant la FRONTIÈRE MINUIT
  * (bug F10) : une séance ENTAMÉE la veille et NON CLÔTURÉE doit pouvoir être
  * reprise après minuit, sinon elle « disparaît » de l'écran (la clé de cache

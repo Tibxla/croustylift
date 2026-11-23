@@ -9,6 +9,7 @@ import {
   type LocalAccount,
 } from '../lib/local-account'
 import { clearReadCache } from '../lib/read-cache'
+import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
 import { clearQueue, pendingCount } from '../features/capture/outbox'
 import { flushOutbox } from '../features/capture/sync'
@@ -21,6 +22,14 @@ import { clearCaptureState } from '../features/capture/state'
  * supabase-js ne répond jamais — sans cette borne, le spinner était éternel.
  */
 const BOOT_TIMEOUT_MS = 3000
+
+// Lecteur de session des modules de lecture (cf. lib/session-identity) : posé
+// ici, au chargement du module d'auth, pour que la pagination et le cache de
+// lecture puissent vérifier QUI lit sans rien savoir de supabase-js.
+setSessionUserReader(async () => {
+  const { data } = await supabase.auth.getSession()
+  return data.session?.user.id ?? null
+})
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)

@@ -27,6 +27,7 @@
 // (b) ne pas toucher la base réelle via une migration dans cet environnement ;
 // le coût (version vide possible) est borné et sans danger pour l'historique.
 import { supabase } from '../../lib/supabase';
+import { afterId, fetchAllRows } from '../../lib/fetch-all';
 import type { Database } from '../../lib/database.types';
 import {
   buildPersonalExerciseInsert,
@@ -397,16 +398,27 @@ export async function loadPlanHistory(): Promise<{
   executedSeanceIds: Set<string>;
   executedRoutineIds: Set<string>;
 }> {
-  const [executionsRes, seancesRes] = await Promise.all([
-    supabase.from('executions').select('seance_versions ( seance_id )'),
+  type Row = { id: string; seance_versions: { seance_id: string } | null };
+  // Toutes les exécutions du compte : lecture paginée (cf. lib/fetch-all). Passé
+  // 1000 exécutions, une séance dont l'historique sortait de la page serait
+  // proposée à la SUPPRESSION au lieu de l'archivage.
+  const [executions, seancesRes] = await Promise.all([
+    fetchAllRows<Row>((after, limit) =>
+      afterId(
+        supabase
+          .from('executions')
+          .select('id, seance_versions ( seance_id )')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
     supabase.from('seances').select('id, routine_id'),
   ]);
-  if (executionsRes.error) throw executionsRes.error;
   if (seancesRes.error) throw seancesRes.error;
 
-  type Row = { seance_versions: { seance_id: string } | null };
   const executedSeanceIds = new Set<string>();
-  for (const row of (executionsRes.data ?? []) as unknown as Row[]) {
+  for (const row of executions) {
     if (row.seance_versions) executedSeanceIds.add(row.seance_versions.seance_id);
   }
   return {
@@ -704,16 +716,25 @@ export async function saveSeanceVersion(
  * courante se font ensuite à froid, dans `buildSeanceCatalog` (pur, testé).
  */
 export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
-  const [routines, seancesRes, versionsRes, currentRoutineId] = await Promise.all([
+  const [routines, seancesRes, versions, currentRoutineId] = await Promise.all([
     listRoutines(),
     supabase.from('seances').select('id, name, routine_id, position, archived_at'),
-    supabase.from('seance_versions').select('id, seance_id, version'),
+    // `seance_versions` est append-only (ADR 0001) : elle grossit à chaque
+    // édition, donc lecture paginée (cf. lib/fetch-all).
+    fetchAllRows<{ id: string; seance_id: string; version: number }>((after, limit) =>
+      afterId(
+        supabase
+          .from('seance_versions')
+          .select('id, seance_id, version')
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    ),
     getCurrentRoutineId(),
   ]);
   if (seancesRes.error) throw seancesRes.error;
-  if (versionsRes.error) throw versionsRes.error;
 
-  const versions = versionsRes.data ?? [];
   // Les prescriptions ne se chargent que pour les versions COURANTES, et
   // seulement pour compter : on ne lit que la clé étrangère. Filtrer sur toutes
   // les versions serait faux de coût, pas de résultat : `seance_versions` est

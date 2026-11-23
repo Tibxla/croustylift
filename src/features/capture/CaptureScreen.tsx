@@ -47,8 +47,8 @@ import {
   getDatedNote,
   getProgress,
   hydratedState,
+  isExecutionStarted,
   isResumable,
-  LAUNCH_EXPIRY_MS,
   loadPersisted,
   mergeProgress,
   newId,
@@ -57,6 +57,7 @@ import {
   persist,
   previousDayIso,
   resolveCaptureDate,
+  shouldReanchorLaunch,
   todayIso,
   type DatedNoteDraft,
   type HydratedProgress,
@@ -66,6 +67,7 @@ import {
   flush,
   pendingCount,
   purgeByExecution,
+  readQueue,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -108,6 +110,12 @@ type LoadState =
 interface CaptureInit {
   date: string;
   executionId: string;
+  /**
+   * `executionId` est-il celui d'une exécution LUE EN BASE (reprise), et non un
+   * id client neuf ? L'un des signes qu'elle existe déjà : son chrono ne doit
+   * alors plus jamais être réancré (cf. `isExecutionStarted`).
+   */
+  executionInBase: boolean;
   /**
    * Lancement de la séance (epoch ms, ADR 0011) : à la REPRISE, le `started_at`
    * lu en base (chrono qui survit au reload) ; pour une séance NEUVE, l'instant du
@@ -218,6 +226,7 @@ export function CaptureScreen() {
       initRef.current = {
         date,
         executionId: today?.executionId ?? newId(),
+        executionInBase: today !== null,
         // Reprise d'une exécution en base → son lancement persisté (ADR 0011) ;
         // séance neuve → maintenant (≈ l'instant du « Démarrer »). Le cache local
         // (restored), s'il existe, prime à la fusion (mergeProgress).
@@ -540,9 +549,10 @@ function CaptureBoard({
   // UNE fois AU CHARGEMENT (`loadSeance`), pour que l'exécution Supabase réhydratée
   // et la clé de persistance visent le MÊME jour. FIGÉE pour la vie du board : une
   // annulation / une nouvelle séance REMONTENT l'écran (onExitToLaunch) plutôt que
-  // de muter la date en place, donc une const suffit (séance neuve = nouveau board).
+  // de muter la date en place, donc un état sans setter suffit (séance neuve =
+  // nouveau board).
   const initRef = useRef(init);
-  const date = initRef.current.date;
+  const [date] = useState(() => init.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
   // (issue #36). Le TEMPLATE d'origine, figé au montage, reste la référence du
@@ -599,12 +609,24 @@ function CaptureBoard({
   // --- Synchro via outbox ---------------------------------------------------
   const { status, pending } = useSyncStatus();
 
-  // L'exécution est enfilée UNE fois par session, AVANT son premier set (la FK
+  // L'exécution est enfilée UNE fois par MONTAGE, AVANT son premier set (la FK
   // séries→exécution impose l'ordre, garanti aussi par le FIFO de l'outbox).
+  // Cette ref repart à false à chaque remontage (changement d'onglet, reload) :
+  // elle dit « déjà ré-affirmée depuis ce montage », RIEN sur l'existence de
+  // l'exécution.
   const executionEnqueuedRef = useRef(false);
+  // L'exécution existe-t-elle DÉJÀ (en base ou enfilée) ? Tranché une fois au
+  // montage depuis l'état restauré, la réhydratation et l'outbox, puis vrai dès
+  // qu'on l'enfile ici. C'est ELLE qui garde le chrono (ADR 0011) : une exécution
+  // née n'est jamais réancrée, donc sa ré-affirmation repose le même started_at.
+  const [startedAtMount] = useState(() =>
+    isExecutionStarted(state, init.executionInBase ? init.executionId : null, readQueue()),
+  );
+  const executionStartedRef = useRef(startedAtMount);
   const enqueueExecutionOnce = useCallback(() => {
     if (executionEnqueuedRef.current) return;
     executionEnqueuedRef.current = true;
+    executionStartedRef.current = true;
     // On lit la PROJECTION (stateRef) : l'id ET le `startedAt` (réancré si le
     // lancement a expiré, cf. handleLog) sont alors à jour. `started_at` matérialise
     // le LANCEMENT en base (ADR 0011), recopié de la valeur mémorisée au démarrage.
@@ -642,9 +664,11 @@ function CaptureBoard({
       // Expiration du lancement (ADR 0011) : si le PREMIER set de l'exécution arrive
       // plus d'1 h après le lancement, ce dernier a expiré (chrono qui aurait tourné
       // dans le vide) → on réancre le chrono sur CE set. Sinon `startedAt` reste
-      // l'instant du lancement. On avance la projection pour qu'enqueueExecutionOnce
-      // (plus bas) écrive la bonne valeur en base.
-      if (!executionEnqueuedRef.current && Date.now() - current.startedAt > LAUNCH_EXPIRY_MS) {
+      // l'instant du lancement. « Premier set de l'exécution » se lit sur
+      // l'existence de l'exécution (`executionStartedRef`), pas sur le montage :
+      // une séance entamée puis remontée n'est jamais réancrée. On avance la
+      // projection pour qu'enqueueExecutionOnce (plus bas) écrive la bonne valeur.
+      if (shouldReanchorLaunch(current, executionStartedRef.current)) {
         const reanchor = { type: 'set-started-at', startedAt: Date.now() } as const;
         dispatch(reanchor);
         stateRef.current = captureReducer(stateRef.current, reanchor);
@@ -791,6 +815,7 @@ function CaptureBoard({
     // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
     enqueueAndFlush({ type: 'deleteExecution', id: state.executionId });
     executionEnqueuedRef.current = false;
+    executionStartedRef.current = false;
     // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution
     // supprimée, donc rien de reprenable → on retombe sur le choix/« Démarrer ».
     onExitToLaunch();
