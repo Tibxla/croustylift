@@ -50,7 +50,15 @@ vi.mock('../../lib/supabase', () => {
 
 import { loadTodayExecution } from './data';
 import { clearQueue, enqueue } from './outbox';
-import { captureReducer, getProgress, hydratedState, initialState, mergeProgress, nextSetOrder } from './state';
+import {
+  captureReducer,
+  getProgress,
+  hydratedState,
+  initialState,
+  mergeProgress,
+  nextSetOrder,
+  reconcileProgress,
+} from './state';
 import { upperA } from './fixtures';
 import { saveLocalAccount } from '../../lib/local-account';
 
@@ -245,5 +253,62 @@ describe('série annulée dont la suppression attend encore', () => {
     const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
 
     expect(today?.progress[EXO]?.setIds).toEqual(['set-1', 'set-2']);
+  });
+});
+
+// Série supprimée depuis le JOURNAL, suppression acquittée, puis retour en
+// Capture sur le même téléphone (relecture Codex du lot 3A). La base ne rend
+// plus qu'une série, rien n'attend en file, mais l'état local en porte deux :
+// la fusion par longueur ramenait la série supprimée et écrivait la suivante au
+// rang 3. On pilote la vraie lecture puis la vraie reprise du tableau.
+describe('série supprimée depuis le Journal, suppression acquittée', () => {
+  /** La reprise telle que le tableau de capture la fait à son montage. */
+  async function reprise() {
+    const restored = etatLocal(); // set-1 et set-2, loggées ici
+    const today = await loadTodayExecution(SEANCE, DATE, restored.executionId);
+    const merged = mergeProgress(
+      hydratedState(upperA, today?.progress ?? {}, {}, DATE, today?.executionId),
+      restored,
+    );
+    const progress =
+      today && today.executionId === restored.executionId
+        ? reconcileProgress(restored.progress, today.progress, { pendingSetIds: today.pendingSetIds })
+        : merged.progress;
+    return getProgress({ ...merged, progress }, EXO);
+  }
+
+  it('la série supprimée ne revient pas, la suivante prend le rang 2', async () => {
+    server.performed_sets = [serie('set-1', 1)];
+
+    const progress = await reprise();
+
+    expect(progress.setIds).toEqual(['set-1']);
+    expect(nextSetOrder(progress, undefined)).toBe(2);
+  });
+
+  it('une série loggée hors ligne et pas encore envoyée reste, elle (son insertion attend)', async () => {
+    server.performed_sets = [serie('set-1', 1)];
+    enqueue({
+      type: 'insertSet',
+      id: 'set-2',
+      executionId: 'exec-1',
+      exerciseId: EXO,
+      setOrder: 2,
+      weightKg: 80,
+      reps: 8,
+      rir: 2,
+    });
+
+    const progress = await reprise();
+
+    expect(progress.setIds).toEqual(['set-1', 'set-2']);
+  });
+
+  it('hors ligne (pas de réponse de la base) : le réalisé local est gardé tel quel', async () => {
+    server.executions = [];
+
+    const progress = await reprise();
+
+    expect(progress.setIds).toEqual(['set-1', 'set-2']);
   });
 });

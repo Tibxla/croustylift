@@ -9,6 +9,7 @@ import {
   statusOf,
   initialState,
   isExecutionStarted,
+  isPristine,
   isResumable,
   LAUNCH_EXPIRY_MS,
   shouldReanchorLaunch,
@@ -16,6 +17,7 @@ import {
   capturePersistFailing,
   persistedVersionIds,
   pruneStaleCaptureStates,
+  reconcileProgress,
   clearCaptureState,
   clearOwnCaptureState,
   hydratedState,
@@ -1450,5 +1452,157 @@ describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
     const state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
     persist(state);
     expect(loadPersisted(upperA, '2026-11-23')?.layout).toBeUndefined();
+  });
+});
+
+// Reprise EN LIGNE d'une exécution que l'appareil tient déjà : la base a
+// répondu, elle fait foi pour ses séries, et les opérations locales encore en
+// attente s'appliquent par-dessus, par identifiant. La fusion « la liste la plus
+// longue gagne » (mergeProgress) ne reste que le repli sans réponse de la base.
+describe('reconcileProgress (la base fait foi, plus les écritures en attente)', () => {
+  const set = (order: number, weightKg = 80) => ({ weightKg, reps: 8, rir: 2, order });
+  const local = (ids: (string | null)[], skipped = false): Record<string, ExerciseProgress> => ({
+    bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids, skipped },
+  });
+  const base = (ids: string[]): Record<string, HydratedProgress> =>
+    ids.length === 0 ? {} : { bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids } };
+  const ids = (progress: Record<string, ExerciseProgress>) => progress.bench?.setIds;
+
+  it('série supprimée depuis le Journal, suppression acquittée : elle ne revient pas en Capture', () => {
+    // Le cache local porte encore deux séries ; la base n'en rend plus qu'une et
+    // rien n'attend en file. Avant : la liste la plus longue (le cache) gagnait.
+    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: [] });
+
+    expect(ids(progress)).toEqual(['s1']);
+    expect(nextSetOrder(progress.bench!, undefined)).toBe(2);
+  });
+
+  it('série loggée hors ligne, pas encore envoyée : elle reste (son insertion attend)', () => {
+    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: ['s2'] });
+
+    expect(ids(progress)).toEqual(['s1', 's2']);
+  });
+
+  it('série écrite ailleurs (journal, autre appareil) : elle arrive, le rang suivant la compte', () => {
+    const progress = reconcileProgress(local(['s1']), base(['s1', 's-ailleurs']), {
+      pendingSetIds: [],
+    });
+
+    expect(ids(progress)).toEqual(['s1', 's-ailleurs']);
+    expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
+  });
+
+  it('toutes les séries d’un exo supprimées ailleurs : l’exo sort du réalisé', () => {
+    expect(reconcileProgress(local(['s1']), base([]), { pendingSetIds: [] })).toEqual({});
+  });
+
+  it('un exo passé reste passé, même sans série', () => {
+    const progress = reconcileProgress(local([], true), base([]), { pendingSetIds: [] });
+    expect(progress.bench).toEqual({ sets: [], setIds: [], skipped: true });
+  });
+
+  it('une série locale sans id (cache d’ancien format) reste si la base n’a rien à ce rang', () => {
+    const progress = reconcileProgress(local([null, null]), base(['s1']), { pendingSetIds: [] });
+    // Rang 1 : la base l'a (avec son id). Rang 2 : inconnu de la base, gardé.
+    expect(ids(progress)).toEqual(['s1', null]);
+  });
+
+  describe('réponse TARDIVE, appliquée à un tableau déjà monté', () => {
+    it('une série loggée pendant le trajet de la lecture est gardée, même déjà acquittée', () => {
+      // Au départ de la lecture : s1. Pendant le trajet : s2 loggée ET acquittée
+      // (absente de la réponse, partie avant ; absente de la file, déjà vidée).
+      const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1'],
+      });
+
+      expect(ids(progress)).toEqual(['s1', 's2']);
+    });
+
+    it('une série annulée pendant le trajet ne revient pas, même si la réponse la porte encore', () => {
+      const progress = reconcileProgress(local(['s1']), base(['s1', 's2']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1', 's2'],
+      });
+
+      expect(ids(progress)).toEqual(['s1']);
+    });
+
+    it('la série écrite ailleurs avant le départ arrive : le rang suivant ne double pas', () => {
+      // A tient s1. B a synchronisé s2. La lecture de A répond après 4 s.
+      const progress = reconcileProgress(local(['s1']), base(['s1', 's2-de-b']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1'],
+      });
+
+      expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
+    });
+  });
+
+  it('le reducer applique une réponse tardive sans toucher au reste de l’état', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      executionId: 'exec-1',
+      activeExerciseId: 'bench',
+      progress: local(['s1']),
+      layout: [{ kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+    };
+
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: base(['s1', 's2-de-b']),
+      pendingSetIds: [],
+      knownAtDeparture: ['s1'],
+    });
+
+    expect(next.progress.bench?.setIds).toEqual(['s1', 's2-de-b']);
+    expect(next.activeExerciseId).toBe('bench');
+    expect(next.layout).toEqual(state.layout);
+    expect(next.executionId).toBe('exec-1');
+  });
+});
+
+describe('isPristine (état abandonnable sans rien perdre)', () => {
+  const fresh = (): CaptureState => initialState(upperA, '2026-11-23');
+
+  it('séance neuve tout juste ouverte : intacte', () => {
+    expect(isPristine(fresh())).toBe(true);
+  });
+
+  it('un exo ouvert (son brouillon a pu être réglé) : plus intacte', () => {
+    expect(isPristine(captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' }))).toBe(false);
+  });
+
+  it('un exo ajouté ou remplacé : plus intacte', () => {
+    const edited = captureReducer(fresh(), {
+      type: 'edit-layout',
+      edit: { kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] },
+    });
+    expect(isPristine(edited)).toBe(false);
+  });
+
+  it('un exo passé, une série ou une note : plus intacte', () => {
+    expect(isPristine(captureReducer(fresh(), { type: 'skip-exercise', exerciseId: 'bench-press' }))).toBe(false);
+    expect(
+      isPristine(
+        captureReducer(fresh(), {
+          type: 'log-set',
+          exerciseId: 'bench-press',
+          setId: 's1',
+          set: { weightKg: 80, reps: 8, rir: 2 },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isPristine(
+        captureReducer(fresh(), { type: 'set-dated-note', exerciseId: 'bench-press', noteId: 'n1', body: 'x' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('revenu au sélecteur sans rien avoir fait : de nouveau intacte', () => {
+    let state = captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' });
+    state = captureReducer(state, { type: 'back-to-picker' });
+    expect(isPristine(state)).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type Dispatch,
+  type RefObject,
 } from 'react';
 import {
   catalogExerciseToSession,
@@ -61,6 +62,7 @@ import {
   getProgress,
   hydratedState,
   isExecutionStarted,
+  isPristine,
   isResumable,
   loadPersisted,
   mergeProgress,
@@ -71,6 +73,7 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
+  reconcileProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
   todayIso,
@@ -158,6 +161,13 @@ interface CaptureInit {
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
   restored: CaptureState | null;
+  /**
+   * Non nul quand la base a RÉPONDU pour l'exécution que tient l'état local : le
+   * réalisé se réconcilie alors par identifiant (la base fait foi, plus les
+   * séries dont l'insertion attend, listées ici) au lieu de la fusion par
+   * longueur, qui n'est que le repli sans réponse (cf. `reconcileProgress`).
+   */
+  pendingSetIds: string[] | null;
 }
 
 /**
@@ -190,6 +200,10 @@ export function CaptureScreen() {
   // cache local), posée par l'effet de chargement et lue par CaptureBoard à son
   // 1ᵉʳ render. Une seule ref : séries, notes et id décrivent la même exécution.
   const initRef = useRef<CaptureInit | null>(null);
+
+  // Guichet par lequel une réponse TARDIVE de la base atteint le tableau monté
+  // (posé par CaptureBoard à son montage, retiré à son démontage).
+  const lateRealityRef = useRef<((action: ReconcileAction) => void) | null>(null);
 
   // Numéro du chargement en cours : incrémenté à chaque ouverture demandée
   // (montage, choix d'une séance, retour au lancement). Une réponse tardive ne
@@ -347,6 +361,10 @@ export function CaptureScreen() {
         progress: today?.progress ?? {},
         datedNotes: today?.datedNotes ?? {},
         restored,
+        pendingSetIds:
+          today && restored && today.executionId === restored.executionId
+            ? today.pendingSetIds
+            : null,
       };
       initRef.current = init;
       setLoad({
@@ -370,9 +388,9 @@ export function CaptureScreen() {
       // quand la réponse arrive, si elle rend une exécution et que RIEN n'a encore
       // été saisi sous l'id provisoire, on l'adopte en rechargeant la séance avec
       // elle (la lecture n'est pas relancée). Si une saisie est déjà partie sous
-      // l'id provisoire, il est trop tard : la séance garde ses deux exécutions,
-      // comme hors ligne. Avec un état local, rien à rattraper ici : son id prime
-      // de toute façon, et le remontage suivant relira la base.
+      // l'id provisoire, ou si l'utilisateur a déjà agi sur le tableau (exo
+      // ouvert, ajouté, remplacé, passé), il est trop tard : la séance garde son
+      // exécution provisoire, comme hors ligne.
       if (late && restored === null) {
         const gen = loadGenRef.current;
         void late.then((lateToday) => {
@@ -384,6 +402,12 @@ export function CaptureScreen() {
             ? isExecutionStarted(provisional, null, queue)
             : queue.some((op) => op.type === 'upsertExecution' && op.id === init.executionId);
           if (started) return;
+          // L'utilisateur a déjà agi sur le tableau provisoire (exo ouvert, donc
+          // brouillon peut-être réglé ; exo ajouté, remplacé ou passé) : on
+          // n'adopte PAS, pour ne rien lui retirer des mains. Transférer ces
+          // gestes vers l'exécution adoptée demanderait de fusionner deux états ;
+          // le choix sûr est de ne remonter le tableau que s'il est intact.
+          if (provisional && !isPristine(provisional)) return;
           // L'état provisoire primerait à la fusion : il est retiré, et l'écran
           // repasse par le chargement (aucune saisie possible pendant l'adoption).
           clearPersisted(shell, date);
@@ -394,6 +418,34 @@ export function CaptureScreen() {
               phase: 'error',
               message: err instanceof Error ? err.message : String(err),
             });
+          });
+        });
+      }
+
+      // DÉLAI DÉPASSÉ, AVEC un état local : son exécution prime, pas d'adoption.
+      // Mais la réponse tardive qui la concerne porte peut-être des séries
+      // écrites ailleurs (autre appareil, journal) : ignorée, le rang suivant
+      // doublait un rang déjà pris. Elle est donc remise au tableau monté, qui
+      // réconcilie son réalisé par identifiant sans se remonter (ni l'exo ouvert
+      // ni le brouillon ne bougent). `knownAtDeparture` : ce que l'état local
+      // portait au départ de la lecture, pour ne pas défaire ce que l'utilisateur
+      // a saisi ou annulé pendant le trajet.
+      if (late && restored !== null) {
+        const gen = loadGenRef.current;
+        const knownAtDeparture = Object.values(restored.progress).flatMap((p) =>
+          p.setIds.filter((id): id is string => id !== null),
+        );
+        void late.then((lateToday) => {
+          if (!lateToday || !active() || loadGenRef.current !== gen) return;
+          if (lateToday.executionId !== restored.executionId) return;
+          lateRealityRef.current?.({
+            type: 'reconcile-progress',
+            base: lateToday.progress,
+            pendingSetIds: [
+              ...lateToday.pendingSetIds,
+              ...readQueue().filter((op) => op.type === 'insertSet').map((op) => op.id),
+            ],
+            knownAtDeparture,
           });
         });
       }
@@ -542,6 +594,7 @@ export function CaptureScreen() {
       key={`${load.session.id}:${load.executionId}`}
       session={load.session}
       templateIds={load.templateIds}
+      lateRealityRef={lateRealityRef}
       seanceVersionId={load.seanceVersionId}
       historyCtx={load.historyCtx}
       // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
@@ -693,6 +746,7 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 function CaptureBoard({
   session: initialSession,
   templateIds,
+  lateRealityRef,
   seanceVersionId,
   historyCtx,
   init,
@@ -701,6 +755,8 @@ function CaptureBoard({
   session: Session;
   /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
   templateIds: string[];
+  /** Guichet des réponses tardives de la base (cf. `loadSeance`). */
+  lateRealityRef: RefObject<((action: ReconcileAction) => void) | null>;
   seanceVersionId: string;
   /** Contexte d'historique de la séance (scope Référence + repère notes) pour les exos ajoutés à la volée. */
   historyCtx: SeanceHistoryContext;
@@ -791,7 +847,16 @@ function CaptureBoard({
     // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
     const versioned = { ...fromSupabase, seanceVersionId };
     if (!restored) return versioned;
-    return mergeProgress(versioned, restored);
+    const merged = mergeProgress(versioned, restored);
+    // La base a répondu pour cette exécution : elle fait foi pour les séries,
+    // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
+    // le Journal revenait ici, le cache local étant le plus long.
+    const { pendingSetIds } = initRef.current;
+    if (pendingSetIds === null) return merged;
+    return {
+      ...merged,
+      progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
+    };
   });
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
@@ -804,6 +869,22 @@ function CaptureBoard({
   // l'order (et l'id à annuler) de l'op et celui du reducer coïncident toujours.
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // Réponse tardive de la base pour CETTE exécution : réconciliée dans l'état,
+  // et la projection avancée du même pas (un log suivant part du bon rang). Le
+  // compteur dit au panneau de saisie que le réalisé a changé sans geste de
+  // l'utilisateur : son brouillon touché ne doit pas être réamorcé.
+  const [realityEpoch, setRealityEpoch] = useState(0);
+  useEffect(() => {
+    lateRealityRef.current = (action) => {
+      dispatch(action);
+      stateRef.current = captureReducer(stateRef.current, action);
+      setRealityEpoch((n) => n + 1);
+    };
+    return () => {
+      lateRealityRef.current = null;
+    };
+  }, [lateRealityRef]);
 
   // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
   // clôturée : la clôture est transitoire (ADR 0009). On nettoie alors le cache
@@ -1152,6 +1233,7 @@ function CaptureBoard({
           total={session.exercises.length}
           progress={getProgress(state, activeExercise.exerciseId)}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
+          historyEpoch={realityEpoch}
           dispatch={dispatch}
           onLog={(set) => handleLog(activeExercise.exerciseId, set)}
           onUndo={() => handleUndo(activeExercise.exerciseId)}
@@ -1262,6 +1344,9 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
 import type { SessionExercise } from './data';
 import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 
+/** L'action de réconciliation qu'une réponse tardive de la base remet au tableau. */
+type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
+
 /**
  * Libellé du bouton de log (issue #46) : explicite le côté pour un exo
  * unilatéral (« Logger le côté gauche/droite »), reste « Logger la série » pour
@@ -1279,6 +1364,7 @@ function CapturePanel({
   total,
   progress,
   datedNote,
+  historyEpoch,
   dispatch,
   onLog,
   onUndo,
@@ -1292,6 +1378,8 @@ function CapturePanel({
   progress: ExerciseProgress;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
+  /** Incrémenté quand le réalisé change sans geste de l'utilisateur (réponse tardive). */
+  historyEpoch: number;
   dispatch: Dispatch<CaptureAction>;
   onLog: (set: { weightKg: number; reps: number; rir: number; side?: Side }) => void;
   onUndo: () => void;
@@ -1351,6 +1439,7 @@ function CapturePanel({
         total={total}
         progress={progress}
         datedNote={datedNote}
+        historyEpoch={historyEpoch}
         onUndoLast={() => {
           onUndo();
           setAnnounce('Dernière série annulée.');

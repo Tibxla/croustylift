@@ -1047,6 +1047,13 @@ export interface TodayExecution {
   startedAt: number;
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
+  /**
+   * Les séries dont l'INSERTION attendait en file pendant la lecture (file lue
+   * avant et après). La réponse ne les porte pas forcément : à la reprise, une
+   * série locale absente de `progress` n'est gardée que si elle est ici, sinon
+   * c'est qu'elle a été supprimée ailleurs (cf. `reconcileProgress`, state.ts).
+   */
+  pendingSetIds: string[];
 }
 
 /**
@@ -1105,7 +1112,11 @@ export async function loadTodayExecution(
     // geste, son `deleteSet` attend peut-être encore, et la base la porte
     // toujours. Rendue telle quelle, elle revenait à l'écran au remontage (la
     // fusion garde la liste la plus longue) et faussait le rang de la suivante.
-    return withoutPendingDeletions(today, [...pendingBefore, ...pendingAfter]);
+    const pending = [...pendingBefore, ...pendingAfter];
+    return {
+      ...withoutPendingDeletions(today, pending),
+      pendingSetIds: [...new Set(pending.filter((op) => op.type === 'insertSet').map((op) => op.id))],
+    };
   } catch {
     return null;
   }
@@ -1307,6 +1318,8 @@ async function fetchTodayExecution(
     startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,
+    // Rempli par `loadTodayExecution`, qui tient la file.
+    pendingSetIds: [],
   };
 }
 

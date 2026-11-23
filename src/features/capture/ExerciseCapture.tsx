@@ -50,6 +50,8 @@ interface ExerciseCaptureProps {
   total?: number;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
+  /** Incrémenté quand le réalisé change sans geste de l'utilisateur (réponse tardive de la base). */
+  historyEpoch?: number;
   onUndoLast: () => void;
   onSkip: () => void;
   onBack: () => void;
@@ -82,6 +84,7 @@ export function ExerciseCapture({
   position,
   total,
   datedNote,
+  historyEpoch = 0,
   onUndoLast,
   onSkip,
   onBack,
@@ -184,15 +187,23 @@ export function ExerciseCapture({
   // saisie commence (changement d'exo, série loggée ou annulée, changement de
   // côté), et le marqueur est alors levé ; quand seul l'historique a changé
   // sous l'écran, seulement si le brouillon est intact.
+  //
+  // `historyEpoch` : quand il change, le réalisé vient d'être réconcilié avec une
+  // réponse tardive de la base (série arrivée d'ailleurs). Le nombre de séries a
+  // pu bouger sans geste de l'utilisateur : c'est un changement d'historique,
+  // pas une nouvelle saisie, donc un brouillon touché reste en place.
+  const seededEpochRef = useRef(historyEpoch);
   useEffect(() => {
-    const trigger = seededKeyRef.current === draftKey ? 'history' : 'explicit';
+    const fromReality = seededEpochRef.current !== historyEpoch;
+    seededEpochRef.current = historyEpoch;
+    const trigger = seededKeyRef.current === draftKey || fromReality ? 'history' : 'explicit';
     seededKeyRef.current = draftKey;
     if (!shouldReseedDraft(trigger, draftTouchedRef.current)) return;
     if (trigger === 'explicit') draftTouchedRef.current = false;
     setWeightKg(seed.weightKg);
     setReps(seed.reps);
     setRir(seed.rir);
-  }, [seed, draftKey]);
+  }, [seed, draftKey, historyEpoch]);
 
   // Remonte le brouillon courant vers la barre d'action fixe (qui commit le log).
   // Pour un exo unilatéral, on y joint le côté CHOISI (issue #63) : c'est ce côté

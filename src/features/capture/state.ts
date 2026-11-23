@@ -138,6 +138,15 @@ export type CaptureAction =
   | { type: 'set-dated-note'; exerciseId: string; noteId: string; body: string }
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
+  // Réponse TARDIVE de la base pour l'exécution en cours (ouverture bornée à
+  // 3 s) : le réalisé est réconcilié par identifiant (cf. `reconcileProgress`).
+  // Rien d'autre ne bouge : exo ouvert, disposition, notes, chrono.
+  | {
+      type: 'reconcile-progress';
+      base: Record<string, HydratedProgress>;
+      pendingSetIds: string[];
+      knownAtDeparture: string[];
+    }
   // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
   | { type: 'edit-layout'; edit: LayoutEdit }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
@@ -287,6 +296,19 @@ export function isExecutionStarted(
   if (Object.keys(state.datedNotes).length > 0) return true;
   if (hydratedExecutionId !== null && hydratedExecutionId === state.executionId) return true;
   return pendingOps.some((op) => op.type === 'upsertExecution' && op.id === state.executionId);
+}
+
+/**
+ * L'état est-il INTACT, tel qu'à l'ouverture d'une séance neuve : rien de
+ * saisi (ni série, ni note datée), aucun exo ouvert, passé, ajouté ou remplacé ?
+ * C'est la condition pour l'abandonner sans rien perdre de ce que l'utilisateur
+ * a fait (adoption tardive d'une exécution trouvée en base, cf. CaptureScreen).
+ */
+export function isPristine(state: CaptureState): boolean {
+  if (state.activeExerciseId !== null) return false;
+  if ((state.layout?.length ?? 0) > 0) return false;
+  if (Object.keys(state.datedNotes).length > 0) return false;
+  return Object.values(state.progress).every((p) => p.sets.length === 0 && !p.skipped);
 }
 
 /**
@@ -493,7 +515,11 @@ export function hydratedState(
 /**
  * Fusionne deux états « en cours » au montage : `a` = hydraté de Supabase (fait
  * foi au reload), `b` = restauré du localStorage (filet offline : écriture pas
- * encore synchronisée, survie au background). Pour chaque exo on garde le réalisé
+ * encore synchronisée, survie au background). Pour le RÉALISÉ, cette fusion par
+ * longueur n'est que le repli sans réponse de la base : quand elle a répondu
+ * pour la même exécution, l'appelant remplace le réalisé fusionné par
+ * `reconcileProgress` (la base fait foi, plus les écritures en attente).
+ * Pour chaque exo on garde le réalisé
  * le plus avancé, ET on aligne les `setIds` index par index pour qu'AUCUNE série
  * affichée ne reste sans id annulable (bug H2/F1) :
  *   - longueurs différentes → on garde la source la plus longue (le réalisé le
@@ -540,6 +566,88 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     datedNotes,
     closedAt: null,
   };
+}
+
+/**
+ * RÉCONCILIE le réalisé local avec celui que la base vient de rendre pour la
+ * MÊME exécution : la base fait foi pour les séries, et les écritures locales
+ * encore en attente s'appliquent par-dessus, PAR IDENTIFIANT. C'est la règle de
+ * toute reprise où la base a répondu ; `mergeProgress` (« la liste la plus
+ * longue gagne ») ne reste que le repli quand elle n'a pas répondu (hors ligne).
+ *
+ * Avec la seule fusion par longueur, une série supprimée depuis le Journal
+ * (suppression acquittée) revenait en Capture, le cache local étant plus long
+ * que la base ; et une série écrite ailleurs n'entrait que si la base devenait
+ * la plus longue.
+ *
+ * Par exo, le résultat est :
+ *   - les séries de la BASE (déjà purgées des suppressions en attente, cf.
+ *     `withoutPendingDeletions` côté data) ;
+ *   - plus les séries LOCALES inconnues de la base dont l'insertion attend
+ *     encore (`pendingSetIds` : la file lue avant et après la lecture réseau).
+ *     Une série locale que la base n'a pas et que rien n'attend a été supprimée
+ *     ailleurs : elle sort ;
+ *   - une série locale sans id (cache d'ancien format) reste si la base n'a
+ *     rien au même rang et au même côté.
+ * `skipped` vient du local (la base ne le connaît pas).
+ *
+ * RÉPONSE TARDIVE (`knownAtDeparture`) : appliquée à un tableau déjà monté,
+ * elle décrit la base au DÉPART de la lecture, alors que l'utilisateur a pu
+ * saisir depuis. `knownAtDeparture` liste les séries que l'état local portait à
+ * ce départ : une série locale qui n'y est pas a été loggée pendant le trajet,
+ * elle est gardée quoi que dise la réponse ; une série de la réponse qui y était
+ * mais que l'état local n'a plus a été annulée pendant le trajet, elle ne
+ * revient pas. Pur.
+ */
+export function reconcileProgress(
+  local: Record<string, ExerciseProgress>,
+  base: Record<string, HydratedProgress>,
+  options: { pendingSetIds: readonly string[]; knownAtDeparture?: readonly string[] | null },
+): Record<string, ExerciseProgress> {
+  const pending = new Set(options.pendingSetIds);
+  const known = options.knownAtDeparture ? new Set(options.knownAtDeparture) : null;
+  const localIds = new Set<string>();
+  for (const p of Object.values(local)) {
+    for (const id of p.setIds) if (id !== null) localIds.add(id);
+  }
+
+  const out: Record<string, ExerciseProgress> = {};
+  for (const exerciseId of new Set([...Object.keys(local), ...Object.keys(base)])) {
+    const mine = local[exerciseId];
+    const theirs = base[exerciseId];
+    const sets: PerformedSet[] = [];
+    const setIds: (string | null)[] = [];
+    const baseIds = new Set<string>();
+
+    theirs?.sets.forEach((set, i) => {
+      const id = theirs.setIds[i];
+      if (id === undefined) return;
+      baseIds.add(id);
+      // Annulée ici pendant le trajet de la lecture : elle ne revient pas.
+      if (known?.has(id) && !localIds.has(id)) return;
+      sets.push(set);
+      setIds.push(id);
+    });
+
+    mine?.sets.forEach((set, i) => {
+      const id = mine.setIds[i] ?? null;
+      if (id === null) {
+        // Ancien format : gardée seulement si la base n'a rien à cette place.
+        if (sets.some((s) => s.order === set.order && s.side === set.side)) return;
+      } else {
+        if (baseIds.has(id)) return;
+        const loggedSinceDeparture = known !== null && !known.has(id);
+        if (!pending.has(id) && !loggedSinceDeparture) return;
+      }
+      sets.push(set);
+      setIds.push(id);
+    });
+
+    const skipped = mine?.skipped ?? false;
+    if (sets.length === 0 && !skipped) continue;
+    out[exerciseId] = { sets, setIds, skipped };
+  }
+  return out;
 }
 
 /**
@@ -647,6 +755,15 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         },
       };
     }
+
+    case 'reconcile-progress':
+      return {
+        ...state,
+        progress: reconcileProgress(state.progress, action.base, {
+          pendingSetIds: action.pendingSetIds,
+          knownAtDeparture: action.knownAtDeparture,
+        }),
+      };
 
     case 'edit-layout':
       return { ...state, layout: [...(state.layout ?? []), action.edit] };
