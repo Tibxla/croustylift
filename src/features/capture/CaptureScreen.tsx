@@ -46,6 +46,7 @@ import {
   datedNoteOutboxOp,
   exerciseNoteOutboxOp,
 } from '../notes/data';
+import { datedNoteId } from '../notes/dated-note-id';
 import {
   adoptedVersionId,
   capturePersistFailing,
@@ -895,7 +896,10 @@ function CaptureBoard({
       // aligné sur handleLog/handleUndo). On avance la projection après le dispatch.
       const current = stateRef.current;
       const existing = getDatedNote(current, exerciseId);
-      const noteId = existing?.id ?? newId();
+      // Id DÉTERMINISTE par couple (exécution, exo) : deux appareils qui notent le
+      // même exo de la même exécution écrivent la même ligne (cf. dated-note-id).
+      // Une note déjà connue (réhydratée, ou née sous un id aléatoire) garde le sien.
+      const noteId = existing?.id ?? datedNoteId(current.executionId, exerciseId);
       const action = { type: 'set-dated-note', exerciseId, noteId, body } as const;
       dispatch(action);
       stateRef.current = captureReducer(current, action);
