@@ -303,6 +303,25 @@ function opKey(op: OutboxOp): string {
   return op._uid ?? JSON.stringify(op);
 }
 
+/**
+ * Réunit des relevés successifs de la file (avant une lecture réseau, après, à
+ * l'arrivée de sa réponse) en une liste sans doublon, dans l'ordre de la file :
+ * une op déjà vue garde sa place, une op apparue depuis vient à la suite.
+ */
+export function unionOfQueueReads(...reads: readonly (readonly OutboxOp[])[]): OutboxOp[] {
+  const seen = new Set<string>();
+  const out: OutboxOp[] = [];
+  for (const read of reads) {
+    for (const op of read) {
+      const key = opKey(op);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(op);
+    }
+  }
+  return out;
+}
+
 /** L'écart tenu en mémoire, s'il est engagé pour le stockage courant. */
 function activeVolatile(): VolatileGap | null {
   if (volatile === null || typeof localStorage === 'undefined') return null;

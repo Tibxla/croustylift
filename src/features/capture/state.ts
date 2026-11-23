@@ -152,6 +152,12 @@ export type CaptureAction =
       datedNotes?: Record<string, DatedNoteDraft>;
       /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
       pendingNoteKeys?: string[];
+      /**
+       * Écritures de séries qui chevauchent la lecture (file relevée avant, après,
+       * et à l'arrivée de la réponse) : réappliquées sur le réalisé réconcilié,
+       * avec leurs valeurs et rangs complets (cf. `applyQueuedSets`).
+       */
+      queuedOps?: OutboxOp[];
     }
   // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
   | { type: 'edit-layout'; edit: LayoutEdit }
@@ -905,17 +911,25 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
-    case 'reconcile-progress':
+    case 'reconcile-progress': {
+      // La base fait foi pour les séries qu'elle porte, mais sa réponse date de
+      // son départ : les écritures de séries qui chevauchent la lecture sont
+      // rejouées par-dessus, sinon une correction ou une renumérotation faite
+      // depuis le Journal reprenait ses valeurs d'avant.
+      const reconciled = reconcileProgress(state.progress, action.base, {
+        pendingSetIds: action.pendingSetIds,
+        knownAtDeparture: action.knownAtDeparture,
+      });
       return {
         ...state,
-        progress: reconcileProgress(state.progress, action.base, {
-          pendingSetIds: action.pendingSetIds,
-          knownAtDeparture: action.knownAtDeparture,
-        }),
+        progress: action.queuedOps
+          ? applyQueuedSets(reconciled, action.queuedOps, state.executionId)
+          : reconciled,
         datedNotes: action.datedNotes
           ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
           : state.datedNotes,
       };
+    }
 
     case 'edit-layout':
       return { ...state, layout: [...(state.layout ?? []), action.edit] };
