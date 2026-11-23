@@ -1,4 +1,4 @@
-import type { E1rmPoint } from './types'
+import type { CurveUnit, E1rmPoint } from './types'
 
 /**
  * Sous ce nombre de points, et d'autant de JOURS distincts, une pente n'est pas
@@ -6,9 +6,26 @@ import type { E1rmPoint } from './types'
  */
 export const MIN_SLOPE_POINTS = 3
 
+/**
+ * Ce qu'on ajoute aux reps effectives pour mesurer une pente en 'reps' : l'e1RM
+ * vaut `charge × (29 + reps effectives) / 30` (ADR 0013).
+ */
+const EPLEY_OFFSET = 29
+
+/**
+ * Pente en % par semaine d'une courbe.
+ *
+ * Sur une courbe en 'reps' (exo jamais chargé), le pourcentage n'est PAS celui
+ * des reps : il se calcule sur `29 + reps effectives`, donc sur l'e1RM à poids du
+ * corps constant, quel que soit ce poids (il se simplifie dans un taux relatif).
+ * Une rep de plus pèse alors autant que sur une barre chargée (environ +2,5 %),
+ * et la pente se compare aux autres cartes et au seuil de stagnation. En reps
+ * brutes, la même rep sur douze pesait +8 %.
+ */
 export function weeklyProgressionRate(
   points: E1rmPoint[],
   minPoints = MIN_SLOPE_POINTS,
+  unit: CurveUnit = 'kg',
 ): number | null {
   if (points.length < minPoints) {
     return null
@@ -32,7 +49,8 @@ export function weeklyProgressionRate(
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
   const xs = sorted.map((p) => (Date.parse(p.date) - t0) / MS_PER_WEEK)
-  const ys = sorted.map((p) => p.e1rm)
+  const offset = unit === 'reps' ? EPLEY_OFFSET : 0
+  const ys = sorted.map((p) => p.e1rm + offset)
   const n = sorted.length
 
   const meanX = xs.reduce((s, x) => s + x, 0) / n

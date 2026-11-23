@@ -31,7 +31,13 @@ import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 import { errorMessage } from '../../lib/error-message';
-import { heroLabel, measureLabel, secondaryLabel, zeroLoadHolesLabel } from './unit-label';
+import {
+  heroLabel,
+  measureLabel,
+  rateNote,
+  secondaryLabel,
+  zeroLoadHolesLabel,
+} from './unit-label';
 import { periodLabel, rateCaption } from './rate-period';
 import { timeAxis } from './chart-time';
 
@@ -425,6 +431,10 @@ function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
         </span>
       </div>
       {caption && <p className="mt-1 text-xs text-ink-muted">{caption}</p>}
+      {/* Exo en reps : le pourcentage du badge n'est pas celui de la courbe. */}
+      {primary?.weeklyRate != null && rateNote(unit) && (
+        <p className="mt-1 text-[11px] text-ink-faint">{rateNote(unit)}</p>
+      )}
 
       {/* Courbe en kilos d'un exo aussi saisi à 0 kg : ces séances-là sont des
           trous, on le dit. */}

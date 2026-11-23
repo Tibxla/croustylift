@@ -11,7 +11,7 @@
 // DÉCOUPER les exécutions par fenêtre de bloc avant de mesurer chaque pente.
 import { buildPrimaryCurve, curveUnit } from './primary-curve'
 import { blockKey, instantMs } from './block'
-import { roundRate, weeklyProgressionRate } from './progression'
+import { MIN_SLOPE_POINTS, roundRate, weeklyProgressionRate } from './progression'
 import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from './types'
 
 /** Le côté d'une comparaison à deux blocs. */
@@ -112,7 +112,7 @@ function progressionOf(
     block,
     curve,
     pointCount: curve.length,
-    weeklyRate: weeklyProgressionRate(curve),
+    weeklyRate: weeklyProgressionRate(curve, MIN_SLOPE_POINTS, unit),
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { heroLabel, measureLabel, secondaryLabel, zeroLoadHolesLabel } from './unit-label'
+import { heroLabel, measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label'
 
 describe('libellés de l’unité d’une courbe', () => {
   it('un exo jamais chargé dit « reps », jamais « e1RM »', () => {
@@ -21,5 +21,10 @@ describe('libellés de l’unité d’une courbe', () => {
     expect(zeroLoadHolesLabel(0)).toBeNull()
     expect(zeroLoadHolesLabel(1)).toBe('1 séance à 0 kg hors courbe')
     expect(zeroLoadHolesLabel(3)).toBe('3 séances à 0 kg hors courbe')
+  })
+
+  it('en reps, le %/sem est expliqué : force estimée, pas un pourcentage de reps', () => {
+    expect(rateNote('reps')).toMatch(/force estimée/)
+    expect(rateNote('kg')).toBeNull()
   })
 })

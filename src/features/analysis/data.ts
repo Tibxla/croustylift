@@ -13,7 +13,7 @@ import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows, inCreationOrder } from '../../lib/fetch-all';
 import { buildPrimaryCurve, curveUnit } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
-import { weeklyProgressionRate } from '../../domain/progression';
+import { MIN_SLOPE_POINTS, weeklyProgressionRate } from '../../domain/progression';
 import { executionsInBlock } from '../../domain/block-comparison';
 import { detectBlocks } from '../../domain/block';
 import { buildConfigTimeline, type FirstExecutionRow } from './config-timeline';
@@ -328,7 +328,7 @@ export function analyzeExecutions(
       label: seanceName,
       curve,
       secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId, unit),
-      weeklyRate: weeklyProgressionRate(blockCurve),
+      weeklyRate: weeklyProgressionRate(blockCurve, MIN_SLOPE_POINTS, unit),
       ratePeriod: {
         since: currentBlock?.start ?? null,
         sessions: blockCurve.length,

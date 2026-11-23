@@ -40,12 +40,13 @@ L'ordre est total et transitif, et deux séries chargées de même e1RM restent 
 
 En analyse, l'unité se décide **une fois par exercice**, sur tout son historique (`curveUnit`, `src/domain/primary-curve.ts`) : `reps` tant qu'aucune de ses séries n'a été chargée, `kg` dès qu'une charge apparaît. Elle vaut pour toutes les courbes de l'exercice (par séance, séries 2+, comparaison de blocs), qui se superposent et se comparent donc toujours dans la même unité. Sur une courbe en kilos, une exécution dont la première série est à 0 kg ne fait pas de point : un trou, pas un zéro, compté sous le graphe (« 2 séances à 0 kg hors courbe »). Un zéro plongerait la courbe et fausserait la pente du passage au lesté.
 
-La pente en reps est un pourcentage de reps effectives par semaine. Elle se compare entre blocs d'un même exercice, ce qui est le seul usage de la comparaison ; elle ne se lit pas contre la pente en e1RM d'un autre exercice (une rep de plus sur douze pèse +8 %, la même rep sur une barre chargée environ +2,5 % d'e1RM).
+La courbe et le chiffre héros sont en reps effectives, mais **la pente (%/semaine) se calcule sur `29 + reps effectives`** (`weeklyProgressionRate`, `src/domain/progression.ts`). C'est exactement la pente de l'e1RM à poids du corps constant : dans `charge × (29 + reps effectives) / 30`, la charge se simplifie d'un taux relatif, quel que soit le poids de la personne. Une rep de plus pèse donc environ +2,5 %, comme sur une barre chargée, et la pente se compare aux autres cartes et au seuil de stagnation (0,5 %/sem). En pourcentage brut de reps, la même rep sur douze pesait +8 % et le seuil ne voulait plus rien dire. Le pourcentage du badge n'est donc pas celui qu'on lirait sur la courbe en reps : la carte et le panneau de comparaison l'écrivent (« %/sem en force estimée, à poids du corps constant : une rep de plus vaut environ +2,5 %. »).
 
 ### Alternatives écartées
 
 - **Demander le poids du corps** : rendrait l'e1RM exact, lesté compris, mais ajoute une saisie et une donnée à tenir à jour pour quelques exercices. Écarté par le demandeur.
 - **Un message « charge nulle » sans juger** : honnête, mais l'exercice reste sans Référence, sans record et sans courbe.
+- **Une pente en pourcentage brut de reps** : fidèle à la courbe affichée, mais trois fois plus forte que celle d'un exercice chargé pour le même gain, donc incomparable d'une carte à l'autre et hors d'échelle pour le seuil de stagnation.
 - **Une unité par séance ou par bloc** : une carte superposerait une courbe en reps et une courbe en kilos, et une comparaison de blocs opposerait deux pentes d'unités différentes.
 - **Garder les points à zéro sur une courbe en kilos** : la pente du bloc où l'on passe au lesté devient absurde.
 

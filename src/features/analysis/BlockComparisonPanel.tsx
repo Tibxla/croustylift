@@ -31,6 +31,7 @@ import { TrendArrow } from './TrendArrow';
 import { trendColor, trendOf, winnerVerdict } from './trend';
 import { formatRate } from './format';
 import { errorMessage } from '../../lib/error-message';
+import { rateNote } from './unit-label';
 
 /** Sous ce nombre de points, une option n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -301,6 +302,10 @@ function ComparisonResult({
           isWinner={result.winner === 'second'}
         />
       </div>
+
+      {rateNote(result.unit) && (
+        <p className="text-[11px] text-ink-faint">{rateNote(result.unit)}</p>
+      )}
 
       <Verdict
         winner={result.winner}
