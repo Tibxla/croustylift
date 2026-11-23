@@ -40,7 +40,19 @@ export function hasNoteDraftChanges(
   drafts: Readonly<Record<string, string>>,
   exerciseIds: readonly string[],
 ): boolean {
-  return exerciseIds.some((id) => {
+  return noteDraftExerciseIds(saved, drafts, exerciseIds).length > 0;
+}
+
+/**
+ * Les exercices dont la note a un brouillon non enregistré, sans doublon (deux
+ * lignes du même exo partagent une note), dans l'ordre de la séance.
+ */
+export function noteDraftExerciseIds(
+  saved: Readonly<Record<string, string>>,
+  drafts: Readonly<Record<string, string>>,
+  exerciseIds: readonly string[],
+): string[] {
+  return [...new Set(exerciseIds)].filter((id) => {
     const draft = drafts[id];
     return draft !== undefined && draft !== (saved[id] ?? '');
   });
@@ -67,6 +79,90 @@ export function hasUnsavedEdits(editor: {
       editor.rows.map((row) => row.exerciseId),
     )
   );
+}
+
+// --- Bouton « Enregistrer » et confirmation de sortie ---------------------------
+//
+// Après un enregistrement réussi, l'éditeur affiche « Séance enregistrée. » à la
+// place du bouton, puis repart en arrière. S'il reste le brouillon d'une note,
+// la garde de sortie retient ce retour et l'utilisateur peut choisir de
+// continuer : l'éditeur reste alors monté APRÈS un enregistrement. Le bandeau
+// ne doit pas y survivre, sinon plus rien ne permet d'enregistrer la suite.
+
+/** État de l'enregistrement des prescriptions. */
+export interface SaveStatus {
+  busy: boolean;
+  error: string | null;
+  /** Le dernier enregistrement a réussi, et l'éditeur n'a pas repris depuis. */
+  done: boolean;
+}
+
+export const SAVE_IDLE: SaveStatus = { busy: false, error: null, done: false };
+export const SAVE_BUSY: SaveStatus = { busy: true, error: null, done: false };
+export const SAVE_DONE: SaveStatus = { busy: false, error: null, done: true };
+
+/** L'enregistrement a échoué : le bouton revient, avec le motif. */
+export function saveFailed(message: string): SaveStatus {
+  return { busy: false, error: message, done: false };
+}
+
+/**
+ * « Continuer l'édition » : l'utilisateur reste dans l'éditeur. Un
+ * enregistrement réussi n'est plus l'état de l'écran, le bouton revient.
+ */
+export function editingResumed(save: SaveStatus): SaveStatus {
+  return save.done ? { ...save, done: false } : save;
+}
+
+/**
+ * Ce que montre l'emplacement du bouton : le bandeau « Séance enregistrée. »
+ * seulement si le dernier enregistrement a réussi ET que rien n'a bougé depuis.
+ * Des prescriptions de nouveau modifiées ramènent le bouton, quoi qu'il arrive.
+ */
+export function saveControl(save: SaveStatus, dirty: boolean): 'saved' | 'button' {
+  return save.done && !dirty ? 'saved' : 'button';
+}
+
+/** Les textes de la confirmation de sortie. */
+export interface LeavePrompt {
+  label: string;
+  title: string;
+  detail: string;
+}
+
+/**
+ * Ce que la confirmation de sortie annonce. Elle s'ouvre aussi juste après un
+ * enregistrement réussi, quand il reste le brouillon d'une note : « Quitter sans
+ * enregistrer ? » y laissait croire que la séance n'était pas partie. Quand
+ * seule une note est en jeu, le texte la nomme.
+ *
+ * `noteDraftNames` : les noms des exercices dont la note a un brouillon
+ * (cf. `noteDraftExerciseIds`).
+ */
+export function leavePrompt(unsaved: {
+  prescriptions: boolean;
+  noteDraftNames: readonly string[];
+}): LeavePrompt {
+  const [first] = unsaved.noteDraftNames;
+  if (unsaved.prescriptions || first === undefined) {
+    return {
+      label: 'Modifications non enregistrées',
+      title: 'Quitter sans enregistrer ?',
+      detail: 'Tes modifications de cette séance seront perdues.',
+    };
+  }
+  if (unsaved.noteDraftNames.length === 1) {
+    return {
+      label: 'Note non enregistrée',
+      title: 'Quitter sans enregistrer la note ?',
+      detail: `Les prescriptions sont enregistrées. La note de « ${first} » ne l’est pas : elle sera perdue.`,
+    };
+  }
+  return {
+    label: 'Notes non enregistrées',
+    title: 'Quitter sans enregistrer les notes ?',
+    detail: `Les prescriptions sont enregistrées. Les notes de ${unsaved.noteDraftNames.length} exercices ne le sont pas : elles seront perdues.`,
+  };
 }
 
 // --- Garde de sortie ----------------------------------------------------------

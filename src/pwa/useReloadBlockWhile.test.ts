@@ -45,6 +45,9 @@ vi.mock('react', () => ({
 
 import { activeBlockers, blockReloads, unblockReloads } from './blockers'
 import { useReloadBlockWhile } from './useReloadBlockWhile'
+import { shouldReload } from './update'
+import { hasUnsavedEdits } from '../features/authoring/seance-dirty'
+import { defaultFields, type EditorRow } from '../features/authoring/prescription-edit'
 
 const REASON = 'brouillon-test'
 
@@ -138,6 +141,60 @@ describe('useReloadBlockWhile', () => {
     const release = render(false)
     release()
     expect(activeBlockers()).toEqual([])
+    unmount()
+  })
+})
+
+// U49 (vérification navigateur du lot 3) : « Quitter » sur un brouillon de note
+// d'instructions, mise à jour en attente, n'avait pas rechargé. Le blocage du
+// brouillon n'y était pour rien : il suit `hasUnsavedEdits`, qui compte les notes,
+// et la levée immédiate le retire comme pour les prescriptions. L'onglet demandé
+// était la Capture, vers laquelle un changement d'onglet ne recharge jamais.
+describe('brouillon de note d’instructions seul (éditeur de séance)', () => {
+  const ligne: EditorRow = {
+    rowId: 'r1',
+    exerciseId: 'bench',
+    exerciseName: 'Développé couché',
+    muscleGroup: 'pectoraux',
+    primaryMuscles: ['pectoraux'],
+    unilateral: false,
+    ...defaultFields(),
+  }
+  /** Le drapeau que l'éditeur passe au hook : prescriptions intactes, une note en cours. */
+  const noteSeule = hasUnsavedEdits({
+    savedRows: [ligne],
+    rows: [ligne],
+    savedNotes: {},
+    noteDrafts: { bench: 'Prise serrée' },
+  })
+  const changementVers = (targetSurface: string) =>
+    shouldReload({
+      captureInProgress: false,
+      fieldFocused: false,
+      blockers: activeBlockers(),
+      trigger: 'surface-change',
+      reloadPending: true,
+      interactedSinceLoad: true,
+      targetSurface,
+    })
+
+  it('tient le blocage, et l’abandon confirmé le lève avant le démontage', () => {
+    expect(noteSeule).toBe(true)
+    const release = render(noteSeule)
+    expect(activeBlockers()).toEqual([REASON])
+    expect(changementVers('analysis')).toBe(false)
+    release()
+    // « Quitter » : le changement d'onglet demande le rechargement dans le même tour.
+    expect(activeBlockers()).toEqual([])
+    expect(changementVers('analysis')).toBe(true)
+    unmount()
+  })
+
+  it('vers la Capture, pas de rechargement, blocage levé ou non : c’est la règle de l’onglet', () => {
+    const release = render(noteSeule)
+    release()
+    expect(activeBlockers()).toEqual([])
+    expect(changementVers('capture')).toBe(false)
     unmount()
   })
 })

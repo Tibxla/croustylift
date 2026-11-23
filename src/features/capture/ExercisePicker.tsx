@@ -405,7 +405,12 @@ function CatalogSheet({
   onChosen: (exercise: SessionExercise) => void;
 }) {
   const [rows, setRows] = useState<ExerciseRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Deux échecs distincts : le CHARGEMENT du catalogue (rien à lister, on propose
+  // de réessayer) et le CHOIX d'un exo (la liste reste, on peut retaper).
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  // Incrémenté par « Réessayer » : relance le chargement.
+  const [attempt, setAttempt] = useState(0);
   const [query, setQuery] = useState('');
   // Id de l'exo en cours de chargement (réf. + records) après un tap.
   const [picking, setPicking] = useState<string | null>(null);
@@ -413,19 +418,19 @@ function CatalogSheet({
   useEffect(() => {
     let alive = true;
     setRows(null);
-    setError(null);
+    setLoadError(null);
     void (async () => {
       try {
         const data = await loadCatalog();
         if (alive) setRows(data);
       } catch (err) {
-        if (alive) setError(errorMessage(err));
+        if (alive) setLoadError(errorMessage(err));
       }
     })();
     return () => {
       alive = false;
     };
-  }, [loadCatalog]);
+  }, [loadCatalog, attempt]);
 
   const excluded = useMemo(() => new Set(existingExerciseIds), [existingExerciseIds]);
 
@@ -440,11 +445,12 @@ function CatalogSheet({
 
   const handlePick = async (row: ExerciseRow) => {
     setPicking(row.id);
+    setPickError(null);
     try {
       const exercise = await loadCatalogExercise({ id: row.id, name: row.name });
       onChosen(exercise);
     } catch (err) {
-      setError(errorMessage(err));
+      setPickError(errorMessage(err));
       setPicking(null);
     }
   };
@@ -501,8 +507,22 @@ function CatalogSheet({
         </div>
 
         <div className="mx-auto w-full max-w-md flex-1 overflow-y-auto px-4">
-          {error ? (
-            <p className="py-8 text-center text-sm text-warn">{error}</p>
+          {pickError && (
+            <p className="pb-3 text-sm text-warn" role="alert">
+              {pickError}
+            </p>
+          )}
+          {loadError ? (
+            <div className="flex flex-col items-center gap-4 py-8" role="alert">
+              <p className="text-center text-sm text-warn">{loadError}</p>
+              <button
+                type="button"
+                onClick={() => setAttempt((n) => n + 1)}
+                className="btn btn-secondary h-11 rounded-xl px-5 text-sm font-medium"
+              >
+                Réessayer
+              </button>
+            </div>
           ) : rows === null ? (
             <p className="py-8 text-center text-sm text-ink-muted">Chargement du catalogue…</p>
           ) : filtered.length === 0 ? (

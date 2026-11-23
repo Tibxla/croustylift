@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
 import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
+import { networkErrorMessage } from '../lib/error-message'
 
 /** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
 const MIN_PASSWORD_LENGTH = 10
 
 /** Traduit les erreurs Supabase de mise à jour en français lisible. */
 function frenchError(message: string): string {
+  // Hors ligne (invité qui rouvre l'app sans réseau) : ce n'est pas le lien.
+  const network = networkErrorMessage(message)
+  if (network) return network
   const m = message.toLowerCase()
   if (m.includes('password should be at least')) {
     return `Le mot de passe est trop court (${MIN_PASSWORD_LENGTH} caractères minimum).`

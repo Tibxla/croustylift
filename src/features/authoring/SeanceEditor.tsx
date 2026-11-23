@@ -49,7 +49,16 @@ import {
 } from './prescription-edit';
 import {
   hasPrescriptionChanges,
+  editingResumed,
   hasUnsavedEdits,
+  leavePrompt,
+  noteDraftExerciseIds,
+  saveControl,
+  saveFailed,
+  SAVE_BUSY,
+  SAVE_DONE,
+  SAVE_IDLE,
+  type SaveStatus,
   requestLeave,
   setLeaveGuard,
 } from './seance-dirty';
@@ -274,11 +283,7 @@ export function SeanceEditorView({
     })),
   );
   const [adding, setAdding] = useState(false);
-  const [save, setSave] = useState<{ busy: boolean; error: string | null; done: boolean }>({
-    busy: false,
-    error: null,
-    done: false,
-  });
+  const [save, setSave] = useState<SaveStatus>(SAVE_IDLE);
 
   // Scroll vers le bas après un ajout (issue #57) : enchaîner les ajouts sans
   // scroller à la main. On compte les ajouts (et non rows.length, qui bouge aussi
@@ -365,22 +370,34 @@ export function SeanceEditorView({
   }
 
   async function handleSave() {
-    setSave({ busy: true, error: null, done: false });
+    setSave(SAVE_BUSY);
     try {
       await onSave(rows);
       setSavedRows(rows);
       setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
-      setSave({ busy: false, error: null, done: true });
+      setSave(SAVE_DONE);
       // Laisse la confirmation visible un instant, puis retour. Par la garde de
       // sortie : s'il reste le brouillon d'une note, elle demande avant de partir.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
       backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
     } catch (err) {
-      setSave({ busy: false, error: errorMessage(err), done: false });
+      setSave(saveFailed(errorMessage(err)));
     }
   }
 
   const empty = rows.length === 0;
+  // Textes de la confirmation de sortie : quand seule une note est en jeu (cas
+  // du retour différé après un enregistrement réussi), elle le dit.
+  const prompt = pendingLeave
+    ? leavePrompt({
+        prescriptions: dirty,
+        noteDraftNames: noteDraftExerciseIds(
+          notes,
+          noteDrafts,
+          rows.map((r) => r.exerciseId),
+        ).map((id) => rows.find((r) => r.exerciseId === id)?.exerciseName ?? ''),
+      })
+    : null;
 
   if (adding) {
     return (
@@ -466,7 +483,7 @@ export function SeanceEditorView({
               <PlusIcon />
               Ajouter
             </button>
-            {save.done ? (
+            {saveControl(save, dirty) === 'saved' ? (
               <p
                 className="surface-card flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
                 role="status"
@@ -498,16 +515,19 @@ export function SeanceEditorView({
             </p>
           )}
           {/* Confirmation INLINE avant de perdre une saisie (jamais window.confirm). */}
-          {pendingLeave && (
-            <div className="mt-2 rounded-xl bg-surface-2/60 p-3" role="alertdialog" aria-label="Modifications non enregistrées">
-              <p className="text-sm text-ink">Quitter sans enregistrer ?</p>
-              <p className="mt-0.5 text-xs text-ink-muted">
-                Tes modifications de cette séance seront perdues.
-              </p>
+          {pendingLeave && prompt && (
+            <div className="mt-2 rounded-xl bg-surface-2/60 p-3" role="alertdialog" aria-label={prompt.label}>
+              <p className="text-sm text-ink">{prompt.title}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">{prompt.detail}</p>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPendingLeave(null)}
+                  onClick={() => {
+                    setPendingLeave(null);
+                    // L'éditeur reste ouvert : « Séance enregistrée. » rend sa
+                    // place au bouton (cf. seance-dirty, `editingResumed`).
+                    setSave(editingResumed);
+                  }}
                   className="btn btn-secondary h-11 flex-1 rounded-xl px-4 text-sm font-medium"
                 >
                   Continuer l&apos;édition

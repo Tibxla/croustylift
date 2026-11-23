@@ -156,28 +156,13 @@ perte), finition.
 
 ### Comptes
 
-- **Invitation : entrer sans avoir défini son mot de passe** (importante, parcours
-  rares). L'obligation de définir un mot de passe est écrite sur l'appareil. Elle tient
-  au rechargement de l'écran, mais pas partout : forçage de la garde d'arrivée sur un
-  appareil qui retient les saisies d'un autre compte, stockage plein à l'arrivée,
-  démarrage en session locale. Piste : poser l'obligation avant la branche de la garde,
-  et la tenir côté serveur pour qu'elle survive à tout rechargement
-  (`auth/AuthProvider.tsx`, `auth/arrival-link`).
-
-### Éditeur de séance
-
-- **« Enregistrer » absent après « Continuer l'édition »** (mineure). Prescriptions
-  enregistrées avec une note encore en brouillon : la confirmation de sortie s'ouvre,
-  et « Continuer l'édition » laisse « Séance enregistrée » à la place du bouton, même
-  après une nouvelle modification. Contournement : quitter puis rouvrir la séance.
-  Piste : rendre le bouton dès que les prescriptions redeviennent modifiées
-  (`SeanceEditor.tsx`).
-- **Mise à jour retardée d'un tap après l'abandon d'un brouillon de note** (finition).
-  « Quitter » sur un brouillon de note d'instructions, avec une mise à jour en attente :
-  le rechargement de ce changement d'onglet est refusé, le blocage du brouillon ne tombe
-  qu'au démontage. La mise à jour passe au tap suivant ; aucune fuite. Piste : appeler la
-  levée immédiate de `useReloadBlockWhile` à l'abandon confirmé, comme pour les
-  prescriptions.
+- **Invité hors ligne après un stockage plein** (finition). L'obligation de définir son
+  mot de passe est tenue par le serveur et relue sur la session (ADR 0019). Sans
+  session (démarrage en session locale), seule la copie de l'appareil la porte : si le
+  stockage était plein à l'arrivée, l'invité entre hors ligne, jusqu'à la première
+  session validée, qui le renvoie à l'écran de mot de passe. À faire avant de s'y
+  fier : une invitation réelle de bout en bout (le mécanisme est vérifié dans la source
+  du serveur d'auth et par tests, pas sur le projet).
 
 ### Base et import
 
@@ -196,10 +181,6 @@ perte), finition.
 
 ### Messages, tests, build
 
-- **Erreurs encore affichées telles quelles** (mineure) : un refus de droits (42501) et
-  une erreur réseau (`TypeError: Failed to fetch`) ne sont pas traduits, et la feuille
-  du catalogue n'a pas de « Réessayer ». Seuls les refus de contrainte (23503, 23514)
-  et de nom (23505) le sont (`lib/db-errors.ts`).
 - **Aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM. La
   logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
   `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de

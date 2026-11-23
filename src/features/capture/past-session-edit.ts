@@ -348,16 +348,17 @@ export function diffSetsToOps(
 // Éditer la durée et le BPM moyen d'une séance CLÔTURÉE (PastSessionEditor) :
 // on dérive l'op `updateExecution` MINIMALE, ne posant QUE les champs réellement
 // changés. Un champ omis laisse la colonne intacte côté DB (`updateExecution`
-// dans data.ts) ; `bpmAvg: null` EXPLICITE retire le BPM. La durée est toujours
-// non-null côté éditeur (décision produit), le BPM est nullable (retirable).
+// dans data.ts) ; un `null` EXPLICITE retire la valeur. Durée et BPM sont tous
+// deux retirables : une durée effacée redevient « non saisie » (`null`), jamais 0
+// (décision produit du 2026-11-24).
 // L'op réutilise EXACTEMENT le chemin d'écriture de la clôture (idempotent par id,
 // ADR 0003/0009) — aucun second chemin. `null` renvoyé si rien n'a bougé (pas d'op).
 
 /**
  * Dérive l'op `updateExecution` minimale pour passer des métriques `original`
  * (telles qu'en base) aux métriques `edited` (après édition). Ne pose QUE les
- * champs changés : la durée si elle diffère, le BPM si il diffère (y compris
- * `null` explicite quand il est retiré). `null` si durée ET BPM sont inchangés.
+ * champs changés, durée comme BPM, y compris un `null` explicite quand la valeur
+ * est retirée. `null` si durée ET BPM sont inchangés.
  * Pure, sans réseau ni mutation. On NE touche jamais `closedAt` : la séance reste
  * clôturée, on ne corrige que ses métriques.
  */
@@ -368,9 +369,12 @@ export function buildExecutionMetricsOp(
 ): UpdateExecutionOp | null {
   const op: UpdateExecutionOp = { type: 'updateExecution', id: executionId };
   let changed = false;
-  // Durée `null` = NON SAISIE dans l'éditeur (séance close sans durée, laissée
-  // telle quelle) : on n'écrit alors aucune durée, jamais une valeur inventée.
-  if (edited.durationMin !== null && edited.durationMin !== original.durationMin) {
+  // Durée `null` = NON SAISIE. Déjà absente en base : rien n'est écrit, jamais
+  // une valeur inventée. Présente en base puis effacée : `null` EXPLICITE, la
+  // colonne est vidée. La séance reste close : l'éditeur n'ouvre les métriques
+  // que si `closed_at` est posé, et c'est lui que la reprise lit d'abord
+  // (`loadTodayExecution`), pas la durée.
+  if (edited.durationMin !== original.durationMin) {
     op.durationMin = edited.durationMin;
     changed = true;
   }

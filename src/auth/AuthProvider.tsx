@@ -4,8 +4,10 @@ import { arrivalHash, supabase, supabaseAuthStorageKey } from '../lib/supabase'
 import {
   arrivalFromHash,
   clearPasswordSetup,
-  passwordSetupRequired,
-  requirePasswordSetup,
+  hasPasswordProof,
+  offlineStartSetupOwed,
+  PASSWORD_SET_KEY,
+  syncPasswordSetup,
 } from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
 import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
@@ -48,6 +50,8 @@ adoptLegacyOps()
 // Arrivée par lien d'INVITATION : la session s'ouvre par un simple SIGNED_IN,
 // sans PASSWORD_RECOVERY. Le premier événement porteur de session envoie donc
 // l'invité définir son mot de passe (une seule fois par chargement de page).
+// Ce fragment n'est que le premier signal : l'obligation elle-même est tenue
+// par le serveur et relue sur chaque session (`syncPasswordSetup`).
 let inviteArrivalPending = arrivalFromHash(arrivalHash).kind === 'invite'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -57,6 +61,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // un lien d'invitation : l'app aiguille alors vers ResetPasswordScreen,
   // prioritaire sur tout autre écran.
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
+  // Obligation de l'INVITÉ : son mot de passe n'est pas encore défini (cf.
+  // arrival-link). Tenue à part de la récupération, parce qu'elle se relit sur
+  // chaque session et peut retomber seule (mot de passe défini ailleurs), ce
+  // qu'un flux de récupération en cours ne doit jamais faire.
+  const [passwordSetupOwed, setPasswordSetupOwed] = useState(false)
   // Marqueur d'identité local (ADR 0012) : qui est reconnu sur cet appareil.
   const [localAccount, setLocalAccount] = useState<LocalAccount | null>(() => loadLocalAccount())
   // Vrai quand la session est invérifiable (réseau) mais que la Session locale
@@ -68,10 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // pas tranché (cf. ArrivalGuardScreen) : forcer, ou y renoncer.
   const [heldArrival, setHeldArrival] = useState<{
     session: Session
-    /** Le lien demandait de définir un mot de passe (récupération, invitation). */
-    passwordSetup: boolean
-    /** C'était une invitation : l'obligation sera persistée si l'arrivée est forcée. */
-    invited: boolean
+    /** Arrivée par un lien de récupération : l'écran de mot de passe au forçage. */
+    recovery: boolean
+    /** Invité sans mot de passe : l'obligation suit l'arrivée si elle est forcée. */
+    setupOwed: boolean
     /** Le compte dont les saisies attendent, et combien. */
     email: string | null
     held: number
@@ -81,13 +90,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     let settled = false
 
+    // Démarrage en SESSION LOCALE (ADR 0012) : pas de session, donc rien à lire
+    // du serveur. La copie de l'obligation écrite sur l'appareil fait foi
+    // jusqu'à la première session validée, qui la confirme ou la lève.
+    const recognizeOffline = () => {
+      const account = loadLocalAccount()
+      if (!account) return
+      if (offlineStartSetupOwed(account)) setPasswordSetupOwed(true)
+      setOfflineRecognized(true)
+    }
+
     // Boot borné (ADR 0012) : si getSession() n'a pas répondu sous 3 s (wifi
     // zombie), on tranche localement. Une réponse tardive reprendra la main via
     // onAuthStateChange (TOKEN_REFRESHED / SIGNED_OUT) — jamais de fantôme.
     const timer = setTimeout(() => {
       if (!active || settled) return
       settled = true
-      if (loadLocalAccount()) setOfflineRecognized(true)
+      recognizeOffline()
       setLoading(false)
     }, BOOT_TIMEOUT_MS)
 
@@ -103,15 +122,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (arrivalBlockedBy(data.session.user.id) === 0) {
             // Session restaurée d'un invité qui n'a pas encore de mot de passe :
             // l'écran de mot de passe d'abord, dès ce premier rendu.
-            if (passwordSetupRequired(data.session.user.id)) setIsPasswordRecovery(true)
+            if (syncPasswordSetup(data.session, inviteArrivalPending)) setPasswordSetupOwed(true)
             setSession(data.session)
           }
-        } else if (error && isAuthRetryableFetchError(error) && loadLocalAccount()) {
+        } else if (error && isAuthRetryableFetchError(error)) {
           // Session présente mais INVÉRIFIABLE (jeton périmé + réseau injoignable) :
           // la Session locale fait foi (ADR 0012). supabase-js garde sa session en
           // storage et le refresh retente en fond — au retour du réseau, soit elle
           // se revalide (TOKEN_REFRESHED), soit elle s'avère révoquée (SIGNED_OUT).
-          setOfflineRecognized(true)
+          recognizeOffline()
         }
         // `null` SANS erreur réseau = vraiment déconnecté (jamais connecté, ou
         // révocation déjà actée) → login. Le marqueur, lui, n'est pas touché :
@@ -122,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!active || settled) return
         settled = true
         clearTimeout(timer)
-        if (loadLocalAccount()) setOfflineRecognized(true)
+        recognizeOffline()
         setLoading(false)
       })
 
@@ -130,20 +149,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return
-      // GARDE D'ARRIVÉE (ADR 0019), avant tout : une session pour un AUTRE compte
+      // OBLIGATION DE MOT DE PASSE de l'invité, AVANT la garde d'arrivée : elle
+      // se lit sur la session (serveur), sur le fragment de ce chargement et sur
+      // la copie de l'appareil, et cette copie est réécrite ici. Une arrivée
+      // retenue par la garde, puis rechargée (plus de fragment), puis forcée,
+      // la retrouve donc entière.
+      let setupOwed = false
+      if (nextSession?.user) {
+        setupOwed = syncPasswordSetup(nextSession, inviteArrivalPending)
+        inviteArrivalPending = false
+      }
+      // GARDE D'ARRIVÉE (ADR 0019), avant tout le reste : une session pour un AUTRE compte
       // que celui dont l'appareil retient des saisies n'entre pas. Elle couvre ce
       // que `signIn` ne voit pas : lien de récupération, lien d'invitation,
       // session restaurée. La session est gardée de côté, le marqueur ne bouge pas.
       if (nextSession?.user) {
         const held = arrivalBlockedBy(nextSession.user.id)
         if (held > 0) {
-          const invited = inviteArrivalPending
-          const passwordSetup = event === 'PASSWORD_RECOVERY' || invited
-          inviteArrivalPending = false
+          const recovery = event === 'PASSWORD_RECOVERY'
           setHeldArrival((current) => ({
             session: nextSession,
-            passwordSetup: passwordSetup || (current?.passwordSetup ?? false),
-            invited: invited || (current?.invited ?? false),
+            recovery: recovery || (current?.recovery ?? false),
+            setupOwed: setupOwed || (current?.setupOwed ?? false),
             email: loadLocalAccount()?.email ?? null,
             held,
           }))
@@ -151,6 +178,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false)
           return
         }
+      }
+      if (nextSession?.user) {
+        // Posée pour toute session qui entre ; ne retombe que sur PREUVE d'un
+        // mot de passe (défini ici ou ailleurs), jamais sur une copie manquante.
+        if (setupOwed) setPasswordSetupOwed(true)
+        else if (hasPasswordProof(nextSession)) setPasswordSetupOwed(false)
       }
       if (event === 'PASSWORD_RECOVERY') {
         // On a une session temporaire recovery : on la garde pour pouvoir appeler
@@ -173,20 +206,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLocalAccount(account)
         setOfflineRecognized(false)
         setSession(nextSession)
-        // Arrivée par invitation : l'obligation de définir son mot de passe est
-        // ÉCRITE pour ce compte, puis relue à chaque session restaurée. Le
-        // fragment ne se lit qu'une fois : sans cela, recharger l'écran avant
-        // d'avoir enregistré le mot de passe faisait entrer sans mot de passe.
-        if (inviteArrivalPending) {
-          inviteArrivalPending = false
-          requirePasswordSetup(nextSession.user.id)
-        }
-        if (passwordSetupRequired(nextSession.user.id)) setIsPasswordRecovery(true)
         setLoading(false)
         return
       }
       if (event === 'SIGNED_OUT') {
         setHeldArrival(null)
+        // Plus de session : l'obligation de l'invité n'a plus d'objet ici (sans
+        // quoi son écran masquerait la connexion). Elle sera relue à la suivante.
+        setPasswordSetupOwed(false)
         // Déconnexion volontaire OU révocation : la session n'existe plus, la
         // reconnaissance hors-ligne tombe avec elle. Le marqueur et les données
         // locales, eux, ne partent qu'avec la Déconnexion (cf. signOut) — une
@@ -246,8 +273,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     recognizeAccount(account)
     setLocalAccount(account)
     setSession(heldArrival.session)
-    if (heldArrival.invited) requirePasswordSetup(account.userId)
-    if (heldArrival.passwordSetup) setIsPasswordRecovery(true)
+    if (heldArrival.recovery) setIsPasswordRecovery(true)
+    // Relue sur la session retenue, et réécrite après la purge : forcer la garde
+    // ne fait pas entrer un invité sans mot de passe.
+    if (syncPasswordSetup(heldArrival.session, heldArrival.setupOwed)) setPasswordSetupOwed(true)
     setHeldArrival(null)
   }, [heldArrival, forgetLocalData])
 
@@ -270,7 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
       user: session?.user ?? null,
       loading,
-      isPasswordRecovery,
+      isPasswordRecovery: isPasswordRecovery || passwordSetupOwed,
       localAccount,
       offlineRecognized,
       signIn: async (email, password) => {
@@ -333,20 +362,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       updatePassword: async (password) => {
-        const { data, error } = await supabase.auth.updateUser({ password })
+        // Le marqueur part DANS LA MÊME REQUÊTE que le mot de passe (une seule
+        // transaction côté serveur) : l'obligation de l'invité n'est levée, sur
+        // tous les appareils, que si le mot de passe est enregistré.
+        const { data, error } = await supabase.auth.updateUser({
+          password,
+          data: { [PASSWORD_SET_KEY]: true },
+        })
         if (error) throw error
-        // Mot de passe enregistré : l'obligation posée par l'invitation est levée.
+        // Mot de passe enregistré : la copie de l'obligation sur l'appareil tombe.
         const userId = data.user?.id ?? session?.user.id
         if (userId) clearPasswordSetup(userId)
       },
       clearPasswordRecovery: () => {
         setIsPasswordRecovery(false)
+        setPasswordSetupOwed(false)
       },
     }),
     [
       session,
       loading,
       isPasswordRecovery,
+      passwordSetupOwed,
       localAccount,
       offlineRecognized,
       forgetLocalData,
