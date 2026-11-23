@@ -21,6 +21,7 @@ import {
   pendingCount,
   clearQueue,
   purgeByExecution,
+  mergeByEnqueueTime,
   adoptLegacyOps,
   readOwnQueue,
   readQuarantine,
@@ -34,7 +35,7 @@ import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
-const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, ...op }) => op);
+const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, _at, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -1747,5 +1748,47 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
   it('seul le forçage (clearQueue) jette tout', () => {
     clearQueue();
     expect(heldCount()).toBe(0);
+  });
+});
+
+describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)', () => {
+  const at = (id: string, _at?: number): OutboxOp => ({ type: 'deleteSet', id, ...(_at === undefined ? {} : { _at }) });
+  const ids = (ops: OutboxOp[]) => ops.map((op) => op.id);
+
+  it('rien en mémoire : la file persistée telle quelle', () => {
+    const persisted = [at('p1', 10), at('p2', 20)];
+    expect(mergeByEnqueueTime(persisted, [])).toBe(persisted);
+  });
+
+  it('une écriture en mémoire passe avant la première persistée plus récente', () => {
+    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p3', 30)], [at('m2', 20)]))).toEqual(['p1', 'm2', 'p3']);
+  });
+
+  it('plus récente que toute la file persistée : en fin, comme avant', () => {
+    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p2', 20)], [at('m3', 30), at('m4', 40)]))).toEqual([
+      'p1',
+      'p2',
+      'm3',
+      'm4',
+    ]);
+  });
+
+  it('à instant égal, la persistée d’abord', () => {
+    expect(ids(mergeByEnqueueTime([at('p', 20)], [at('m', 20)]))).toEqual(['p', 'm']);
+  });
+
+  it('chaque liste garde son ordre interne (exécution avant ses séries)', () => {
+    const merged = mergeByEnqueueTime([at('p1', 10), at('p4', 40)], [at('m2', 20), at('m3', 30), at('m5', 50)]);
+    expect(ids(merged)).toEqual(['p1', 'm2', 'm3', 'p4', 'm5']);
+  });
+
+  it('ops sans instant (bundle antérieur) : persistée, tenue pour plus ancienne ; en mémoire, laissée en fin', () => {
+    expect(ids(mergeByEnqueueTime([at('vieille'), at('p2', 20)], [at('m1', 10)]))).toEqual(['vieille', 'm1', 'p2']);
+    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p2', 20)], [at('sans-instant'), at('m0', 5)]))).toEqual([
+      'p1',
+      'p2',
+      'sans-instant',
+      'm0',
+    ]);
   });
 });

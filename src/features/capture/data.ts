@@ -48,7 +48,7 @@ import {
   type PersonalRecordBySide,
 } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
-import { loadExerciseNote } from '../notes/data';
+import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
 import { readOwnQueue, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
@@ -1054,6 +1054,15 @@ export interface TodayExecution {
    * c'est qu'elle a été supprimée ailleurs (cf. `reconcileProgress`, state.ts).
    */
   pendingSetIds: string[];
+  /**
+   * Les notes datées de cette exécution dont une ÉCRITURE (pose ou effacement)
+   * attendait en file pendant la lecture, file lue avant et après : leurs exos,
+   * ou l'id de la note pour un effacement hérité (cf. `pendingDatedNoteKeys`).
+   * La réponse est figée à son départ : pour ces notes elle est déjà périmée,
+   * même si l'écriture a été acquittée pendant le trajet et que la file est vide
+   * à l'arrivée. Une note effacée ainsi est déjà retirée de `datedNotes`.
+   */
+  pendingNoteKeys: string[];
 }
 
 /**
@@ -1116,6 +1125,10 @@ export async function loadTodayExecution(
     return {
       ...withoutPendingDeletions(today, pending),
       pendingSetIds: [...new Set(pending.filter((op) => op.type === 'insertSet').map((op) => op.id))],
+      // Les notes aussi se lisent aux deux bouts : un effacement acquitté
+      // pendant le trajet (par cet onglet ou un autre) a vidé la file, et la
+      // réponse porte encore la note.
+      pendingNoteKeys: [...new Set(pendingDatedNoteKeys(pending, today.executionId))],
     };
   } catch {
     return null;
@@ -1155,14 +1168,20 @@ export async function loadTodayExecutionWithin(
 }
 
 /**
- * Le réalisé relu en base, moins les séries que la file d'écritures supprime
- * (`deleteSet` en attente). Un exo qui n'a plus aucune série sort du réalisé.
- * Pur : l'appelant passe la file lue avant ET après la lecture réseau.
+ * Le réalisé relu en base, moins ce que la file d'écritures supprime : les
+ * séries (`deleteSet` en attente) et les notes datées (`deleteDatedNote`, par
+ * son couple, ou par l'id de la note pour un effacement hérité). Un exo qui n'a
+ * plus aucune série sort du réalisé. Pur : l'appelant passe la file lue avant
+ * ET après la lecture réseau.
  */
 export function withoutPendingDeletions(
   today: TodayExecution,
   pendingOps: readonly OutboxOp[],
 ): TodayExecution {
+  return withoutDeletedNotes(withoutDeletedSets(today, pendingOps), pendingOps);
+}
+
+function withoutDeletedSets(today: TodayExecution, pendingOps: readonly OutboxOp[]): TodayExecution {
   const deleted = new Set(
     pendingOps.filter((op) => op.type === 'deleteSet').map((op) => op.id),
   );
@@ -1179,6 +1198,29 @@ export function withoutPendingDeletions(
     progress[exerciseId] = { sets: kept.map((r) => r.set), setIds: kept.map((r) => r.id) };
   }
   return { ...today, progress };
+}
+
+/**
+ * Une note dont l'effacement attend (ou attendait au départ de la lecture) a
+ * quitté l'état local dès le geste, et la base la porte encore : rendue telle
+ * quelle, elle revenait dans la Capture. L'effacement vise le couple
+ * (exécution, exercice) ; celui d'un bundle antérieur ne porte que l'id.
+ */
+function withoutDeletedNotes(today: TodayExecution, pendingOps: readonly OutboxOp[]): TodayExecution {
+  const deletes = pendingOps.filter((op) => op.type === 'deleteDatedNote');
+  if (deletes.length === 0) return today;
+  const datedNotes: Record<string, DatedNoteDraft> = {};
+  let removed = false;
+  for (const [exerciseId, note] of Object.entries(today.datedNotes)) {
+    const gone = deletes.some((op) =>
+      op.executionId !== undefined && op.exerciseId !== undefined
+        ? op.executionId === today.executionId && op.exerciseId === exerciseId
+        : op.id === note.id,
+    );
+    if (gone) removed = true;
+    else datedNotes[exerciseId] = note;
+  }
+  return removed ? { ...today, datedNotes } : today;
 }
 
 /**
@@ -1318,8 +1360,9 @@ async function fetchTodayExecution(
     startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,
-    // Rempli par `loadTodayExecution`, qui tient la file.
+    // Remplis par `loadTodayExecution`, qui tient la file.
     pendingSetIds: [],
+    pendingNoteKeys: [],
   };
 }
 

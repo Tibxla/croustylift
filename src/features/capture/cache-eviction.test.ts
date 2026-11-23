@@ -12,9 +12,11 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from: () => query } };
 });
 
-import { evictNonEssentialCopies, writeMakingRoom } from './cache-eviction';
+import { evictNonEssentialCopies, forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
 import { loadCaptureSource, loadChosenSeance, loadExerciseRows, loadSeanceForCapture } from './data';
 import { clearQueue, enqueue, readQueue, storageFailing } from './outbox';
+import { capturePersistFailing, initialState, persist } from './state';
+import { upperA } from './fixtures';
 import { clearReadCache } from '../../lib/read-cache';
 import { saveLocalAccount } from '../../lib/local-account';
 
@@ -86,6 +88,7 @@ const ESSENTIAL = [
 ];
 
 beforeEach(() => {
+  forgetEntrustedExercises();
   storage = new MemoryStorage();
   (globalThis as unknown as { localStorage: Storage }).localStorage = storage as unknown as Storage;
   clearReadCache();
@@ -112,6 +115,86 @@ describe('evictNonEssentialCopies', () => {
     evictNonEssentialCopies(1);
     evictNonEssentialCopies(2);
     expect(copies()).toEqual(ESSENTIAL);
+  });
+});
+
+// Un exo AJOUTÉ (ou remplaçant) dans la séance en cours n'est dans aucun
+// template : ses copies évincées, la réouverture hors ligne l'ignorait.
+describe('exos de la séance en cours', () => {
+  const captureState = (over: Record<string, unknown>) =>
+    storage.setItem(
+      'croustylift:capture:s1:2026-11-24',
+      JSON.stringify({ sessionId: 's1', date: '2026-11-24', progress: {}, ...over }),
+    );
+
+  it('exo ajouté à la disposition enregistrée : son historique et sa note restent au palier 2', () => {
+    captureState({ layout: [{ kind: 'added', exerciseId: 'curl', name: 'Curl' }] });
+    expect(evictNonEssentialCopies(2)).toBe(0);
+    expect(copies()).toContain('exo-execs:curl');
+    expect(copies()).toContain('exo-note:curl');
+  });
+
+  it('exo qui a du réalisé, ou exo ouvert, dans un état enregistré : protégés aussi', () => {
+    captureState({ progress: { curl: { sets: [], setIds: [], skipped: false } } });
+    expect(evictNonEssentialCopies(2)).toBe(0);
+    captureState({ activeExerciseId: 'curl' });
+    expect(evictNonEssentialCopies(2)).toBe(0);
+  });
+
+  it('exo en cours d’ajout, pas encore sur l’appareil : protégé par l’appelant', () => {
+    // C'est l'écriture de la disposition elle-même qui déclenche l'éviction.
+    expect(evictNonEssentialCopies(2, ['curl'])).toBe(0);
+    // Même quand rien n'y fait et que les deux paliers passent.
+    expect(writeMakingRoom(() => false, ['curl'])).toBe(false);
+    expect(copies()).toContain('exo-execs:curl');
+    expect(copies()).toContain('exo-note:curl');
+  });
+
+  it('stockage vraiment plein : l’état qui ajoute l’exo n’a pas pu s’écrire, la série enfilée ensuite n’évince pas ses copies', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const state = {
+      ...initialState(upperA, '2026-11-24'),
+      layout: [{ kind: 'added' as const, exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+    };
+    // Plus aucune place : ni l'état ni la file ne passeront, même après éviction.
+    storage.capacity = 0;
+    persist(state);
+    expect(capturePersistFailing()).toBe(true);
+    expect([...storage.store.keys()].some((k) => k.startsWith('croustylift:capture:'))).toBe(false);
+
+    // L'outbox ne connaît pas l'état de capture : son éviction passe quand même.
+    enqueue({ type: 'insertSet', id: 's1', executionId: state.executionId, exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 2 });
+    expect(storageFailing()).toBe(true);
+    expect(copies()).toContain('exo-execs:curl');
+    expect(copies()).toContain('exo-note:curl');
+    // Le confort, lui, est bien parti : l'éviction a eu lieu.
+    expect(copies()).not.toContain('last-exec:s1');
+    clearQueue();
+  });
+
+  it('un état de capture illisible ne protège rien et ne casse rien', () => {
+    storage.setItem('croustylift:capture:s1:2026-11-24', '{pas du json');
+    expect(evictNonEssentialCopies(2)).toBe(2);
+  });
+
+  it('sans séance en cours qui le porte, l’exo hors plan part toujours', () => {
+    captureState({ layout: [{ kind: 'added', exerciseId: 'dips', name: 'Dips' }] });
+    expect(evictNonEssentialCopies(2)).toBe(2);
+    expect(copies()).not.toContain('exo-execs:curl');
+  });
+
+  it('`persist` d’un état qui ajoute un exo, stockage plein : ses copies survivent à l’éviction', () => {
+    // Juste assez de place pour que l'état passe une fois le confort évincé.
+    const state = {
+      ...initialState(upperA, '2026-11-24'),
+      layout: [{ kind: 'added' as const, exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+    };
+    const used = [...storage.store.values()].reduce((n, v) => n + v.length, 0);
+    storage.capacity = used + 10;
+    persist(state);
+    expect(copies()).toContain('exo-execs:curl');
+    expect(copies()).toContain('exo-note:curl');
+    expect(copies()).toContain('exo-execs:bench');
   });
 });
 

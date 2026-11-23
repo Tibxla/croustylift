@@ -83,14 +83,35 @@ describe('fetchWithTimeout sous le client Supabase', () => {
     expect(isPermanentRejection(error)).toBe(false);
   });
 
-  it('lecture dont le corps se bloque : rend la main aussi', async () => {
-    // `.retry(false)` : PostgREST rejoue de lui-même une lecture échouée, trois
-    // fois, avec 1 s, 2 s puis 4 s d'attente. Sans rapport avec l'enveloppe ; on
-    // le coupe ici pour ne mesurer qu'elle.
-    const supabase = clientOver(stalled, 30);
-    const { data, error } = await supabase.from('routines').select('id').retry(false);
+  it('lecture qui pend : UNE tentative, pas les rejeux de la bibliothèque', async () => {
+    // `postgrest-js` rejoue une lecture échouée (3 fois, 1 s + 2 s + 4 s d'attente),
+    // sauf un abandon. Le délai dépassé en est un : sans cela, une lecture qui
+    // pendait mettait quatre délais et sept secondes à échouer.
+    let attempts = 0;
+    const counted: typeof fetch = (input, init) => {
+      attempts += 1;
+      return stalled(input, init);
+    };
+    const supabase = clientOver(counted, 30);
+    const started = Date.now();
+    const { data, error } = await supabase.from('routines').select('id');
     expect(data).toBeNull();
     expect(String(error?.message)).toMatch(/Pas de réponse du serveur/);
     expect(isPermanentRejection(error)).toBe(false);
+    expect(attempts).toBe(1);
+    expect(Date.now() - started).toBeLessThan(900);
+  });
+
+  it('lecture qui ne reçoit même pas ses en-têtes : une tentative aussi', async () => {
+    let attempts = 0;
+    const silent: typeof fetch = (_input, init) => {
+      attempts += 1;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    };
+    const { error } = await clientOver(silent, 30).from('routines').select('id');
+    expect(String(error?.message)).toMatch(/Pas de réponse du serveur/);
+    expect(attempts).toBe(1);
   });
 });

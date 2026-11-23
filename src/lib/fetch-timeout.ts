@@ -14,6 +14,19 @@
 /** Délai maximal d'une requête Supabase (lecture paginée de 1000 lignes comprise). */
 export const REQUEST_TIMEOUT_MS = 20_000;
 
+/**
+ * Nom de l'erreur d'un délai dépassé : `AbortError`, et non `TimeoutError`.
+ * `postgrest-js` rejoue de lui-même une lecture dont le `fetch` a échoué, trois
+ * fois, avec 1 s, 2 s puis 4 s d'attente ; il ne rejoue PAS un abandon
+ * (`AbortError`). Sous `TimeoutError`, une lecture qui pendait était donc tentée
+ * quatre fois : environ 87 s avant d'échouer, pour un délai annoncé de 20 s. Un
+ * délai dépassé est un abandon : une seule tentative, l'appelant décide de la
+ * suite (copie locale, nouvel essai du flush). Une coupure franche (`TypeError`)
+ * reste rejouée par la bibliothèque, avec 7 s d'attente entre ses essais : au
+ * pire, trois échecs francs puis une tentative qui pend, environ 27 s.
+ */
+export const TIMEOUT_ERROR_NAME = 'AbortError';
+
 /** Statuts dont la réponse ne porte jamais de corps (`Response` refuse d'en construire une avec). */
 const NULL_BODY_STATUS = new Set([204, 205, 304]);
 
@@ -41,7 +54,7 @@ export function fetchWithTimeout(
     if (outer?.aborted) relay();
     else outer?.addEventListener('abort', relay, { once: true });
     const timer = setTimeout(
-      () => controller.abort(new DOMException(`Pas de réponse du serveur sous ${ms} ms.`, 'TimeoutError')),
+      () => controller.abort(new DOMException(`Pas de réponse du serveur sous ${ms} ms.`, TIMEOUT_ERROR_NAME)),
       ms,
     );
     try {

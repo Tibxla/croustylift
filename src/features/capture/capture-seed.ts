@@ -167,3 +167,27 @@ export function seedDraft({
 export function shouldReseedDraft(trigger: 'explicit' | 'history', touched: boolean): boolean {
   return trigger === 'explicit' || !touched;
 }
+
+/**
+ * Faut-il REPROPOSER le côté de la prochaine saisie (exo unilatéral : le côté
+ * qui manque à la série en cours) ?
+ *   - seulement quand la saisie change (`keyChanged` : autre exo, nombre de
+ *     séries loggées différent). Un simple rafraîchissement ne touche pas au
+ *     côté affiché ;
+ *   - et jamais quand ce changement vient de la base (`fromReality` : une
+ *     réponse tardive a ajouté une série écrite ailleurs) alors que
+ *     l'utilisateur a déjà réglé son brouillon (`draftTouched`) ou choisi son
+ *     côté (`sideChosen`). Le sélecteur ne bascule pas sous ses doigts, et son
+ *     brouillon n'est donc pas réamorcé par un faux changement de côté.
+ * Un geste de la séance (série loggée ou annulée, changement d'exo) repropose
+ * toujours : c'est une nouvelle saisie, les deux marqueurs sont levés avec elle.
+ */
+export function shouldReproposeSide(ctx: {
+  keyChanged: boolean;
+  fromReality: boolean;
+  draftTouched: boolean;
+  sideChosen: boolean;
+}): boolean {
+  if (!ctx.keyChanged) return false;
+  return !(ctx.fromReality && (ctx.draftTouched || ctx.sideChosen));
+}

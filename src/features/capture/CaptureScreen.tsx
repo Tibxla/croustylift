@@ -7,6 +7,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -61,8 +62,8 @@ import {
   getDatedNote,
   getProgress,
   hydratedState,
+  canAdoptLateExecution,
   isExecutionStarted,
-  isPristine,
   isResumable,
   loadPersisted,
   mergeProgress,
@@ -73,6 +74,7 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
+  applyQueuedSets,
   reconcileProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
@@ -86,8 +88,10 @@ import {
   pendingCount,
   quarantineCount,
   purgeByExecution,
+  readOwnQueue,
   readQueue,
   storageFailing,
+  type OutboxOp,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -173,6 +177,13 @@ interface CaptureInit {
    * longueur, qui n'est que le repli sans réponse (cf. `reconcileProgress`).
    */
   pendingSetIds: string[] | null;
+  /**
+   * La file d'écritures du compte, lue à l'ouverture : ses écritures de séries
+   * pour cette exécution sont appliquées au réalisé final (`applyQueuedSets`),
+   * que la base ait répondu ou non. Une série ajoutée depuis le Journal et pas
+   * encore envoyée entre ainsi dans le tableau, et son rang est pris.
+   */
+  queuedOps: OutboxOp[];
 }
 
 /**
@@ -211,6 +222,10 @@ export function CaptureScreen() {
   // continue après la borne de 3 s), étiquetée par génération de chargement et
   // par exécution, jusqu'à ce que ce tableau-là vienne la prendre.
   const [lateBox] = useState(() => createLateMailbox<ReconcileAction>());
+  // L'état courant du tableau monté, lu à la demande (adoption tardive, cf.
+  // `canAdoptLateExecution`). Posé par le tableau à son montage, retiré au
+  // démontage.
+  const boardStateRef = useRef<(() => CaptureState) | null>(null);
 
   // Numéro du chargement en cours : incrémenté à chaque ouverture demandée
   // (montage, choix d'une séance, retour au lancement). Une réponse tardive ne
@@ -372,6 +387,7 @@ export function CaptureScreen() {
           today && restored && today.executionId === restored.executionId
             ? today.pendingSetIds
             : null,
+        queuedOps: readOwnQueue(),
       };
       initRef.current = init;
       setLoad({
@@ -403,19 +419,16 @@ export function CaptureScreen() {
         const gen = loadGenRef.current;
         void late.then((lateToday) => {
           if (!lateToday || !active() || loadGenRef.current !== gen) return;
-          const provisional = loadPersisted(shell, date);
-          if (provisional && provisional.executionId !== init.executionId) return;
-          const queue = readQueue();
-          const started = provisional
-            ? isExecutionStarted(provisional, null, queue)
-            : queue.some((op) => op.type === 'upsertExecution' && op.id === init.executionId);
-          if (started) return;
           // L'utilisateur a déjà agi sur le tableau provisoire (exo ouvert, donc
           // brouillon peut-être réglé ; exo ajouté, remplacé ou passé) : on
           // n'adopte PAS, pour ne rien lui retirer des mains. Transférer ces
           // gestes vers l'exécution adoptée demanderait de fusionner deux états ;
           // le choix sûr est de ne remonter le tableau que s'il est intact.
-          if (provisional && !isPristine(provisional)) return;
+          // On juge l'état COURANT du tableau monté, pas sa copie enregistrée :
+          // stockage plein, la copie n'a pas pu suivre et paraissait intacte.
+          // Tableau pas encore monté : la copie (s'il y en a une) fait foi.
+          const current = boardStateRef.current?.() ?? loadPersisted(shell, date);
+          if (!canAdoptLateExecution(current, init.executionId, readQueue())) return;
           // L'état provisoire primerait à la fusion : il est retiré, et l'écran
           // repasse par le chargement (aucune saisie possible pendant l'adoption).
           clearPersisted(shell, date);
@@ -458,9 +471,16 @@ export function CaptureScreen() {
             knownAtDeparture,
             // Les notes datées aussi : une note écrite ailleurs (autre appareil,
             // ancien client) que l'état local ignore est adoptée ; une note
-            // locale ou en attente d'envoi n'est jamais touchée.
+            // locale ou en attente d'envoi n'est jamais touchée. Les écritures
+            // de notes se relèvent comme les séries, avant et après la lecture
+            // (`lateToday.pendingNoteKeys`) puis à l'arrivée : un effacement
+            // acquitté pendant le trajet a vidé la file, la réponse, partie
+            // avant, porte encore la note.
             datedNotes: lateToday.datedNotes,
-            pendingNoteKeys: pendingDatedNoteKeys(queue, restored.executionId),
+            pendingNoteKeys: [
+              ...lateToday.pendingNoteKeys,
+              ...pendingDatedNoteKeys(queue, restored.executionId),
+            ],
           });
         });
       }
@@ -610,6 +630,7 @@ export function CaptureScreen() {
       session={load.session}
       templateIds={load.templateIds}
       lateBox={lateBox}
+      boardStateRef={boardStateRef}
       generation={load.generation}
       seanceVersionId={load.seanceVersionId}
       historyCtx={load.historyCtx}
@@ -766,6 +787,7 @@ function CaptureBoard({
   session: initialSession,
   templateIds,
   lateBox,
+  boardStateRef,
   generation,
   seanceVersionId,
   historyCtx,
@@ -777,6 +799,8 @@ function CaptureBoard({
   templateIds: string[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
   lateBox: LateMailbox<ReconcileAction>;
+  /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
+  boardStateRef: { current: (() => CaptureState) | null };
   /** Génération du chargement dont ce tableau est issu : il ne prend que ses réponses. */
   generation: number;
   seanceVersionId: string;
@@ -794,7 +818,6 @@ function CaptureBoard({
   // annulation / une nouvelle séance REMONTENT l'écran (onExitToLaunch) plutôt que
   // de muter la date en place, donc un état sans setter suffit (séance neuve =
   // nouveau board).
-  const initRef = useRef(init);
   const [date] = useState(() => init.date);
 
   // La séance courante évolue à la volée : ajout / swap d'un exo hors template
@@ -853,8 +876,10 @@ function CaptureBoard({
   // en base — sinon un id client neuf (séance neuve) — pour que les nouvelles ops
   // ne créent pas une exécution orpheline décorrélée des séries (bug H1).
   const [state, dispatch] = useReducer(captureReducer, null, () => {
-    const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } =
-      initRef.current;
+    // `init` : la prop du PREMIER rendu. Cet initialiseur ne tourne qu'au
+    // montage, il la lit donc telle qu'à l'ouverture, sans passer par une ref
+    // (lue pendant le rendu, elle valait un warning `react-hooks/refs`).
+    const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } = init;
     const fromSupabase = hydratedState(
       initialSession,
       progress,
@@ -868,29 +893,44 @@ function CaptureBoard({
     // L'exécution porte la version de séance adoptée au chargement ; un état
     // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
     const versioned = { ...fromSupabase, seanceVersionId };
-    if (!restored) return versioned;
+    // Dernier temps, dans tous les cas : les écritures de séries de cette
+    // exécution encore en file (cf. `CaptureInit.queuedOps`).
+    const { queuedOps } = init;
+    const withQueued = (built: CaptureState): CaptureState => {
+      const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
+      return progress === built.progress ? built : { ...built, progress };
+    };
+    if (!restored) return withQueued(versioned);
     const merged = mergeProgress(versioned, restored);
     // La base a répondu pour cette exécution : elle fait foi pour les séries,
     // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
     // le Journal revenait ici, le cache local étant le plus long.
-    const { pendingSetIds } = initRef.current;
-    if (pendingSetIds === null) return merged;
-    return {
+    const { pendingSetIds } = init;
+    if (pendingSetIds === null) return withQueued(merged);
+    return withQueued({
       ...merged,
       progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
-    };
+    });
   });
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
   // capturé par les handlers est figé entre deux renders : deux taps « Logger »
   // rapprochés liraient le MÊME state et calculeraient le MÊME set_order, alors
   // que le reducer en pose deux distincts → deux lignes au même order en base.
-  // On tient donc une projection à jour : assignée à chaque render (suit undo /
-  // reset / réhydratation) ET avancée localement par les handlers JUSTE après leur
-  // dispatch, pour que le tap suivant parte de l'état projeté, pas du périmé. Ainsi
-  // l'order (et l'id à annuler) de l'op et celui du reducer coïncident toujours.
+  // On tient donc une projection à jour : recalée sur l'état à chaque rendu
+  // commité (suit undo / reset / réhydratation) ET avancée localement par les
+  // handlers JUSTE après leur dispatch, pour que le tap suivant parte de l'état
+  // projeté, pas du périmé. Ainsi l'order (et l'id à annuler) de l'op et celui
+  // du reducer coïncident toujours.
+  //
+  // Recalée dans un effet de MISE EN PAGE : il passe au commit, avant tout
+  // effet passif et avant que le navigateur ne rende la main, donc avant tout
+  // geste et toute réponse réseau, seuls lecteurs de la projection. L'écrire pendant le rendu valait un warning `react-hooks/refs`,
+  // et aurait posé l'état d'un rendu abandonné.
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useLayoutEffect(() => {
+    stateRef.current = state;
+  });
 
   // Réponse tardive de la base pour CETTE exécution : réconciliée dans l'état,
   // et la projection avancée du même pas (un log suivant part du bon rang). Le
@@ -910,6 +950,15 @@ function CaptureBoard({
       }),
     [lateBox, generation, mountedExecutionId],
   );
+  // L'état courant, pour qui doit juger le tableau tel qu'il est (adoption
+  // tardive) et non tel qu'il a pu être enregistré.
+  useEffect(() => {
+    const read = () => stateRef.current;
+    boardStateRef.current = read;
+    return () => {
+      if (boardStateRef.current === read) boardStateRef.current = null;
+    };
+  }, [boardStateRef]);
 
   // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
   // clôturée : la clôture est transitoire (ADR 0009). On nettoie alors le cache

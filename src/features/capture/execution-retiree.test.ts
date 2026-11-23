@@ -16,6 +16,8 @@ const server = vi.hoisted(() => ({
   openExecutionId: null as string | null,
   /** Appelé pendant que la lecture de l'exécution est « sur le réseau ». */
   duringRead: null as (() => void) | null,
+  /** Notes datées de l'exécution, telles que la base les rend. */
+  notes: [] as { id: string; exercise_id: string; body: string; created_at: string }[],
 }));
 
 vi.mock('../../lib/supabase', () => {
@@ -49,11 +51,12 @@ vi.mock('../../lib/supabase', () => {
       return query;
     }
     if (table === 'performed_sets' || table === 'dated_notes') {
-      // Séries et notes de l'exécution : select → eq → order, sans ligne ici.
+      // Séries et notes de l'exécution : select → eq → order. Aucune série ici.
       const query = {
         select: () => query,
         eq: () => query,
-        order: () => Promise.resolve({ data: [], error: null }),
+        order: () =>
+          Promise.resolve({ data: table === 'dated_notes' ? server.notes : [], error: null }),
       };
       return query;
     }
@@ -63,6 +66,7 @@ vi.mock('../../lib/supabase', () => {
 });
 
 import { isExecutionRetiredInQueue, loadTodayExecution, loadTodayExecutionWithin } from './data';
+import { reconcileDatedNotes } from './state';
 import { clearQueue, enqueue, type OutboxOp } from './outbox';
 import { saveLocalAccount } from '../../lib/local-account';
 
@@ -103,6 +107,7 @@ beforeEach(() => {
   clearQueue();
   server.openExecutionId = 'exec-1';
   server.duringRead = null;
+  server.notes = [];
 });
 
 describe('isExecutionRetiredInQueue', () => {
@@ -174,6 +179,86 @@ describe('loadTodayExecution et les écritures en attente', () => {
 
 // Lecture BORNÉE de l'exécution du jour (audit sync, constat 5) : hors ligne avec
 // un jeton expiré, ou sur un wifi zombie, elle tenait l'ouverture de la séance.
+// Une note datée effacée quitte l'état local dès le geste ; la base la porte
+// tant que l'effacement n'est pas acquitté, et la réponse d'une lecture partie
+// avant la porte encore APRÈS. Sans lecture de la file aux deux bouts, la note
+// revenait dans la Capture (au montage, ou par une réponse tardive).
+describe('loadTodayExecution et les écritures de notes en attente', () => {
+  const noteBench = { id: 'note-h', exercise_id: 'bench', body: 'coude gauche', created_at: '2026-11-23T18:05:00Z' };
+  const noteSquat = { id: 'note-s', exercise_id: 'squat', body: 'talons', created_at: '2026-11-23T18:06:00Z' };
+  const effacement = (exerciseId: string): OutboxOp => ({
+    type: 'deleteDatedNote',
+    id: 'id-deterministe',
+    executionId: 'exec-1',
+    exerciseId,
+  });
+
+  beforeEach(() => {
+    server.notes = [noteBench, noteSquat];
+  });
+
+  it('rien en attente : les notes de la base sont rendues, aucune clé relevée', async () => {
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
+    expect(today!.pendingNoteKeys).toEqual([]);
+  });
+
+  it('effacement encore en file au retour : la note n’est pas rendue', async () => {
+    enqueue(effacement('bench'));
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes)).toEqual(['squat']);
+    expect(today!.pendingNoteKeys).toEqual(['bench']);
+  });
+
+  it('effacement ACQUITTÉ pendant le trajet (file vide au retour) : la note n’est ni rendue ni réadoptée', async () => {
+    enqueue(effacement('bench'));
+    // Un autre onglet vide la file pendant que la réponse, qui porte encore la
+    // note, est en route.
+    server.duringRead = () => clearQueue();
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes)).toEqual(['squat']);
+    expect(today!.pendingNoteKeys).toEqual(['bench']);
+
+    // La réponse tardive arrive sur une Capture qui ne connaît aucune note : la
+    // file relue à l'arrivée est vide, seules les clés relevées par la lecture
+    // retiennent la note effacée.
+    const adoptees = reconcileDatedNotes({}, { bench: { id: 'note-h', body: 'coude gauche' }, ...today!.datedNotes }, today!.pendingNoteKeys);
+    expect(adoptees).toEqual({ squat: { id: 'note-s', body: 'talons' } });
+  });
+
+  it('effacement enfilé PENDANT la lecture : la note n’est pas rendue', async () => {
+    server.duringRead = () => void enqueue(effacement('squat'));
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes)).toEqual(['bench']);
+  });
+
+  it('effacement hérité (id seul) : retire la note de cet id, pas les autres', async () => {
+    enqueue({ type: 'deleteDatedNote', id: 'note-s' });
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes)).toEqual(['bench']);
+    expect(today!.pendingNoteKeys).toEqual(['note-s']);
+  });
+
+  it('écriture (pas effacement) en attente : la note de la base reste rendue, sa clé est relevée', async () => {
+    enqueue({ type: 'upsertDatedNote', id: 'id-deterministe', executionId: 'exec-1', exerciseId: 'bench', body: 'corrigée' });
+    server.duringRead = () => clearQueue();
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
+    // La version de la base est périmée pour cet exo : elle ne sera pas adoptée.
+    expect(today!.pendingNoteKeys).toEqual(['bench']);
+    expect(reconcileDatedNotes({}, today!.datedNotes, today!.pendingNoteKeys)).toEqual({
+      squat: { id: 'note-s', body: 'talons' },
+    });
+  });
+
+  it('effacement d’une note d’une AUTRE exécution : sans effet', async () => {
+    enqueue({ type: 'deleteDatedNote', id: 'x', executionId: 'exec-2', exerciseId: 'bench' });
+    const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
+    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
+    expect(today!.pendingNoteKeys).toEqual([]);
+  });
+});
+
 describe('loadTodayExecutionWithin', () => {
   it('réponse dans le budget : c’est la vraie réponse, rien de tardif', async () => {
     server.openExecutionId = 'exec-1';

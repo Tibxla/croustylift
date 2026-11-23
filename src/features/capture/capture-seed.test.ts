@@ -2,7 +2,7 @@
 // testable sans DOM (environment: 'node').
 
 import { describe, expect, it } from 'vitest';
-import { seedDraft, shouldReseedDraft } from './capture-seed';
+import { seedDraft, shouldReseedDraft, shouldReproposeSide } from './capture-seed';
 import type { Prescription, PerformedSet } from '../../domain/types';
 
 const range = (min: number, max: number) => ({ min, max });
@@ -241,6 +241,42 @@ describe('shouldReseedDraft', () => {
   });
 
   it('historique rafraîchi, brouillon touché : il ne bouge pas', () => {
+    expect(shouldReseedDraft('history', true)).toBe(false);
+  });
+});
+
+// Exo unilatéral : le côté de la prochaine saisie est reproposé à chaque nouvelle
+// saisie. Une réponse tardive de la base qui ajoute une série change le nombre
+// de séries SANS geste : le côté basculait sous un brouillon en cours de
+// réglage, et ce faux changement de côté réinitialisait poids, reps et RIR.
+describe('shouldReproposeSide', () => {
+  const rien = { keyChanged: false, fromReality: false, draftTouched: false, sideChosen: false };
+
+  it('série loggée ou annulée, changement d’exo : toujours reproposé, marqueurs posés ou non', () => {
+    expect(shouldReproposeSide({ ...rien, keyChanged: true })).toBe(true);
+    expect(shouldReproposeSide({ ...rien, keyChanged: true, draftTouched: true, sideChosen: true })).toBe(true);
+  });
+
+  it('série arrivée de la base, brouillon intact et côté non choisi : reproposé (rien à perdre)', () => {
+    expect(shouldReproposeSide({ ...rien, keyChanged: true, fromReality: true })).toBe(true);
+  });
+
+  it('série arrivée de la base pendant que le brouillon est réglé : le côté ne bouge pas', () => {
+    expect(shouldReproposeSide({ ...rien, keyChanged: true, fromReality: true, draftTouched: true })).toBe(false);
+  });
+
+  it('série arrivée de la base après que l’utilisateur a choisi son côté : il le garde', () => {
+    // Changer de côté lève le marqueur du brouillon : le choix se retient à part.
+    expect(shouldReproposeSide({ ...rien, keyChanged: true, fromReality: true, sideChosen: true })).toBe(false);
+  });
+
+  it('réponse de la base sans effet sur cet exo : le côté affiché ne bouge pas', () => {
+    expect(shouldReproposeSide({ ...rien, fromReality: true })).toBe(false);
+    expect(shouldReproposeSide(rien)).toBe(false);
+  });
+
+  it('côté gardé, donc pas de faux geste : le brouillon touché n’est pas réamorcé', () => {
+    // Le côté n'ayant pas bougé, le seul déclencheur restant est l'historique.
     expect(shouldReseedDraft('history', true)).toBe(false);
   });
 });

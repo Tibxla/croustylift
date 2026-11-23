@@ -98,61 +98,17 @@ onglets ou deux appareils, réseau lent, file enfilée par une version antérieu
 Gravité : importante (une donnée peut être perdue ou fausse), mineure (gêne, sans
 perte), finition.
 
-### Notes datées
-
-- **Rejeu d'une ancienne file : effacement acquitté sans effet** (importante). Une file
-  enfilée avant l'identité par couple peut contenir l'écriture d'une note sous son id
-  déterministe, puis son effacement, qui ne porte que cet id. Si la note du couple vit
-  en base sous un id historique, l'écriture vise la bonne ligne mais l'effacement en
-  vise une autre, touche zéro ligne et sort de la file : la note saisie puis effacée
-  reste. Piste : avant le premier envoi, compléter les effacements hérités à partir des
-  écritures en file du même compte et du même id (`capture/sync.ts`, `notes/data.ts`).
-- **Réponse tardive qui réaffiche une note effacée** (mineure). Si un autre onglet
-  acquitte l'effacement pendant que la réponse de la base, qui porte encore la note,
-  est en route, la Capture l'adopte de nouveau. Piste : passer au rapprochement les
-  écritures de notes relevées avant et après la lecture, comme pour les séries
-  (`reconcileDatedNotes`).
-- **Note adoptée visible à la réouverture seulement** (finition). Une note adoptée par
-  une réponse tardive pendant que le panneau de l'exo est ouvert n'apparaît dans le
-  champ qu'à sa réouverture. Sans perte : une saisie faite entre-temps est écrite sur la
-  ligne du couple. Piste : resemer le champ tant qu'il n'a pas été touché
-  (`useAutosavedNote`).
-
 ### File d'écritures et stockage plein
 
-- **Mise à jour retenue après le retour du stockage** (mineure). Stockage plein puis
-  place libérée : « Mettre à jour » ne retente aucune écriture de la file, la mise à
-  jour reste retenue jusqu'au prochain enfilement ou acquittement. Piste : retenter la
-  persistance à la demande de mise à jour, puis réévaluer (`pwa/reload-guards.ts`).
-- **Ordre des écritures sous repli mémoire** (mineure). La file relue place les
-  écritures persistées avant celles tenues en mémoire. Deux onglets, stockage plein :
-  une ancienne note d'instructions gardée en mémoire par l'un peut partir après la
-  correction persistée par l'autre, et l'écraser. Piste : garder l'ordre des écritures
-  d'une même ligne entre onglets, ou les dater (`outbox.ts`).
-- **Adoption tardive sous stockage plein** (mineure). L'adoption de l'exécution du jour
-  juge le tableau « intact » sur sa copie enregistrée. Si le stockage a refusé
-  l'ouverture d'un exo ou un ajout, la copie paraît intacte et l'adoption remonte le
-  tableau, brouillon ou exo ajouté perdus. Piste : décider sur l'état courant du
-  tableau, pas sur sa copie (`CaptureScreen.tsx`).
-- **Éviction d'un exo ajouté à la séance en cours** (mineure). L'éviction des copies
-  protège les exos des templates, pas un exo ajouté ou remplacé dans la séance en
-  cours : ses copies évincées, la réouverture hors ligne l'ignore. Piste : protéger
-  aussi les exos des dispositions reprenables (`cache-eviction.ts`).
+- **Écriture ancienne envoyée après une correction déjà partie** (finition). Stockage
+  plein, deux onglets : une écriture tenue en mémoire par l'un est désormais replacée
+  dans la file à son instant d'enfilement, donc avant une correction de la même ligne
+  encore en file. Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
+  et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
+  se présente : dater les écritures d'une même ligne côté base.
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.
-
-### Capture, reprise
-
-- **Insertion en file absente du calcul de rang** (mineure). Une série ajoutée depuis
-  le Journal à une exécution ouverte, encore en file à la reprise, n'entre pas dans le
-  réalisé de la Capture : la série suivante peut reprendre son rang. Piste : appliquer
-  à la réponse les insertions en file de l'exécution avant de calculer le rang
-  (`capture/data.ts`).
-- **Brouillon unilatéral réamorcé** (mineure). Une réponse tardive qui ajoute le côté
-  manquant fait basculer le sélecteur de côté, et le brouillon en cours (poids, reps,
-  RIR) est réinitialisé. Piste : tenir le côté choisi pour une partie du brouillon
-  touché (`ExerciseCapture.tsx`).
 
 ### Comptes
 
@@ -171,26 +127,14 @@ perte), finition.
   laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
   séance, sans transaction.
 
-### Réseau
-
-- **Lecture qui pend : jusqu'à environ 87 s avant l'échec** (mineure). Le délai d'une
-  requête est de 20 s, mais `postgrest-js` rejoue de lui-même une lecture échouée, trois
-  fois, avec 1 s, 2 s puis 4 s d'attente. Les écritures ne sont pas rejouées. Piste :
-  `.retry(false)` sur les lectures du chemin d'ouverture, ou un délai plus court pour
-  elles.
-
 ### Messages, tests, build
 
 - **Aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM. La
   logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
   `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de
   sortie, blocages de rechargement, brouillons) n'est vérifié qu'en navigateur.
-- **Deux warnings `react-hooks/refs` dans `CaptureScreen.tsx`** (finition) : une ref lue
-  à l'initialisation du réducteur, une autre écrite au rendu. Le plafond de warnings
-  (14) les fige.
 - **Exports sans consommateur hors tests** (finition) : `loadDatedNote`
-  (`notes/data.ts`), `listRefused` (`capture/outbox.ts`), `initialState`
-  (`capture/state.ts`) et `upperA` (`capture/fixtures.ts`, jeu d'essai de 71 appels
-  de tests, à déplacer dans un fichier de test plutôt qu'à supprimer). Les autres
-  exports sans appelant extérieur servent dans leur propre fichier : ce sont des
-  `export` posés pour les tests, pas du code mort.
+  (`notes/data.ts`), `listRefused` (`capture/outbox.ts`) et `initialState`
+  (`capture/state.ts`). `upperA` (`capture/fixtures.ts`) est le jeu d'essai des tests,
+  gardé tel quel. Les autres exports sans appelant extérieur servent dans leur propre
+  fichier : ce sont des `export` posés pour les tests, pas du code mort.

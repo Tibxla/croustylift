@@ -3,8 +3,10 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
+import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
-import { writeMakingRoom } from './cache-eviction';
+import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
+import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -316,6 +318,32 @@ export function isPristine(state: CaptureState): boolean {
 }
 
 /**
+ * Peut-on ADOPTER l'exécution du jour que la base vient de rendre, trop tard
+ * pour l'ouverture, à la place de l'exécution provisoire `provisionalExecutionId`
+ * sous laquelle la séance s'est ouverte ? Seulement si rien n'a été fait sous
+ * l'id provisoire : aucune saisie partie (`isExecutionStarted`), et un tableau
+ * intact (`isPristine`).
+ *
+ * `current` : l'état COURANT du tableau monté, pas sa copie enregistrée. Stockage
+ * plein, l'écriture de l'état est refusée : la copie paraissait intacte alors
+ * que l'utilisateur avait ouvert un exo ou en avait ajouté un, et l'adoption
+ * remontait le tableau en jetant ces gestes. `null` : le tableau n'est pas
+ * encore monté, rien n'a donc pu y être fait.
+ */
+export function canAdoptLateExecution(
+  current: CaptureState | null,
+  provisionalExecutionId: string,
+  pendingOps: readonly OutboxOp[],
+): boolean {
+  if (current === null) {
+    return !pendingOps.some((op) => op.type === 'upsertExecution' && op.id === provisionalExecutionId);
+  }
+  if (current.executionId !== provisionalExecutionId) return false;
+  if (isExecutionStarted(current, null, pendingOps)) return false;
+  return isPristine(current);
+}
+
+/**
  * Faut-il RÉANCRER le chrono sur le set qu'on logge (ADR 0011) ? Seulement si le
  * lancement a expiré (plus d'1 h) ET que l'exécution n'est pas encore née : un
  * lancement oublié, jamais suivi d'un set. Une séance entamée garde son
@@ -570,6 +598,91 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     datedNotes,
     closedAt: null,
   };
+}
+
+/**
+ * Applique au réalisé les écritures de SÉRIES de l'exécution `executionId` qui
+ * attendent encore en file, dans l'ordre de la file : `insertSet` pose la série
+ * (ou remplace celle du même id), `deleteSet` la retire.
+ *
+ * Pourquoi : une série peut être ajoutée à l'exécution en cours depuis le
+ * Journal. Tant que son insertion attend (hors ligne surtout), elle n'est ni en
+ * base ni dans l'état de la Capture, qui ne connaît que ses propres saisies : le
+ * tableau repris l'ignorait, et la série suivante prenait SON rang (deux lignes
+ * au même rang en base une fois la file vidée). Vaut que la base ait répondu ou
+ * non. Une série déjà présente n'est pas doublée, une série de la Capture dont
+ * la suppression attend sort.
+ *
+ * Les séries d'un exo touché sont retriées par rang, puis gauche avant droite,
+ * comme à la réhydratation. `skipped` est conservé. Rend `progress` lui-même si
+ * la file ne change rien. Pur.
+ */
+export function applyQueuedSets(
+  progress: Record<string, ExerciseProgress>,
+  ops: readonly OutboxOp[],
+  executionId: string,
+): Record<string, ExerciseProgress> {
+  // Séries par id, exo par exo ; une série sans id (cache d'ancien format) garde
+  // une clé de position et ne peut être ni remplacée ni retirée par la file.
+  const rows = new Map<string, { exerciseId: string; set: PerformedSet; id: string | null }>();
+  for (const [exerciseId, entry] of Object.entries(progress)) {
+    entry.sets.forEach((set, index) => {
+      const id = entry.setIds[index] ?? null;
+      rows.set(id ?? `sans-id:${exerciseId}:${index}`, { exerciseId, set, id });
+    });
+  }
+  const touched = new Set<string>();
+  for (const op of ops) {
+    if (op.type === 'insertSet') {
+      if (op.executionId !== executionId) continue;
+      const set: PerformedSet = {
+        weightKg: op.weightKg,
+        reps: op.reps,
+        rir: op.rir,
+        order: op.setOrder,
+        ...(op.side ? { side: op.side } : {}),
+      };
+      const known = rows.get(op.id);
+      if (known && known.exerciseId === op.exerciseId && sameSet(known.set, set)) continue;
+      if (known) touched.add(known.exerciseId);
+      rows.set(op.id, { exerciseId: op.exerciseId, set, id: op.id });
+      touched.add(op.exerciseId);
+    } else if (op.type === 'deleteSet') {
+      const known = rows.get(op.id);
+      if (!known) continue;
+      rows.delete(op.id);
+      touched.add(known.exerciseId);
+    }
+  }
+  if (touched.size === 0) return progress;
+
+  const out: Record<string, ExerciseProgress> = { ...progress };
+  for (const exerciseId of touched) {
+    const mine = [...rows.values()]
+      .filter((row) => row.exerciseId === exerciseId)
+      .sort(
+        (a, b) =>
+          a.set.order - b.set.order ||
+          (a.set.side === 'right' ? 1 : 0) - (b.set.side === 'right' ? 1 : 0),
+      );
+    const skipped = progress[exerciseId]?.skipped ?? false;
+    if (mine.length === 0 && !skipped) {
+      delete out[exerciseId];
+      continue;
+    }
+    out[exerciseId] = { sets: mine.map((r) => r.set), setIds: mine.map((r) => r.id), skipped };
+  }
+  return out;
+}
+
+function sameSet(a: PerformedSet, b: PerformedSet): boolean {
+  return (
+    a.weightKg === b.weightKg &&
+    a.reps === b.reps &&
+    a.rir === b.rir &&
+    a.order === b.order &&
+    (a.side ?? null) === (b.side ?? null)
+  );
 }
 
 /**
@@ -843,7 +956,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
 // L'exécution en cours est sauvée en localStorage et restaurée au montage.
 
 /** Préfixe des clés d'état de capture : `croustylift:capture:<séance>:<date>`. */
-export const STORAGE_PREFIX = 'croustylift:capture:';
+export const STORAGE_PREFIX = CAPTURE_STATE_PREFIX;
 
 function storageKey(sessionId: string, date: string): string {
   return `${STORAGE_PREFIX}${sessionId}:${date}`;
@@ -976,6 +1089,18 @@ export function capturePersistFailing(): boolean {
   return persistFailing;
 }
 
+/**
+ * Les exos qu'un état de capture porte : ceux de sa disposition (ajoutés ou
+ * remplaçants, absents du template), ceux qui ont du réalisé, et l'exo ouvert.
+ */
+function captureStateExerciseIds(state: CaptureState): string[] {
+  return [
+    ...(state.layout ?? []).map((edit) => edit.exerciseId),
+    ...Object.keys(state.progress),
+    ...(state.activeExerciseId ? [state.activeExerciseId] : []),
+  ];
+}
+
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
   // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
@@ -994,11 +1119,16 @@ export function persist(state: CaptureState): void {
   // Quota plein : les copies de lecture NON ESSENTIELLES cèdent la place (cf.
   // cache-eviction : jamais celles du chemin d'ouverture de la Capture), puis
   // nouvel essai. Si rien n'y fait, la capture reste en mémoire et le refus est
-  // signalé (bannière), au lieu de l'ancienne dégradation muette.
-  persistFailing = !writeMakingRoom(write);
+  // signalé (bannière), au lieu de l'ancienne dégradation muette. Les exos de
+  // CET état ne cèdent jamais leurs copies : c'est souvent l'ajout d'un exo qui
+  // déclenche l'éviction, avant même que sa disposition soit sur l'appareil.
+  persistFailing = !writeMakingRoom(write, captureStateExerciseIds(state));
 }
 
 export function clearPersisted(session: Session, date: string): void {
+  // La séance est close ou abandonnée : ses exos n'ont plus à être protégés de
+  // l'éviction (cf. cache-eviction).
+  forgetEntrustedExercises();
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(storageKey(session.id, date));

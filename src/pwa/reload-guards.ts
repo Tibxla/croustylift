@@ -13,16 +13,25 @@
 //     séries et la clôture pas encore envoyées. Ce n'est pas un blocage posé
 //     puis levé à la main : il est lu dans la file, donc vrai exactement tant
 //     que ces ops existent, et faux dès qu'elles sont écrites sur l'appareil ou
-//     acquittées par la base.
+//     acquittées par la base. Chaque question retente d'abord cette écriture.
 
-import { hasUnpersistedOps } from '../features/capture/outbox'
+import { hasUnpersistedOps, retryPersistQueue } from '../features/capture/outbox'
 import { activeBlockers } from './blockers'
 
 /** Des écritures en attente ne tiennent qu'en mémoire (stockage de l'appareil plein). */
 export const UNPERSISTED_WRITES_BLOCK = 'ecritures-non-persistees'
 
-/** Toutes les raisons qui interdisent de recharger maintenant. */
+/**
+ * Toutes les raisons qui interdisent de recharger maintenant.
+ *
+ * Si des écritures ne tiennent qu'en mémoire, leur persistance est RETENTÉE ici,
+ * avant de répondre : l'utilisateur a peut-être libéré de la place depuis le
+ * refus. Sans cela, « Mettre à jour » restait refusé tant qu'aucune écriture
+ * nouvelle ne passait par la file, stockage rétabli ou non. La garde est
+ * réévaluée dans le même appel ; elle tient si l'appareil refuse toujours.
+ */
 export function currentBlockers(): string[] {
   const declared = activeBlockers()
+  if (hasUnpersistedOps()) retryPersistQueue()
   return hasUnpersistedOps() ? [...declared, UNPERSISTED_WRITES_BLOCK] : declared
 }

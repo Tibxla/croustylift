@@ -115,6 +115,40 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     expect(a.storageFailing()).toBe(false);
   });
 
+  it('une écriture ancienne tenue en mémoire par A part AVANT la correction persistée ensuite par B', async () => {
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const a = await openTab();
+    const b = await openTab();
+    const note = (body: string): OutboxOp => ({ type: 'upsertExerciseNote', id: 'bench', body });
+
+    // Stockage plein : A garde l'ancienne note en mémoire.
+    storage.full = true;
+    a.enqueue(note('ancienne'));
+    // Plus tard, la place revient et B persiste la correction de la même note.
+    now = 2_000;
+    storage.full = false;
+    b.enqueue(note('corrigée'));
+    expect(persistedIds()).toEqual(['bench']);
+
+    // A relit la file : son écriture, plus ancienne, précède celle de B.
+    const bodies = (ops: OutboxOp[]) =>
+      ops.map((op) => (op.type === 'upsertExerciseNote' ? op.body : op.type));
+    expect(bodies(a.readQueue())).toEqual(['ancienne', 'corrigée']);
+
+    // Et c'est dans cet ordre qu'elles partent : la correction est la dernière
+    // écrite en base. Avant, A envoyait la file persistée puis sa mémoire, et
+    // l'ancienne note écrasait la correction.
+    const sent: string[] = [];
+    const fns = {
+      ...recorder().fns,
+      upsertExerciseNote: async (op: { body: string }) => void sent.push(op.body),
+    } as unknown as SyncFns;
+    await a.flush(fns);
+    expect(sent).toEqual(['ancienne', 'corrigée']);
+    expect(persistedIds()).toEqual([]);
+  });
+
   it('un retrait tenu en mémoire par A ne réécrit pas la file : la série de B reste', async () => {
     const a = await openTab();
     const b = await openTab();
