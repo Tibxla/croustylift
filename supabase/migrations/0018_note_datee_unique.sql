@@ -11,11 +11,13 @@
 --    migration 0019) : il empêche qu'un autre compte, en tentant d'écrire dans
 --    cette exécution, apprenne par l'erreur d'unicité qu'une note y existe.
 --
--- 2. Trigger `replace_dated_note` : une note insérée sous un nouvel id REMPLACE
---    celle du même couple, au lieu d'être refusée. Sans lui, l'index changerait
---    un doublon sans conséquence en saisie refusée (23505, quarantaine de l'ADR
---    0018) pour une écriture que le client produit légitimement (règle de la
---    migration 0012). La dernière écriture gagne (ADR 0003).
+-- 2. Pas de trigger de remplacement (arbitrage du 2026-11-23) : c'est le client
+--    qui écrit la note par son couple, `upsert` avec
+--    `onConflict: 'execution_id,exercise_id,owner_id'` (src/features/notes/data.ts).
+--    Une note arrivée sous un autre id met alors à jour celle du couple, id
+--    compris : la dernière écriture gagne (ADR 0003). Un client qui insérerait
+--    encore par `id` seul recevrait 23505 sur un second id du même couple, et
+--    l'op partirait en quarantaine (ADR 0018) sans bloquer la file.
 --
 -- Rejouable. Aucune donnée modifiée : des doublons existants font échouer la
 -- migration entière, ils ne sont jamais supprimés d'office.
@@ -42,9 +44,10 @@
 --     ) as rang from dated_notes
 --   ) r where r.id = d.id and r.rang > 1;
 --
--- RISQUE : faible sans doublon. Deux insertions simultanées du même couple
--- (deux appareils à la même seconde) : la seconde est refusée en 23505 et part
--- en quarantaine, sans bloquer la file.
+-- RISQUE : faible sans doublon. À appliquer juste avant de déployer le client
+-- qui upserte par le couple : entre les deux, seule une seconde note du même
+-- couple sous un autre id (deux appareils, Capture remontée hors ligne sans
+-- état local) serait refusée.
 
 begin;
 
@@ -68,24 +71,5 @@ create unique index if not exists dated_notes_execution_exercise_unique
   on public.dated_notes (execution_id, exercise_id, owner_id);
 
 drop index if exists public.dated_notes_execution_id_idx;
-
-create or replace function public.replace_dated_note()
-returns trigger
-language plpgsql
-set search_path = ''  -- durcit le search_path (advisor function_search_path_mutable)
-as $$
-begin
-  -- Sous la RLS de l'appelant : seule sa propre note peut être remplacée.
-  delete from public.dated_notes
-    where execution_id = new.execution_id
-      and exercise_id = new.exercise_id
-      and id <> new.id;
-  return new;
-end;
-$$;
-
-drop trigger if exists replace_dated_note on public.dated_notes;
-create trigger replace_dated_note before insert on public.dated_notes
-  for each row execute function public.replace_dated_note();
 
 commit;

@@ -10,10 +10,10 @@ select case when ok then 'OK' else 'ECHEC' end as verdict, quoi, empeche from (
          not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'dated_notes_execution_id_idx'),
          'index en double'
   union all
-  select 'trigger replace_dated_note avant insertion',
-         exists (select 1 from pg_trigger where tgrelid = 'public.dated_notes'::regclass
-                   and tgname = 'replace_dated_note' and tgenabled = 'O' and not tgisinternal),
-         'saisie refusée (23505) quand une note arrive sous un autre id : elle remplace l''ancienne'
+  select 'aucun trigger de remplacement sur dated_notes (le client upserte par le couple)',
+         not exists (select 1 from pg_trigger where tgrelid = 'public.dated_notes'::regclass
+                   and tgname = 'replace_dated_note' and not tgisinternal),
+         'suppression en base à l''insertion, décidée hors du client'
   union all
   select 'aucun doublon en base',
          not exists (select 1 from dated_notes group by execution_id, exercise_id having count(*) > 1),

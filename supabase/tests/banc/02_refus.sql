@@ -109,13 +109,15 @@ select banc.vrai('exo d''avant 0005 sans muscle : rempli depuis son groupe par l
 select banc.compte(:A);
 
 -- ===================== 0018 : une note datée par couple =====================
-select banc.accepte('seconde note du même couple sous un autre id : elle remplace',
-  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''nouvelle note'')');
+select banc.refuse('seconde note du même couple sous un autre id, insérée par id seul', '23505',
+  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''refusée'') on conflict (id) do update set body = excluded.body');
+select banc.accepte('seconde note du même couple, upsert par le couple (client) : elle remplace, id compris',
+  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''nouvelle note'') on conflict (execution_id, exercise_id, owner_id) do update set id = excluded.id, body = excluded.body');
 select banc.vrai('une seule note reste pour le couple, la dernière écrite',
   (select count(*) = 1 and min(body) = 'nouvelle note' and min(id::text) = 'a0000000-0000-0000-0000-000000000032'
    from public.dated_notes where execution_id = 'a0000000-0000-0000-0000-000000000011'));
-select banc.accepte('rejouer la même note par son id (upsert de l''outbox)',
-  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''rejouée'') on conflict (id) do update set body = excluded.body');
+select banc.accepte('rejouer la même note (même id, même couple)',
+  'insert into public.dated_notes (id, execution_id, exercise_id, body) values (''a0000000-0000-0000-0000-000000000032'', ''a0000000-0000-0000-0000-000000000011'', ''a0000000-0000-0000-0000-0000000000e1'', ''rejouée'') on conflict (execution_id, exercise_id, owner_id) do update set id = excluded.id, body = excluded.body');
 select banc.vrai('toujours une seule note, corps mis à jour',
   (select count(*) = 1 and min(body) = 'rejouée' from public.dated_notes where execution_id = 'a0000000-0000-0000-0000-000000000011'));
 select banc.accepte('note d''un autre exo dans la même exécution',
@@ -265,11 +267,18 @@ update public.performed_sets set reps = 99 where id = 'a0000000-0000-0000-0000-0
 delete from public.performed_sets where id <> 'a0000000-0000-0000-0000-000000000021';
 select banc.vrai('le désarchivage hors import écrit bien son événement',
   (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2'));
+-- La note du couple a été recréée sous un autre id depuis la sauvegarde.
+delete from public.dated_notes where id = 'a0000000-0000-0000-0000-000000000032';
+insert into public.dated_notes (id, execution_id, exercise_id, body) values
+  ('a0000000-0000-0000-0000-000000000033', 'a0000000-0000-0000-0000-000000000011', 'a0000000-0000-0000-0000-0000000000e1', 'recréée depuis');
 select banc.accepte('restaurer la sauvegarde sur un compte modifié',
   format('select public.import_user_data(%L::jsonb)', (select data from sauvegarde)));
 select banc.vrai('série modifiée rendue à sa valeur, série supprimée revenue',
   (select (select reps from public.performed_sets where id = 'a0000000-0000-0000-0000-000000000021') = 10
       and (select count(*) from public.performed_sets) = (select series from avant)));
+select banc.vrai('note recréée sous un autre id depuis : celle du fichier la remplace',
+  (select count(*) = 1 and min(id::text) = 'a0000000-0000-0000-0000-000000000032' and min(body) = 'rejouée'
+   from public.dated_notes where exercise_id = 'a0000000-0000-0000-0000-0000000000e1'));
 select banc.vrai('état d''archivage rendu par le fichier, sans événement daté de la restauration',
   (select (select archived_at is not null from public.seances where id = 'a0000000-0000-0000-0000-0000000000b2')
       and (select count(*) = 2 from public.seance_archive_events where seance_id = 'a0000000-0000-0000-0000-0000000000b2')));

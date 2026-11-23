@@ -48,6 +48,7 @@ L'import envoie le champ `data` en un seul appel à la fonction de base `import_
 
 - **Sous la RLS de l'appelant** : les lignes ne tombent que dans le compte connecté. Le fichier d'un autre compte est refusé.
 - **Upsert par `id`** : réimporter le même fichier ne crée aucun doublon, la ligne en base est remplacée par celle du fichier.
+- **Notes datées** : la note du fichier remplace celle que la base porterait, sous un autre id, pour le même exercice dans la même exécution.
 - **Journal des archivages** : inséré sans réécriture (un événement déjà en base reste tel quel, migration 0022). Pendant l'import, le trigger d'archivage n'écrit rien : l'état `archived_at` et le journal viennent tous deux du fichier.
 - **Routine courante** : la base refuse d'archiver la routine courante (migration 0021). Une sauvegarde où une routine est archivée, restaurée sur un compte dont elle est devenue la routine courante depuis, est donc refusée en entier : définir d'abord une autre routine comme courante, puis réimporter.
 - **Sauvegarde plus ancienne que le schéma** : une colonne absente du fichier prend sa valeur par défaut. `prepareForRestore` complète ce que la base exige désormais : `unilateral` à false, muscles principaux repris de `muscle_group`, une seule note datée par exercice et par exécution (la plus récente).

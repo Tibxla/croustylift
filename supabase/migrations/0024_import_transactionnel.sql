@@ -18,6 +18,10 @@
 --   - `on conflict (id) do update` : réimporter le même fichier ne crée aucun
 --     doublon (ADR 0003). Le journal des archivages fait exception, en
 --     `do nothing` : il ne se réécrit pas (migration 0022).
+--   - Notes datées : une note de la base qui occupe, sous un autre id, le
+--     couple (exécution, exercice) d'une note du fichier est retirée avant
+--     l'écriture. Le fichier gagne, comme pour toute ligne restaurée ; sans
+--     cela l'unicité de la migration 0018 refuserait tout l'import.
 --
 -- Pendant l'import, le trigger `log_seance_archive` se tait : l'état
 -- `archived_at` et le journal viennent tous deux du fichier. Sans cela,
@@ -138,6 +142,14 @@ begin
     if not v_has_id then
       raise exception 'import_user_data : les lignes de % ne portent pas d''id.', v_table
         using errcode = '22023';
+    end if;
+
+    if v_table = 'dated_notes' then
+      delete from public.dated_notes d
+        using jsonb_populate_recordset(null::public.dated_notes, v_rows) f
+        where d.execution_id = f.execution_id
+          and d.exercise_id = f.exercise_id
+          and d.id <> f.id;
     end if;
 
     execute format(

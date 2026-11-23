@@ -11,7 +11,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 NOM=croustylift-banc-pg
-IMAGE=${BANC_IMAGE:-postgres:18-alpine}
+# Même version majeure que la prod (PostgreSQL 17.6 au 2026-11-23).
+IMAGE=${BANC_IMAGE:-postgres:17-alpine}
 
 docker rm -f "$NOM" >/dev/null 2>&1 || true
 docker run -d --rm --name "$NOM" --memory 512m --network none \
