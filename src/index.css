@@ -61,8 +61,14 @@
   pour positionner les barres `fixed` juste au-dessus de la nav.
 */
 :root {
+  /* Encoches du système, lues une seule fois ici : tout le calcul de hauteur
+     passe par ces deux variables (et les tests peuvent les surcharger, Chromium
+     n'ayant pas d'encoche). Nulles hors mode écran d'accueil. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
   --nav-height: 3.5rem; /* = h-14, hauteur d'un onglet */
-  --nav-offset: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+  --nav-offset: calc(var(--nav-height) + var(--safe-bottom));
 
   /* --- Système de motion (durées) --------------------------------------------
      150–250 ms sur l'essentiel (register product) ; le « slow » reste pour les
@@ -128,7 +134,53 @@ body {
      UNIFORMÉMENT tous les écrans (header, login, capture) sous la zone sûre. Nul
      hors standalone / sans encoche (env() = 0). Les éléments `fixed` (nav, barres
      d'action) sont relatifs au viewport et gèrent leur propre safe-area-inset-bottom. */
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--safe-top);
+}
+
+/*
+  Hauteur des écrans : le document ne doit PAS défiler quand le contenu tient.
+
+  `body` porte déjà l'encoche haute en padding. Un écran à `100vh` dessous donnait
+  un document plus haut que la fenêtre (100vh + encoche), donc défilable même
+  vide. Sur iPhone en mode écran d'accueil, un document défilable laisse WebKit
+  le décaler pour dégager un champ à l'ouverture du clavier, état qu'il ne
+  restaure pas toujours : les barres fixes du bas restaient alors décrochées
+  (diagnostic du 22 novembre 2026, cause 1). On retire donc l'encoche de la
+  hauteur minimale, et on mesure en `dvh` (repli `vh` pour les moteurs anciens).
+
+  Règles hors couche : elles priment sur les utilitaires Tailwind du même nom.
+  - `.min-h-screen` : écran entier (login, premier lancement, chargement, shell).
+  - `.min-h-surface` : écran d'onglet, la nav et son encoche basse en moins.
+  - la troisième cible la classe arbitraire `min-h-[calc(100vh-3.5rem)]`, écrite
+    en dur dans les écrans d'onglet avant `.min-h-surface` : même valeur.
+*/
+.min-h-screen {
+  min-height: calc(100vh - var(--safe-top));
+  min-height: calc(100dvh - var(--safe-top));
+}
+.min-h-surface,
+.min-h-\[calc\(100vh-3\.5rem\)\] {
+  min-height: calc(100vh - var(--nav-offset) - var(--safe-top));
+  min-height: calc(100dvh - var(--nav-offset) - var(--safe-top));
+}
+
+/* iOS zoome la page au focus d'un contrôle de formulaire en police < 16 px et ne
+   dézoome pas toujours : zoomée, la page décale ses barres fixes. Les champs de
+   texte sont déjà à 16 px ; les `select` (14 px) y passent, sur iOS seulement
+   (`-webkit-touch-callout` n'existe que là), pour ne rien changer ailleurs. */
+@supports (-webkit-touch-callout: none) {
+  select {
+    font-size: max(1rem, 16px);
+  }
+}
+
+/* Sous une feuille modale (`aria-modal`), le document de fond ne défile pas : au
+   tactile seulement, pour ne pas faire sauter la barre de défilement d'un
+   navigateur de bureau. */
+@media (pointer: coarse) {
+  html:has([aria-modal="true"]) {
+    overflow: hidden;
+  }
 }
 
 /* Scrim de status bar (standalone iOS). Le shell n'a plus de barre haute : sans
@@ -140,7 +192,7 @@ body {
 .safe-top-scrim {
   position: fixed;
   inset: 0 0 auto 0;
-  height: env(safe-area-inset-top, 0px);
+  height: var(--safe-top);
   background-color: var(--color-bg);
   /* Au-dessus de tout, feuilles et modales comprises (z-50) : la status bar doit
      rester lisible quel que soit l'écran ouvert. */
@@ -441,6 +493,12 @@ input:-webkit-autofill:active {
 ::view-transition-new(root) {
   animation-duration: 0.24s;
   animation-timing-function: var(--ease-out-quart);
+}
+
+/* Le calque de transition recouvre la page le temps du fondu : sans ceci il
+   avale les taps, et une transition qui tournerait mal laisserait l'app sourde. */
+::view-transition {
+  pointer-events: none;
 }
 
 /* Motion 150–250 ms ease-out ; instantané si l'utilisateur le demande. */

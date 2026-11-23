@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useAuth } from './auth/useAuth'
 import { PendingWritesError } from './auth/auth-context'
@@ -23,6 +23,7 @@ import {
   useUpdateReady,
 } from './pwa/register'
 import type { SurfaceName } from './pwa/update'
+import { openDiag } from './viewport/watch'
 import { APP_VERSION_LABEL } from './version'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
@@ -52,8 +53,23 @@ type Surface = SurfaceName
  * force React à appliquer le changement DANS la transition pour que l'ancien et
  * le nouvel écran soient capturés. Désactivé sous `prefers-reduced-motion` et là
  * où l'API n'existe pas (fallback : mise à jour directe, instantanée).
+ *
+ * Champ en cours de saisie : on lui retire le focus et on se passe de transition.
+ * Sinon le champ est démonté pendant que le clavier descend et que le navigateur
+ * photographie la page, ce qui sur iPhone peut laisser la fenêtre d'affichage
+ * faussée et les barres du bas décrochées (registre R4).
  */
 function withViewTransition(update: () => void): void {
+  const focused = typeof document === 'undefined' ? null : document.activeElement
+  if (
+    focused instanceof HTMLInputElement ||
+    focused instanceof HTMLTextAreaElement ||
+    focused instanceof HTMLSelectElement
+  ) {
+    focused.blur()
+    update()
+    return
+  }
   const reduce =
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -399,6 +415,9 @@ function FullScreenSpinner({ label }: { label: string }) {
 
 // --- Navigation entre les surfaces (zone du pouce, bas d'écran) ---------------
 
+/** Durée de l'appui long sur la barre d'onglets qui ouvre le relevé de diagnostic. */
+const DIAG_LONG_PRESS_MS = 1500
+
 function BottomNav({
   surface,
   onSelect,
@@ -406,12 +425,39 @@ function BottomNav({
   surface: Surface
   onSelect: (s: Surface) => void
 }) {
+  // Appui long sur la barre d'onglets : ouvre le relevé de diagnostic (registre
+  // R4). C'est le seul geste disponible sur tous les écrans de l'app installée,
+  // qui n'a pas de barre d'adresse pour `?diag=1`. Le clic qui suit le relâcher
+  // est avalé, pour ne pas changer d'onglet en ouvrant le relevé.
+  const pressTimer = useRef<number | undefined>(undefined)
+  const longPressed = useRef(false)
+  const cancelPress = () => window.clearTimeout(pressTimer.current)
+
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-hair bg-bg/80 backdrop-blur-md"
+      className="fixed inset-x-0 bottom-0 z-30 select-none border-t border-hair bg-bg/80 backdrop-blur-md"
+      style={{ WebkitTouchCallout: 'none' }}
       aria-label="Navigation principale"
+      onPointerDown={() => {
+        longPressed.current = false
+        cancelPress()
+        pressTimer.current = window.setTimeout(() => {
+          longPressed.current = true
+          openDiag()
+        }, DIAG_LONG_PRESS_MS)
+      }}
+      onPointerUp={cancelPress}
+      onPointerCancel={cancelPress}
+      onPointerLeave={cancelPress}
+      onContextMenu={(event) => event.preventDefault()}
+      onClickCapture={(event) => {
+        if (!longPressed.current) return
+        longPressed.current = false
+        event.preventDefault()
+        event.stopPropagation()
+      }}
     >
-      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[env(safe-area-inset-bottom,0)]">
+      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[var(--safe-bottom)]">
         <TabButton
           label="Capture"
           active={surface === 'capture'}

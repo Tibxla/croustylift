@@ -5,10 +5,13 @@ import App from './App.tsx'
 import { AuthProvider } from './auth/AuthProvider'
 import { ErrorBoundary } from './ErrorBoundary'
 import { initServiceWorker } from './pwa/register'
+import { DiagPanel } from './viewport/DiagPanel'
+import { startViewportWatch } from './viewport/watch'
 
-// Hors de l'arbre React : le service vit autant que la page et ne doit pas
-// dépendre d'un écran monté (login, premier lancement, erreur).
+// Hors de l'arbre React : ces deux services vivent autant que la page et ne
+// doivent pas dépendre d'un écran monté (login, premier lancement, erreur).
 initServiceWorker()
+startViewportWatch()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -17,5 +20,7 @@ createRoot(document.getElementById('root')!).render(
         <App />
       </AuthProvider>
     </ErrorBoundary>
+    {/* Hors de la frontière d'erreur : le relevé reste ouvrable sur un écran planté. */}
+    <DiagPanel />
   </StrictMode>,
 )
