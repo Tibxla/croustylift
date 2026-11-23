@@ -850,6 +850,16 @@ export interface TodayExecution {
 export async function loadTodayExecution(
   seanceVersionId: string,
   date: string,
+  /**
+   * L'exécution que l'appareil tient DÉJÀ en cours (état de capture restauré), ou
+   * `null`. Quand elle est connue, c'est ELLE qu'on relit, par son id : elle garde
+   * la version de séance sous laquelle elle est née (`upsertExecution` est une
+   * insertion seule), donc une recherche par version courante ne la retrouverait
+   * plus après une retouche du plan en pleine séance, et ses séries écrites
+   * ailleurs (journal) manqueraient à la reprise. Sans état local, on cherche
+   * l'exécution ouverte du jour pour cette version.
+   */
+  localExecutionId: string | null = null,
 ): Promise<TodayExecution | null> {
   // Tolérant SANS copie locale (ADR 0012) : hors-ligne, `null` suffit — le
   // réalisé LOCAL du jour (state.ts, fusionné par mergeProgress, qui PRIME pour
@@ -860,23 +870,59 @@ export async function loadTodayExecution(
   // repli en échec NON-réseau : une exécution du jour en base peut être ignorée
   // et doublée — même classe résiduelle que le multi-appareil (ADR 0003), la
   // capture ne bloque jamais.
+  //
+  // La base ne suffit pas à dire qu'une exécution est encore EN COURS : Clôture,
+  // Annulation et suppression effacent l'état local dès le geste, alors que leur
+  // écriture attend peut-être encore dans l'outbox. Une exécution que la file
+  // clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait déjà
+  // close. On lit la file aux deux bouts de la lecture, car la réponse est figée
+  // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
+  // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
+  const pendingBefore = readQueue();
   try {
-    return await fetchTodayExecution(seanceVersionId, date);
+    const today = await fetchTodayExecution(seanceVersionId, date, localExecutionId);
+    if (today === null) return null;
+    const retired =
+      isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
+      isExecutionRetiredInQueue(today.executionId, readQueue());
+    return retired ? null : today;
   } catch {
     return null;
   }
+}
+
+/**
+ * La file d'écritures en attente RETIRE-t-elle cette exécution : une clôture
+ * (`updateExecution` portant un `closedAt`) ou une suppression (`deleteExecution`,
+ * posée par l'Annulation comme par le journal) qui la vise ? Une correction de
+ * métriques sans clôture, ou une op visant une autre exécution, ne compte pas.
+ */
+export function isExecutionRetiredInQueue(
+  executionId: string,
+  pendingOps: readonly OutboxOp[],
+): boolean {
+  return pendingOps.some((op) => {
+    if (op.id !== executionId) return false;
+    if (op.type === 'deleteExecution') return true;
+    return op.type === 'updateExecution' && typeof op.closedAt === 'string';
+  });
 }
 
 /** Lecture Supabase brute de l'exécution du jour (cf. loadTodayExecution). */
 async function fetchTodayExecution(
   seanceVersionId: string,
   date: string,
+  localExecutionId: string | null,
 ): Promise<TodayExecution | null> {
-  const { data: exec, error: execErr } = await supabase
-    .from('executions')
-    .select('id, started_at, created_at')
-    .eq('seance_version_id', seanceVersionId)
-    .eq('performed_on', date)
+  const base = supabase.from('executions').select('id, started_at, created_at');
+  // L'exécution tenue par l'appareil se relit par son id, sans filtre de version
+  // (cf. loadTodayExecution) ; sinon, l'exécution du jour de la version courante.
+  // Les gardes « en cours » ci-dessous valent pour les deux lectures.
+  const scoped =
+    localExecutionId !== null
+      ? base.eq('id', localExecutionId)
+      : base.eq('seance_version_id', seanceVersionId).eq('performed_on', date);
+  const { data: exec, error: execErr } = await scoped
     // On ne réhydrate QUE l'exécution EN COURS (non clôturée) : la clôture pose un
     // `closed_at` en base (ADR 0009), donc une séance déjà RANGÉE ce jour-là est
     // exclue ici → on repart vierge, sans la ressusciter ni y rattacher un nouveau
@@ -1076,9 +1122,19 @@ export async function loadExecutionForEdit(
 // dans CaptureScreen.
 
 /**
- * Crée (ou ré-affirme) l'exécution du jour, par son id client. `upsert` avec
- * `onConflict: 'id'` : rejouer la même op est sans effet (la ligne existe déjà,
- * ses colonnes identiques). owner_id se remplit via default auth.uid().
+ * Crée l'exécution du jour, par son id client. INSERTION SEULE : `upsert` avec
+ * `onConflict: 'id'` et `ignoreDuplicates` (`on conflict do nothing`). Rejouer
+ * l'op, ou la ré-affirmer à chaque remontage de la Capture, ne touche JAMAIS une
+ * ligne existante : ni sa version de séance, ni sa date, ni son lancement.
+ *
+ * Pourquoi pas un upsert qui réécrit : la Capture ré-enfile l'exécution avant la
+ * première série de chaque montage, avec la version de séance qu'elle vient de
+ * charger. Une séance retouchée en plein entraînement (nouvelle version) faisait
+ * alors basculer l'exécution entamée, et toutes ses séries, sur la nouvelle
+ * version. Aucun chemin n'a besoin de modifier ces trois colonnes après coup :
+ * clôture et métriques passent par `updateExecution`, et le lancement est figé
+ * dès que l'exécution est née (`shouldReanchorLaunch`, state.ts).
+ * owner_id se remplit via default auth.uid().
  */
 export async function upsertExecution(params: {
   id: string;
@@ -1092,11 +1148,10 @@ export async function upsertExecution(params: {
       id: params.id,
       seance_version_id: params.seanceVersionId,
       performed_on: params.performedOn,
-      // Posé seulement si fourni : un upsert sans `started_at` ne l'écrase pas à null
-      // (le `?? undefined` laisse Supabase ignorer la colonne plutôt que la vider).
+      // Posé seulement si fourni : sinon la colonne garde sa valeur par défaut.
       ...(params.startedAt !== undefined ? { started_at: params.startedAt } : {}),
     },
-    { onConflict: 'id' },
+    { onConflict: 'id', ignoreDuplicates: true },
   );
   if (error) throw error;
 }
