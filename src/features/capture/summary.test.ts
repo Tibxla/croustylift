@@ -34,6 +34,16 @@ describe('elapsedMinutesSince', () => {
     vi.useRealTimers();
   });
 
+  it('séance oubliée, terminée le lendemain : durée non mesurée (null), pas 1 400 min', () => {
+    vi.setSystemTime(1_000_000 + 60_000 * 1400);
+    expect(elapsedMinutesSince(1_000_000)).toBeNull();
+  });
+
+  it('au plafond exact (600 min) la durée est encore rendue', () => {
+    vi.setSystemTime(1_000_000 + 60_000 * 600);
+    expect(elapsedMinutesSince(1_000_000)).toBe(600);
+  });
+
   it('retourne le nombre de minutes écoulées (arrondi)', () => {
     vi.setSystemTime(1_000_000 + 60_000 * 45); // +45 min exactement
     expect(elapsedMinutesSince(1_000_000)).toBe(45);

@@ -27,6 +27,7 @@ import {
 } from '../capture/past-session-edit';
 import { flushOps } from '../capture/sync';
 import { unsavedWritesLabel } from '../capture/sync-label';
+import { SESSION_DURATION_MAX_MIN } from '../capture/summary';
 import type { OutboxOp } from '../capture/outbox';
 import type { Side } from '../../domain/types';
 
@@ -39,7 +40,7 @@ const WEIGHT_FINE = 1.25;
 const DURATION_STEP = 5;
 const DURATION_FINE = 1;
 const DURATION_MIN = 1;
-const DURATION_MAX = 600;
+const DURATION_MAX = SESSION_DURATION_MAX_MIN;
 /** Durée proposée si la séance close n'avait pas de chrono (`duration_min` null, cas dégénéré). */
 const DURATION_DEFAULT = 60;
 const BPM_STEP = 5;

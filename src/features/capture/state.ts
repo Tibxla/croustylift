@@ -646,7 +646,8 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
 // --- Persistance « survit au background » -----------------------------------
 // L'exécution en cours est sauvée en localStorage et restaurée au montage.
 
-const STORAGE_PREFIX = 'croustylift:capture:';
+/** Préfixe des clés d'état de capture : `croustylift:capture:<séance>:<date>`. */
+export const STORAGE_PREFIX = 'croustylift:capture:';
 
 function storageKey(sessionId: string, date: string): string {
   return `${STORAGE_PREFIX}${sessionId}:${date}`;
@@ -858,6 +859,42 @@ export function clearOwnCaptureState(): void {
           ?.ownerId;
       } catch {
         ownerId = undefined; // État illisible : à personne, il part.
+      }
+      if (typeof ownerId !== 'string' || ownerId === owner) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
+ * Retire les états de capture devenus IRRÉCUPÉRABLES : ceux d'avant la veille de
+ * `today`. La reprise ne regarde que le jour même et la veille
+ * (`resolveCaptureDate`) ; au-delà, l'état d'une séance oubliée sans clôture
+ * n'était plus jamais lu ni purgé, et restait en clair sur l'appareil. Ses
+ * écritures ne sont pas concernées : elles vivent dans l'outbox. Seuls les états
+ * du compte reconnu (ou sans compte) partent ; ceux d'un autre compte restent.
+ * Appelée une fois par lancement de l'app, à l'arrivée en Capture.
+ */
+export function pruneStaleCaptureStates(today = todayIso()): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const oldestKept = previousDayIso(today);
+    const owner = loadLocalAccount()?.userId;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      // Clé : `croustylift:capture:<séance>:<AAAA-MM-JJ>`.
+      const date = key.slice(key.lastIndexOf(':') + 1);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date >= oldestKept) continue;
+      let ownerId: unknown;
+      try {
+        ownerId = (JSON.parse(localStorage.getItem(key) ?? 'null') as { ownerId?: unknown } | null)
+          ?.ownerId;
+      } catch {
+        ownerId = undefined;
       }
       if (typeof ownerId !== 'string' || ownerId === owner) keys.push(key);
     }

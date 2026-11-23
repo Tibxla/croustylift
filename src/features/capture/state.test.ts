@@ -15,6 +15,7 @@ import {
   adoptedVersionId,
   capturePersistFailing,
   persistedVersionIds,
+  pruneStaleCaptureStates,
   clearCaptureState,
   clearOwnCaptureState,
   hydratedState,
@@ -1340,5 +1341,42 @@ describe('version de séance de l’exécution adoptée', () => {
     persist({ ...local(), sessionId: 'sans-version' });
 
     expect(persistedVersionIds().sort()).toEqual(['v1', 'v7']);
+  });
+});
+
+describe('pruneStaleCaptureStates (séance oubliée sans clôture)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const put = (date: string, ownerId = 'user-a') =>
+    localStorage.setItem(
+      `croustylift:capture:seance-1:${date}`,
+      JSON.stringify({ sessionId: 'seance-1', date, ownerId }),
+    );
+  const has = (date: string) => localStorage.getItem(`croustylift:capture:seance-1:${date}`) !== null;
+
+  it('garde le jour même et la veille (reprenables), retire les états plus anciens', () => {
+    put('2026-11-23');
+    put('2026-11-22');
+    put('2026-11-21');
+    put('2026-10-02');
+
+    pruneStaleCaptureStates('2026-11-23');
+
+    expect(has('2026-11-23')).toBe(true);
+    expect(has('2026-11-22')).toBe(true);
+    expect(has('2026-11-21')).toBe(false);
+    expect(has('2026-10-02')).toBe(false);
+  });
+
+  it('ne touche pas à l’état d’un autre compte, même ancien', () => {
+    put('2026-10-02', 'user-b');
+
+    pruneStaleCaptureStates('2026-11-23');
+
+    expect(has('2026-10-02')).toBe(true);
   });
 });

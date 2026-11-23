@@ -60,6 +60,7 @@ import {
   pendingSide,
   persist,
   persistedVersionIds,
+  pruneStaleCaptureStates,
   previousDayIso,
   resolveCaptureDate,
   shouldReanchorLaunch,
@@ -88,6 +89,7 @@ import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { buildSummary, elapsedMinutesSince } from './summary';
+import { formatRelativeDay } from './format';
 
 type LoadState =
   | { phase: 'loading' }
@@ -375,6 +377,8 @@ export function CaptureScreen() {
       copiesPruned = true;
       // Les séances en cours gardent le template de leur version de naissance.
       pruneCaptureCopies(persistedVersionIds());
+      // Et des états de capture d'avant la veille, que plus rien ne reprend.
+      pruneStaleCaptureStates();
     }
 
     void (async () => {
@@ -969,6 +973,10 @@ function CaptureBoard({
 
   const summary = buildSummary(session, state);
 
+  // La séance reprise est-elle celle d'un jour PASSÉ (restée ouverte) ? `date` est
+  // figée au montage ; « hier » ou plus (cf. `formatRelativeDay`).
+  const staleSince = date < todayIso() ? formatRelativeDay(date, todayIso()) : null;
+
   const handleFinish = useCallback(
     async (values: SessionEndValues) => {
       // Clôture via l'outbox : on pose les métriques de fin (durée du chrono
@@ -1049,6 +1057,32 @@ function CaptureBoard({
         />
       ) : (
         <>
+          {/* Séance d'un jour passé restée ouverte : on le dit, avec ses deux
+              sorties. Sans cela l'app s'ouvrait dans la séance d'hier sans un mot,
+              même quand on venait en faire une autre. */}
+          {staleSince && (
+            <div className="mx-auto mt-3 w-full max-w-md px-4">
+              <div className="surface-card rounded-2xl px-4 py-3.5" role="status">
+                <p className="text-sm text-ink">
+                  Cette séance date d’{staleSince} et n’a pas été terminée.
+                </p>
+                <p className="mt-1 text-[13px] text-ink-muted">
+                  {loggedAny
+                    ? 'Termine-la pour la ranger (sa durée ne sera pas comptée si elle n’est plus mesurable), ou annule-la.'
+                    : 'Annule-la pour en démarrer une autre.'}
+                </p>
+                {loggedAny && (
+                  <button
+                    type="button"
+                    onClick={openFinish}
+                    className="btn btn-secondary mt-3 h-11 rounded-xl px-4 text-sm"
+                  >
+                    Terminer cette séance
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <ExercisePicker
             session={session}
             templateExerciseIds={templateIdsRef.current}
