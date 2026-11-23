@@ -15,7 +15,7 @@ import { buildPrimaryCurve } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
 import { weeklyProgressionRate } from '../../domain/progression';
 import { detectBlocks } from '../../domain/block';
-import { buildConfigTimeline } from './config-timeline';
+import { buildConfigTimeline, type FirstExecutionRow } from './config-timeline';
 import { orderByPlan, planExerciseOrder } from './exercise-order';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
 import { currentVersionIdBySeance } from '../authoring/duplicate-seance';
@@ -176,6 +176,7 @@ export async function loadExerciseExecutions(
     executions: {
       performed_on: string;
       created_at: string;
+      started_at: string | null;
       seance_versions: {
         seance_id: string;
         seances: {
@@ -194,7 +195,7 @@ export async function loadExerciseExecutions(
       supabase
         .from('performed_sets')
         .select(
-          'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
+          'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
         )
         .eq('exercise_id', exerciseId)
         .order('id')
@@ -227,6 +228,9 @@ export async function loadExerciseExecutions(
         id: row.execution_id,
         seanceId,
       };
+      // Lancement horodaté (ADR 0011) : l'instant qui rattache l'exécution à son
+      // bloc. `null` sur les exécutions d'avant la colonne -> repli `createdAt`.
+      if (execution.started_at) exec.startedAt = execution.started_at;
       byExecution.set(row.execution_id, exec);
     }
     exec.sets.push({
@@ -404,14 +408,16 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
  * inchangée. On LIT le journal des changements de plan (activations de routine +
  * versions de séances + archivages de séances + le lien séance->routine), on construit la timeline de
  * configs via le module pur `buildConfigTimeline`, puis on la passe à
- * `detectBlocks`. Aucune lecture d'exécution ici : une déviation ne peut pas
- * créer de bloc (cf. ADR 0001). Pas de logique de calcul dans cette couche.
+ * `detectBlocks`. Aucune série n'est lue : une déviation ne peut pas créer de
+ * bloc (cf. ADR 0001). La seule exécution lue est la PREMIÈRE du compte, pour le
+ * bloc implicite d'avant toute activation (cf. `loadFirstExecution`). Pas de
+ * logique de calcul dans cette couche.
  */
 export async function loadBlocks(): Promise<Block[]> {
   // Quatre journaux qui ne font que grossir avec l'âge du compte : lus en entier,
   // page par page (cf. lib/fetch-all), sinon un bloc ancien ou récent sautait
   // en silence passé 1000 lignes.
-  const [activations, versions, seances, archives] = await Promise.all([
+  const [activations, versions, seances, archives, firstExecution] = await Promise.all([
     fetchAllRows<{ id: string; activated_at: string; routine_id: string }>((after, limit) =>
       afterId(
         supabase
@@ -447,6 +453,7 @@ export async function loadBlocks(): Promise<Block[]> {
         after,
       ),
     ),
+    loadFirstExecution(),
   ]);
 
   const timeline = buildConfigTimeline({
@@ -467,9 +474,39 @@ export async function loadBlocks(): Promise<Block[]> {
       seanceId: r.seance_id,
       archived: r.archived,
     })),
+    firstExecution,
   });
 
   return detectBlocks(timeline);
+}
+
+/**
+ * La plus ancienne exécution du compte rattachée à une séance, avec la routine
+ * de cette séance. Sert au seul bloc implicite : un compte qui a capturé avant
+ * d'activer une routine (la Capture se replie sur la première non archivée)
+ * n'avait aucun bloc pour ces séances-là. Une ligne lue, jamais plus. `null`
+ * sans exécution rattachée.
+ */
+async function loadFirstExecution(): Promise<FirstExecutionRow | null> {
+  type Row = {
+    performed_on: string;
+    created_at: string;
+    started_at: string | null;
+    seance_versions: { seances: { routine_id: string } | null } | null;
+  };
+  const { data, error } = await supabase
+    .from('executions')
+    .select(
+      'performed_on, created_at, started_at, seance_versions!inner ( seances!inner ( routine_id ) )',
+    )
+    .order('performed_on')
+    .order('created_at')
+    .limit(1);
+  if (error) throw error;
+  const row = ((data ?? []) as unknown as Row[])[0];
+  const routineId = row?.seance_versions?.seances?.routine_id;
+  if (!row || !routineId) return null;
+  return { date: row.performed_on, at: row.started_at ?? row.created_at, routineId };
 }
 
 // --- Comparaison de deux blocs d'un exo (cf. issue #6) ------------------------

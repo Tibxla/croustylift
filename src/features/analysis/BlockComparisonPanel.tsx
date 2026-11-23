@@ -15,6 +15,7 @@
 // `compareBlockSeances`, `defaultComparisonPair`).
 import { useEffect, useMemo, useState } from 'react';
 import type { ExerciseExecution, Block } from '../../domain/types';
+import { blockKey } from '../../domain/block';
 import {
   compareBlockSeances,
   defaultComparisonPair,
@@ -226,7 +227,7 @@ function OptionSelect({
         onChange={(e) => onChange(Number(e.target.value))}
       >
         {options.map((o, index) => (
-          <option key={`${o.block.start}:${o.seanceId}`} value={index} disabled={index === exclude}>
+          <option key={`${blockKey(o.block)}:${o.seanceId}`} value={index} disabled={index === exclude}>
             {oneLine(optionLabel(o, seances))}
             {o.pointCount < MIN_POINTS ? ' · trop peu de points' : ''}
           </option>
