@@ -618,7 +618,8 @@ function CaptureBoard({
   // L'exécution existe-t-elle DÉJÀ (en base ou enfilée) ? Tranché une fois au
   // montage depuis l'état restauré, la réhydratation et l'outbox, puis vrai dès
   // qu'on l'enfile ici. C'est ELLE qui garde le chrono (ADR 0011) : une exécution
-  // née n'est jamais réancrée, donc sa ré-affirmation repose le même started_at.
+  // née n'est jamais réancrée, et sa ré-affirmation ne modifie pas la ligne en base
+  // (insertion seule, cf. upsertExecution) : started_at reste celui du lancement.
   const [startedAtMount] = useState(() =>
     isExecutionStarted(state, init.executionInBase ? init.executionId : null, readQueue()),
   );

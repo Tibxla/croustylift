@@ -18,6 +18,7 @@ import {
   loadPersisted,
   persist,
   clearPersisted,
+  clearPersistedExecution,
   nextSetOrder,
   pendingSide,
   previousDayIso,
@@ -799,6 +800,49 @@ describe('clearCaptureState', () => {
   it('est un no-op sans erreur quand rien n’est persisté', () => {
     expect(() => clearCaptureState()).not.toThrow();
     expect(localStorage.length).toBe(0);
+  });
+});
+
+// --- clearPersistedExecution (suppression d'une exécution depuis le journal) ---
+//
+// Le bug : supprimer depuis le journal l'exécution que la Capture tient encore en
+// cours laissait son état local. Il prime à la réhydratation, donc la série
+// suivante recréait l'exécution supprimée sous le même id.
+
+describe('clearPersistedExecution', () => {
+  const DATE = '2026-06-18';
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+
+  it('efface l’état de capture qui porte cette exécution : la séance repart vierge', () => {
+    persist(mkState({ executionId: 'exec-supprimee' }));
+    expect(loadPersisted(upperA, DATE)?.executionId).toBe('exec-supprimee');
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+  });
+
+  it('laisse l’état d’une AUTRE exécution, et tout ce qui n’est pas un état de capture', () => {
+    persist(mkState({ executionId: 'exec-en-cours' }));
+    persist(mkState({ sessionId: 'autre-seance', executionId: 'exec-supprimee' }));
+    localStorage.setItem('croustylift:outbox', '[{"type":"deleteExecution","id":"exec-supprimee"}]');
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)?.executionId).toBe('exec-en-cours');
+    expect(localStorage.getItem(`croustylift:capture:autre-seance:${DATE}`)).toBeNull();
+    expect(localStorage.getItem('croustylift:outbox')).not.toBeNull();
+  });
+
+  it('un état illisible ne bloque pas le balayage', () => {
+    localStorage.setItem('croustylift:capture:cassee:2026-06-17', '{pas du json');
+    persist(mkState({ executionId: 'exec-supprimee' }));
+
+    clearPersistedExecution('exec-supprimee');
+    expect(loadPersisted(upperA, DATE)).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:cassee:2026-06-17')).not.toBeNull();
   });
 });
 

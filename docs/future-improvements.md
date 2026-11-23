@@ -72,12 +72,3 @@ qui a été fait et des décisions actées.
   sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. La
   garde lit la file : une clôture sortie de la file sans avoir été appliquée en base ne
   serait plus vue.
-
-## Ouvert (à trancher)
-
-- **Exécution du jour supprimée depuis le journal, Capture encore ouverte dessus** : la
-  suppression (`PastSessionEditor`) n'efface pas l'état local de la Capture
-  (`clearPersisted` n'est appelé que par la Clôture et l'Annulation). Cet état prime à la
-  réhydratation, donc la série suivante recrée l'exécution supprimée sous le même id,
-  que la suppression soit déjà acquittée ou non. Piste : effacer l'état local de la
-  Capture qui porte cet id au moment de la suppression.
