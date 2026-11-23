@@ -1076,9 +1076,19 @@ export async function loadExecutionForEdit(
 // dans CaptureScreen.
 
 /**
- * Crée (ou ré-affirme) l'exécution du jour, par son id client. `upsert` avec
- * `onConflict: 'id'` : rejouer la même op est sans effet (la ligne existe déjà,
- * ses colonnes identiques). owner_id se remplit via default auth.uid().
+ * Crée l'exécution du jour, par son id client. INSERTION SEULE : `upsert` avec
+ * `onConflict: 'id'` et `ignoreDuplicates` (`on conflict do nothing`). Rejouer
+ * l'op, ou la ré-affirmer à chaque remontage de la Capture, ne touche JAMAIS une
+ * ligne existante : ni sa version de séance, ni sa date, ni son lancement.
+ *
+ * Pourquoi pas un upsert qui réécrit : la Capture ré-enfile l'exécution avant la
+ * première série de chaque montage, avec la version de séance qu'elle vient de
+ * charger. Une séance retouchée en plein entraînement (nouvelle version) faisait
+ * alors basculer l'exécution entamée, et toutes ses séries, sur la nouvelle
+ * version. Aucun chemin n'a besoin de modifier ces trois colonnes après coup :
+ * clôture et métriques passent par `updateExecution`, et le lancement est figé
+ * dès que l'exécution est née (`shouldReanchorLaunch`, state.ts).
+ * owner_id se remplit via default auth.uid().
  */
 export async function upsertExecution(params: {
   id: string;
@@ -1092,11 +1102,10 @@ export async function upsertExecution(params: {
       id: params.id,
       seance_version_id: params.seanceVersionId,
       performed_on: params.performedOn,
-      // Posé seulement si fourni : un upsert sans `started_at` ne l'écrase pas à null
-      // (le `?? undefined` laisse Supabase ignorer la colonne plutôt que la vider).
+      // Posé seulement si fourni : sinon la colonne garde sa valeur par défaut.
       ...(params.startedAt !== undefined ? { started_at: params.startedAt } : {}),
     },
-    { onConflict: 'id' },
+    { onConflict: 'id', ignoreDuplicates: true },
   );
   if (error) throw error;
 }
