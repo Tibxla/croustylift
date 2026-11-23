@@ -25,9 +25,9 @@ import { clearCaptureState } from '../features/capture/state'
  */
 const BOOT_TIMEOUT_MS = 3000
 
-// Lecteur de session des modules de lecture (cf. lib/session-identity) : posé
-// ici, au chargement du module d'auth, pour que la pagination et le cache de
-// lecture puissent vérifier QUI lit sans rien savoir de supabase-js.
+// Lecteur de session (cf. lib/session-identity) : posé ici, au chargement du
+// module d'auth, pour que la pagination et le flush de l'outbox puissent
+// vérifier QUI est connecté sans rien savoir de supabase-js.
 setSessionUserReader(async () => {
   const { data } = await supabase.auth.getSession()
   return data.session?.user.id ?? null

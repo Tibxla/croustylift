@@ -15,7 +15,7 @@ Lis ta progression réelle au calme, façon cadran d'instrument.
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-646cff.svg?logo=vite&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-3ecf8e.svg?logo=supabase&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-642%20passing-22c55e.svg)
+![Tests](https://img.shields.io/badge/tests-940%20passing-22c55e.svg)
 
 </div>
 
@@ -46,7 +46,7 @@ Projet perso (et quelques potes). PWA installable, **offline-first**, **0 € d'
 **Analyse au calme**
 - **Courbe e1RM** estimée (max théorique à 1 rép), trend par bloc, journal brut auditable.
 - **Décompte de séries par muscle** principal, pondéré par les reps.
-- Comparaison **bloc courant vs précédent**.
+- Comparaison de **deux blocs au choix**, y compris entre deux routines.
 
 **Organisation**
 - Routines → séances → **prescriptions** (séries × fourchette de reps × RIR).
@@ -79,7 +79,7 @@ Le système complet est documenté dans **[`DESIGN.md`](./DESIGN.md)** (format S
 | Dataviz | **Recharts** (courbe e1RM, comparaisons) |
 | PWA | `vite-plugin-pwa` / Workbox — precache + offline |
 | Typo | Geist · Geist Mono *(repli Inter · JetBrains Mono, self-hosted)* |
-| Tests | **Vitest** — domaine métier en **TDD** (642 tests) |
+| Tests | **Vitest** · domaine métier en **TDD** (940 tests) |
 
 ## Démarrage
 
@@ -110,7 +110,7 @@ npm run dev
 | `npm run lint` | ESLint (dont `react-hooks` / React Compiler) |
 | `npm run typecheck` | `tsc -b` seul |
 
-Le schéma Postgres et les politiques RLS vivent côté Supabase (projet hébergé).
+Le schéma Postgres et les politiques RLS sont versionnés dans `supabase/migrations/` (14 migrations), appliquées sur le projet Supabase hébergé.
 
 ## Structure
 
@@ -132,14 +132,14 @@ src/
 
 ## Concepts du domaine
 
-Vocabulaire métier complet dans **[`CONTEXT.md`](./CONTEXT.md)**. En bref :
+Vocabulaire métier complet dans **[`GLOSSARY.md`](./GLOSSARY.md)**. En bref :
 
-- **Série** — une exécution (poids × reps + RIR). En unilatéral, gauche + droite au même rang.
-- **e1RM** — *estimated 1-rep max*, le max théorique à 1 répétition ; la métrique de progression.
-- **RIR** — *reps in reserve*, réps qu'il restait dans le réservoir en fin de série.
-- **Prescription** — la cible d'un exo dans une séance : séries × fourchette de reps × RIR.
-- **Bloc** — une période d'entraînement comparée à la précédente.
-- **Déviation** — écart entre le template versionné et ce qui a réellement été fait, dérivé par diff.
+- **Série** : une exécution (poids × reps + RIR). En unilatéral, gauche + droite au même rang.
+- **e1RM** : *estimated 1-rep max*, le max théorique à 1 répétition ; la métrique de progression.
+- **RIR** : *reps in reserve*, réps qu'il restait dans le réservoir en fin de série.
+- **Prescription** : la cible d'un exo dans une séance (séries × fourchette de reps × RIR).
+- **Bloc** : une période pendant laquelle le plan n'a pas bougé, l'unité de comparaison de la progression.
+- **Déviation** : écart entre le template versionné et ce qui a réellement été fait, dérivé par diff.
 
 ## Décisions d'architecture
 
@@ -153,7 +153,7 @@ pondéré par les reps, gestion de l'unilatéral, etc.
 |---|---|
 | [`PRODUCT.md`](./PRODUCT.md) | Stratégie produit — qui, quoi, pourquoi |
 | [`DESIGN.md`](./DESIGN.md) | Système visuel — tokens, composants, règles nommées |
-| [`CONTEXT.md`](./CONTEXT.md) | Glossaire du domaine |
+| [`GLOSSARY.md`](./GLOSSARY.md) | Glossaire du domaine |
 | [`docs/adr/`](./docs/adr/) | Décisions d'architecture |
 
 ## Licence

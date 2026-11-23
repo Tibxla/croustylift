@@ -1,6 +1,6 @@
 -- Catalogue d'exercices de base : lignes globales (owner_id null), lecture seule
 -- pour les utilisateurs, modifiables seulement via service_role (cette migration).
--- Un seul groupe musculaire principal par exo (cf. CONTEXT.md).
+-- Un seul groupe musculaire principal par exo (cf. GLOSSARY.md).
 
 insert into public.exercises (owner_id, name, muscle_group) values
   (null, 'Développé couché',            'pectoraux'),

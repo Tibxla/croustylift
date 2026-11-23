@@ -15,9 +15,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
 
       // Precache l'integralite du shell statique genere par Vite.
-      // Les requetes Supabase (api.supabase.co / *.supabase.co) ne sont PAS
-      // incluses : elles passent toujours par le reseau (network-first ou
-      // network-only implicite, aucune route workbox ne les couvre).
+      // Les requetes Supabase (*.supabase.co) ne sont PAS precachees : elles
+      // passent toujours par le reseau, via la route NetworkOnly declaree dans
+      // runtimeCaching ci-dessous.
       workbox: {
         globPatterns: ['**/*.{js,css,html,woff2,woff,ttf,svg,png,ico,webp}'],
         // Exclure explicitement les appels Supabase du cache SW.

@@ -9,7 +9,7 @@ import {
 } from './exercise-input';
 
 describe('MUSCLE_GROUPS', () => {
-  it('liste les 15 muscles canoniques (cf. CONTEXT.md)', () => {
+  it('liste les 15 muscles canoniques (cf. GLOSSARY.md)', () => {
     expect(MUSCLE_GROUPS).toHaveLength(15);
     // bornes du vocabulaire : « dos » n'est PAS un muscle -> « dorsaux »
     expect(MUSCLE_GROUPS).toContain('dorsaux');

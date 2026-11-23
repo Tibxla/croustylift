@@ -1,7 +1,7 @@
 // Noms uniques des séances et des routines (grilling du 2026-09-13).
 //
 // Un nom de séance est unique dans sa routine, un nom de routine dans le compte,
-// archivées comprises, casse et espaces en trop ignorés (CONTEXT.md « Séance »,
+// archivées comprises, casse et espaces en trop ignorés (GLOSSARY.md « Séance »,
 // « Routine ») : c'est par son nom qu'on choisit une séance en salle, et
 // « séance · routine » doit désigner une seule séance dans l'analyse. La base
 // tient la règle par un index unique sur la même normalisation (migration

@@ -1,6 +1,6 @@
 // Badge UNIQUE par série loggée (ADR 0010), logique pure extraite de la Capture.
 //
-// Deux axes de comparaison, distincts (cf. CONTEXT.md « Référence » / « Record
+// Deux axes de comparaison, distincts (cf. GLOSSARY.md « Référence » / « Record
 // personnel ») :
 //   - RÉFÉRENCE (« dernière fois ») : la série à la MÊME position (et le même côté
 //     en unilatéral) lors de la dernière exécution. Juge = e1RM, seuils STRICTS :

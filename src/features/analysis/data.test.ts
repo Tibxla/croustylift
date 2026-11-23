@@ -1,7 +1,7 @@
 // Tests de la partie PURE de l'analyse par séance (issue #67) :
 // `analyzeExecutions` groupe les exécutions d'un exo par séance et dérive une
 // courbe (+ pente + secondaire) PAR groupe — un même exo n'a pas la même perf
-// selon le contexte de fatigue de la séance (cf. CONTEXT.md « Référence »).
+// selon le contexte de fatigue de la séance (cf. GLOSSARY.md « Référence »).
 // La requête Supabase reste dans la couche d'accès ; seul le groupement/tri est
 // testé ici, les courbes elles-mêmes étant couvertes par le domaine.
 import { describe, expect, it } from 'vitest';

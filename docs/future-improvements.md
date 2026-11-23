@@ -31,11 +31,16 @@ qui a été fait et des décisions actées.
 
 - **Revalidation du cache de lecture hors-ligne (ADR 0012)** : la revalidation ne sait
   rejouer que les lectures déjà vues dans la session en cours (registre mémoire de
-  `lib/read-cache`). La Référence n'en dépend PLUS : elle fusionne les écritures en attente
-  de l'outbox avant de dériver (ADR 0014), donc une séance capturée hors-ligne sert de
-  repère dès la saisie. Le retard résiduel ne concerne que les lectures qui n'ont pas de
-  source locale équivalente. Piste si ça devenait gênant : réchauffer les copies des
-  séances de la routine courante après un flush au boot.
+  `lib/read-cache`). La Référence n'en dépend PLUS, à ses deux bouts. Tant qu'une série
+  attend, la dérivation fusionne les écritures de l'outbox (ADR 0014) : une séance
+  capturée hors-ligne sert de repère dès la saisie. Dès qu'elle est acquittée, la copie
+  d'historique de son exo est relue depuis le réseau, à la fin de tout flush, sans attendre
+  la relance (`refreshExerciseRows`, ADR 0020). Les lectures d'une même clé pouvant se
+  croiser, la copie ne s'écrit que sous gardes d'ordre : dernière réponse écrite, seuil
+  posé par la relecture d'après acquittement, purge et compte. Le retard résiduel ne
+  concerne que les lectures qui n'ont pas de source locale équivalente. Piste si ça
+  devenait gênant : réchauffer les copies des séances de la routine courante après un
+  flush au boot.
 
 - **Protection « mots de passe compromis » (advisor `auth_leaked_password_protection`)** :
   fonctionnalité **Supabase Pro (payante)**, hors de portée du free tier. Laissée

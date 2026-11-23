@@ -20,3 +20,12 @@ Depuis le journal, l'utilisateur peut supprimer une **exécution** entière (un 
 - Nouvelle op d'outbox `deleteExecution` (idempotente par id) et sa fonction de sync (`DELETE` par id, RLS scopé).
 - La **cascade DB** est le seul mécanisme de nettoyage des séries et notes datées : à préserver si l'on touche aux clés étrangères `performed_sets.execution_id` / `dated_notes.execution_id`.
 - Après suppression, le journal et l'analyse se rechargent (même voie que `onSaved` après une correction).
+
+## Amendement du 2026-11-23
+
+Deux phrases de cet ADR ne tiennent plus telles quelles. L'exécution supprimée depuis le journal n'est pas toujours « passée, déjà entièrement synchronisée » : ce peut être la séance du jour, encore tenue en cours par la Capture. Et l'op n'est plus réduite à son id.
+
+- La suppression efface l'état de capture local qui porte cette exécution (`clearPersistedExecution`). Sans cela, cet état primait à la réhydratation et la série suivante recréait l'exécution supprimée sous le même id (ADR 0021).
+- Les ops `deleteExecution` et `deleteSet` portent, quand l'émetteur les connaît, les exos concernés (`exerciseIds`). Ce champ ne part pas en base : il dit quelles copies locales d'historique relire à l'acquittement (ADR 0020).
+- Tant que la suppression attend en file, la Capture n'adopte pas l'exécution visée, même si la base la montre encore (ADR 0021).
+- La purge ciblée de la file écartée plus haut existe pour un autre geste : « Annuler la séance » en Capture retire de la file et de la quarantaine les ops de l'exécution abandonnée (`purgeByExecution`). La suppression depuis le journal, elle, s'en tient au FIFO.

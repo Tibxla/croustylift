@@ -2,7 +2,7 @@
 
 Tracker de musculation — capture zéro-friction en salle, analyse au calme. PWA + Supabase, local-first, multi-user (toi + potes).
 
-Docs clés : `PRODUCT.md` (stratégie) · `DESIGN.md` (visuel) · `CONTEXT.md` (glossaire domaine) · `docs/adr/` (décisions) · `brainstorming/brainstorm-tracker-muscu-2026-06-17/brainstorm-intent.md` (spec produit).
+Docs clés : `PRODUCT.md` (stratégie) · `DESIGN.md` (visuel) · `GLOSSARY.md` (glossaire domaine) · `docs/adr/` (décisions) · `brainstorming/brainstorm-tracker-muscu-2026-06-17/brainstorm-intent.md` (spec produit).
 
 ## Agent skills
 
@@ -16,4 +16,4 @@ Vocabulaire canonique par défaut (`needs-triage`, `needs-info`, `ready-for-agen
 
 ### Domain docs
 
-Single-context : un `CONTEXT.md` + `docs/adr/` à la racine. See `docs/agents/domain.md`.
+Single-context : un `GLOSSARY.md` + `docs/adr/` à la racine. See `docs/agents/domain.md`.

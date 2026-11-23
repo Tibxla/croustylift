@@ -180,7 +180,7 @@ export function ExerciseCapture({
   }, [weightKg, reps, rir, currentSide, onDraftChange]);
 
   // Le record AFFICHÉ en repère : le record all-time de l'exo (toutes séances,
-  // cf. CONTEXT.md « Record personnel »), lu PAR CÔTÉ pour un unilatéral (le
+  // cf. GLOSSARY.md « Record personnel »), lu PAR CÔTÉ pour un unilatéral (le
   // bras visé au sélecteur, chaque bras tenant son propre record — ADR 0010).
   const displayRecord = unilateral
     ? exercise.personalRecordBySide?.[selectedSide] ?? null
@@ -321,7 +321,7 @@ export function ExerciseCapture({
             </span>
           )}
         </div>
-        {/* RECORD personnel (all-time, toutes séances — cf. CONTEXT.md) : la perf
+        {/* RECORD personnel (all-time, toutes séances — cf. GLOSSARY.md) : la perf
             au meilleur e1RM, à aller chercher. Par CÔTÉ en unilatéral : le record
             du bras visé au sélecteur, comme « Dernière fois » (ADR 0010). Absent
             si l'historique est vierge (rien à annoncer au premier passage). */}
@@ -347,7 +347,7 @@ export function ExerciseCapture({
       {/* Repère « Dernière fois tu notais : … » (lecture seule, TOUJOURS daté) :
           la note que la DERNIÈRE exécution de cette séance porte pour cet exo —
           rien si elle n'en porte pas, on ne repêche jamais plus ancien (cf.
-          CONTEXT.md « Note datée »). On saisit une note FRAÎCHE du jour plus bas. */}
+          GLOSSARY.md « Note datée »). On saisit une note FRAÎCHE du jour plus bas. */}
       {exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body) && (
         <div className="mt-3 rounded-xl border border-hair bg-surface px-3.5 py-2.5">
           <div className="flex items-baseline justify-between gap-2">

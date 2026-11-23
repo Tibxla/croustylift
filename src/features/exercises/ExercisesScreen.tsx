@@ -6,7 +6,7 @@
 // réseau. `ExercisesScreen` est le conteneur : il charge via listExercises (lit
 // base + perso), mute via create/update/deletePersonalExercise, et recharge.
 //
-// Périmètre (cf. CONTEXT.md) :
+// Périmètre (cf. GLOSSARY.md) :
 //   - exo de BASE (owner_id null) : la LIGNE de base reste lecture seule pour
 //     tous, mais l'user peut la PERSONNALISER via un override per-user (nom,
 //     unilatéral, muscles principaux ; issue #50) et la réinitialiser. La ligne

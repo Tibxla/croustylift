@@ -96,7 +96,7 @@ export function weakSideE1rm(sets: PerformedSet[]): number | null {
   const isUnilateral = sets.some((s) => s.side !== undefined)
   if (!isUnilateral) {
     // Pré-condition : un exo bilatéral a UNE série par `order` (une série = un
-    // rang, cf. CONTEXT.md « Série »). Deux séries bilatérales au même order est
+    // rang, cf. GLOSSARY.md « Série »). Deux séries bilatérales au même order est
     // une anomalie (jamais produite par la capture). On la rend néanmoins
     // déterministe au lieu de laisser l'ordre du tableau — non garanti côté data
     // — trancher : à `order` égal on retient le plus petit e1RM, cohérent avec la

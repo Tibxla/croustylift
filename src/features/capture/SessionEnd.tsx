@@ -255,7 +255,7 @@ function SummaryCard({
 /**
  * Décompte RÉEL des séries par muscle principal (issue #60), affiché en fin de
  * séance sous le récap. Dérivé des séries loggées et pondéré par reps (cf.
- * buildSummary). On ne parle PAS de « volume » (terme proscrit, CONTEXT.md) :
+ * buildSummary). On ne parle PAS de « volume » (terme proscrit, GLOSSARY.md) :
  * « séries par muscle ».
  *
  * DESIGN.md : chiffres en mono tabulaire (.readout) alignés en colonne, un muscle

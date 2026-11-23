@@ -22,7 +22,7 @@ export type ExerciseOrigin = 'template' | 'added' | 'swapped';
  * Le repère « Dernière fois tu notais » : la note datée que la DERNIÈRE exécution
  * de la séance porte pour cet exo, avec sa date (affichée en relatif). Si la
  * dernière exécution n'a pas de note pour l'exo, il n'y a PAS de repère — on ne
- * repêche jamais une note plus ancienne (cf. CONTEXT.md « Note datée »).
+ * repêche jamais une note plus ancienne (cf. GLOSSARY.md « Note datée »).
  */
 export interface PreviousDatedNote {
   body: string;
@@ -52,7 +52,7 @@ export interface SessionExercise {
   prescription: Prescription;
   /**
    * La Référence : les séries réellement faites la dernière fois DANS CETTE
-   * SÉANCE, par position (cf. CONTEXT.md « Référence » : le même exo dans une
+   * SÉANCE, par position (cf. GLOSSARY.md « Référence » : le même exo dans une
    * autre séance ne compte pas, le contexte de fatigue diffère). Dérivée de
    * l'historique (jamais saisie). `null` = jamais fait dans cette séance → rien
    * à battre ni à égaler (même si l'exo a un historique ailleurs).
@@ -84,7 +84,7 @@ export interface SessionExercise {
    * Le repère « Dernière fois tu notais : … » (lecture seule, daté) : la note que
    * la DERNIÈRE exécution de cette séance porte pour cet exo — null/absent si
    * elle n'en porte pas (on ne repêche jamais une note plus ancienne, cf.
-   * CONTEXT.md « Note datée »). Distinct de la note du jour (saisissable) et de
+   * GLOSSARY.md « Note datée »). Distinct de la note du jour (saisissable) et de
    * la note d'instructions (persistante).
    */
   previousDatedNote?: PreviousDatedNote | null;

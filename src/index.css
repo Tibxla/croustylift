@@ -13,7 +13,8 @@
 /*
   Design tokens — « L'instrument de nuit » (DESIGN.md).
   Dark par nécessité : fond mat quasi-noir teinté vers l'accent, contraste élevé.
-  Toutes les valeurs en OKLCH. Contrastes vérifiés WCAG AA (script contrast.mjs) :
+  Toutes les valeurs en OKLCH. Contrastes vérifiés WCAG AA (script contrast.mjs,
+  absent du dépôt) :
     ink/surface 16.3:1 · inkMuted/surface 7.1:1 · white/accent-strong 5.3:1.
 */
 @theme {

@@ -31,7 +31,7 @@ export interface SeedInput {
   prescription: Prescription;
   /**
    * La « dernière fois » par position (et par côté en unilatéral), SCOPÉE à la
-   * séance courante (cf. CONTEXT.md « Référence »), ou `null` si l'exo n'a jamais
+   * séance courante (cf. GLOSSARY.md « Référence »), ou `null` si l'exo n'a jamais
    * été fait dans cette séance.
    */
   reference: PerformedSet[] | null;

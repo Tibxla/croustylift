@@ -1,7 +1,7 @@
 -- Modèle d'exercice étendu (issue #33) : un exo porte désormais
 --   - `unilateral` : booléen (mouvement exécuté un côté à la fois) ;
 --   - `primary_muscles` : LISTE de muscles principaux (>= 1), vocabulaire canonique
---     CONTEXT.md. PAS de muscle secondaire.
+--     GLOSSARY.md. PAS de muscle secondaire.
 --
 -- ADDITIF et NON destructif :
 --   - on AJOUTE les deux colonnes (defaults sûrs) ;

@@ -184,7 +184,7 @@ export async function loadChosenSeance(seance: SeanceChoice): Promise<LoadedSean
 
 /**
  * TOUS les ids de version d'une séance (append-only, ADR 0001). C'est le périmètre
- * de la Référence scopée séance (cf. CONTEXT.md « Référence ») : les versions sont
+ * de la Référence scopée séance (cf. GLOSSARY.md « Référence ») : les versions sont
  * des retouches du même template, l'historique de l'exo les traverse toutes.
  */
 export async function listSeanceVersionIds(seanceId: string): Promise<string[]> {
@@ -681,13 +681,13 @@ function fetchExerciseRows(exerciseId: string): Promise<PerformedSetWithExecutio
 /**
  * Toutes les dérivées d'historique d'un exo pour la Capture, issues d'UNE seule
  * lecture des performed_sets :
- *   - `reference` : la dernière perf DANS CETTE SÉANCE (cf. CONTEXT.md
+ *   - `reference` : la dernière perf DANS CETTE SÉANCE (cf. GLOSSARY.md
  *     « Référence » — le même exo dans une autre séance ne compte pas) ;
  *   - `fallbackReference` : repli du PRÉREMPLISSAGE seul quand la séance n'a pas
  *     d'historique (dernière perf toutes séances confondues) — jamais de repère
  *     ni de badge dessus ;
  *   - `personalRecord` / `personalRecordBySide` : les records, eux, restent
- *     ALL-TIME toutes séances confondues (cf. CONTEXT.md « Record personnel »).
+ *     ALL-TIME toutes séances confondues (cf. GLOSSARY.md « Record personnel »).
  */
 export interface ExerciseHistory {
   reference: PerformedSet[] | null;
@@ -718,7 +718,7 @@ export function deriveExerciseHistory(
   //     (`computeRecordFlags` fait avancer un record « running » série après
   //     série). Y verser déjà le jour éteindrait le badge d'une série qui vient
   //     de battre le record, au premier remontage de l'écran. Le record affiché
-  //     reste all-time au sens du CONTEXT : le jour est rejoué par-dessus.
+  //     reste all-time au sens du glossaire : le jour est rejoué par-dessus.
   const past = currentExecutionId
     ? rows.filter((r) => r.execution_id !== currentExecutionId)
     : rows;
@@ -776,7 +776,7 @@ export async function loadExerciseRows(
 /**
  * La DERNIÈRE exécution passée de la séance (`performed_on < beforeDate`, toutes
  * versions confondues) : c'est ELLE seule qui peut porter le repère « Dernière
- * fois tu notais » (cf. CONTEXT.md « Note datée » — si elle n'a pas de note pour
+ * fois tu notais » (cf. GLOSSARY.md « Note datée » — si elle n'a pas de note pour
  * un exo, rien ne ressort, on ne repêche jamais plus ancien). `beforeDate` = la
  * date ADOPTÉE de la séance du jour : on exclut l'exécution en cours. `null` si
  * la séance n'a jamais été exécutée.
@@ -819,7 +819,7 @@ export async function loadPreviousDatedNotes(
 ): Promise<Record<string, PreviousDatedNote>> {
   if (!lastExecution) return {};
   // Tolérant (ADR 0012) : même statut de confort que loadLastSeanceExecution —
-  // sans copie ni réseau, rien ne ressort (cf. CONTEXT.md « Note datée »).
+  // sans copie ni réseau, rien ne ressort (cf. GLOSSARY.md « Note datée »).
   return tolerantRead(
     `prev-notes:${lastExecution.id}`,
     async () => {
