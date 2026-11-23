@@ -91,7 +91,10 @@ export interface UpdateExecutionOp {
 
 /**
  * Crée (ou ré-affirme) la NOTE DATÉE d'un exo pour l'exécution courante (issue
- * #26). Idempotent via upsert par id (UUID client) : rejouer pose le même corps.
+ * #26). Idempotent : rejouer pose le même corps sur la même ligne. La ligne
+ * écrite est celle du COUPLE (exécution, exercice) si la base en a déjà une,
+ * quel que soit son id ; `id` (UUID déterministe du couple) ne sert qu'à en
+ * créer une (cf. `upsertDatedNote`, features/notes/data.ts).
  * Comme une série, elle dépend de l'exécution (FK) → enfilée APRÈS l'upsert
  * d'exécution, ordre garanti par le FIFO.
  */
@@ -104,10 +107,21 @@ export interface UpsertDatedNoteOp {
   body: string;
 }
 
-/** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
+/**
+ * Efface la note datée d'un exo dans une exécution (corps vidé). L'identité
+ * d'une note datée est son COUPLE (exécution, exercice) : l'effacement vise le
+ * couple, donc aussi une note née sous un autre id (ancien client, autre
+ * appareil). Idempotent.
+ *
+ * `executionId` et `exerciseId` sont absents d'une op enfilée par un bundle
+ * antérieur : elle n'efface alors que la ligne `id`, comme avant. `id` reste
+ * l'identité de l'op dans la file et dans l'état local.
+ */
 export interface DeleteDatedNoteOp {
   type: 'deleteDatedNote';
   id: string;
+  executionId?: string;
+  exerciseId?: string;
 }
 
 /**

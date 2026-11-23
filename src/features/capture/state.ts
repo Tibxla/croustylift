@@ -146,6 +146,10 @@ export type CaptureAction =
       base: Record<string, HydratedProgress>;
       pendingSetIds: string[];
       knownAtDeparture: string[];
+      /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
+      datedNotes?: Record<string, DatedNoteDraft>;
+      /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
+      pendingNoteKeys?: string[];
     }
   // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
   | { type: 'edit-layout'; edit: LayoutEdit }
@@ -569,6 +573,38 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
 }
 
 /**
+ * RÉCONCILIE les notes datées locales avec celles que la base vient de rendre
+ * pour la MÊME exécution (réponse tardive, tableau déjà monté). Même règle que
+ * la fusion au montage (`mergeProgress`) : le LOCAL prime par exo.
+ *   - un exo sans note locale ADOPTE celle de la base, avec son id. C'est le cas
+ *     d'une note écrite ailleurs (autre appareil, ancien client à id aléatoire)
+ *     que l'état local ignorait : sans cela le champ restait vide et la saisie
+ *     suivante repartait de rien ;
+ *   - un exo qui porte déjà une note locale la GARDE telle quelle, corps vidé
+ *     compris (un effacement est une édition) : la saisie de l'utilisateur ne
+ *     bouge pas sous ses doigts ;
+ *   - un exo dont une écriture de note attend encore en file (`pendingKeys` :
+ *     exos, ou ids de notes pour les ops d'un bundle antérieur) n'adopte rien :
+ *     la base ne connaît pas encore cette écriture, sa version est déjà périmée.
+ * Rend `local` lui-même quand rien n'est adopté. Pur.
+ */
+export function reconcileDatedNotes(
+  local: Record<string, DatedNoteDraft>,
+  base: Record<string, DatedNoteDraft>,
+  pendingKeys: readonly string[],
+): Record<string, DatedNoteDraft> {
+  const pending = new Set(pendingKeys);
+  let next: Record<string, DatedNoteDraft> | null = null;
+  for (const [exerciseId, note] of Object.entries(base)) {
+    if (local[exerciseId] !== undefined) continue;
+    if (pending.has(exerciseId) || pending.has(note.id)) continue;
+    next ??= { ...local };
+    next[exerciseId] = { id: note.id, body: note.body };
+  }
+  return next ?? local;
+}
+
+/**
  * RÉCONCILIE le réalisé local avec celui que la base vient de rendre pour la
  * MÊME exécution : la base fait foi pour les séries, et les écritures locales
  * encore en attente s'appliquent par-dessus, PAR IDENTIFIANT. C'est la règle de
@@ -763,6 +799,9 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
           pendingSetIds: action.pendingSetIds,
           knownAtDeparture: action.knownAtDeparture,
         }),
+        datedNotes: action.datedNotes
+          ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
+          : state.datedNotes,
       };
 
     case 'edit-layout':

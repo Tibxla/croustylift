@@ -1,7 +1,11 @@
-// Id DÉTERMINISTE d'une note datée : UUID v5 (RFC 4122, SHA-1) de son couple
-// (exécution, exercice). Deux appareils qui notent le même exo de la même
-// exécution calculent le même id : l'upsert par `id` converge, et l'unicité du
-// couple en base (migration 0018) n'est jamais heurtée.
+// Id DÉTERMINISTE d'une note datée NEUVE : UUID v5 (RFC 4122, SHA-1) de son
+// couple (exécution, exercice). Deux appareils qui notent le même exo de la même
+// exécution calculent le même id : leurs écritures convergent sur une ligne.
+//
+// Ce n'est pas l'identité de la note pour autant : une note écrite par un ancien
+// client porte un id aléatoire. L'identité est le COUPLE, résolu à l'écriture et
+// à l'effacement (`upsertDatedNote`, `deleteDatedNoteByCouple`, data.ts) ; cet id
+// ne sert qu'à créer la ligne quand le couple n'en a pas encore.
 //
 // NE JAMAIS changer l'espace de noms ni la forme du nom : les ids déjà écrits
 // en dépendent.

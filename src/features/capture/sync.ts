@@ -19,6 +19,7 @@ import {
 import {
   upsertDatedNote as upsertDatedNoteRow,
   deleteDatedNoteById,
+  deleteDatedNoteByCouple,
   upsertExerciseNoteRow,
   deleteExerciseNoteByExercise,
 } from '../notes/data';
@@ -159,8 +160,14 @@ export const syncFns: SyncFns = {
       exerciseId: op.exerciseId,
       body: op.body,
     }),
+  // Effacement par COUPLE (exécution, exercice), l'identité de la note en base ;
+  // par id pour une op d'un bundle antérieur, qui ne porte que lui.
   deleteDatedNote: async (op) => {
-    await deleteDatedNoteById(op.id);
+    if (op.executionId !== undefined && op.exerciseId !== undefined) {
+      await deleteDatedNoteByCouple(op.executionId, op.exerciseId);
+    } else {
+      await deleteDatedNoteById(op.id);
+    }
   },
   // Note d'instructions (issue #52, blind F3) : l'`id` de l'op porte l'`exerciseId`
   // (clé idempotente, 1 note par user+exo). Le corps est déjà normalisé en amont.

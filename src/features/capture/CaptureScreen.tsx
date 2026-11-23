@@ -49,6 +49,7 @@ import {
 } from './session-edit';
 import {
   datedNoteOutboxOp,
+  pendingDatedNoteKeys,
   exerciseNoteOutboxOp,
 } from '../notes/data';
 import { datedNoteId } from '../notes/dated-note-id';
@@ -444,15 +445,21 @@ export function CaptureScreen() {
         void late.then((lateToday) => {
           if (!lateToday || !active() || loadGenRef.current !== gen) return;
           if (lateToday.executionId !== restored.executionId) return;
+          const queue = readQueue();
           // Remise par la boîte : le tableau n'est peut-être pas encore monté.
           lateBox.post(gen, restored.executionId, {
             type: 'reconcile-progress',
             base: lateToday.progress,
             pendingSetIds: [
               ...lateToday.pendingSetIds,
-              ...readQueue().filter((op) => op.type === 'insertSet').map((op) => op.id),
+              ...queue.filter((op) => op.type === 'insertSet').map((op) => op.id),
             ],
             knownAtDeparture,
+            // Les notes datées aussi : une note écrite ailleurs (autre appareil,
+            // ancien client) que l'état local ignore est adoptée ; une note
+            // locale ou en attente d'envoi n'est jamais touchée.
+            datedNotes: lateToday.datedNotes,
+            pendingNoteKeys: pendingDatedNoteKeys(queue, restored.executionId),
           });
         });
       }
@@ -1061,6 +1068,9 @@ function CaptureBoard({
       // Id DÉTERMINISTE par couple (exécution, exo) : deux appareils qui notent le
       // même exo de la même exécution écrivent la même ligne (cf. dated-note-id).
       // Une note déjà connue (réhydratée, ou née sous un id aléatoire) garde le sien.
+      // Une note que l'état local ignore encore (écrite ailleurs, réponse de la
+      // base pas arrivée) n'est pas doublée pour autant : l'écriture relit le
+      // couple et vise sa ligne (cf. `upsertDatedNote`, notes/data).
       const noteId = existing?.id ?? datedNoteId(current.executionId, exerciseId);
       const action = { type: 'set-dated-note', exerciseId, noteId, body } as const;
       dispatch(action);

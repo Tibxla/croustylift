@@ -41,6 +41,7 @@ vi.mock('./data', () => ({
 vi.mock('../notes/data', () => ({
   upsertDatedNote: vi.fn(),
   deleteDatedNoteById: vi.fn(),
+  deleteDatedNoteByCouple: vi.fn(),
   upsertExerciseNoteRow: vi.fn(),
   deleteExerciseNoteByExercise: vi.fn(),
 }));
@@ -50,6 +51,7 @@ import { enqueue, readQueue } from './outbox';
 // `./data` est mocké plus haut : cet import récupère la vi.fn() pour asserter
 // l'argument reçu par data.updateExecution (chaîne closed_at).
 import { updateExecution } from './data';
+import { deleteDatedNoteByCouple, deleteDatedNoteById } from '../notes/data';
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -260,5 +262,25 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     // peut se fermer), même si la file globale n'est pas vide (op étrangère).
     expect(res.remaining).toBe(0);
     expect(readQueue().map((o) => o.id)).toEqual(['autre']);
+  });
+});
+
+describe('syncFns.deleteDatedNote', () => {
+  it('efface par COUPLE quand l’op le porte : une note née sous un autre id part aussi', async () => {
+    await syncFns.deleteDatedNote({
+      type: 'deleteDatedNote',
+      id: 'note-deterministe',
+      executionId: 'exec-1',
+      exerciseId: 'bench',
+    });
+    expect(deleteDatedNoteByCouple).toHaveBeenCalledWith('exec-1', 'bench');
+    expect(deleteDatedNoteById).not.toHaveBeenCalled();
+  });
+
+  it('op d’un bundle antérieur, sans couple : efface par id comme avant', async () => {
+    vi.mocked(deleteDatedNoteByCouple).mockClear();
+    await syncFns.deleteDatedNote({ type: 'deleteDatedNote', id: 'note-1' });
+    expect(deleteDatedNoteById).toHaveBeenCalledWith('note-1');
+    expect(deleteDatedNoteByCouple).not.toHaveBeenCalled();
   });
 });

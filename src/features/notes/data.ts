@@ -32,8 +32,9 @@ export const NOTE_WRITE_BLOCK = 'ecriture-note-instructions';
  * Décide l'op d'outbox pour une note datée, à partir du corps saisi :
  *   - corps réel  -> `upsertDatedNote` (corps NORMALISÉ) ;
  *   - corps vide  -> `deleteDatedNote` (on efface plutôt que stocker du blanc).
- * L'id (UUID client) reste stable entre upsert et delete : rejouer ou alterner
- * vise toujours la même ligne (idempotence). Logique PURE, sans réseau.
+ * Les deux ops portent le COUPLE (exécution, exercice), qui est l'identité de la
+ * note en base : rejouer ou alterner vise toujours la même ligne, y compris une
+ * note née sous un autre id (cf. `upsertDatedNote`). Logique PURE, sans réseau.
  */
 export function datedNoteOutboxOp(params: {
   id: string;
@@ -42,7 +43,12 @@ export function datedNoteOutboxOp(params: {
   body: string;
 }): OutboxOp {
   if (isBlankNote(params.body)) {
-    return { type: 'deleteDatedNote', id: params.id };
+    return {
+      type: 'deleteDatedNote',
+      id: params.id,
+      executionId: params.executionId,
+      exerciseId: params.exerciseId,
+    };
   }
   return {
     type: 'upsertDatedNote',
@@ -51,6 +57,27 @@ export function datedNoteOutboxOp(params: {
     exerciseId: params.exerciseId,
     body: normalizeNoteBody(params.body),
   };
+}
+
+/**
+ * Les notes datées de l'exécution `executionId` dont une écriture attend encore
+ * en file : leurs exos, et l'id de la note pour une op d'effacement d'un bundle
+ * antérieur (qui ne porte ni exécution ni exo). Sert à la réconciliation d'une
+ * réponse tardive de la base (`reconcileDatedNotes`, capture/state) : la base
+ * ne connaît pas encore ces écritures, sa version de ces notes est périmée.
+ * Logique PURE.
+ */
+export function pendingDatedNoteKeys(queue: readonly OutboxOp[], executionId: string): string[] {
+  const keys: string[] = [];
+  for (const op of queue) {
+    if (op.type === 'upsertDatedNote') {
+      if (op.executionId === executionId) keys.push(op.exerciseId);
+    } else if (op.type === 'deleteDatedNote') {
+      if (op.executionId === undefined || op.exerciseId === undefined) keys.push(op.id);
+      else if (op.executionId === executionId) keys.push(op.exerciseId);
+    }
+  }
+  return keys;
 }
 
 /**
@@ -158,10 +185,45 @@ export async function loadDatedNote(
   return data?.body ?? '';
 }
 
+/** Violation d'unicité (Postgres 23505) : ici, le couple de la migration 0018. */
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === '23505';
+}
+
 /**
- * Crée (ou ré-affirme) une note datée par son id client. `upsert` onConflict id :
- * rejouer (retry après coupure) ne crée pas de doublon. owner via default
- * auth.uid(). Idempotent → consommée par l'outbox (SyncFns).
+ * L'id de la note datée que la base tient pour ce couple (exécution, exercice),
+ * ou `null`. S'il y en a plusieurs (doublons d'avant la migration 0018), la plus
+ * récente : celle que lisent `loadDatedNote` et la réhydratation de la Capture.
+ */
+async function findDatedNoteId(executionId: string, exerciseId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('dated_notes')
+    .select('id')
+    .eq('execution_id', executionId)
+    .eq('exercise_id', exerciseId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
+/**
+ * Écrit la note datée d'un exo dans une exécution. Idempotent → consommée par
+ * l'outbox (SyncFns). owner via default auth.uid().
+ *
+ * L'IDENTITÉ d'une note datée est son couple (exécution, exercice), pas son id.
+ * `params.id` est l'UUID déterministe du couple (dated-note-id), mais une note
+ * écrite par un ancien client porte un id aléatoire : écrire sous l'id
+ * déterministe sans regarder créait une seconde ligne tant que l'index unique
+ * de la migration 0018 n'existe pas, et était refusé (23505, saisie en
+ * quarantaine) une fois qu'il existe. On relit donc le couple d'abord et on
+ * écrit sur la ligne qu'il a déjà ; `params.id` ne sert qu'à en créer une.
+ *
+ * Pas d'upsert `onConflict` sur le couple : il exige l'index de 0018, absent
+ * tant que la migration n'est pas passée. Cette voie marche dans les deux états
+ * du schéma. Le repli sur 23505 couvre la course (un autre appareil crée la
+ * note entre la lecture et l'écriture, index posé) : on réécrit sur sa ligne.
  */
 export async function upsertDatedNote(params: {
   id: string;
@@ -169,24 +231,56 @@ export async function upsertDatedNote(params: {
   exerciseId: string;
   body: string;
 }): Promise<void> {
-  const { error } = await supabase.from('dated_notes').upsert(
-    {
-      id: params.id,
-      execution_id: params.executionId,
-      exercise_id: params.exerciseId,
-      body: params.body,
-    },
-    { onConflict: 'id' },
-  );
-  if (error) throw error;
+  const write = (id: string) =>
+    supabase.from('dated_notes').upsert(
+      {
+        id,
+        execution_id: params.executionId,
+        exercise_id: params.exerciseId,
+        body: params.body,
+      },
+      { onConflict: 'id' },
+    );
+
+  const known = await findDatedNoteId(params.executionId, params.exerciseId);
+  const id = known ?? params.id;
+  const { error } = await write(id);
+  if (!error) return;
+  if (!isUniqueViolation(error)) throw error;
+
+  const taken = await findDatedNoteId(params.executionId, params.exerciseId);
+  if (taken === null || taken === id) throw error;
+  const { error: retryError } = await write(taken);
+  if (retryError) throw retryError;
 }
 
 /**
- * Supprime une note datée par son id (corps vidé). Idempotent (delete par id).
- * Rend le nombre de lignes touchées : 0 (note déjà absente) reste un succès.
+ * Supprime une note datée par son id. Idempotent (delete par id). Rend le nombre
+ * de lignes touchées : 0 (note déjà absente) reste un succès. Pour une op
+ * d'effacement enfilée par un bundle antérieur, qui ne porte que l'id.
  */
 export async function deleteDatedNoteById(id: string): Promise<number> {
   const { data, error } = await supabase.from('dated_notes').delete().eq('id', id).select('id');
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
+/**
+ * Efface la note datée d'un exo dans une exécution, par son COUPLE : toute
+ * ligne du couple part, quel que soit son id (note d'un ancien client, doublon
+ * d'avant la migration 0018). Idempotent. Rend le nombre de lignes touchées : 0
+ * (note déjà absente) reste un succès.
+ */
+export async function deleteDatedNoteByCouple(
+  executionId: string,
+  exerciseId: string,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('dated_notes')
+    .delete()
+    .eq('execution_id', executionId)
+    .eq('exercise_id', exerciseId)
+    .select('id');
   if (error) throw error;
   return data?.length ?? 0;
 }

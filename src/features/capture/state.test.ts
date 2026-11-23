@@ -17,6 +17,7 @@ import {
   capturePersistFailing,
   persistedVersionIds,
   pruneStaleCaptureStates,
+  reconcileDatedNotes,
   reconcileProgress,
   clearCaptureState,
   clearOwnCaptureState,
@@ -1559,6 +1560,83 @@ describe('reconcileProgress (la base fait foi, plus les écritures en attente)',
     expect(next.activeExerciseId).toBe('bench');
     expect(next.layout).toEqual(state.layout);
     expect(next.executionId).toBe('exec-1');
+  });
+});
+
+describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu est adopté)', () => {
+  const baseNote = { id: 'id-historique', body: 'écrite sous l’ancien client' };
+
+  it('une note de la base que l’état local ignorait est adoptée, avec son id', () => {
+    expect(reconcileDatedNotes({}, { bench: baseNote }, [])).toEqual({ bench: baseNote });
+  });
+
+  it('une édition locale est préservée, la base ne l’écrase pas', () => {
+    const local = { bench: { id: 'id-local', body: 'en cours de saisie' } };
+    const next = reconcileDatedNotes(local, { bench: baseNote }, []);
+    expect(next).toBe(local);
+  });
+
+  it('une note vidée localement reste vidée (un effacement est une édition)', () => {
+    const local = { bench: { id: 'id-local', body: '' } };
+    expect(reconcileDatedNotes(local, { bench: baseNote }, [])).toBe(local);
+  });
+
+  it('une écriture de la note attend en file : la base, déjà périmée, n’est pas adoptée', () => {
+    // Par exo (op actuelle) ou par id de note (op d'effacement d'un bundle antérieur).
+    expect(reconcileDatedNotes({}, { bench: baseNote }, ['bench'])).toEqual({});
+    expect(reconcileDatedNotes({}, { bench: baseNote }, ['id-historique'])).toEqual({});
+  });
+
+  it('chaque exo est jugé séparément', () => {
+    const local = { bench: { id: 'id-local', body: 'la mienne' } };
+    const next = reconcileDatedNotes(
+      local,
+      { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' }, row: { id: 'n-row', body: 'x' } },
+      ['row'],
+    );
+    expect(next).toEqual({
+      bench: { id: 'id-local', body: 'la mienne' },
+      squat: { id: 'n-squat', body: 'talons au sol' },
+    });
+  });
+
+  it('rien à adopter : l’état local est rendu tel quel', () => {
+    const local = { bench: { id: 'id-local', body: 'x' } };
+    expect(reconcileDatedNotes(local, {}, [])).toBe(local);
+  });
+
+  it('le reducer réconcilie les notes avec les séries, sans toucher une note locale', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      executionId: 'exec-1',
+      datedNotes: { bench: { id: 'id-local', body: 'en cours' } },
+    };
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: {},
+      pendingSetIds: [],
+      knownAtDeparture: [],
+      datedNotes: { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' } },
+      pendingNoteKeys: [],
+    });
+    expect(next.datedNotes).toEqual({
+      bench: { id: 'id-local', body: 'en cours' },
+      squat: { id: 'n-squat', body: 'talons au sol' },
+    });
+  });
+
+  it('une réponse tardive sans notes (ancienne forme de l’action) laisse les notes en place', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      datedNotes: { bench: { id: 'id-local', body: 'en cours' } },
+    };
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: {},
+      pendingSetIds: [],
+      knownAtDeparture: [],
+    });
+    expect(next.datedNotes).toBe(state.datedNotes);
   });
 });
 

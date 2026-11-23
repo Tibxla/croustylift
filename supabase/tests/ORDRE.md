@@ -42,7 +42,7 @@ Une PWA restée ouverte ou hors ligne garde l'ancien code et, dans sa file, des 
 - **Version servie** : le site de production sert bien le client de l'étape 2. Dans le bundle servi, on trouve `import_user_data`, `reorder_seances` et l'espace de noms `6f1d7c52-9a3e-4b8f-8d21-5c0e7a94b3d6` ; le premier lancement refuse un nom de plus de 80 caractères avant toute écriture.
 - **Appareils à jour** : chaque appareil du cercle a rechargé l'app en ligne depuis ce déploiement.
 - **Files vidées** : sur chacun, la bannière dit « Synchronisé », sans saisie en attente ni saisie refusée.
-- **Notes à id historique** : sur le nouveau client, rouvrir une séance du jour qui porte une note datée écrite par l'ancien client, la modifier, la vider, la réécrire. La note garde son id d'origine (une ligne en base pour le couple, pas de seconde ligne), et rien ne part en quarantaine. Requête de contrôle, attendue vide :
+- **Notes à id historique** : sur le nouveau client, rouvrir une séance du jour qui porte une note datée écrite par l'ancien client, la modifier, la vider, la réécrire. Tant qu'elle n'est pas vidée, la note garde son id d'origine ; il n'y a jamais plus d'une ligne en base pour le couple, et rien ne part en quarantaine. Le client résout la note par son couple à chaque écriture, y compris quand la base a répondu trop tard pour qu'il la connaisse (réseau lent) : refaire l'essai en bridant le réseau. Requête de contrôle, attendue vide :
   `select execution_id, exercise_id, count(*) from dated_notes group by 1, 2 having count(*) > 1;`
 - **Rejeu d'une file ancienne** : un appareil resté hors ligne avec des notes en file sous l'ancien client les remonte sans erreur une fois revenu en ligne (c'est le cas tant que 0018 n'est pas appliquée).
 

@@ -11,13 +11,17 @@
 --    migration 0019) : il empêche qu'un autre compte, en tentant d'écrire dans
 --    cette exécution, apprenne par l'erreur d'unicité qu'une note y existe.
 --
--- 2. Pas de trigger de remplacement, et pas d'upsert par le couple : c'est
---    l'ID de la note qui devient DÉTERMINISTE côté client (arbitrage du
---    2026-11-23). L'id d'une note datée est l'UUID v5 de son couple
---    (`execution_id:exercise_id`, espace de noms fixe) : deux appareils qui
---    notent le même exo de la même exécution écrivent le même id, et l'upsert
---    par `id` converge sans jamais heurter cet index. Les suppressions en
---    attente, qui visent l'id, restent justes.
+-- 2. Pas de trigger de remplacement, et pas d'upsert `on conflict` sur le
+--    couple (il exigerait cet index, absent avant la migration). Côté client
+--    (arbitrage du 2026-11-23, complété le même jour) :
+--    - l'id d'une note NEUVE est DÉTERMINISTE : UUID v5 de son couple
+--      (`execution_id:exercise_id`, espace de noms fixe). Deux appareils qui
+--      notent le même exo de la même exécution écrivent le même id ;
+--    - l'IDENTITÉ d'une note reste son couple. Avant d'écrire, le client relit
+--      la note du couple et réécrit SA ligne, quel que soit son id ; sur un
+--      23505 (course entre deux appareils), il relit et réécrit la ligne
+--      trouvée. L'effacement vise le couple. Les effacements déjà en file, qui
+--      ne portent que l'id, restent justes.
 --
 -- ORDRE, impératif (voir supabase/tests/ORDRE.md) : cette migration s'applique
 -- APRÈS le déploiement du client à id déterministe ET après le passage des
@@ -26,10 +30,9 @@
 -- seconde note du même couple sous un autre id recevrait 23505, et sa saisie
 -- partirait en quarantaine (ADR 0018). Son numéro ne dit pas son rang.
 --
--- Les notes déjà en base gardent leur id aléatoire. Le client les reprend par
--- leur id (réhydratation) ; une note réécrite sans avoir été relue arrive sous
--- l'id déterministe et serait refusée (23505) : cas limité aux exécutions
--- antérieures au nouveau client, que la Capture ne rouvre pas.
+-- Les notes déjà en base gardent leur id aléatoire. Le client à jour les
+-- réécrit sur leur ligne, qu'il les ait relues ou non (réhydratation, ou
+-- relecture du couple à l'écriture) : aucune n'est refusée par cet index.
 --
 -- Rejouable. Aucune donnée modifiée : des doublons existants font échouer la
 -- migration entière, ils ne sont jamais supprimés d'office.
