@@ -19,6 +19,7 @@ import { isBlankNote, normalizeNoteBody } from '../../domain/notes';
 import type { OutboxOp } from '../capture/outbox';
 import { invalidateExerciseNoteCopy } from '../capture/plan-copies';
 import { withReloadBlocked } from '../../pwa/blockers';
+import { translateConstraintError } from '../../lib/db-errors';
 
 /** Raison du blocage de rechargement tenu pendant l'écriture directe d'une note d'instructions. */
 export const NOTE_WRITE_BLOCK = 'ecriture-note-instructions';
@@ -102,7 +103,8 @@ export async function loadExerciseNote(exerciseId: string): Promise<string> {
  * Écriture DIRECTE (authoring, onglet Exercices), hors file d'attente : aucun
  * rechargement automatique tant qu'elle n'est pas finie, sinon la note serait
  * perdue sans message. Les notes saisies en Capture passent par la file, qui
- * survit à un rechargement.
+ * survit à un rechargement. Un refus de contrainte (exo supprimé entre-temps,
+ * note trop longue) sort en français (lib/db-errors).
  */
 export async function saveExerciseNote(exerciseId: string, body: string): Promise<void> {
   try {
@@ -119,7 +121,7 @@ async function writeExerciseNote(exerciseId: string, body: string): Promise<void
       .from('exercise_notes')
       .delete()
       .eq('exercise_id', exerciseId);
-    if (error) throw error;
+    if (error) throw translateConstraintError(error);
     return;
   }
 
@@ -127,7 +129,7 @@ async function writeExerciseNote(exerciseId: string, body: string): Promise<void
     { exercise_id: exerciseId, body: normalizeNoteBody(body) },
     { onConflict: 'user_id,exercise_id' },
   );
-  if (error) throw error;
+  if (error) throw translateConstraintError(error);
 }
 
 // =====================================================================

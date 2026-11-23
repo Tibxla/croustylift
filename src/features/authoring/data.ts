@@ -40,6 +40,7 @@ import {
 import { loadExerciseOverrides } from '../exercises/overrides';
 import { invalidatePlanCopies } from '../capture/plan-copies';
 import { withReloadBlocked } from '../../pwa/blockers';
+import { translateConstraintError } from '../../lib/db-errors';
 import {
   mergeExerciseOverride,
   type ExerciseOverrideValues,
@@ -67,11 +68,17 @@ export const PLAN_WRITE_BLOCK = 'ecriture-plan';
  * requêtes ou plus, et une page rechargée entre deux (changement d'onglet juste
  * après « Enregistrer », nouvelle version en attente) laisserait l'écriture à
  * moitié faite. Le blocage est posé en synchrone, à l'appel.
+ *
+ * Dernier recours de traduction : un refus de contrainte (clé étrangère 23503,
+ * check 23514) que l'écriture n'a pas déjà expliqué avec ses mots sort en
+ * français (lib/db-errors), jamais en message Postgres brut.
  */
 function planWrite<T>(write: () => Promise<T>): Promise<T> {
   return withReloadBlocked(PLAN_WRITE_BLOCK, async () => {
     try {
       return await write();
+    } catch (err) {
+      throw translateConstraintError(err);
     } finally {
       invalidatePlanCopies();
     }

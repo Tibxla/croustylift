@@ -20,6 +20,7 @@ import {
   type ExerciseShared,
 } from '../../domain/exercise-override';
 import { withReloadBlocked } from '../../pwa/blockers';
+import { translateConstraintError } from '../../lib/db-errors';
 
 /**
  * Raison du blocage de rechargement tenu pendant l'écriture d'un override : une
@@ -182,7 +183,8 @@ export async function upsertExerciseOverride(
       },
       { onConflict: 'user_id,exercise_id' },
     );
-    if (error) throw error;
+    // Refus de contrainte (exo supprimé entre-temps, nom trop long) : en français.
+    if (error) throw translateConstraintError(error);
   });
 }
 
@@ -197,6 +199,6 @@ export async function resetExerciseOverride(exerciseId: string): Promise<void> {
       .from('exercise_overrides')
       .delete()
       .eq('exercise_id', exerciseId);
-    if (error) throw error;
+    if (error) throw translateConstraintError(error);
   });
 }

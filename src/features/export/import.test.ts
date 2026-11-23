@@ -37,7 +37,7 @@ function validJson(overrides: Record<string, unknown> = {}): string {
 }
 
 /** Faux client : note chaque appel de fonction, répond `error` (null = succès). */
-function fakeImportClient(error: { message: string } | null = null): {
+function fakeImportClient(error: { message: string; code?: string } | null = null): {
   client: ImportClient;
   calls: { fn: string; data: CollectedData }[];
 } {
@@ -296,5 +296,23 @@ describe('importUserData', () => {
     await expect(
       importUserData(client, parsedWith({ routines: [{ id: 'r1', name: 'Ma routine' }] })),
     ).rejects.toThrow('db boom');
+  });
+
+  it('un refus de contrainte est dit en français, sans le nom de la contrainte', async () => {
+    const routines = parsedWith({ routines: [{ id: 'r1', name: 'Ma routine' }] });
+    const fk = fakeImportClient({
+      code: '23503',
+      message: 'insert or update on table "seances" violates foreign key constraint "seances_routine_id_fkey"',
+    });
+    await expect(importUserData(fk.client, routines)).rejects.toThrow(
+      /^Import refusé : le fichier fait référence à un élément qu’il ne contient pas.*Rien n’a été importé\.$/,
+    );
+    const check = fakeImportClient({
+      code: '23514',
+      message: 'new row for relation "exercises" violates check constraint "exercises_name_taille_check"',
+    });
+    await expect(importUserData(check.client, routines)).rejects.toThrow(
+      /^Import refusé : le fichier contient une valeur hors des limites acceptées.*Rien n’a été importé\.$/,
+    );
   });
 });

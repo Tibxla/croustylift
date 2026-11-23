@@ -56,7 +56,7 @@ export interface ImportClient {
   rpc(
     fn: 'import_user_data',
     args: { p_data: CollectedData },
-  ): PromiseLike<{ error: { message: string } | null }>;
+  ): PromiseLike<{ error: { message: string; code?: string } | null }>;
 }
 
 // --- Parsing + validation (pure) ----------------------------------------------
@@ -202,5 +202,21 @@ export async function importUserData(client: ImportClient, parsed: ParsedImport)
   if (EXPORT_TABLES.every((table) => data[table].length === 0)) return;
 
   const { error } = await client.rpc('import_user_data', { p_data: data });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(importRefusalMessage(error));
+}
+
+/**
+ * Le message d'un import refusé par la base. Un refus de contrainte vient du
+ * FICHIER (référence vers une ligne qu'il ne contient pas, valeur hors bornes) :
+ * on le dit en français, sans le nom de la contrainte. L'import est une seule
+ * transaction (migration 0024) : rien n'a été écrit.
+ */
+function importRefusalMessage(error: { message: string; code?: string }): string {
+  if (error.code === '23503') {
+    return 'Import refusé : le fichier fait référence à un élément qu’il ne contient pas (exercice, séance ou routine). Rien n’a été importé.';
+  }
+  if (error.code === '23514') {
+    return 'Import refusé : le fichier contient une valeur hors des limites acceptées (texte trop long, nombre hors bornes). Rien n’a été importé.';
+  }
+  return error.message;
 }

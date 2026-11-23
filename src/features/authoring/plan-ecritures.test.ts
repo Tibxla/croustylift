@@ -32,6 +32,9 @@ vi.mock('../../lib/supabase', () => {
       };
       return query;
     }
+    if (table === 'seances') {
+      return { delete: () => ({ eq: () => Promise.resolve({ error: server.deleteError }) }) };
+    }
     if (table === 'routines') {
       return {
         delete: () => ({
@@ -52,7 +55,13 @@ vi.mock('../../lib/supabase', () => {
 });
 
 import { activeBlockers } from '../../pwa/blockers';
-import { PLAN_WRITE_BLOCK, deleteRoutine, getCurrentRoutineId, reorderSeancesViaRpc } from './data';
+import {
+  PLAN_WRITE_BLOCK,
+  deleteRoutine,
+  deleteSeance,
+  getCurrentRoutineId,
+  reorderSeancesViaRpc,
+} from './data';
 
 beforeEach(() => {
   server.activations = [];
@@ -122,6 +131,36 @@ describe('deleteRoutine', () => {
     await expect(deleteRoutine('routine-courante')).rejects.toThrow(
       'La routine courante ne se supprime pas. Définis d’abord une autre routine comme courante.',
     );
+  });
+});
+
+describe('refus de contrainte d’une écriture du plan', () => {
+  it('l’explication propre à l’écriture prime sur le message générique (23503)', async () => {
+    server.deleteError = { code: '23503', message: 'violates foreign key constraint "x_fkey"' };
+
+    await expect(deleteSeance('s1')).rejects.toThrow(
+      'Cette séance a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+    );
+    await expect(deleteRoutine('r1')).rejects.toThrow(
+      'Cette routine a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
+    );
+  });
+
+  it('un refus que l’écriture n’explique pas sort en français, pas en message Postgres (23514)', async () => {
+    const raw = { code: '23514', message: 'new row violates check constraint "seances_x_check"' };
+    server.deleteError = raw;
+
+    const err = await deleteSeance('s1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/^Enregistrement refusé : une valeur sort des limites/);
+    expect((err as Error).message).not.toMatch(/violates|check constraint/);
+    expect((err as Error).cause).toBe(raw);
+  });
+
+  it('toute autre erreur repart telle quelle', async () => {
+    const raw = { code: '42501', message: 'permission denied' };
+    server.deleteError = raw;
+    await expect(deleteSeance('s1')).rejects.toBe(raw);
   });
 });
 
