@@ -120,10 +120,6 @@ perte), finition.
 
 ### File d'écritures et stockage plein
 
-- **Mise à jour retenue après le retour du stockage** (mineure). Stockage plein puis
-  place libérée : « Mettre à jour » ne retente aucune écriture de la file, la mise à
-  jour reste retenue jusqu'au prochain enfilement ou acquittement. Piste : retenter la
-  persistance à la demande de mise à jour, puis réévaluer (`pwa/reload-guards.ts`).
 - **Ordre des écritures sous repli mémoire** (mineure). La file relue place les
   écritures persistées avant celles tenues en mémoire. Deux onglets, stockage plein :
   une ancienne note d'instructions gardée en mémoire par l'un peut partir après la

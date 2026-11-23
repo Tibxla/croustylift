@@ -416,6 +416,20 @@ function writeQueue(queue: OutboxOp[]): boolean {
 }
 
 /**
+ * Retente d'écrire sur l'appareil ce que la file ne tient qu'en mémoire. Sans
+ * cela, le repli mémoire n'était résorbé que par la prochaine écriture de la
+ * file (enfilement ou acquittement) : stockage plein, place libérée, réseau
+ * coupé, plus rien ne retentait, et l'écart restait en mémoire alors que
+ * l'appareil l'aurait accepté. Rend vrai si la file est persistée en sortie
+ * (elle l'était déjà, ou l'écriture vient de passer). Sans effet de bord sinon :
+ * l'écart reste tenu en mémoire, tel quel.
+ */
+export function retryPersistQueue(): boolean {
+  if (activeVolatile() === null) return true;
+  return writeQueue(readQueue());
+}
+
+/**
  * Les ops en file du compte local reconnu (marqueur), pour ce qui AFFICHE des
  * écritures en attente (Référence fusionnée, ADR 0014) : les séries d'un autre
  * compte restées en file n'entrent pas dans les repères de celui-ci. Une op

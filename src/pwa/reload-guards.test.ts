@@ -136,6 +136,35 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     expect(wouldReload()).toBe(true)
   })
 
+  it('stockage rétabli sans nouvelle écriture : la demande de mise à jour retente et passe', () => {
+    const state = quota()
+    enqueue(execOp)
+    enqueue(setOp('s1', 1))
+    enqueue(closeOp)
+    expect(wouldReload()).toBe(false)
+
+    // L'utilisateur libère de la place, hors ligne : aucun enfilement, aucun
+    // acquittement. Seule la question « peut-on recharger ? » repasse.
+    state.full = false
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull()
+    expect(wouldReload()).toBe(true)
+    // La file entière est sur l'appareil, dans l'ordre : le rechargement ne perd rien.
+    const persisted = JSON.parse(localStorage.getItem('croustylift:outbox')!) as { id: string }[]
+    expect(persisted.map((op) => op.id)).toEqual(['exec-1', 's1', 'exec-1'])
+    expect(storageFailing()).toBe(false)
+    expect(pendingCount()).toBe(3)
+  })
+
+  it('stockage toujours plein : la demande retente, échoue, et le refus tient', () => {
+    quota()
+    enqueue(execOp)
+    expect(wouldReload()).toBe(false)
+    expect(wouldReload()).toBe(false)
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull()
+    expect(pendingCount()).toBe(1)
+    expect(currentBlockers()).toEqual([UNPERSISTED_WRITES_BLOCK])
+  })
+
   it('levé dès que la base a acquitté ces écritures', async () => {
     quota()
     enqueue(execOp)
