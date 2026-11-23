@@ -290,6 +290,19 @@ export function storageFailing(): boolean {
 }
 
 /**
+ * Vrai tant que des ops ENFILÉES ne sont écrites nulle part ailleurs qu'en
+ * mémoire : recharger la page les détruirait (séries, clôture). Plus étroit que
+ * `storageFailing`, qui reste vrai pour un écart vide ou fait de seuls retraits :
+ * ici, seulement les ajouts non persistés. Faux dès qu'ils sont écrits sur
+ * l'appareil (le stockage accepte de nouveau) ou acquittés par la base (retirés
+ * de la file). C'est ce que lit l'autorisation de recharger (pwa/reload-guards).
+ */
+export function hasUnpersistedOps(): boolean {
+  const gap = activeVolatile();
+  return gap !== null && gap.adds.length > 0;
+}
+
+/**
  * Lit la file persistée, telle qu'elle est dans le stockage à l'instant (vide si
  * rien / illisible).
  *

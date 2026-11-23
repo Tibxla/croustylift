@@ -81,8 +81,10 @@ export interface ReloadGuards {
   /** Un champ de saisie a le focus. */
   fieldFocused: boolean
   /**
-   * Raisons déclarées par le reste de l'app (`blockReloads`, register.ts) : un
-   * brouillon non enregistré, un flux de récupération de mot de passe en cours.
+   * Raisons qui interdisent de recharger (`currentBlockers`, reload-guards.ts) :
+   * celles déclarées par le reste de l'app (`blockReloads` : brouillon non
+   * enregistré, écriture en cours, récupération de mot de passe), et les
+   * écritures de la file que l'appareil n'a pas pu stocker.
    */
   blockers: readonly string[]
 }

@@ -5,7 +5,7 @@
 import { useSyncExternalStore } from 'react'
 import { registerSW } from 'virtual:pwa-register'
 import { STORAGE_PREFIX, previousDayIso, todayIso } from '../features/capture/state'
-import { activeBlockers } from './blockers'
+import { currentBlockers } from './reload-guards'
 import {
   chunkFailureAction,
   isControllerReplacement,
@@ -73,7 +73,7 @@ function currentGuards(): ReloadGuards {
   return {
     captureInProgress: captureInProgress(),
     fieldFocused: fieldFocused(),
-    blockers: activeBlockers(),
+    blockers: currentBlockers(),
   }
 }
 
