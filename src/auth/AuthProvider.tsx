@@ -11,7 +11,7 @@ import {
 import { clearReadCache } from '../lib/read-cache'
 import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
-import { adoptLegacyOps, clearQueue, pendingCount } from '../features/capture/outbox'
+import { adoptLegacyOps, clearQueue, heldCount } from '../features/capture/outbox'
 import { foreignPendingWrites } from './pending-guard'
 import { flushOutbox } from '../features/capture/sync'
 import { clearCaptureState } from '../features/capture/state'
@@ -189,7 +189,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           /* hors-ligne ou flush en échec : le blocage ci-dessous tranche */
         }
-        const pending = pendingCount()
+        // Les ops en quarantaine (rejetées par la base) comptent aussi : la
+        // Déconnexion les purgerait, donc seul le forçage peut les jeter.
+        const pending = heldCount()
         if (!force && pending > 0) throw new PendingWritesError(pending)
 
         const { error } = await supabase.auth.signOut()

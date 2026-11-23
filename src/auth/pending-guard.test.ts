@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { foreignPendingWrites } from './pending-guard';
 import { saveLocalAccount } from '../lib/local-account';
-import { enqueue } from '../features/capture/outbox';
+import { enqueue, flush, type SyncFns } from '../features/capture/outbox';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -47,6 +47,20 @@ describe('foreignPendingWrites', () => {
 
   it('aucun compte reconnu sur l’appareil : rien ne s’y oppose', () => {
     expect(foreignPendingWrites('b@exemple.com')).toBe(0);
+  });
+
+  it('une op en quarantaine compte aussi : elle ne se perd pas sans geste explicite', async () => {
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+    enqueue({ type: 'deleteSet', id: 'set-1' });
+    // La base refuse l'op (contrainte) : elle quitte la file pour la quarantaine.
+    const fns = {
+      deleteSet: async () => {
+        throw { code: '23503', message: 'rejet' };
+      },
+    } as unknown as SyncFns;
+    await flush(fns);
+
+    expect(foreignPendingWrites('b@exemple.com')).toBe(1);
   });
 
   it('compte reconnu sans adresse connue : dans le doute, refus', () => {

@@ -14,6 +14,9 @@ import {
   purgeByExecution,
   adoptLegacyOps,
   readOwnQueue,
+  readQuarantine,
+  quarantineCount,
+  heldCount,
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
@@ -1014,5 +1017,222 @@ describe('file liée à un compte', () => {
 
     expect(readOwnQueue().map((o) => o.id)).toEqual(['set-b']);
     expect(readQueue()).toHaveLength(2);
+  });
+});
+
+// --- quarantaine d'une op rejetée par la base (audit sync, constat 6) -------
+//
+// Une op que la base refuse DÉFINITIVEMENT (contrainte, RLS) échouait à
+// l'identique à chaque passe et bloquait toute la file derrière elle ; seule
+// issue : la purge totale. Elle est mise de côté, conservée, jamais rejouée
+// seule, et la file continue. Une erreur transitoire garde l'arrêt d'avant.
+
+/** L'erreur telle que data.ts la relance : l'objet PostgREST, SQLSTATE en `code`. */
+function rejet(code: string, message = 'rejet de la base') {
+  return { code, message, details: '', hint: '' };
+}
+
+describe('quarantaine (rejet définitif de la base)', () => {
+  it('l’op rejetée part en quarantaine, la file continue dans l’ordre', async () => {
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-refuse', 1));
+    enqueue(setOp('set-2', 2));
+    enqueue({ type: 'updateExecution', id: 'exec-1', closedAt: '2026-06-18T10:00:00Z' });
+    const fns = okFns();
+    const insertSet = vi.fn(async (op: InsertSetOp) => {
+      if (op.id === 'set-refuse') throw rejet('23503', 'exercice supprimé');
+    });
+    fns.insertSet = insertSet;
+
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 0, flushed: 3 });
+    expect(insertSet.mock.calls.map(([op]) => op.id)).toEqual(['set-refuse', 'set-2']);
+    expect(fns.updateExecution).toHaveBeenCalledTimes(1);
+    expect(pendingCount()).toBe(0);
+    expect(quarantineCount()).toBe(1);
+    const [entree] = readQuarantine();
+    expect(entree?.op.id).toBe('set-refuse');
+    expect(entree?.reason).toContain('23503');
+  });
+
+  it('une op en quarantaine n’est jamais rejouée par les passes suivantes', async () => {
+    enqueue(setOp('set-refuse', 1));
+    const fns = okFns();
+    const insertSet = vi.fn(async () => {
+      throw rejet('23514');
+    });
+    fns.insertSet = insertSet;
+    await flush(fns);
+
+    enqueue({ type: 'deleteSet', id: 'set-9' });
+    const res = await flush(fns);
+
+    expect(insertSet).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(quarantineCount()).toBe(1);
+  });
+
+  it.each([
+    ['réseau (sans code)', new Error('TypeError: Failed to fetch')],
+    ['réseau vu par postgrest-js (code vide)', rejet('')],
+    ['jeton expiré (401)', rejet('PGRST301')],
+    ['erreur serveur sans corps JSON (5xx)', { message: 'Bad Gateway' }],
+    ['requête annulée par la base', rejet('57014')],
+    ['conflit de sérialisation', rejet('40001')],
+  ])('erreur transitoire, %s : arrêt et nouvel essai, rien en quarantaine', async (_nom, erreur) => {
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-1', 1));
+    const fns = okFns();
+    fns.upsertExecution = vi.fn(async () => {
+      throw erreur;
+    });
+
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(quarantineCount()).toBe(0);
+    expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
+  });
+
+  it('exécution rejetée : ses séries, sa note et sa clôture la suivent sans être envoyées', async () => {
+    enqueue(execOp('exec-refusee'));
+    enqueue(setOp('set-1', 1, 'exec-refusee'));
+    enqueue(execOp('exec-saine'));
+    enqueue({
+      type: 'upsertDatedNote',
+      id: 'note-1',
+      executionId: 'exec-refusee',
+      exerciseId: 'bench',
+      body: 'coude',
+    });
+    enqueue(setOp('set-sain', 1, 'exec-saine'));
+    enqueue({ type: 'updateExecution', id: 'exec-refusee', closedAt: '2026-06-18T10:00:00Z' });
+    const fns = okFns();
+    const upsertExecution = vi.fn(async (op: { id: string }) => {
+      if (op.id === 'exec-refusee') throw rejet('23503', 'séance supprimée');
+    });
+    fns.upsertExecution = upsertExecution;
+
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.calls().map((o) => o.id)).toEqual(['set-sain']);
+    expect(fns.upsertDatedNote).not.toHaveBeenCalled();
+    expect(fns.updateExecution).not.toHaveBeenCalled();
+    expect(readQuarantine().map((q) => q.op.id)).toEqual([
+      'exec-refusee',
+      'set-1',
+      'note-1',
+      'exec-refusee',
+    ]);
+  });
+
+  it('une série enfilée PLUS TARD pour une exécution en quarantaine la rejoint', async () => {
+    enqueue(execOp('exec-refusee'));
+    const fns = okFns();
+    fns.upsertExecution = vi.fn(async () => {
+      throw rejet('23503');
+    });
+    await flush(fns);
+
+    enqueue(setOp('set-tardif', 1, 'exec-refusee'));
+    const res = await flush(fns);
+
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(res).toEqual({ remaining: 0, flushed: 0 });
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['exec-refusee', 'set-tardif']);
+  });
+
+  it('l’exécution ré-affirmée avec succès : ses séries suivantes repassent normalement', async () => {
+    enqueue(execOp('exec-1'));
+    const fns = okFns();
+    let refuse = true;
+    fns.upsertExecution = vi.fn(async () => {
+      if (refuse) throw rejet('23503');
+    });
+    await flush(fns);
+    expect(quarantineCount()).toBe(1);
+
+    refuse = false;
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-1', 1, 'exec-1'));
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    // L'op refusée reste conservée, mais ne retient plus les suivantes.
+    expect(quarantineCount()).toBe(1);
+  });
+
+  it('rejet reçu alors que la session vient de tomber : pas de quarantaine, l’op reste en file', async () => {
+    // Sans session la requête part sous la clé publique : un upsert est alors
+    // refusé par la RLS (42501) alors que l'op est saine.
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    enqueue(execOp('exec-1'));
+    const fns = okFns();
+    let session: string | null = 'user-1';
+    fns.upsertExecution = vi.fn(async () => {
+      session = null;
+      throw rejet('42501', 'new row violates row-level security policy');
+    });
+
+    const res = await flush(fns, async () => session);
+
+    expect(res).toEqual({ remaining: 1, flushed: 0 });
+    expect(quarantineCount()).toBe(0);
+  });
+
+  it('rejet RLS sous une session toujours vérifiée : quarantaine', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    enqueue(execOp('exec-1'));
+    const fns = okFns();
+    fns.upsertExecution = vi.fn(async () => {
+      throw rejet('42501');
+    });
+
+    const res = await flush(fns, async () => 'user-1');
+
+    expect(res).toEqual({ remaining: 0, flushed: 0 });
+    expect(quarantineCount()).toBe(1);
+    expect(readQuarantine()[0]?.op._owner).toBe('user-1');
+  });
+
+  it('heldCount compte file et quarantaine ; clearQueue purge les deux', async () => {
+    enqueue(setOp('set-refuse', 1));
+    const fns = okFns();
+    fns.insertSet = vi.fn(async () => {
+      throw rejet('23503');
+    });
+    await flush(fns);
+    enqueue({ type: 'deleteSet', id: 'set-9' });
+
+    expect(pendingCount()).toBe(1);
+    expect(heldCount()).toBe(2);
+
+    clearQueue();
+    expect(heldCount()).toBe(0);
+    expect(readQuarantine()).toEqual([]);
+  });
+
+  it('quarantaine impossible à écrire (quota) : l’op reste en file, la passe s’arrête', async () => {
+    enqueue(setOp('set-refuse', 1));
+    enqueue(setOp('set-2', 2));
+    const fns = okFns();
+    fns.insertSet = vi.fn(async () => {
+      throw rejet('23503');
+    });
+    const store = globalThis.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox:quarantine') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    const res = await flush(fns);
+
+    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(readQueue().map((o) => o.id)).toEqual(['set-refuse', 'set-2']);
   });
 });

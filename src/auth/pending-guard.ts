@@ -6,17 +6,17 @@
 // le forçage explicite peut les jeter. Avant, la garde ne couvrait que
 // `signIn` : « Créer un compte » la contournait (audit sync, constat 12).
 import { loadLocalAccount } from '../lib/local-account';
-import { pendingCount } from '../features/capture/outbox';
+import { heldCount } from '../features/capture/outbox';
 
 /**
- * Nombre d'écritures en attente qui interdisent à `email` de s'installer sur
+ * Nombre d'écritures retenues sur l'appareil (file et quarantaine) qui interdisent à `email` de s'installer sur
  * l'appareil : celles d'un compte reconnu dont l'adresse diffère. `0` = rien ne
  * s'y oppose (aucun compte reconnu, file vide, ou même compte).
  */
 export function foreignPendingWrites(email: string): number {
   const account = loadLocalAccount();
   if (!account) return 0;
-  const pending = pendingCount();
+  const pending = heldCount();
   if (pending === 0) return 0;
   return (account.email ?? '').toLowerCase() === email.trim().toLowerCase() ? 0 : pending;
 }
