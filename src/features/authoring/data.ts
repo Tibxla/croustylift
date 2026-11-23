@@ -383,6 +383,12 @@ export async function deleteRoutine(id: string): Promise<void> {
   return planWrite(async () => {
     const { error } = await supabase.from('routines').delete().eq('id', id);
     if (error) {
+      // La base refuse de supprimer la routine courante (check, 23514).
+      if ((error as { code?: unknown }).code === '23514') {
+        throw new Error(
+          'La routine courante ne se supprime pas. Définis d’abord une autre routine comme courante.',
+        );
+      }
       if (isForeignKeyViolation(error)) {
         throw new Error(
           'Cette routine a déjà été faite en salle : archive-la plutôt, son historique reste entier.',
@@ -475,11 +481,19 @@ export async function setCurrentRoutine(routineId: string): Promise<void> {
   });
 }
 
-/** Id de la routine courante = activation la plus récente, ou null si aucune. */
+/**
+ * Id de la routine courante = activation la plus récente d'une routine NON
+ * ARCHIVÉE, ou null si aucune. Les activations des routines archivées sont
+ * ignorées : supprimer la routine courante (jamais exécutée) emporte ses
+ * activations en cascade, et l'activation précédente, celle d'une routine
+ * archivée depuis, remontait alors comme courante. Une routine archivée ne peut
+ * pas être courante (ADR 0017). Filtre côté serveur, par jointure.
+ */
 export async function getCurrentRoutineId(): Promise<string | null> {
   const { data, error } = await supabase
     .from('routine_activations')
-    .select('routine_id')
+    .select('routine_id, routines!inner(archived_at)')
+    .is('routines.archived_at', null)
     .order('activated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -609,16 +623,32 @@ export async function unarchiveSeance(id: string): Promise<void> {
 }
 
 /**
+ * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Tant
+ * que la migration n'est pas appliquée, la fonction n'existe pas : le drapeau
+ * reste FAUX et le réordonnancement garde son ancien chemin (une mise à jour
+ * par séance). À passer à vrai une fois la migration appliquée en prod.
+ */
+export const REORDER_SEANCES_RPC = false;
+
+/**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
  * (index 0 = première). `orderedIds` doit lister les séances de la routine ;
- * les positions sont réassignées 0..n-1. Une mise à jour par séance (pas de bulk
- * upsert pour ne pas risquer d'écrire owner_id via un upsert mal formé).
+ * les positions sont réassignées 0..n-1.
+ *
+ * Deux chemins, choisis par `REORDER_SEANCES_RPC` : la RPC transactionnelle
+ * (`reorderSeancesViaRpc`), ou, tant qu'elle n'est pas en base, une mise à jour
+ * par séance, en série et sans transaction (pas de bulk upsert pour ne pas
+ * risquer d'écrire owner_id via un upsert mal formé).
  */
 export async function reorderSeances(
-  _routineId: string,
+  routineId: string,
   orderedIds: string[],
 ): Promise<void> {
   return planWrite(async () => {
+    if (REORDER_SEANCES_RPC) {
+      await reorderSeancesViaRpc(routineId, orderedIds);
+      return;
+    }
     for (let position = 0; position < orderedIds.length; position++) {
       const id = orderedIds[position];
       if (id === undefined) continue;
@@ -629,6 +659,28 @@ export async function reorderSeances(
       if (error) throw error;
     }
   });
+}
+
+/**
+ * Réordonne les séances d'une routine en UNE transaction côté serveur :
+ * `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`, qui
+ * refuse (22023) un id en double ou hors de la routine. La fonction n'est pas
+ * encore dans `database.types.ts` (migration 0023 à appliquer) : d'où le cast
+ * local, à retirer quand les types seront régénérés.
+ */
+export async function reorderSeancesViaRpc(
+  routineId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    fn: 'reorder_seances',
+    args: { p_routine_id: string; p_seance_ids: string[] },
+  ) => PromiseLike<{ error: unknown }>;
+  const { error } = await rpc('reorder_seances', {
+    p_routine_id: routineId,
+    p_seance_ids: orderedIds,
+  });
+  if (error) throw error;
 }
 
 // =====================================================================
@@ -793,12 +845,20 @@ export async function loadSeanceCatalog(): Promise<SeanceCatalogEntry[]> {
   const currentVersionIds = [...currentVersionIdBySeance(versions).values()];
   let prescriptions: { seance_version_id: string }[] = [];
   if (currentVersionIds.length > 0) {
-    const { data, error } = await supabase
-      .from('prescriptions')
-      .select('seance_version_id')
-      .in('seance_version_id', currentVersionIds);
-    if (error) throw error;
-    prescriptions = data ?? [];
+    // Lecture paginée (cf. lib/fetch-all) : au-delà de 1000 prescriptions
+    // courantes, une seule requête était tronquée en silence et les compteurs
+    // du catalogue sortaient incomplets.
+    prescriptions = await fetchAllRows<{ id: string; seance_version_id: string }>((after, limit) =>
+      afterId(
+        supabase
+          .from('prescriptions')
+          .select('id, seance_version_id')
+          .in('seance_version_id', currentVersionIds)
+          .order('id')
+          .limit(limit),
+        after,
+      ),
+    );
   }
 
   return buildSeanceCatalog({
