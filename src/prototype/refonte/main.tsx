@@ -9,13 +9,20 @@ import '../../index.css';
 import { session } from './fixtures';
 import { PrototypeSwitcher } from './PrototypeSwitcher';
 import { VariantA, name as nameA } from './VariantA';
-import { VariantB, name as nameB } from './VariantB';
-import { VariantC, name as nameC } from './VariantC';
+// VariantB et VariantC : 1er tour, gardées pour mémoire hors bascule.
+
+import { VariantD, name as nameD } from './VariantD';
+import { VariantE, name as nameE } from './VariantE';
+import { VariantF, name as nameF } from './VariantF';
 
 const VARIANTS = [
+  // 2ᵉ tour : l'utilisateur garde la structure de A (roulette, zéro clavier),
+  // rejette son style violet. D, E, F = A rhabillée. B et C restent hors bascule
+  // (fichiers gardés pour mémoire, ?variant=B ou C ne les sert plus).
   { key: 'A', name: nameA, C: VariantA },
-  { key: 'B', name: nameB, C: VariantB },
-  { key: 'C', name: nameC, C: VariantC },
+  { key: 'D', name: nameD, C: VariantD },
+  { key: 'E', name: nameE, C: VariantE },
+  { key: 'F', name: nameF, C: VariantF },
 ];
 
 function readVariant(): string {
