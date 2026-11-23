@@ -462,7 +462,13 @@ function writeQueue(queue: OutboxOp[]): boolean {
  */
 export function retryPersistQueue(): boolean {
   if (activeVolatile() === null) return true;
-  return writeQueue(readQueue());
+  const persisted = writeQueue(readQueue());
+  // La bannière « stockage plein » se relit sur cet événement : sans lui elle
+  // restait affichée jusqu'à la prochaine écriture de la file.
+  if (persisted && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
+  }
+  return persisted;
 }
 
 /**

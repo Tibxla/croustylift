@@ -5,7 +5,7 @@ import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
 import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
-import { writeMakingRoom } from './cache-eviction';
+import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -1126,6 +1126,9 @@ export function persist(state: CaptureState): void {
 }
 
 export function clearPersisted(session: Session, date: string): void {
+  // La séance est close ou abandonnée : ses exos n'ont plus à être protégés de
+  // l'éviction (cf. cache-eviction).
+  forgetEntrustedExercises();
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(storageKey(session.id, date));

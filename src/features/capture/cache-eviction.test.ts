@@ -12,10 +12,10 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from: () => query } };
 });
 
-import { evictNonEssentialCopies, writeMakingRoom } from './cache-eviction';
+import { evictNonEssentialCopies, forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
 import { loadCaptureSource, loadChosenSeance, loadExerciseRows, loadSeanceForCapture } from './data';
 import { clearQueue, enqueue, readQueue, storageFailing } from './outbox';
-import { initialState, persist } from './state';
+import { capturePersistFailing, initialState, persist } from './state';
 import { upperA } from './fixtures';
 import { clearReadCache } from '../../lib/read-cache';
 import { saveLocalAccount } from '../../lib/local-account';
@@ -88,6 +88,7 @@ const ESSENTIAL = [
 ];
 
 beforeEach(() => {
+  forgetEntrustedExercises();
   storage = new MemoryStorage();
   (globalThis as unknown as { localStorage: Storage }).localStorage = storage as unknown as Storage;
   clearReadCache();
@@ -147,6 +148,28 @@ describe('exos de la séance en cours', () => {
     expect(writeMakingRoom(() => false, ['curl'])).toBe(false);
     expect(copies()).toContain('exo-execs:curl');
     expect(copies()).toContain('exo-note:curl');
+  });
+
+  it('stockage vraiment plein : l’état qui ajoute l’exo n’a pas pu s’écrire, la série enfilée ensuite n’évince pas ses copies', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const state = {
+      ...initialState(upperA, '2026-11-24'),
+      layout: [{ kind: 'added' as const, exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+    };
+    // Plus aucune place : ni l'état ni la file ne passeront, même après éviction.
+    storage.capacity = 0;
+    persist(state);
+    expect(capturePersistFailing()).toBe(true);
+    expect([...storage.store.keys()].some((k) => k.startsWith('croustylift:capture:'))).toBe(false);
+
+    // L'outbox ne connaît pas l'état de capture : son éviction passe quand même.
+    enqueue({ type: 'insertSet', id: 's1', executionId: state.executionId, exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 2 });
+    expect(storageFailing()).toBe(true);
+    expect(copies()).toContain('exo-execs:curl');
+    expect(copies()).toContain('exo-note:curl');
+    // Le confort, lui, est bien parti : l'éviction a eu lieu.
+    expect(copies()).not.toContain('last-exec:s1');
+    clearQueue();
   });
 
   it('un état de capture illisible ne protège rien et ne casse rien', () => {

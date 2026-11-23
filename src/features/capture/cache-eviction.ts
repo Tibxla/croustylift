@@ -81,6 +81,20 @@ function inProgressExerciseIds(): Set<string> {
 }
 
 /**
+ * Les exos du dernier état de capture confié par `persist`, retenus en mémoire.
+ * Stockage vraiment plein, l'écriture de cet état échoue : il n'est pas sur
+ * l'appareil, `inProgressExerciseIds` ne le voit pas, et c'est l'écriture
+ * suivante (une série enfilée par l'outbox, qui ne connaît pas l'état) qui
+ * aurait évincé les copies de l'exo qu'il vient d'ajouter.
+ */
+let lastEntrustedExerciseIds: readonly string[] = [];
+
+/** La séance dont l'état avait été confié est close ou abandonnée : plus rien à retenir. */
+export function forgetEntrustedExercises(): void {
+  lastEntrustedExerciseIds = [];
+}
+
+/**
  * Retire les copies NON ESSENTIELLES du palier demandé (cf. en-tête) et rend le
  * nombre de copies retirées. Les copies du chemin d'ouverture ne sont jamais
  * touchées, quel que soit le palier. `keepExerciseIds` : des exos à protéger en
@@ -104,7 +118,12 @@ export function evictNonEssentialCopies(
       .forEach(drop);
     return dropped;
   }
-  const kept = new Set([...plannedExerciseIds(), ...inProgressExerciseIds(), ...keepExerciseIds]);
+  const kept = new Set([
+    ...plannedExerciseIds(),
+    ...inProgressExerciseIds(),
+    ...lastEntrustedExerciseIds,
+    ...keepExerciseIds,
+  ]);
   for (const prefix of [EXERCISE_ROWS_PREFIX, EXERCISE_NOTE_PREFIX]) {
     for (const key of cachedKeys(prefix)) {
       if (!kept.has(key.slice(prefix.length))) drop(key);
@@ -117,15 +136,20 @@ export function evictNonEssentialCopies(
  * Tente `write` ; s'il est refusé (stockage plein), fait céder les copies non
  * essentielles, palier par palier, en retentant après chacun. Rend vrai dès que
  * l'écriture passe, faux si elle est toujours refusée une fois les deux paliers
- * épuisés. `keepExerciseIds` : cf. `evictNonEssentialCopies`.
+ * épuisés. `keepExerciseIds` : les exos de l'état de capture en cours d'écriture
+ * (cf. `evictNonEssentialCopies`). Fournis, ils sont retenus AVANT le premier
+ * essai, et protégés aussi des évictions suivantes, d'où qu'elles viennent,
+ * jusqu'au prochain état confié ; sans eux (appel de l'outbox), la retenue
+ * précédente vaut toujours.
  */
 export function writeMakingRoom(
   write: () => boolean,
-  keepExerciseIds: readonly string[] = [],
+  keepExerciseIds?: readonly string[],
 ): boolean {
+  if (keepExerciseIds !== undefined) lastEntrustedExerciseIds = [...keepExerciseIds];
   if (write()) return true;
   for (const tier of [1, 2] as const) {
-    if (evictNonEssentialCopies(tier, keepExerciseIds) > 0 && write()) return true;
+    if (evictNonEssentialCopies(tier) > 0 && write()) return true;
   }
   return false;
 }
