@@ -13,7 +13,6 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type Dispatch,
-  type RefObject,
 } from 'react';
 import {
   catalogExerciseToSession,
@@ -96,6 +95,7 @@ import {
 import { flushOutbox } from './sync';
 import { syncBannerLabel, type SyncTone } from './sync-label';
 import { boundSetValues } from './stepper-utils';
+import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
@@ -124,6 +124,8 @@ type LoadState =
        * et le tableau resterait monté sur l'id provisoire.
        */
       executionId: string;
+      /** Génération du chargement qui a produit cet état (cf. `loadGenRef`). */
+      generation: number;
       seanceVersionId: string;
       /** Contexte d'historique de la séance (scope Référence + repère notes), partagé avec les exos ajoutés à la volée. */
       historyCtx: SeanceHistoryContext;
@@ -202,9 +204,11 @@ export function CaptureScreen() {
   // 1ᵉʳ render. Une seule ref : séries, notes et id décrivent la même exécution.
   const initRef = useRef<CaptureInit | null>(null);
 
-  // Guichet par lequel une réponse TARDIVE de la base atteint le tableau monté
-  // (posé par CaptureBoard à son montage, retiré à son démontage).
-  const lateRealityRef = useRef<((action: ReconcileAction) => void) | null>(null);
+  // Boîte par laquelle une réponse TARDIVE de la base atteint le tableau monté.
+  // Elle GARDE la réponse arrivée avant le montage du tableau (le chargement
+  // continue après la borne de 3 s), étiquetée par génération de chargement et
+  // par exécution, jusqu'à ce que ce tableau-là vienne la prendre.
+  const [lateBox] = useState(() => createLateMailbox<ReconcileAction>());
 
   // Numéro du chargement en cours : incrémenté à chaque ouverture demandée
   // (montage, choix d'une séance, retour au lancement). Une réponse tardive ne
@@ -372,6 +376,7 @@ export function CaptureScreen() {
         phase: 'ready',
         session,
         templateIds: templateExerciseIds(template),
+        generation: loadGenRef.current,
         executionId: init.executionId,
         seanceVersionId,
         historyCtx: {
@@ -439,7 +444,8 @@ export function CaptureScreen() {
         void late.then((lateToday) => {
           if (!lateToday || !active() || loadGenRef.current !== gen) return;
           if (lateToday.executionId !== restored.executionId) return;
-          lateRealityRef.current?.({
+          // Remise par la boîte : le tableau n'est peut-être pas encore monté.
+          lateBox.post(gen, restored.executionId, {
             type: 'reconcile-progress',
             base: lateToday.progress,
             pendingSetIds: [
@@ -451,7 +457,7 @@ export function CaptureScreen() {
         });
       }
     },
-    [],
+    [lateBox],
   );
 
   // Au montage (et à chaque retour sur l'onglet Capture, qui REMONTE l'écran),
@@ -595,7 +601,8 @@ export function CaptureScreen() {
       key={`${load.session.id}:${load.executionId}`}
       session={load.session}
       templateIds={load.templateIds}
-      lateRealityRef={lateRealityRef}
+      lateBox={lateBox}
+      generation={load.generation}
       seanceVersionId={load.seanceVersionId}
       historyCtx={load.historyCtx}
       // `initRef` est posé juste avant le passage en « ready » (jamais null ici).
@@ -750,7 +757,8 @@ function useSyncStatus(): { status: SyncStatus; pending: number } {
 function CaptureBoard({
   session: initialSession,
   templateIds,
-  lateRealityRef,
+  lateBox,
+  generation,
   seanceVersionId,
   historyCtx,
   init,
@@ -759,8 +767,10 @@ function CaptureBoard({
   session: Session;
   /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
   templateIds: string[];
-  /** Guichet des réponses tardives de la base (cf. `loadSeance`). */
-  lateRealityRef: RefObject<((action: ReconcileAction) => void) | null>;
+  /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
+  lateBox: LateMailbox<ReconcileAction>;
+  /** Génération du chargement dont ce tableau est issu : il ne prend que ses réponses. */
+  generation: number;
   seanceVersionId: string;
   /** Contexte d'historique de la séance (scope Référence + repère notes) pour les exos ajoutés à la volée. */
   historyCtx: SeanceHistoryContext;
@@ -879,16 +889,19 @@ function CaptureBoard({
   // compteur dit au panneau de saisie que le réalisé a changé sans geste de
   // l'utilisateur : son brouillon touché ne doit pas être réamorcé.
   const [realityEpoch, setRealityEpoch] = useState(0);
-  useEffect(() => {
-    lateRealityRef.current = (action) => {
-      dispatch(action);
-      stateRef.current = captureReducer(stateRef.current, action);
-      setRealityEpoch((n) => n + 1);
-    };
-    return () => {
-      lateRealityRef.current = null;
-    };
-  }, [lateRealityRef]);
+  // Le tableau s'annonce à la boîte à son montage : il y prend la réponse
+  // arrivée AVANT lui, puis reçoit celles d'après. Seules celles de sa
+  // génération de chargement et de son exécution lui sont remises.
+  const [mountedExecutionId] = useState(() => state.executionId);
+  useEffect(
+    () =>
+      lateBox.register(generation, mountedExecutionId, (action) => {
+        dispatch(action);
+        stateRef.current = captureReducer(stateRef.current, action);
+        setRealityEpoch((n) => n + 1);
+      }),
+    [lateBox, generation, mountedExecutionId],
+  );
 
   // Persiste à chaque changement d'état (localStorage), SAUF une fois la séance
   // clôturée : la clôture est transitoire (ADR 0009). On nettoie alors le cache
