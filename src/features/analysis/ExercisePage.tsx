@@ -32,6 +32,7 @@ import { E1rmChart } from './E1rmChart';
 import { formatDay, rateCaption, sessionsLabel } from './rate-period';
 import { SecondaryChart } from './SecondaryChart';
 import { SlopeStatus } from './SlopeStatus';
+import { WordsHelp } from './WordsHelp';
 import { measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label';
 
 export function ExercisePage({
@@ -149,6 +150,7 @@ export function ExercisePage({
             {note && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{note}</p>}
             {holes && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{holes}.</p>}
             {cut && <p className="mt-1 text-[13px] leading-[1.45] text-faint">Trait coupé : plus de trois semaines sans séance.</p>}
+            <WordsHelp terms={unit === 'reps' ? ['pente', 'bloc'] : ['e1rm', 'pente', 'bloc']} />
           </div>
 
           {multi && <Legend curves={seanceCurves} shown={shown} onToggle={toggle} year={year} />}
