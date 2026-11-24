@@ -178,6 +178,24 @@ describe('la base fait foi, plus les écritures locales qu’elle ne contient pa
     expect(progress.curl?.sets.map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
   });
 
+  it('côté changé ici, alors qu’un autre appareil a rempli ce côté du même rang : les deux lignes restent, aucune n’écrase l’autre', () => {
+    // Ici : la ligne l2 passe à droite (l'autre côté du rang 2 était libre).
+    enqueue({ ...patch('l2', 'values', { exerciseId: 'curl', setOrder: 2, side: 'right' }), only: 'side' } as OutboxOp);
+    // La base, entre-temps : un autre appareil a loggé la droite du rang 2.
+    const progress = executionReality({
+      executionId: EXEC,
+      read: {
+        curl: {
+          sets: [ps(1, { side: 'left' }), ps(2, { side: 'left' }), ps(2, { side: 'right', weightKg: 20 })],
+          setIds: ['l1', 'l2', 'r2-ailleurs'],
+        },
+      },
+      writes: writesSince(null),
+    });
+    expect(progress.curl?.setIds).toEqual(['l1', 'l2', 'r2-ailleurs']);
+    expect(progress.curl?.sets.map((s) => `${s.order}${s.side}:${s.weightKg}`)).toEqual(['1left:80', '2right:80', '2right:20']);
+  });
+
   it('une série sans id (cache d’un très ancien format) reste en place : aucune écriture ne la vise', () => {
     enqueue(insert('s2', 2));
     expect(arrive(null, read([null, ps(1)])).bench?.setIds).toEqual([null, 's2']);
