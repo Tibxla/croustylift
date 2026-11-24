@@ -8,7 +8,7 @@
 //
 // Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
 // arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
-// geste délibéré, visible dans le diff. Dernière révision : nettoyage du code mort (index.css, NoteSheet.js)
+// geste délibéré, visible dans le diff. Dernière révision : lot UX hors Salle (AnalysisScreen.js, use-dated-load.js)
 // (taille mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -24,7 +24,7 @@ const BUDGETS = {
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 7_500, // (mesuré : 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)
   // À la demande.
-  'AnalysisScreen.js': 23_100, // code de l'Analyse (mesuré : 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
+  'AnalysisScreen.js': 25_000, // code de l'Analyse (mesuré : 23 781 au lot UX hors Salle, statuts du Journal face à la Référence, aide sur les mots, copies datées ; 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
   'SeancesScreen.js': 14_000, // routines, page d'une routine, éditeur de séance (mesuré : 13 106 à l'intuitivité de Séances, ⋯ et feuilles d'actions, ligne d'état, catalogue ouvert ; 11 277 avant ; 10 783 au lot 5)
   'ReglagesScreen.js': 5_700, // (mesuré : 5 420 au lot 5)
   'ExercisesScreen.js': 5_200, // (mesuré : 4 925 au lot 5, usage local d'un exo compris)
@@ -32,6 +32,7 @@ const BUDGETS = {
   'NoteSheet.js': 2_100, // formulaire d'exo et feuille de note, partagés par Exos et l'éditeur de séance (mesuré : 1 998 au nettoyage du code mort, note sortie du formulaire ; 2 139 avant ; 1 792 pour le formulaire seul, alors chunk ExerciseForm.js)
   'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
   'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
+  'use-dated-load.js': 600, // copies datées des écrans au calme, partagées par Séances et l'Analyse (mesuré : 525)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 
