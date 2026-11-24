@@ -214,7 +214,7 @@ Palette **retenue** : neuf valeurs, toutes définies une fois dans `src/index.cs
 
 - **Rayon des blocs** : 6 px (`rounded-block`) pour les boutons, les carrés de couleur, les champs. Les cases d'un interrupteur prennent 3 px.
 - **Rayon haut des feuilles** : 10 px (`rounded-t-sheet`).
-- **Filets** : 1 px `--color-line` ; trait épais de 2 px en `--color-muted` pour séparer deux familles de contenu ; trait de 3 px blanc cassé à gauche d'un message d'erreur, d'un avis ou d'une confirmation en ligne (jamais d'une ligne de liste).
+- **Filets** : 1 px `--color-line` ; trait épais de 2 px en `--color-muted` pour séparer deux familles de contenu ; un message d'erreur, un avis ou une confirmation en ligne se posent entre deux filets (`Alert`), jamais sur une bande latérale.
 - Pas de pilule, pas de `rounded-2xl`, pas de cercle décoratif. Les seuls cercles sont les marques d'état d'un exo.
 
 ## Components
@@ -244,8 +244,9 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Champs et confirmations
 
-- **Champ** (`TextField`, `PasswordField`, `TextArea`) : fond levé, contour gris repère, 48 px, texte de 17 px (jamais sous 16 px : iOS zoome). Libellé visible au-dessus, ou masqué mais lu (`hideLabel`) quand la section porte déjà le titre. Focus : un seul indicateur, le contour passe au blanc cassé et double. Erreur : la phrase sous le champ, sur un trait blanc cassé à gauche (`FieldError`), jamais de rouge. Pas de placeholder qui imite une valeur. Le clavier n'est admis que pour du texte libre.
-- **Avis** (`Notice`) : trait à gauche, titre, texte gris, actions dessous.
+- **Champ** (`TextField`, `PasswordField`, `TextArea`) : fond levé, contour gris repère, 48 px, texte de 17 px (jamais sous 16 px : iOS zoome). Libellé visible au-dessus, ou masqué mais lu (`hideLabel`) quand la section porte déjà le titre. Focus : un seul indicateur, le contour passe au blanc cassé et double. Erreur : « Erreur : » puis la phrase sous le champ, entre deux filets (`FieldError`), jamais de rouge. Pas de placeholder qui imite une valeur. Le clavier n'est admis que pour du texte libre.
+- **Alerte** (`Alert`) : la phrase entre deux filets, « Erreur : » en demi-gras en tête (ou le mot qui convient) ; sans mot en tête pour un simple compte rendu (`role="status"`).
+- **Avis** (`Notice`) : entre deux filets, titre, texte gris, actions dessous.
 - **Confirmation en ligne** (`Confirm`) : posée là où l'action a été demandée, le texte dit ce qui sera perdu. Une perte définitive : l'option sûre est le bouton, la perte un lien. Un geste qui se défait (archiver) : l'action est le bouton, « Annuler » le lien.
 - **Section repliée** (`Disclosure`) : titre, compte après un point médian, « Afficher » ou « Masquer » souligné.
 - **Action d'objet** (`ActionRow`) : bouton secondaire pleine largeur, l'explication dessous ; `ActionNote` dit pourquoi une action manque.

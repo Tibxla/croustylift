@@ -140,7 +140,10 @@ function RefusedList() {
                   <p className="break-words text-[17px] font-medium leading-[1.3] text-ink">{t.what}</p>
                   {t.detail && <p className="mt-0.5 text-[14px] text-muted">{t.detail}</p>}
                   <p className="mt-0.5 text-[14px] text-faint">Refusée {when}</p>
-                  <p className="mt-2 border-l-[3px] border-muted pl-3 text-[15px] leading-[1.4] text-ink">{t.reason}</p>
+                  <p className="mt-2 text-[15px] leading-[1.4] text-ink">
+                    <span className="font-semibold">Motif : </span>
+                    {t.reason}
+                  </p>
                   {confirming === entry.refusalId ? (
                     <Confirm
                       className="mt-3"

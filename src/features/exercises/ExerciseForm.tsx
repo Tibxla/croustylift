@@ -30,6 +30,7 @@ import { NoteField } from '../notes/NoteField';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { errorMessage } from '../../lib/error-message';
 import {
+  Alert,
   CheckBox,
   Choice,
   FieldError,
@@ -237,9 +238,7 @@ export function ExerciseForm({
   );
 
   const errorLine = error && (
-    <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-      {error}
-    </p>
+    <Alert>{error}</Alert>
   );
 
   const onFormSubmit = (e: FormEvent) => {

@@ -8,12 +8,13 @@
 // rayon de bloc, texte de 17 px (au moins 16 px : iOS zoome sinon). Focus : UN
 // seul indicateur (registre U17), le contour passe au blanc cassé et double
 // (filet intérieur net, sans flou) ; le contour global de `:focus-visible` est
-// retiré par `.focus-own`. Erreur : la phrase sous le champ, sur un trait blanc
-// cassé à gauche, reliée par `aria-describedby` ; jamais de rouge, jamais le
-// signal. Un champ a toujours un nom : libellé visible, ou masqué mais lu
+// retiré par `.focus-own`. Erreur : « Erreur : » puis la phrase sous le champ,
+// entre deux filets (`Alert`), reliée par `aria-describedby` ; jamais de rouge,
+// jamais le signal. Un champ a toujours un nom : libellé visible, ou masqué mais lu
 // (`hideLabel`, registre U37). Pas de placeholder qui imite une valeur (U32).
 import { useId, useState, type ReactNode, type Ref } from 'react';
 import { Icon } from './icons';
+import { Alert } from './states';
 
 export const FIELD_CLASS =
   'focus-own w-full min-w-0 rounded-block border border-dim bg-raise px-3.5 text-[17px] text-ink placeholder:text-faint focus:border-ink focus:shadow-[inset_0_0_0_1px_var(--color-ink)] aria-[invalid=true]:border-ink disabled:text-muted';
@@ -21,30 +22,28 @@ export const FIELD_CLASS =
 /** Message sous un champ (ou d'un formulaire). `role="alert"` : lu dès qu'il paraît. */
 export function FieldError({ id, children, className = '' }: { id?: string; children: ReactNode; className?: string }) {
   return (
-    <p id={id} role="alert" className={`mt-2 border-l-[3px] border-ink pl-3 text-[15px] leading-[1.4] text-ink ${className}`}>
+    <Alert id={id} className={`mt-2 py-2 ${className}`}>
       {children}
-    </p>
+    </Alert>
   );
 }
 
-/** Bloc d'information ou de garde : trait à gauche, titre, texte, actions dessous. */
+/** Bloc d'information ou de garde : entre deux filets, titre, texte, actions dessous. */
 export function Notice({
   title,
   children,
   actions,
-  tone = 'ink',
   role,
   className = '',
 }: {
   title?: ReactNode;
   children?: ReactNode;
   actions?: ReactNode;
-  tone?: 'ink' | 'muted';
   role?: 'alert' | 'status';
   className?: string;
 }) {
   return (
-    <div role={role} className={`border-l-[3px] pl-3 ${tone === 'ink' ? 'border-ink' : 'border-muted'} ${className}`}>
+    <div role={role} className={`border-y border-line py-3 ${className}`}>
       {title && <p className="text-[16px] font-semibold leading-[1.35] text-ink">{title}</p>}
       {children && <div className={`${title ? 'mt-1' : ''} text-[15px] leading-[1.45] text-muted`}>{children}</div>}
       {actions && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">{actions}</div>}

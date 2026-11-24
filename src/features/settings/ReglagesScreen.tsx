@@ -43,7 +43,7 @@ import {
   useReglages,
 } from '../../settings/reglages';
 import { CLARTE_DEFAUT, CLARTE_MAX, FREE_NAME, freeHex, HUE_MAX, HUE_STEP, readable, SIG_PRESETS } from '../../settings/signal-color';
-import { Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, Switch, TextLink } from '../../ui';
+import { Alert, Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, Switch, TextLink } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { signOutRefusalLabel } from '../capture/sync-label';
 import { downloadUserData, exportFilename } from '../export/data';
@@ -359,9 +359,7 @@ function DonneesSection() {
         </p>
       )}
       {status.phase === 'error' && (
-        <p role="alert" className="mx-5 mt-3 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-          {status.message}
-        </p>
+        <Alert className="mx-5 mt-3">{status.message}</Alert>
       )}
     </section>
   );
@@ -421,7 +419,7 @@ function CompteSection({
       </div>
       <div className="px-5 pt-3">
         {issue?.kind === 'pending' ? (
-          <div role="alert" className="border-l-[3px] border-ink pl-3">
+          <div role="alert" className="border-y border-line py-3">
             <p className="text-[15px] leading-[1.45] text-ink">{signOutRefusalLabel({ held: issue.pending, refused: issue.refused })}</p>
             {/* L'option sûre est le bouton ; la perte, un lien discret. */}
             <div className="mt-3 flex flex-wrap items-center gap-x-4">
@@ -442,8 +440,11 @@ function CompteSection({
         ) : (
           <>
             {issue?.kind === 'error' && (
-              <div role="alert" className="mb-3 border-l-[3px] border-ink pl-3">
-                <p className="break-words text-[15px] leading-[1.45] text-ink">Déconnexion impossible&#8239;: {issue.message}</p>
+              <div role="alert" className="mb-3 border-y border-line py-3">
+                <p className="break-words text-[15px] leading-[1.45] text-ink">
+                  <span className="font-semibold">Déconnexion impossible : </span>
+                  {issue.message}
+                </p>
                 <TextLink tone="muted" onClick={() => setIssue(null)}>
                   Fermer
                 </TextLink>

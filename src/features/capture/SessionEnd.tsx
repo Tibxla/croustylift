@@ -25,6 +25,7 @@ import type { PerformedExercise } from '../../domain/set-count';
 import { weekStartIso } from '../../domain/week';
 import { useSyncState } from '../../shell/useSyncState';
 import {
+  Alert,
   IconButton,
   List,
   PrimaryButton,
@@ -251,9 +252,9 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
       </section>
 
       {error && (
-        <p role="alert" className="mx-5 mt-4 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-          Échec de l’enregistrement : {error}
-        </p>
+        <Alert label="Échec de l’enregistrement" className="mx-5 mt-4">
+          {error}
+        </Alert>
       )}
     </Screen>
   );

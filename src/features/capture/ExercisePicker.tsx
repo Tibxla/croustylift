@@ -28,6 +28,7 @@ import { foldAccents } from '../../domain/text';
 import { isBlankNote } from '../../domain/notes';
 import { errorMessage } from '../../lib/error-message';
 import {
+  Alert,
   BottomBar,
   EmptyState,
   IconButton,
@@ -495,13 +496,14 @@ function CatalogList({
         />
       </div>
       {pickError && (
-        <p role="alert" className="mx-5 mb-3 border-l-[3px] border-ink pl-3 text-[15px] text-ink">
-          {pickError}
-        </p>
+        <Alert className="mx-5 mb-3">{pickError}</Alert>
       )}
       {loadError ? (
         <div role="alert" className="px-5 py-4">
-          <p className="border-l-[3px] border-ink pl-3 text-[15px] text-ink">{loadError}</p>
+          <p className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+            <span className="font-semibold">Erreur : </span>
+            {loadError}
+          </p>
           <SecondaryButton
             className="mt-3"
             onClick={() => {

@@ -69,6 +69,7 @@ import { fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-fo
 import { NameSheet, ReorderRow } from './seances-ui';
 import {
   ActionRow,
+  Alert,
   Choice,
   Confirm,
   EmptyState,
@@ -556,9 +557,7 @@ export function SeanceEditorView({
   const bottom = showBottom ? (
     <>
       {save.error && (
-        <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-          {save.error}
-        </p>
+        <Alert>{save.error}</Alert>
       )}
       {dirty && !save.busy && (
         <div className="flex min-h-11 items-center">

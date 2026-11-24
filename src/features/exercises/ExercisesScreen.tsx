@@ -39,6 +39,7 @@
 // l'exo est encore utilisé, au lieu de laisser la base lever une violation de FK.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  Alert,
   Confirm,
   EmptyState,
   IconButton,
@@ -627,9 +628,7 @@ function Fiche({
             </p>
           ) : note.phase === 'error' ? (
             <div>
-              <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-                Impossible de charger la note : {note.message}
-              </p>
+              <Alert>Impossible de charger la note : {note.message}</Alert>
               <SecondaryButton className="mt-3" onClick={() => {
                 setNote({ phase: 'loading' });
                 setNoteAttempt((n) => n + 1);
@@ -754,12 +753,12 @@ function Line({ label, children, sub }: { label: string; children: ReactNode; su
   );
 }
 
-/** Confirmation du dernier geste : trait gris à gauche, sans couleur. */
+/** Confirmation du dernier geste : entre deux filets, sans couleur. */
 function Flash({ children }: { children: ReactNode }) {
   return (
-    <p role="status" className="mx-5 mb-4 border-l-[3px] border-muted pl-3 text-[15px] leading-[1.45] text-ink">
+    <Alert role="status" label={null} className="mx-5 mb-4">
       {children}
-    </p>
+    </Alert>
   );
 }
 

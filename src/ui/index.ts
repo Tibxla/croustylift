@@ -60,7 +60,7 @@ export { NumberRow } from './number-row';
 export { Ruler } from './ruler';
 export { Sheet } from './sheet';
 export { SheetSlotContext } from './sheet-slot';
-export { LoadError, Loading } from './states';
+export { Alert, LoadError, Loading } from './states';
 export { Sign, Status } from './status';
 export { SyncBanner } from './sync-banner';
 export { TONE, type Verdict } from './status-tone';
