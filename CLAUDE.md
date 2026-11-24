@@ -17,3 +17,7 @@ Vocabulaire canonique par défaut (`needs-triage`, `needs-info`, `ready-for-agen
 ### Domain docs
 
 Single-context : un `GLOSSARY.md` + `docs/adr/` à la racine. See `docs/agents/domain.md`.
+
+## Git
+
+Un push sur `main` lance la CI (`check` puis `deploy` en production, `.github/workflows/ci.yml`) : sur `main`, **pousser juste après chaque commit**, une fois les tests verts en local. Sur une branche de travail (`feat/`, `fix/`…), pousser la branche juste après chaque commit (`git push -u origin <branche>` la première fois) : elle ne déploie rien.
