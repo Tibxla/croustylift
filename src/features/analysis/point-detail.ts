@@ -33,6 +33,31 @@ export function pointExecutions(
     .map(({ e }) => e)
 }
 
+/**
+ * L'exécution du point `index` d'une courbe, ou `undefined` si la seconde
+ * lecture ne concorde plus avec la courbe affichée. La courbe ne porte pas
+ * d'id d'exécution (`E1rmPoint`, couche de données gelée) : on exige donc que
+ * les deux lectures aient le même nombre de points ET que l'exécution retenue
+ * redonne exactement la date et la mesure du point. Une exécution supprimée,
+ * ajoutée ou corrigée sur un autre appareil entre les deux lectures ne fait
+ * jamais afficher les séries, le tonnage ni le lien d'une autre séance.
+ */
+export function pointExecution(
+  executions: readonly ExerciseExecution[],
+  exerciseId: string,
+  seanceId: string | null,
+  unit: CurveUnit,
+  curve: readonly E1rmPoint[],
+  index: number,
+): ExerciseExecution | undefined {
+  const aligned = pointExecutions(executions, exerciseId, seanceId, unit)
+  const point = curve[index]
+  const candidate = aligned[index]
+  if (aligned.length !== curve.length || !point || !candidate) return undefined
+  const [own] = buildPrimaryCurve([candidate], exerciseId, unit)
+  return own && own.date === point.date && own.e1rm === point.e1rm ? candidate : undefined
+}
+
 /** Le record d'un exo et sa date : meilleure mesure, toutes séries confondues. */
 export interface RecordFact {
   /** e1RM, ou reps effectives pour un exo jamais chargé. */

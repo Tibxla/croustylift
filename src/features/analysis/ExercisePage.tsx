@@ -22,7 +22,7 @@ import { errorMessage } from '../../lib/error-message';
 import { formatE1rm, formatWeight } from '../capture/format';
 import { loadExerciseExecutions } from './data';
 import { formatInt } from './format';
-import { exerciseFacts, gapBreaks, pointExecutions, secondaryBreaks, setMeasure } from './point-detail';
+import { exerciseFacts, gapBreaks, pointExecution, secondaryBreaks, setMeasure } from './point-detail';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 import type { ExerciseAnalysis, SeanceCurve } from './data';
 import { Swatch, type ChartSel } from './Chart';
@@ -81,7 +81,9 @@ export function ExercisePage({
   const ready = execs.phase === 'ready' ? execs.executions : null;
   const facts = ready ? exerciseFacts(ready, exerciseId, unit) : null;
   // L'exécution du point lu : même construction que la courbe (point-detail).
-  const exec = ready && selCurve ? pointExecutions(ready, exerciseId, selCurve.seanceId, unit)[selIndex] : undefined;
+  // Introuvable si les deux lectures ne concordent plus : « Séries
+  // indisponibles pour l'instant. » plutôt que les séries d'une autre séance.
+  const exec = ready && selCurve ? pointExecution(ready, exerciseId, selCurve.seanceId, unit, selCurve.curve, selIndex) : undefined;
   const cut = shown.some((sc) => gapBreaks(sc.curve).some(Boolean));
   const cut2 = !!lead && secondaryBreaks(lead.secondaryCurve, lead.curve).some(Boolean);
   const fmtValue = (v: number) => (unit === 'reps' ? String(Math.round(v)) : formatE1rm(v));
@@ -302,7 +304,7 @@ function PointSets({
         </p>
       ) : !exec ? (
         <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
-          {phase === 'error' ? 'Séries indisponibles pour l’instant.' : 'Séries introuvables pour ce point.'}
+          Séries indisponibles pour l’instant.
         </p>
       ) : (
         <>

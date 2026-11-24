@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExerciseExecution } from '../../domain/types'
 import { buildPrimaryCurve } from '../../domain/primary-curve'
-import { exerciseFacts, gapBreaks, pointExecutions, secondaryBreaks } from './point-detail'
+import { exerciseFacts, gapBreaks, pointExecution, pointExecutions, secondaryBreaks } from './point-detail'
 
 const ex = (id: string, date: string, w: number, seanceId = 's', createdAt?: string): ExerciseExecution => ({
   id,
@@ -50,3 +50,27 @@ describe('coupures du trait', () => {
     expect(secondaryBreaks(secondary, primary)).toEqual([false, true])
   })
 })
+
+describe('pointExecution', () => {
+  const first = ex('a', '2026-11-01', 80)
+  const second = ex('b', '2026-11-03', 85)
+  const curve = buildPrimaryCurve([first, second], 'x', 'kg')
+
+  it('rend l’exécution du point quand les deux lectures concordent', () => {
+    expect(pointExecution([first, second], 'x', 's', 'kg', curve, 0)?.id).toBe('a')
+    expect(pointExecution([first, second], 'x', 's', 'kg', curve, 1)?.id).toBe('b')
+  })
+
+  it('rien quand la première exécution a disparu entre les deux lectures', () => {
+    // Supprimée sur un autre appareil : le point 0 ne doit jamais afficher les
+    // séries, le tonnage ni le lien de la seconde exécution.
+    expect(pointExecution([second], 'x', 's', 'kg', curve, 0)).toBeUndefined()
+    expect(pointExecution([second], 'x', 's', 'kg', curve, 1)).toBeUndefined()
+  })
+
+  it('rien quand une exécution a été ajoutée ou corrigée entre-temps', () => {
+    expect(pointExecution([first, second, ex('c', '2026-11-05', 90)], 'x', 's', 'kg', curve, 0)).toBeUndefined()
+    expect(pointExecution([ex('a', '2026-11-01', 82.5), second], 'x', 's', 'kg', curve, 0)).toBeUndefined()
+  })
+})
+
