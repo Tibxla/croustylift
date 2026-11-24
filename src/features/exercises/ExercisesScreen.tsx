@@ -58,6 +58,7 @@ import {
   Choice,
 } from '../../ui';
 import { MUSCLE_GROUPS } from '../authoring/exercise-input';
+import { localTemplates, seancesUsing } from './local-usage';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { listExercises } from '../capture/data';
 import {
@@ -571,6 +572,10 @@ function Fiche({
     }
   }
 
+  // Ce que l'appareil sait déjà de son usage (copies de la Salle) ; le refus du
+  // serveur reste le filet pour une séance jamais ouverte ici.
+  const usedIn = guard === 'delete' ? seancesUsing(exo.id, localTemplates()) : [];
+
   const openGuard = (g: 'reset' | 'delete') => {
     setGuard(g);
     setGuardError(null);
@@ -696,6 +701,15 @@ function Fiche({
               <p className="font-medium">Revenir à la version de base ?</p>
               <p className="mt-1 text-muted">Ton nom, tes muscles et ton réglage du mouvement sont retirés. Ta note et ton historique restent.</p>
             </Confirm>
+          ) : guard === 'delete' && usedIn.length > 0 ? (
+            <div role="alert" className="mx-5 border-y border-line py-3">
+              <p className="text-[15px] leading-[1.45] text-ink">
+                Il figure dans {usedIn.join(', ')} : retire-le d’abord de {usedIn.length > 1 ? 'ces séances' : 'cette séance'}.
+              </p>
+              <div className="mt-3">
+                <SecondaryButton onClick={() => setGuard(null)}>Compris</SecondaryButton>
+              </div>
+            </div>
           ) : guard === 'delete' ? (
             <Confirm
               destructive
@@ -708,7 +722,7 @@ function Fiche({
             >
               <p className="font-medium">Supprimer « {exo.name} » ?</p>
               <p className="mt-1 text-muted">
-                Ce geste ne se défait pas. S’il figure dans une séance ou a déjà servi, la suppression est refusée et la raison s’affiche ici.
+                Ce geste ne se défait pas.
               </p>
             </Confirm>
           ) : (
