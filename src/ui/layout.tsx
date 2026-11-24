@@ -26,7 +26,10 @@ export function BottomBar({ children }: { children: ReactNode }) {
 }
 
 /** En-tête d'écran. `back` : retour vers la page parente, nommée (« ‹ Séance »).
- *  `action` : un lien ou un bouton à droite. `meta` : une ligne sous le titre. */
+ *  `action` : un lien ou un bouton à droite (plusieurs se rangent côte à côte).
+ *  `meta` : une ligne sous le titre. Un retour au nom long (routine) se coupe
+ *  en fin de ligne plutôt que de pousser les actions hors de l'écran à 360 px :
+ *  les actions gardent leur taille, le nom entier reste lu. */
 export function ScreenHeader({
   title,
   meta,
@@ -41,23 +44,25 @@ export function ScreenHeader({
   return (
     <header className="px-5 pb-4 pt-1">
       {(back || action) && (
-        <div className="-ml-1 flex min-h-11 items-center justify-between">
+        <div className="-ml-1 flex min-h-11 items-center justify-between gap-3">
           {back ? (
             <button
               type="button"
               onClick={back.onClick}
-              className="inline-flex h-11 items-center gap-2 pl-1 pr-3 text-[16px] text-muted active:text-ink"
+              className="inline-flex h-11 min-w-0 items-center gap-2 pl-1 pr-3 text-[16px] text-muted active:text-ink"
             >
-              <Chevron dir="left" />
-              {back.label}
+              <span className="flex-none">
+                <Chevron dir="left" />
+              </span>
+              <span className="truncate">{back.label}</span>
             </button>
           ) : (
             <span />
           )}
-          {action}
+          {action && <div className="flex flex-none items-center gap-2">{action}</div>}
         </div>
       )}
-      <h1 className="text-[28px] font-[650] leading-[1.15] tracking-[-0.025em] text-ink">{title}</h1>
+      <h1 className="break-words text-[28px] font-[650] leading-[1.15] tracking-[-0.025em] text-ink">{title}</h1>
       {meta && <p className="mt-1 text-[15px] text-muted">{meta}</p>}
     </header>
   );
