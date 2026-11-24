@@ -26,6 +26,7 @@ import { EmptyState, List, Row, Sheet, Status } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
 import { blockLabel, seanceRoutineLabel } from './block-label';
+import { shortDay } from './chart-time';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
 import { formatRate } from './format';
@@ -80,6 +81,23 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
 /** « Push · PPL » : la séance d'une option, toujours avec sa routine. */
 const seanceOf = (o: BlockSeanceProgression, seances: ReadonlyMap<string, SeanceInfo>) =>
   seanceRoutineLabel(seances.get(o.seanceId));
+
+/** « du 28/03 au 23/11 », « depuis le 23/11 » : la période d'un bloc en mots. */
+const periodOf = (block: Block) =>
+  block.end === null ? `depuis le ${shortDay(block.start)}` : `du ${shortDay(block.start)} au ${shortDay(block.end)}`;
+
+/**
+ * Le nom d'une option : sa séance, et sa période dès qu'une autre option porte
+ * le même nom (même séance de la même routine dans deux blocs, le cas courant).
+ */
+function optionName(
+  o: BlockSeanceProgression,
+  options: readonly BlockSeanceProgression[],
+  seances: ReadonlyMap<string, SeanceInfo>,
+): string {
+  const name = seanceOf(o, seances);
+  return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${periodOf(o.block)}` : name;
+}
 
 /** La pente d'une option en signe + mot, ou ce qui lui manque. */
 function OptionRate({ rate, points }: { rate: number | null; points: number }) {
@@ -161,8 +179,8 @@ export function ComparisonView({
         exerciseId={exerciseId}
         a={a}
         b={b}
-        aLabel={seanceOf(a, seances)}
-        bLabel={seanceOf(b, seances)}
+        aLabel={optionName(a, options, seances)}
+        bLabel={optionName(b, options, seances)}
       />
 
       <Sheet open={picking !== null} title={picking === 'a' ? 'Option A' : 'Option B'} onClose={() => setPicking(null)}>
@@ -177,7 +195,7 @@ export function ComparisonView({
               return (
                 <Row
                   key={`${blockKey(o.block)}:${o.seanceId}`}
-                  title={seanceOf(o, seances)}
+                  title={optionName(o, options, seances)}
                   meta={`${blockLabel(o.block)} · ${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
                   value={taken ? <span className="text-[14px] font-normal text-faint">déjà en {picking === 'a' ? 'B' : 'A'}</span> : undefined}
                   current={index === mine}
