@@ -70,11 +70,19 @@ export function OfflineState({ surface }: { surface: string }) {
   );
 }
 
-/** La valeur montrée est une copie locale : de quand elle date, et pourquoi. */
+/** La valeur montrée est une copie locale : de quand elle date. Hors ligne, la
+ *  ligne de synchro du shell le dit déjà ; en ligne, c'est le réseau qui ne
+ *  répond pas, et on le dit. */
 export function CopyNote({ at, online }: { at: number; online: boolean }) {
   return (
     <p role="status" className="px-5 pb-3 text-[14px] leading-[1.45] text-muted">
-      <span className="font-medium text-ink">{online ? 'Pas de réponse du réseau' : 'Hors ligne'}</span> · copie du {copyStamp(at)}
+      {online ? (
+        <>
+          <span className="font-medium text-ink">Pas de réponse du réseau</span> · copie du {copyStamp(at)}
+        </>
+      ) : (
+        `Copie du ${copyStamp(at)}`
+      )}
     </p>
   );
 }
