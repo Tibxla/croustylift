@@ -70,7 +70,7 @@ interface ExerciseCaptureProps {
   /** Enregistre la note d'instructions de l'exo (issue #52), corps vidé = supprimée. */
   onSaveExerciseNote: (body: string) => void;
   /** Corrige la série d'id `setId` (poids, reps, RIR). */
-  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
   /** Supprime la série de la ligne d'id `setId` (les deux côtés en unilatéral). */
   onDeleteSet: (setId: string) => void;
 }

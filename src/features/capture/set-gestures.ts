@@ -116,25 +116,35 @@ export function writeSetOp(
  * log (`boundSetValues`). `null` si la série n'existe pas dans cet exo, si elle
  * n'a pas d'id (cache d'ancien format, rien à viser en base) ou si rien ne
  * change.
+ *
+ * `values` ne porte que ce que l'utilisateur a RÉGLÉ. Les autres colonnes sont
+ * celles de la ligne telle qu'elle est maintenant : la feuille de correction a
+ * pu s'ouvrir avant qu'une réponse tardive de la base ne change une colonne
+ * qu'il n'a pas touchée, et la comparer à son brouillon la réécrivait en base
+ * avec la valeur d'avant.
  */
 export function correctSet(
   state: CaptureState,
   exerciseId: string,
   setId: string,
-  values: SetEntry,
+  values: Partial<SetEntry>,
 ): SetGesture | null {
   const progress = getProgress(state, exerciseId);
   const index = progress.setIds.indexOf(setId);
   const current = index === -1 ? undefined : progress.sets[index];
   if (current === undefined) return null;
-  const next = boundSetValues({ weightKg: values.weightKg, reps: values.reps, rir: values.rir });
-  if (next.weightKg === current.weightKg && next.reps === current.reps && next.rir === current.rir) {
-    return null;
-  }
+  const next = boundSetValues({
+    weightKg: values.weightKg ?? current.weightKg,
+    reps: values.reps ?? current.reps,
+    rir: values.rir ?? current.rir,
+  });
   // Seules les colonnes CHANGÉES sont écrites (last-write-wins par colonne,
   // ADR 0003) : corriger le poids ici et les reps sur un autre appareil garde
   // les deux.
-  const cols = (['weightKg', 'reps', 'rir'] as const).filter((col) => next[col] !== current[col]);
+  const cols = (['weightKg', 'reps', 'rir'] as const).filter(
+    (col) => values[col] !== undefined && next[col] !== current[col],
+  );
+  if (cols.length === 0) return null;
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
     ops: [{ ...writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values'), cols }],

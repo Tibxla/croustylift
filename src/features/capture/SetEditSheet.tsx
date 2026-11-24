@@ -56,15 +56,23 @@ export function SetEditSheet({
   progress: ExerciseProgress;
   /** La ligne corrigée (présente dans `progress`, cf. le parent). */
   setId: string;
-  /** Enregistre les nouvelles valeurs de la ligne (le parent ne fait rien si rien ne change). */
-  onSave: (values: SetEntry) => void;
+  /** Enregistre ce que l'utilisateur a RÉGLÉ, et cela seul (le parent ne fait rien si rien ne change). */
+  onSave: (values: Partial<SetEntry>) => void;
   /** Supprime la série de cette ligne (les deux côtés d'une paire unilatérale). */
   onDelete: () => void;
   onClose: () => void;
 }) {
   const index = progress.setIds.indexOf(setId);
   const orig = progress.sets[index] as PerformedSet;
-  const [v, setV] = useState<SetEntry>({ weightKg: orig.weightKg, reps: orig.reps, rir: orig.rir });
+  // Ce que l'utilisateur a réglé, colonne par colonne. Une colonne qu'il n'a pas
+  // touchée suit la ligne : si une réponse tardive de la base la change pendant
+  // que la feuille est ouverte, c'est la nouvelle valeur qui s'affiche, et elle
+  // n'est pas réécrite à l'enregistrement.
+  const [edits, setV] = useState<Partial<SetEntry>>({});
+  const v = useMemo<SetEntry>(
+    () => ({ weightKg: orig.weightKg, reps: orig.reps, rir: orig.rir, ...edits }),
+    [orig.weightKg, orig.reps, orig.rir, edits],
+  );
   const [ask, setAsk] = useState(false);
   const { stepKg } = useReglages();
 
@@ -120,7 +128,7 @@ export function SetEditSheet({
             meta={values(v)}
             ariaLabel={`Enregistrer la série ${rank}${side ? ` ${sideWord(side)}` : ''}, ${values(v)}`}
             onClick={() => {
-              if (changed) onSave(v);
+              if (changed) onSave(edits);
               onClose();
             }}
           >

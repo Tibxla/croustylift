@@ -154,6 +154,23 @@ describe('correctSet', () => {
     expect(correctSet(started(), BENCH, 's2', { weightKg: 80, reps: 9, rir: 1 })!.ops[0]).toMatchObject({ cols: ['reps'] });
   });
 
+  it('ne reçoit que ce que l’utilisateur a réglé : une colonne changée entre-temps par la base n’est pas réécrite', () => {
+    // La feuille s'est ouverte sur 80 × 7 ; une réponse tardive a porté les reps
+    // à 10 (corrigées sur un autre appareil). L'utilisateur n'a réglé que le poids.
+    const state: CaptureState = {
+      ...started(),
+      progress: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 10, 1, 2), ps(80, 6, 0, 3)], setIds: ['s1', 's2', 's3'], skipped: false } },
+    };
+
+    const gesture = correctSet(state, BENCH, 's2', { weightKg: 77.5 })!;
+
+    expect(gesture.ops[0]).toMatchObject({ weightKg: 77.5, reps: 10, rir: 1, cols: ['weightKg'] });
+    expect(getProgress(captureReducer(state, gesture.action), BENCH).sets[1]).toEqual(ps(77.5, 10, 1, 2));
+    // Rien de réglé, ou réglé à la valeur déjà là : aucun geste.
+    expect(correctSet(state, BENCH, 's2', {})).toBeNull();
+    expect(correctSet(state, BENCH, 's2', { reps: 10 })).toBeNull();
+  });
+
   it('unilatéral : un seul côté est corrigé, l’autre et le rang ne bougent pas', () => {
     const state: CaptureState = {
       ...started(),

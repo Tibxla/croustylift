@@ -1040,7 +1040,7 @@ function CaptureBoard({
     [enqueueExecutionOnce],
   );
   const handleCorrectSet = useCallback(
-    (exerciseId: string, setId: string, values: SetEntry) =>
+    (exerciseId: string, setId: string, values: Partial<SetEntry>) =>
       applySetGesture(correctSet(stateRef.current, exerciseId, setId, values)),
     [applySetGesture],
   );
@@ -1439,7 +1439,7 @@ function CapturePanel({
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
-  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
   onDeleteSet: (setId: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre du bas puisse
