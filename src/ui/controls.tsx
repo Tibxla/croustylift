@@ -67,12 +67,14 @@ export function Stepper({
   const btn =
     'flex h-12 w-12 flex-none items-center justify-center rounded-block border border-muted text-[22px] text-ink active:bg-line disabled:border-line disabled:text-dim';
   return (
-    <div className="flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
-      <span className="min-w-0 flex-1">
+    // Sous 350 px, le libellé prend sa ligne et les boutons passent dessous, à
+    // droite : à côté d'eux, il ne lui restait que 70 px (« Pas de / la / règle »).
+    <div className="flex min-h-16 items-center gap-3 border-b border-line px-5 py-2 max-[349px]:flex-wrap max-[349px]:gap-y-2">
+      <span className="min-w-0 flex-1 max-[349px]:basis-full">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
         {meta && <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>}
       </span>
-      <button type="button" className={btn} aria-label={`${label} : moins`} disabled={value <= min} onClick={() => set(value - step)}>
+      <button type="button" className={`${btn} max-[349px]:ml-auto`} aria-label={`${label} : moins`} disabled={value <= min} onClick={() => set(value - step)}>
         −
       </button>
       <output

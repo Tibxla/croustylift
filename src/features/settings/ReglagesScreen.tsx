@@ -104,7 +104,9 @@ function SignalSection() {
 
       {/* On choisit au nom et à l'aperçu, sans chiffre. */}
       <div role="radiogroup" aria-label="Couleur de signal">
-        <div className="mt-5 grid grid-cols-6 gap-x-2 px-5">
+        {/* Sous 350 px, trois par ligne : six colonnes y laissaient 40 px par
+            pastille et coupaient les noms (« Jau… »). */}
+        <div className="mt-5 grid grid-cols-6 gap-x-2 px-5 max-[349px]:grid-cols-3 max-[349px]:gap-x-4 max-[349px]:gap-y-3">
           {SIG_PRESETS.map((p) => (
             <Swatch
               key={p.name}
@@ -458,12 +460,14 @@ function CompteSection({
   );
 }
 
-function Line({ label, value }: { label: string; value: ReactNode }) {
+/** Une ligne libellé · valeur. `whole` : la valeur ne se coupe jamais ; faute de
+ *  place, elle passe sous le libellé (la version, à 320 px). */
+function Line({ label, value, whole = false }: { label: string; value: ReactNode; whole?: boolean }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+    <div className={`flex min-h-12 items-center justify-between gap-x-4 border-b border-line px-5 py-2.5 ${whole ? 'flex-wrap gap-y-0.5' : ''}`}>
       {/* Le libellé ne se coupe jamais (« E- / mail ») : c'est la valeur qui cède. */}
       <span className="flex-none whitespace-nowrap text-[16px] text-muted">{label}</span>
-      <span className="min-w-0 truncate text-right text-[16px] text-ink">{value}</span>
+      <span className={`text-right text-[16px] text-ink ${whole ? 'whitespace-nowrap' : 'min-w-0 truncate'}`}>{value}</span>
     </div>
   );
 }
@@ -479,7 +483,7 @@ function AboutSection() {
     <section>
       <SectionTitle>À propos</SectionTitle>
       <div className="border-t border-line">
-        <Line label="Version" value={<span className="tnum">{APP_VERSION_LABEL}</span>} />
+        <Line label="Version" whole value={<span className="tnum">{APP_VERSION_LABEL}</span>} />
         {updateReady && (
           <div className="flex min-h-14 items-center justify-between gap-4 border-b border-line px-5 py-2">
             <span className="text-[16px] text-ink">{inSession ? 'Mise à jour prête, installée après ta séance' : 'Mise à jour prête'}</span>
