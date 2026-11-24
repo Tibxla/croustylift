@@ -295,7 +295,7 @@ function PointSets({
   const sets = exec ? [...exec.sets].sort((a, b) => a.order - b.order || (a.side ?? '').localeCompare(b.side ?? '')) : [];
   return (
     <section aria-labelledby="exo-series-point">
-      <SectionTitle id="exo-series-point" aside={exec ? `${formatInt(liftedKg(exec.sets))} kg soulevés` : undefined}>
+      <SectionTitle id="exo-series-point" aside={exec ? `${formatInt(liftedKg(exec.sets))}\u00a0kg soulevés` : undefined}>
         Séries du {date}
       </SectionTitle>
       {phase === 'loading' ? (
@@ -353,6 +353,13 @@ function Facts({
   const delta = first && last ? Math.round((last.e1rm - first.e1rm) * 10) / 10 : null;
   const unitWord = unit === 'reps' ? 'reps' : 'kg';
   const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))} ${unitWord}`;
+  /** Un nombre et son unité, comme dans la liste de l'Analyse (« 217 kg »). */
+  const withUnit = (value: string, word: string) => (
+    <>
+      {value}
+      <span className="ml-1 text-[14px] font-normal text-muted">{word}</span>
+    </>
+  );
   return (
     <section aria-labelledby="exo-faits">
       <SectionTitle id="exo-faits">Faits</SectionTitle>
@@ -363,14 +370,14 @@ function Facts({
             meta={`${facts.record.set.weightKg === 0 ? `${facts.record.set.reps} reps` : `${formatWeight(facts.record.set.weightKg)} kg × ${facts.record.set.reps}`} · RIR ${facts.record.set.rir}${
               facts.record.date ? `, ${formatDay(facts.record.date, year)}` : ''
             }`}
-            value={fmtValue(facts.record.value)}
+            value={withUnit(fmtValue(facts.record.value), unitWord)}
           />
         )}
         {facts.heaviest && unit === 'kg' && (
           <Row
             title="Charge la plus lourde"
             meta={`${formatWeight(facts.heaviest.weightKg)} kg × ${facts.heaviest.reps}${facts.heaviest.date ? `, ${formatDay(facts.heaviest.date, year)}` : ''}`}
-            value={formatWeight(facts.heaviest.weightKg)}
+            value={withUnit(formatWeight(facts.heaviest.weightKg), 'kg')}
           />
         )}
         {delta !== null && first && lead.curve.length > 1 && (
