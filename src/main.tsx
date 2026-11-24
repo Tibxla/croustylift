@@ -25,6 +25,12 @@ startViewportWatch()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    {/* Bande opaque sous la barre d'état iOS (heure, batterie, encoche), posée une
+        fois pour TOUS les écrans (connexion, premier lancement, surfaces) : elle
+        réserve l'encoche dans le flux et, collée en haut, couvre ce qui défile
+        dessous. Premier enfant de #root, sinon `sticky` ne tient pas. Hauteur
+        nulle hors encoche (index.css, .safe-top-scrim). */}
+    <div className="safe-top-scrim" aria-hidden="true" />
     <ErrorBoundary>
       <AuthProvider>
         <App />
@@ -32,11 +38,5 @@ createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
     {/* Hors de la frontière d'erreur : le relevé reste ouvrable sur un écran planté. */}
     <DiagPanel />
-    {/* Bande opaque sous la barre d'état iOS (heure, batterie, encoche), posée une
-        fois pour TOUS les écrans (connexion, premier lancement, surfaces) : en
-        mode écran d'accueil la webview passe sous elle (viewport-fit=cover et
-        status bar translucide, index.html), et rien de ce qui défile ne doit s'y
-        lire. Hauteur nulle hors encoche (index.css, .safe-top-scrim). */}
-    <div className="safe-top-scrim" aria-hidden="true" />
   </StrictMode>,
 )

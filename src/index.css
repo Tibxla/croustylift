@@ -99,16 +99,15 @@ body {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Safe-area haute : avec viewport-fit=cover (index.html) et la status bar iOS
-     black-translucent, le contenu remonterait sous l'encoche. Ce padding décale
-     tous les écrans sous la zone sûre. Nul hors écran d'accueil (env() = 0). */
-  padding-top: var(--safe-top);
+  /* L'encoche haute n'est pas un padding de `body` : la bande collée
+     `.safe-top-scrim` (premier enfant de #root) l'occupe dans le flux. */
 }
 
 /*
   Hauteur des écrans : le document ne doit PAS défiler quand le contenu tient.
 
-  `body` porte déjà l'encoche haute en padding. Un écran à `100vh` dessous donnait
+  La bande de l'encoche haute (`.safe-top-scrim`) occupe déjà `--safe-top` en
+  tête du document. Un écran à `100vh` dessous donnait
   un document plus haut que la fenêtre (100vh + encoche), donc défilable même
   vide. Sur iPhone en mode écran d'accueil, un document défilable laisse WebKit
   le décaler pour dégager un champ à l'ouverture du clavier, état qu'il ne
@@ -149,16 +148,17 @@ body {
   }
 }
 
-/* Scrim de status bar (standalone iOS) : `viewport-fit=cover` et la status bar
-   translucide font passer la webview sous l'heure et la batterie (index.html).
-   Cette bande opaque, dans la teinte de l'app, empêche le contenu de défiler
-   derrière elles ; repasser la status bar en `black` laisserait iOS peindre du
-   noir pur (#000), visiblement plus sombre que le fond sur un OLED. Hauteur
-   nulle sans encoche : env() vaut 0. Ce n'est pas une barre collée : elle ne
-   porte aucun contrôle et ne dépend pas de la mesure de la fenêtre. */
+/* Bande de la barre d'état (standalone iOS) : `viewport-fit=cover` et la status
+   bar translucide font passer la webview sous l'heure et la batterie
+   (index.html). Cette bande opaque, dans la teinte de l'app, réserve l'encoche
+   au-dessus de tout écran et couvre ce qui défile dessous ; repasser la status
+   bar en `black` laisserait iOS peindre du noir pur (#000), visiblement plus
+   sombre que le fond sur un OLED. Hauteur nulle sans encoche : env() vaut 0.
+   COLLÉE, jamais fixe (règle du kit) : premier enfant du conteneur qui défile
+   (#root, ou un écran plein écran qui défile seul), `sticky; top: 0`. */
 .safe-top-scrim {
-  position: fixed;
-  inset: 0 0 auto 0;
+  position: sticky;
+  top: 0;
   height: var(--safe-top);
   background-color: var(--color-bg);
   /* Au-dessus du contenu et des barres collées (z-10, z-20), SOUS les voiles des
