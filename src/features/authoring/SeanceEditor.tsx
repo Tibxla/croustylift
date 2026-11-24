@@ -67,7 +67,7 @@ import { errorMessage } from '../../lib/error-message';
 import { planRowActions } from './archive';
 import { fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
 import { NameSheet, ReorderRow } from './seances-ui';
-import { createSaveFlight, type SaveFlight } from './save-flight';
+import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import {
   ActionRow,
   Alert,
@@ -464,10 +464,17 @@ export function SeanceEditorView({
     return flightRef.current;
   }
 
+  // « Enregistrer et quitter » a la main sur la navigation : la fin d'un
+  // « Enregistrer » lancé avant ne referme pas sa confirmation et ne programme
+  // pas de retour (sinon l'édition se rouvrait pendant l'envoi suivant, et une
+  // retouche saisie à ce moment se perdait à la sortie).
+  const leavingRef = useRef(false);
+
   async function handleSave() {
     setSave(SAVE_BUSY);
     try {
       const saved = await saveFlight().run(rows);
+      if (leavingRef.current) return;
       setSavedRows(saved);
       setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
       setSave(SAVE_DONE);
@@ -476,6 +483,7 @@ export function SeanceEditorView({
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
       backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
     } catch (err) {
+      if (leavingRef.current) return; // la sortie en cours rapporte l'échec elle-même
       setSave(saveFailed(errorMessage(err)));
     }
   }
@@ -490,26 +498,43 @@ export function SeanceEditorView({
     const leave = pendingLeave;
     if (!leave) return;
     if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
+    leavingRef.current = true;
     setLeaving(true);
-    try {
-      if (dirty || saveFlight().busy) {
-        setSave(SAVE_BUSY);
-        // Rejoint la sauvegarde déjà en vol s'il y en a une, sinon la lance.
-        let saved = await saveFlight().run(rowsRef.current);
-        // Retouché pendant l'envoi : ces changements-là sont une nouvelle version.
-        if (hasPrescriptionChanges(saved, rowsRef.current)) saved = await saveFlight().run(rowsRef.current);
-        setSavedRows(saved);
-        setSave(SAVE_DONE);
-      }
+    const saveNoteDrafts = async () => {
       for (const id of noteDraftExerciseIds(notes, noteDrafts, rowsRef.current.map((r) => r.exerciseId))) {
         await saveNote(id, noteDrafts[id] ?? '');
       }
+    };
+    const go = () => {
       setPendingLeave(null);
       leaveNow(leave);
+    };
+    try {
+      if (dirty || saveFlight().busy) {
+        setSave(SAVE_BUSY);
+        // Rejoint l'envoi en vol, puis envoie le dernier brouillon jusqu'à son
+        // acquittement, puis les notes, puis seulement la sortie (save-flight.ts).
+        await saveAllThenLeave({
+          flight: saveFlight(),
+          latest: () => rowsRef.current,
+          changed: hasPrescriptionChanges,
+          onSaved: setSavedRows,
+          afterPlan: async () => {
+            setSave(SAVE_DONE);
+            await saveNoteDrafts();
+          },
+          leave: go,
+        });
+      } else {
+        // Plan inchangé : aucune version, seulement les notes.
+        await saveNoteDrafts();
+        go();
+      }
     } catch (err) {
       setPendingLeave(null);
       setSave(saveFailed(errorMessage(err)));
     } finally {
+      leavingRef.current = false;
       setLeaving(false);
     }
   }
