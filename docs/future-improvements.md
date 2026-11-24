@@ -135,19 +135,6 @@ perte), finition.
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.
 
-### Capture, reprise
-
-- **Série annulée ressuscitée par une réponse tardive** (mineure, acceptée). La
-  lecture de l'exécution du jour part avec l'insertion d'une série encore en file ;
-  passé le délai d'ouverture, l'utilisateur annule cette série dans la Capture ;
-  l'insertion puis la suppression sont acquittées avant le retour de la réponse, la
-  file est vide à l'arrivée. Le rapprochement écarte bien la série, mais le rejeu des
-  écritures relevées au départ la réinsère : elle réapparaît au tableau alors qu'elle
-  n'est plus en base, et la série suivante saute son rang. Piste : faire primer les
-  annulations locales survenues pendant la lecture sur les insertions relevées au
-  départ, même acquittées (`applyQueuedSets` après `reconcileProgress`,
-  `capture/state.ts`).
-
 ### Comptes
 
 - **Invité hors ligne après un stockage plein** (finition). L'obligation de définir son

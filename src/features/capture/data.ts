@@ -50,7 +50,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
+import { isSetInsertion, isSetWrite, readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -589,6 +589,20 @@ export function applyPendingSets(
 
   for (const op of ops) {
     switch (op.type) {
+      case 'patchSet': {
+        if (op.exerciseId !== exerciseId) break;
+        // Écriture partielle (correction, remontée de rang) : elle ne touche
+        // qu'une ligne déjà lue, et que ses colonnes ; elle n'en crée pas.
+        const known = byKey.get(op.id);
+        if (!known) break;
+        byKey.set(
+          op.id,
+          op.only === 'values'
+            ? { ...known, weight_kg: op.weightKg, reps: op.reps, rir: op.rir }
+            : { ...known, set_order: op.setOrder },
+        );
+        break;
+      }
       case 'insertSet': {
         if (op.exerciseId !== exerciseId) break;
         const executions = context.get(op.executionId);
@@ -1134,13 +1148,15 @@ export async function loadTodayExecution(
     const pending = [...pendingBefore, ...pendingAfter];
     return {
       ...withoutPendingDeletions(today, pending),
-      pendingSetIds: [...new Set(pending.filter((op) => op.type === 'insertSet').map((op) => op.id))],
+      // Les INSERTIONS seulement : une écriture partielle ne crée pas la ligne,
+      // elle ne justifie donc pas de garder une série que la base n'a pas.
+      pendingSetIds: [...new Set(pending.filter(isSetInsertion).map((op) => op.id))],
       // Les notes aussi se lisent aux deux bouts : un effacement acquitté
       // pendant le trajet (par cet onglet ou un autre) a vidé la file, et la
       // réponse porte encore la note.
       pendingNoteKeys: [...new Set(pendingDatedNoteKeys(pending, today.executionId))],
       pendingSetOps: unionOfQueueReads(pendingBefore, pendingAfter).filter(
-        (op) => op.type === 'insertSet' || op.type === 'deleteSet',
+        (op) => isSetWrite(op) || op.type === 'deleteSet',
       ),
     };
   } catch {
@@ -1563,6 +1579,32 @@ export async function upsertSet(params: {
 }
 
 /**
+ * Écriture PARTIELLE d'une série existante, par son id (cf. `PatchSetOp`, outbox.ts) :
+ * les valeurs seules (correction) ou le rang seul (remontée après une
+ * suppression). Un `update`, jamais un `upsert` : si la ligne n'existe plus,
+ * rien n'est écrit et rien n'est recréé. Idempotent. Rend le nombre de lignes
+ * touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès, la série a
+ * été supprimée entre-temps.
+ */
+export async function patchSet(
+  params:
+    | { id: string; only: 'values'; weightKg: number; reps: number; rir: number }
+    | { id: string; only: 'rank'; setOrder: number },
+): Promise<number> {
+  const patch =
+    params.only === 'values'
+      ? { weight_kg: params.weightKg, reps: params.reps, rir: params.rir }
+      : { set_order: params.setOrder };
+  const { data, error } = await supabase
+    .from('performed_sets')
+    .update(patch)
+    .eq('id', params.id)
+    .select('id');
+  if (error) throw error;
+  return data?.length ?? 0;
+}
+
+/**
  * Supprime une série par son id (« annuler »). Idempotent : supprimer une ligne
  * déjà absente ne fait rien et ne lève pas (delete par id ciblé). Rend le nombre
  * de lignes touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès.
@@ -1628,4 +1670,45 @@ export async function deleteExecutionById(id: string): Promise<number> {
   const { data, error } = await supabase.from('executions').delete().eq('id', id).select('id');
   if (error) throw error;
   return data?.length ?? 0;
+}
+
+/** Ce que la suppression conditionnelle a fait de l'exécution. */
+export type ConditionalDeletion = 'deleted' | 'kept' | 'absent';
+
+/** L'erreur dit-elle que la fonction n'existe pas en base (migration non appliquée) ? */
+function isMissingFunction(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  // PGRST202 : PostgREST ne trouve pas la fonction. 42883 : Postgres non plus.
+  return code === 'PGRST202' || code === '42883';
+}
+
+/**
+ * Supprime l'exécution `id` SEULEMENT SI elle est encore ouverte et vide (ni
+ * série, ni note datée). Sert à « Changer de séance », qui part sans
+ * confirmation (cf. session-gestures.ts). Idempotent.
+ *
+ * Chemin normal : la RPC `delete_execution_if_empty` (migration 0025), qui
+ * verrouille l'exécution, vérifie puis supprime d'un seul tenant. Une série
+ * insérée au même instant attend le verrou : soit elle est vue (l'exécution
+ * reste), soit elle arrive après la suppression et la base la refuse (clé
+ * étrangère), ce que la file montre comme une saisie refusée, jamais perdue en
+ * silence.
+ *
+ * Tant que la fonction n'est pas en base, RIEN n'est supprimé : l'exécution
+ * reste (`kept`). Un repli en plusieurs lectures puis un delete ne serait pas
+ * atomique : une série acquittée par un autre appareil entre la dernière lecture
+ * et le delete partirait en cascade (relecture Codex du 24/11). Une exécution
+ * vide qui reste ouverte n'est qu'un désagrément (la prochaine ouverture
+ * l'adopte) ; une série effacée est une perte. La migration 0025 doit donc
+ * passer avant le client qui l'appelle (supabase/tests/ORDRE.md).
+ */
+export async function deleteExecutionIfEmpty(id: string): Promise<ConditionalDeletion> {
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    fn: 'delete_execution_if_empty',
+    args: { p_execution_id: string },
+  ) => PromiseLike<{ data: unknown; error: unknown }>;
+  const { data, error } = await rpc('delete_execution_if_empty', { p_execution_id: id });
+  if (!error) return data === 'deleted' || data === 'absent' ? data : 'kept';
+  if (!isMissingFunction(error)) throw error;
+  return 'kept';
 }

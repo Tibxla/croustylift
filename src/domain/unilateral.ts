@@ -208,3 +208,26 @@ export function nextOrderForSide(sets: PerformedSet[], side: Side): number {
   if (!done.includes(side)) return order
   return maxOrder(sets) + 1
 }
+
+/**
+ * La PLACE (0 = la 1ʳᵉ) de la série que vise une saisie du côté `side`, parmi
+ * les séries présentes rangées par `order` (`pairSidesByOrder`) : celle que la
+ * saisie complète, ou la suivante si elle en ouvre une (`nextOrderForSide`).
+ * C'est la case « en cours » de la bande et le rang que dit « Logger » : le
+ * nombre de séries COMPLÈTES ne convient pas, trois gauches de suite font trois
+ * séries sans aucune paire. Positionnelle : un trou de rang ne décale rien. Pur.
+ */
+export function targetSlotForSide(sets: PerformedSet[], side: Side): number {
+  return slotOfOrder(sets, nextOrderForSide(sets, side))
+}
+
+/**
+ * La PLACE (0 = la 1ʳᵉ) de la série de rang `order` parmi les séries présentes
+ * rangées par `order` ; celle qui suit la dernière si aucune ne porte ce rang.
+ * Positionnelle, comme la bande. Pur.
+ */
+export function slotOfOrder(sets: PerformedSet[], order: number): number {
+  const pairs = pairSidesByOrder(sets)
+  const at = pairs.findIndex((pair) => pair.order === order)
+  return at === -1 ? pairs.length : at
+}

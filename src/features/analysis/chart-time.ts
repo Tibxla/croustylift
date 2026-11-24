@@ -83,3 +83,52 @@ export function cardTimeAxis(
 ): TimeAxis | null {
   return timeAxis([...shown.map((sc) => sc.curve), shown[0]?.secondaryCurve ?? []])
 }
+
+/**
+ * Le dernier point d'une courbe bat-il le précédent ? C'est le seul point que
+ * le signal marque (« mieux que la dernière fois »), sur le graphe comme dans le
+ * relevé de la page d'un exo.
+ */
+export function lastBeatsPrevious(curve: readonly E1rmPoint[]): boolean {
+  const n = curve.length
+  return n > 1 && curve[n - 1]!.e1rm > curve[n - 2]!.e1rm
+}
+
+const MONTHS_SHORT = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.']
+
+/**
+ * Graduations au 1er du mois dans `domain` (en ms), un mois sur 1, 2, 3, 6 ou
+ * 12 : le plus petit pas qui tient en `maxTicks` étiquettes. Libellé : le mois
+ * court (« juin », « juil. ») ; au passage d'une année, l'année seule (« 2027 »).
+ * Moins de deux graduations : `[]`, l'appelant garde ses dates.
+ */
+export function monthTicks(domain: readonly [number, number], maxTicks: number): { x: number; label: string }[] {
+  const [from, to] = domain
+  if (!(to > from) || maxTicks < 2) return []
+  const start = new Date(from)
+  // Premier 1er du mois dans le domaine (le jour même s'il tombe un 1er).
+  let y = start.getUTCFullYear()
+  let m = start.getUTCMonth() + (start.getUTCDate() === 1 && start.getUTCHours() === 0 ? 0 : 1)
+  const firsts: number[] = []
+  for (;;) {
+    y += Math.floor(m / 12)
+    m %= 12
+    const t = Date.UTC(y, m, 1)
+    if (t > to) break
+    firsts.push(t)
+    m += 1
+  }
+  for (const step of [1, 2, 3, 6, 12]) {
+    // Pas de 2, 3, 6 ou 12 : calé sur les mois qui divisent l'année (janv., mars…).
+    const kept = firsts.filter((t) => new Date(t).getUTCMonth() % step === 0)
+    if (kept.length <= maxTicks) {
+      if (kept.length < 2) return []
+      return kept.map((t, i) => {
+        const d = new Date(t)
+        const prev = i > 0 ? new Date(kept[i - 1]!).getUTCFullYear() : d.getUTCFullYear()
+        return { x: t, label: i > 0 && d.getUTCFullYear() !== prev ? String(d.getUTCFullYear()) : MONTHS_SHORT[d.getUTCMonth()]! }
+      })
+    }
+  }
+  return []
+}

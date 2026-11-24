@@ -18,6 +18,44 @@ export function formatRate(rate: number): string {
   return digits
 }
 
+/** Une durée de séance : « 58 min » sous l'heure, « 1 h 05 » au-delà. Une
+ *  durée notée à 0 (moins de 30 s) se dit « moins d'1 min », comme en fin de
+ *  séance ; une durée absente ne passe pas ici (« non notée » chez l'appelant). */
+export function formatDuration(min: number): string {
+  if (min === 0) return 'moins d’1 min'
+  if (min < 60) return `${min} min`
+  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`
+}
+
+/** Un entier à la française, milliers séparés d'une espace insécable : « 3 420 ». */
+export function formatInt(n: number): string {
+  return Math.round(n).toLocaleString('fr-FR')
+}
+
+/**
+ * 'YYYY-MM-DD' -> « mardi 17 novembre », avec l'année hors de `currentYear`
+ * (« lundi 29 décembre 2025 »). Lu en heure locale, comme le jour de la séance.
+ * Renvoie l'entrée telle quelle si elle est mal formée.
+ */
+export function formatDateLong(iso: string, currentYear: number): string {
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    ...(date.getFullYear() === currentYear ? {} : { year: 'numeric' }),
+  })
+}
+
+/** 'YYYY-MM-DD' -> « Novembre 2026 », titre d'un mois du journal. */
+export function formatMonthTitle(iso: string): string {
+  const date = new Date(`${iso.slice(0, 7)}-01T00:00:00`)
+  if (Number.isNaN(date.getTime())) return iso
+  const s = date.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 // Le décompte de séries fractionnaire (« Séries loggées 5,8 ») a une seule
 // définition, partagée avec la fin de séance : features/capture/format.ts.
 export { formatCount } from '../capture/format'

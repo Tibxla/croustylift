@@ -119,3 +119,22 @@ describe('errorMessage : coupure réseau et délai dépassé', () => {
     ).toBeNull()
   })
 })
+
+describe('erreurs intégrées de Postgres et PostgREST', () => {
+  it('22P02 et les autres codes connus : un message français, jamais le texte anglais', () => {
+    const uuid = { code: '22P02', message: 'invalid input syntax for type uuid: "squat"', details: null, hint: null }
+    expect(errorMessage(uuid)).toMatch(/^Le serveur a refusé une donnée mal formée/)
+    expect(errorMessage({ code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' })).toMatch(
+      /^Élément introuvable/,
+    )
+  })
+  it('un code inconnu : un repli français qui garde le code', () => {
+    expect(errorMessage({ code: '42P01', message: 'relation "x" does not exist' })).toBe(
+      'Le serveur a refusé la demande (code 42P01). Réessaie ; si l’erreur revient, signale-la.',
+    )
+  })
+  it('un motif écrit par un trigger garde son texte', () => {
+    const refus = { code: 'P0001', message: 'Cette séance a déjà été faite en salle.' }
+    expect(errorMessage(refus)).toBe(refus.message)
+  })
+})

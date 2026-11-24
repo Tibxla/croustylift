@@ -1,31 +1,36 @@
 // Éditeur de prescriptions d'une séance (ADR 0001 : éditer crée une NOUVELLE
-// version, jamais une mutation en place).
+// version, jamais une mutation en place). Refonte E (DESIGN.md).
 //
-// Architecture (calquée sur SeancesScreen / AnalysisScreen) : on SÉPARE le
-// chargement Supabase de la PRÉSENTATION. `SeanceEditorView` est PUR (props =
-// données + callbacks + catalogue) et se monte tel quel dans le harness de
-// screenshot, sans réseau. `SeanceEditor` est le conteneur : il charge via
-// loadSeanceEditor, mappe vers l'état éditable, et sauvegarde via
-// saveSeanceVersion (mapping état -> PrescriptionInput[] dans prescription-edit).
+// Architecture : `SeanceEditor` est le conteneur (charge via loadSeanceEditor,
+// sauvegarde via saveSeanceVersion) ; `SeanceEditorView` reçoit données et
+// callbacks.
 //
-// Conventions DESIGN.md tenues ici :
-//   - chiffres MESURÉS via le Stepper (jamais de clavier OS) ; readouts en mono.
-//   - accent violet parcimonieux : bouton Enregistrer + toggle actif uniquement.
-//   - AUCUN tiret long (—) affiché. La fourchette s'écrit avec deux Steppers
-//     étiquetés « min » / « max » (pas de séparateur tiret du tout).
-//   - info jamais par couleur seule ; tap-targets >= 44px.
-//   - <select> natif pour le muscle, <input text> pour nom/recherche (le ban du
-//     clavier OS ne vise QUE les chiffres mesurés).
+// Le plan s'édite en brouillon. « Enregistrer » n'est actif que si le brouillon
+// diffère de la version enregistrée (`hasPrescriptionChanges`). Dans la routine
+// courante, un enregistrement ferme le bloc en cours : on le dit au-dessus du
+// bouton, avant. Un exo déplié à la fois ; les chiffres se règlent aux steppers
+// du kit, jamais au clavier. La note d'instructions appartient à l'exo, hors
+// version : elle s'édite sur geste explicite (NoteSheet, la même feuille que la
+// fiche d'Exos), s'enregistre à part et n'allume pas « Enregistrer » ; son
+// brouillon est tenu ICI, pour que la garde
+// de sortie et le blocage de rechargement le voient (registre U27).
 //
-// Doublons d'exos : AUTORISÉS. Une séance peut légitimement contenir deux fois le
-// même mouvement avec des prescriptions différentes (ex. lourd en début, léger en
-// finition). On n'empêche donc pas l'ajout en double ; chaque ligne a sa propre
-// identité (rowId) pour rester éditable indépendamment.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ClusterStepper } from '../capture/ClusterStepper';
-import { formatCount } from '../capture/format';
+// Garde de sortie (seance-dirty) : tant qu'une saisie n'est pas enregistrée
+// (prescriptions ou note), toute navigation qui ferait disparaître l'éditeur
+// (retour, onglet, autre séance) passe par une feuille de confirmation dont le
+// texte dit quand seule une note est en jeu. L'option sûre est le bouton
+// (« Continuer l'édition »), la perte un lien.
+//
+// Actions de la séance (renommer, dupliquer, archiver ou supprimer) : un ⋯ en
+// tête, à côté de « Réordonner », qui ouvre la même feuille que le ⋯ de sa ligne
+// dans la routine (seances-ui.tsx, object-actions.ts). La garde de sortie la
+// ferme comme les autres feuilles.
+//
+// Doublons d'exos : AUTORISÉS (lourd en début, léger en finition) ; chaque ligne
+// a sa propre identité (rowId). Retirer un exo se défait par « Annuler les
+// modifications » tant que rien n'est enregistré (registre U31).
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { listExercises } from '../capture/data';
-import { NoteField } from '../notes/NoteField';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
 import { isBlankNote } from '../../domain/notes';
 import { foldAccents } from '../../domain/text';
@@ -63,8 +68,33 @@ import {
   setLeaveGuard,
 } from './seance-dirty';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
-import { countPlannedSets, type CountRange } from '../../domain/set-count';
+import { countPlannedSets } from '../../domain/set-count';
 import { errorMessage } from '../../lib/error-message';
+import { menuLabel, seanceMenu } from './object-actions';
+import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
+import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
+import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
+import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
+import {
+  Alert,
+  Choice,
+  EmptyState,
+  Icon,
+  IconButton,
+  List,
+  LoadError,
+  Loading,
+  PrimaryButton,
+  Row,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  Sheet,
+  Stepper,
+  TextField,
+  TextLink,
+} from '../../ui';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
@@ -83,13 +113,33 @@ type Load =
       notes: Record<string, string>;
     };
 
-export interface SeanceEditorProps {
+/** Actions de la séance elle-même, portées par la surface Séances. */
+export interface SeanceActions {
+  /** Nom de la routine (libellé du retour). */
+  routineName: string;
+  /** La séance est dans la routine courante : enregistrer ouvre un nouveau bloc. */
+  isCurrentRoutine: boolean;
+  /** Déjà exécutée : elle s'archive au lieu de se supprimer (ADR 0017). */
+  executed: boolean;
+  /** Nom proposé pour une copie (libre dans la routine). */
+  copyName: string;
+  onRename: (name: string) => Promise<void>;
+  /** Copie la version ENREGISTRÉE dans la même routine, puis l'ouvre (par la
+   *  garde de sortie : un brouillon en cours le demande d'abord). */
+  onDuplicate: (name: string) => Promise<void>;
+  onArchive: () => Promise<void>;
+  onDelete: () => Promise<void>;
+}
+
+export interface SeanceEditorProps extends SeanceActions {
   /** Id de la séance éditée (charge sa version courante, sauve une nouvelle version). */
   seanceId: string;
   /** Nom de la séance (titre). */
   seanceName: string;
-  /** Retour à la liste des séances de la routine. */
+  /** Retour à la routine. */
   onBack: () => void;
+  /** Ce qu'un geste vient de faire (renommée, copiée), en tête ; null sinon. */
+  flash?: string | null;
 }
 
 let rowIdSeq = 0;
@@ -98,14 +148,11 @@ function freshRowId(): string {
   return `row-${rowIdSeq}`;
 }
 
-export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps) {
+export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...actions }: SeanceEditorProps) {
   const [load, setLoad] = useState<Load>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
-  const reload = () => setReloadKey((k) => k + 1);
-  // Dernière séance réellement chargée : on n'affiche le loader que pour un
-  // NOUVEAU contexte (1er chargement / changement de séance). Un rafraîchissement
-  // de la MÊME séance (reload() après un save) garde le contenu monté → pas de
-  // saut de scroll en haut.
+  // Dernière séance réellement chargée : on n'affiche le chargement que pour un
+  // NOUVEAU contexte. Un rafraîchissement de la MÊME séance garde le contenu monté.
   const loadedSeanceRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -115,10 +162,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
     void (async () => {
       try {
         // Prescriptions et catalogue sont indépendants : on parallélise.
-        const [prescriptions, catalogue] = await Promise.all([
-          loadSeanceEditor(seanceId),
-          listExercises(),
-        ]);
+        const [prescriptions, catalogue] = await Promise.all([loadSeanceEditor(seanceId), listExercises()]);
         if (!active) return;
         const rows: EditorRow[] = prescriptions.map((p) => ({
           rowId: freshRowId(),
@@ -133,9 +177,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
         }));
         // Note d'instructions (issue #26) par exo distinct présent dans la séance.
         const exerciseIds = [...new Set(prescriptions.map((p) => p.exerciseId))];
-        const noteEntries = await Promise.all(
-          exerciseIds.map(async (id) => [id, await loadExerciseNote(id)] as const),
-        );
+        const noteEntries = await Promise.all(exerciseIds.map(async (id) => [id, await loadExerciseNote(id)] as const));
         if (!active) return;
         const notes = Object.fromEntries(noteEntries);
         loadedSeanceRef.current = seanceId;
@@ -151,17 +193,23 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
     };
   }, [seanceId, reloadKey]);
 
-  if (load.phase === 'loading') {
-    return <ScreenSpinner label="Chargement de la séance" />;
-  }
-
-  if (load.phase === 'error') {
+  if (load.phase === 'loading' || load.phase === 'error') {
     return (
-      <ScreenError
-        message={load.message}
-        intro="Impossible de charger cette séance."
-        onRetry={reload}
-      />
+      <Screen>
+        <ScreenHeader title={seanceName} back={{ label: actions.routineName, onClick: onBack }} />
+        {load.phase === 'loading' ? (
+          <Loading label="Chargement de la séance…" />
+        ) : (
+          <LoadError
+            intro="Impossible de charger cette séance."
+            message={load.message}
+            onRetry={() => {
+              loadedSeanceRef.current = null;
+              setReloadKey((k) => k + 1);
+            }}
+          />
+        )}
+      </Screen>
     );
   }
 
@@ -182,15 +230,18 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
           muscleGroup: created.muscle_group,
           primaryMuscles: created.primary_muscles ?? [],
           unilateral: created.unilateral ?? false,
+          personal: true,
         };
       }}
       makeRowId={freshRowId}
+      actions={actions}
+      flash={flash}
     />
   );
 }
 
 // =====================================================================
-// Présentation pure (montable sans réseau dans le harness)
+// Présentation
 // =====================================================================
 
 /** Un exo du catalogue, réduit à ce dont la vue a besoin. */
@@ -202,6 +253,8 @@ export interface CatalogueExercise {
   primaryMuscles: string[];
   /** Mouvement unilatéral (#33) : pèse double au décompte total (#37). */
   unilateral: boolean;
+  /** Exo perso (créé par l'utilisateur), par opposition au catalogue commun. */
+  personal?: boolean;
 }
 
 /**
@@ -217,6 +270,12 @@ export interface PersonalExerciseFormInput {
 
 /** Raison du blocage de rechargement tenu par une séance modifiée et non enregistrée. */
 const SEANCE_DRAFT_BLOCK = 'brouillon-seance';
+
+const FIELD_LABEL: Record<FieldKey, string> = { sets: 'Séries', reps: 'Reps', rir: 'RIR' };
+/** Plafond des steppers : large, la base ne borne pas davantage. */
+const FIELD_CEIL: Record<FieldKey, number> = { sets: 99, reps: 99, rir: 10 };
+
+const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
 
 export interface SeanceEditorViewProps {
   seanceName: string;
@@ -236,8 +295,11 @@ export interface SeanceEditorViewProps {
   onSaveExerciseNote: (exerciseId: string, body: string) => Promise<void>;
   /** Crée un exo perso et renvoie sa forme réduite (pour l'ajouter aussitôt). */
   onCreatePersonal: (input: PersonalExerciseFormInput) => Promise<CatalogueExercise>;
-  /** Fabrique de rowId (injectée pour rester déterministe en test/harness). */
+  /** Fabrique de rowId (injectée pour rester déterministe en test). */
   makeRowId: () => string;
+  actions: SeanceActions;
+  /** Ce qu'un geste vient de faire (renommée, copiée), en tête ; null sinon. */
+  flash?: string | null;
 }
 
 export function SeanceEditorView({
@@ -250,6 +312,8 @@ export function SeanceEditorView({
   onSaveExerciseNote,
   onCreatePersonal,
   makeRowId,
+  actions,
+  flash = null,
 }: SeanceEditorViewProps) {
   const [rows, setRows] = useState<EditorRow[]>(initialRows);
   // Dernières lignes ENREGISTRÉES : la base de comparaison du drapeau « modifié ».
@@ -257,17 +321,15 @@ export function SeanceEditorView({
   // demanderait de confirmer la perte d'une saisie déjà enregistrée.
   const [savedRows, setSavedRows] = useState<EditorRow[]>(initialRows);
   const dirty = hasPrescriptionChanges(savedRows, rows);
-  // Navigation en attente de confirmation (retour ou changement d'onglet), tant
+  // Navigation en attente de confirmation (retour, onglet, autre séance), tant
   // que des modifications ne sont pas enregistrées.
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   // Notes d'instructions par exo (issue #26), éditées et sauvegardées à part du
-  // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même
-  // exo (exercise_notes est unique par exo).
+  // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même exo.
   const [notes, setNotes] = useState<Record<string, string>>(initialNotes);
-  // Brouillons des notes, par exo : tenus ICI et non dans le champ, pour que la
+  // Brouillons des notes, par exo : tenus ICI et non dans la feuille, pour que la
   // garde de sortie et le blocage de rechargement les voient. Un brouillon
-  // survit ainsi au repli de la carte, et deux lignes du même exo partagent le
-  // même texte en cours.
+  // survit à la fermeture de la feuille.
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   // Quitter perdrait-il une saisie ? Prescriptions modifiées OU brouillon de
   // note. « Enregistrer » reste sur `dirty` seul (cf. seance-dirty).
@@ -280,20 +342,30 @@ export function SeanceEditorView({
       muscleGroup: e.muscle_group,
       primaryMuscles: e.primary_muscles ?? [],
       unilateral: e.unilateral ?? false,
+      personal: e.owner_id !== null,
     })),
   );
   const [adding, setAdding] = useState(false);
+  // Exos ajoutés depuis l'ouverture du catalogue, qui reste ouvert pour en
+  // ajouter plusieurs à la suite ; le dernier se déplie à la fermeture.
+  const [added, setAdded] = useState<{ rowId: string; name: string }[]>([]);
+  const [creatingExo, setCreatingExo] = useState<{ prefill: string } | null>(null);
   const [save, setSave] = useState<SaveStatus>(SAVE_IDLE);
+  const [open, setOpen] = useState<string | null>(null);
+  const [reorder, setReorder] = useState(false);
+  const [moved, setMoved] = useState<string | null>(null);
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
-  // Scroll vers le bas après un ajout (issue #57) : enchaîner les ajouts sans
-  // scroller à la main. On compte les ajouts (et non rows.length, qui bouge aussi
-  // au réordonnancement / à la suppression) pour ne déclencher QUE sur ajout.
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [addCount, setAddCount] = useState(0);
+  // Après un ajout, l'exo neuf s'ouvre et vient en haut de l'écran. Saut sec,
+  // jamais de défilement doux forcé (registre U36, « Réduire les animations »).
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
   useEffect(() => {
-    if (addCount === 0) return; // pas au montage initial.
-    bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [addCount]);
+    if (!scrollTo) return;
+    document.getElementById(`exo-${scrollTo}`)?.scrollIntoView({ block: 'start' });
+    setScrollTo(null);
+  }, [scrollTo]);
 
   // Retour différé (900 ms) après une sauvegarde réussie. Id gardé en ref et
   // annulé au démontage : si l'éditeur disparaît avant l'échéance, le timer ne
@@ -311,9 +383,12 @@ export function SeanceEditorView({
   useEffect(() => {
     if (!unsaved) return;
     setLeaveGuard((proceed) => {
-      // La confirmation vit dans l'écran principal : on referme la feuille
-      // d'ajout, sinon la demande resterait en attente sans rien afficher.
+      // La confirmation est une feuille : on referme celles qui seraient ouvertes
+      // (le brouillon d'une note reste tenu ici), sinon la demande resterait en
+      // attente derrière elles.
       setAdding(false);
+      setNoteFor(null);
+      setMenuOpen(false);
       setPendingLeave(() => proceed);
     });
     return () => setLeaveGuard(null);
@@ -331,10 +406,16 @@ export function SeanceEditorView({
     else onBack();
   }
 
+  /** Quitte sans repasser par la garde (abandon confirmé). Archiver ou supprimer
+   *  la séance démonte l'éditeur : la garde et le blocage tombent avec lui. */
+  function leaveNow(proceed: () => void) {
+    setLeaveGuard(null);
+    releaseDraft();
+    proceed();
+  }
+
   function updateRow(rowId: string, key: FieldKey, next: FieldValue) {
-    setRows((prev) =>
-      prev.map((r) => (r.rowId === rowId ? { ...r, [key]: next } : r)),
-    );
+    setRows((prev) => prev.map((r) => (r.rowId === rowId ? { ...r, [key]: next } : r)));
   }
 
   // Enregistre la note d'un exo : optimiste en local (toutes ses lignes la
@@ -351,11 +432,13 @@ export function SeanceEditorView({
     }
   }
 
-  function addExercise(exo: CatalogueExercise) {
+  /** Ajoute une ligne en fin de séance, prescription par défaut. */
+  function appendRow(exo: CatalogueExercise): string {
+    const rowId = makeRowId();
     setRows((prev) => [
       ...prev,
       {
-        rowId: makeRowId(),
+        rowId,
         exerciseId: exo.id,
         exerciseName: exo.name,
         muscleGroup: exo.muscleGroup,
@@ -364,16 +447,69 @@ export function SeanceEditorView({
         ...defaultFields(),
       },
     ]);
-    setAdding(false);
-    // Signale l'effet de scroll : on revient en bas, sur le nouvel exo (#57).
-    setAddCount((n) => n + 1);
+    setReorder(false);
+    return rowId;
   }
+
+  /** Ajout hors catalogue (exo perso créé) : l'exo neuf se déplie et vient en haut. */
+  function addExercise(exo: CatalogueExercise) {
+    const rowId = appendRow(exo);
+    setAdding(false);
+    setOpen(rowId);
+    setScrollTo(rowId);
+  }
+
+  function openCatalog() {
+    setAdded([]);
+    setAdding(true);
+  }
+
+  /** Toucher un exo du catalogue l'ajoute sans refermer : on enchaîne le suivant. */
+  function pickFromCatalog(exo: CatalogueExercise) {
+    const rowId = appendRow(exo);
+    setAdded((prev) => [...prev, { rowId, name: exo.name }]);
+  }
+
+  /** Fermer le catalogue rend l'éditeur, le dernier ajouté déplié et amené en haut
+   *  (saut sec, pas de défilement doux sous la feuille). */
+  function closeCatalog() {
+    setAdding(false);
+    const last = added[added.length - 1];
+    if (last) {
+      setOpen(last.rowId);
+      setScrollTo(last.rowId);
+    }
+  }
+
+  // Une seule sauvegarde du plan en vol, partagée par « Enregistrer » et
+  // « Enregistrer et quitter » (save-flight.ts) : une seule version par envoi.
+  // Les refs donnent la dernière fonction d'écriture et le dernier brouillon à
+  // une suite qui reprend après l'attente.
+  const onSaveRef = useRef(onSave);
+  const rowsRef = useRef(rows);
+  useLayoutEffect(() => {
+    onSaveRef.current = onSave;
+    rowsRef.current = rows;
+  });
+  const flightRef = useRef<SaveFlight<EditorRow[]> | null>(null);
+  /** La file de sauvegarde, créée au premier geste (jamais lue pendant le rendu). */
+  function saveFlight(): SaveFlight<EditorRow[]> {
+    flightRef.current ??= createSaveFlight<EditorRow[]>((snapshot) => onSaveRef.current(snapshot));
+    return flightRef.current;
+  }
+
+  // « Enregistrer et quitter » a la main sur la navigation : la fin d'un
+  // « Enregistrer » lancé avant ne referme pas sa confirmation et ne programme
+  // pas de retour (sinon l'édition se rouvrait pendant l'envoi suivant, et une
+  // retouche saisie à ce moment se perdait à la sortie).
+  const leavingRef = useRef(false);
 
   async function handleSave() {
     setSave(SAVE_BUSY);
     try {
-      await onSave(rows);
-      setSavedRows(rows);
+      const saved = await saveFlight().run(rows);
+      if (leavingRef.current) return;
+      setSavedRows(saved);
       setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
       setSave(SAVE_DONE);
       // Laisse la confirmation visible un instant, puis retour. Par la garde de
@@ -381,7 +517,59 @@ export function SeanceEditorView({
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
       backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
     } catch (err) {
+      if (leavingRef.current) return; // la sortie en cours rapporte l'échec elle-même
       setSave(saveFailed(errorMessage(err)));
+    }
+  }
+
+  /**
+   * « Enregistrer et quitter » depuis la garde de sortie : exactement le chemin
+   * du bouton Enregistrer (une nouvelle version seulement si le plan a changé,
+   * aucune sinon), puis les notes en brouillon, PUIS la navigation demandée. Un
+   * échec garde l'éditeur ouvert, l'erreur au-dessus du bouton.
+   */
+  async function saveAndLeave() {
+    const leave = pendingLeave;
+    if (!leave) return;
+    if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
+    leavingRef.current = true;
+    setLeaving(true);
+    const saveNoteDrafts = async () => {
+      for (const id of noteDraftExerciseIds(notes, noteDrafts, rowsRef.current.map((r) => r.exerciseId))) {
+        await saveNote(id, noteDrafts[id] ?? '');
+      }
+    };
+    const go = () => {
+      setPendingLeave(null);
+      leaveNow(leave);
+    };
+    try {
+      if (dirty || saveFlight().busy) {
+        setSave(SAVE_BUSY);
+        // Rejoint l'envoi en vol, puis envoie le dernier brouillon jusqu'à son
+        // acquittement, puis les notes, puis seulement la sortie (save-flight.ts).
+        await saveAllThenLeave({
+          flight: saveFlight(),
+          latest: () => rowsRef.current,
+          changed: hasPrescriptionChanges,
+          onSaved: setSavedRows,
+          afterPlan: async () => {
+            setSave(SAVE_DONE);
+            await saveNoteDrafts();
+          },
+          leave: go,
+        });
+      } else {
+        // Plan inchangé : aucune version, seulement les notes.
+        await saveNoteDrafts();
+        go();
+      }
+    } catch (err) {
+      setPendingLeave(null);
+      setSave(saveFailed(errorMessage(err)));
+    } finally {
+      leavingRef.current = false;
+      setLeaving(false);
     }
   }
 
@@ -398,945 +586,569 @@ export function SeanceEditorView({
         ).map((id) => rows.find((r) => r.exerciseId === id)?.exerciseName ?? ''),
       })
     : null;
+  const resumeEditing = () => {
+    setPendingLeave(null);
+    // « Séance enregistrée » rend sa place au bouton (cf. seance-dirty, `editingResumed`).
+    setSave(editingResumed);
+  };
+  const menuItems = seanceMenu({
+    executed: actions.executed,
+    inCurrentRoutine: actions.isCurrentRoutine,
+    hasExercises: savedRows.length > 0,
+    unsavedEdits: unsaved,
+  });
+  const noteRow = noteFor ? rows.find((r) => r.exerciseId === noteFor) : undefined;
 
-  if (adding) {
+  // Confirmation de sortie : une feuille, au-dessus de l'éditeur comme de la
+  // création d'un exo perso (la garde peut se déclencher sur l'un ou l'autre).
+  const leaveSheet = (
+    <Sheet
+      open={pendingLeave !== null && prompt !== null}
+      title={prompt?.title ?? ''}
+      onClose={leaving ? () => {} : resumeEditing}
+      footer={
+        <>
+          <PrimaryButton
+            onClick={() => void saveAndLeave()}
+            disabled={leaving || (dirty && empty)}
+            over={dirty && actions.isCurrentRoutine ? 'Un nouveau bloc commence' : undefined}
+          >
+            {leaving ? 'Enregistrement…' : dirty && empty ? 'Ajoute au moins un exo' : 'Enregistrer et quitter'}
+          </PrimaryButton>
+          <SecondaryButton onClick={resumeEditing} disabled={leaving}>
+            Continuer l’édition
+          </SecondaryButton>
+          <TextLink
+            tone="muted"
+            className="self-start"
+            onClick={
+              leaving
+                ? undefined
+                : () => {
+                    const leave = pendingLeave;
+                    setPendingLeave(null);
+                    // La garde tombe avec l'écran ; on la retire tout de suite pour que
+                    // la sortie confirmée ne repasse pas par elle. Le blocage de
+                    // rechargement aussi : la saisie est abandonnée, et un changement
+                    // d'onglet peut recharger dans la foulée.
+                    if (leave) leaveNow(leave);
+                  }
+            }
+          >
+            Quitter sans enregistrer
+          </TextLink>
+        </>
+      }
+    >
+      {prompt && (
+        <p role="alert" className="px-5 pb-2 text-[15px] leading-[1.45] text-muted">
+          {prompt.detail}
+        </p>
+      )}
+    </Sheet>
+  );
+
+  // Création d'un exo perso depuis le catalogue : un écran entier, au-dessus de
+  // l'éditeur, qui garde son brouillon (l'état reste monté ici).
+  if (creatingExo) {
     return (
-      <AddExerciseSheet
-        catalogue={catalog}
-        onCancel={() => setAdding(false)}
-        onPick={addExercise}
-        onCreatePersonal={async (input) => {
+      <>
+      <ExerciseForm
+        frame={{ title: 'Nouvel exo perso', meta: `Il s’ajoute à ${seanceName} une fois créé.`, backLabel: seanceName }}
+        prefillName={creatingExo.prefill}
+        submitLabel="Créer et ajouter"
+        submitBusyLabel="Création…"
+        onCancel={() => setCreatingExo(null)}
+        onSubmit={async (input) => {
           const created = await onCreatePersonal(input);
           setCatalog((prev) => [...prev, created]);
+          setCreatingExo(null);
           addExercise(created);
         }}
       />
+      {leaveSheet}
+      </>
     );
   }
 
-  return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-40 pt-3">
-      <BackButton label="Retour aux séances" onClick={requestBack} />
+  const showBottom = !reorder && (!empty || dirty);
+  const bottom = showBottom ? (
+    <>
+      {save.error && (
+        <Alert>{save.error}</Alert>
+      )}
+      {dirty && !save.busy && (
+        <div className="flex min-h-11 items-center">
+          <TextLink tone="muted" onClick={() => setRows(savedRows)}>
+            Annuler les modifications
+          </TextLink>
+        </div>
+      )}
+      <div className="flex">
+        {saveControl(save, dirty) === 'saved' ? (
+          <p role="status" aria-live="polite" className="flex h-14 flex-1 items-center rounded-block border border-line px-4 text-[18px] font-semibold text-ink">
+            Séance enregistrée
+          </p>
+        ) : empty ? (
+          // Le brouillon a tout retiré : une séance vide ne s'enregistre pas.
+          <PrimaryButton disabled>Ajoute au moins un exo</PrimaryButton>
+        ) : (
+          <PrimaryButton
+            onClick={() => void handleSave()}
+            disabled={save.busy || !dirty}
+            over={dirty && actions.isCurrentRoutine ? 'Un nouveau bloc commence' : undefined}
+            ariaLabel={dirty && actions.isCurrentRoutine ? 'Enregistrer, un nouveau bloc commence' : undefined}
+          >
+            {save.busy ? 'Enregistrement…' : dirty ? 'Enregistrer' : 'Aucune modification'}
+          </PrimaryButton>
+        )}
+      </div>
+    </>
+  ) : undefined;
 
-      <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
-        {seanceName}
-      </h2>
-      <p className="mb-4 mt-0.5 text-sm text-ink-muted">
-        Exercices prescrits, dans l&apos;ordre. Règle séries, reps et RIR.
-      </p>
+  return (
+    <Screen bottom={bottom}>
+      <ScreenHeader
+        title={seanceName}
+        meta={empty ? undefined : plural(rows.length, 'exo')}
+        back={{ label: actions.routineName, onClick: requestBack }}
+        action={
+          reorder ? (
+            <SecondaryButton
+              size="sm"
+              onClick={() => {
+                setReorder(false);
+                setMoved(null);
+              }}
+            >
+              Terminé
+            </SecondaryButton>
+          ) : (
+            <>
+              {rows.length > 1 && (
+                <SecondaryButton
+                  size="sm"
+                  ariaLabel="Réordonner les exos"
+                  onClick={() => {
+                    setReorder(true);
+                    setMoved(null);
+                    setOpen(null);
+                  }}
+                >
+                  Réordonner
+                </SecondaryButton>
+              )}
+              <IconButton
+                icon="more"
+                framed
+                label={menuLabel(
+                  menuItems.map((i) => i.key),
+                  seanceName,
+                )}
+                onClick={() => setMenuOpen(true)}
+              />
+            </>
+          )
+        }
+      />
+
+      {flash && <StatusLine flash={{ text: flash }} />}
 
       {empty ? (
-        <EmptyState />
+        <EmptyState
+          title="Séance vide"
+          body="Ajoute ses exos dans l’ordre où tu les fais en salle."
+          action={<SecondaryButton onClick={openCatalog}>Ajouter un exo</SecondaryButton>}
+        />
       ) : (
         <>
-          {/* Décompte PRÉVU des séries (issue #37) : en direct, au-dessus de la liste. */}
-          <PlannedSetCountCard rows={rows} />
-
-          <ul className="flex flex-col gap-3">
-            {rows.map((row, index) => (
-              <li key={row.rowId}>
-                <ExerciseRowCard
+          <ul aria-label="Exos de la séance" className="border-t border-line">
+            {rows.map((row, i) => {
+              if (reorder) {
+                return (
+                  <ReorderRow
+                    key={row.rowId}
+                    rank={i + 1}
+                    title={row.exerciseName}
+                    meta={summarizeRow(row)}
+                    first={i === 0}
+                    last={i === rows.length - 1}
+                    moved={moved === row.rowId}
+                    onMove={(d) => {
+                      setRows((prev) => moveRow(prev, i, d));
+                      setMoved(row.rowId);
+                    }}
+                  />
+                );
+              }
+              const note = notes[row.exerciseId] ?? '';
+              const draft = noteDrafts[row.exerciseId];
+              return (
+                <ItemBlock
+                  key={row.rowId}
                   row={row}
-                  position={index + 1}
-                  isFirst={index === 0}
-                  isLast={index === rows.length - 1}
-                  note={notes[row.exerciseId] ?? ''}
-                  noteDraft={noteDrafts[row.exerciseId] ?? notes[row.exerciseId] ?? ''}
-                  onNoteDraft={(body) =>
-                    setNoteDrafts((prev) => ({ ...prev, [row.exerciseId]: body }))
-                  }
-                  onMove={(direction) => setRows((prev) => moveRow(prev, index, direction))}
-                  onRemove={() => setRows((prev) => prev.filter((r) => r.rowId !== row.rowId))}
-                  onField={(key, next) => updateRow(row.rowId, key, next)}
-                  onSaveNote={(body) => saveNote(row.exerciseId, body)}
+                  rank={i + 1}
+                  change={rowChange(savedRows, row)}
+                  note={note}
+                  noteUnsaved={draft !== undefined && draft !== note}
+                  open={open === row.rowId}
+                  onToggle={() => setOpen(open === row.rowId ? null : row.rowId)}
+                  onField={(k, f) => updateRow(row.rowId, k, f)}
+                  onNote={() => setNoteFor(row.exerciseId)}
+                  onRemove={() => {
+                    setRows((prev) => prev.filter((r) => r.rowId !== row.rowId));
+                    setOpen(null);
+                  }}
                 />
-              </li>
-            ))}
+              );
+            })}
           </ul>
-
-          {/* « Ajouter un exercice » N'est PLUS ici (zone scrollable) : il vit dans
-              la barre fixe du bas pour rester TOUJOURS visible. Sentinel de scroll
-              conservé (on revient ici après un ajout, #57). */}
-          <div ref={bottomRef} aria-hidden="true" />
+          {!reorder && (
+            <div className="px-5 pt-4">
+              <SecondaryButton onClick={openCatalog} className="w-full">
+                Ajouter un exo
+              </SecondaryButton>
+            </div>
+          )}
+          {!reorder && <CountSection rows={rows} savedRows={savedRows} dirty={dirty} />}
         </>
       )}
 
-      {/* Barre d'enregistrement fixée en bas (One Voice : seul accent fort de l'écran).
-          Ancrée sur `--nav-offset` (hauteur nav + safe-area), PAS `bottom-14` (=
-          hauteur nav SANS la safe-area) : sinon, sur appareil à encoche, le bas de
-          la barre passe sous la nav. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
-        <div className="mx-auto w-full max-w-md">
-          {/* UNE seule ligne pour ne pas voler la hauteur : « Ajouter » compact
-              (pointillé, comme Capture) à gauche + « Enregistrer » qui prend le
-              reste. « Ajouter » TOUJOURS visible (hors scroll) ; caché quand la
-              séance est vide (l'EmptyState porte alors son propre CTA centré). */}
-          <div className="flex items-center gap-2.5">
-            {/* TOUJOURS présent (même séance vide) : c'est l'unique « Ajouter »,
-                fixe et en pointillé. L'EmptyState n'a donc plus son propre bouton. */}
-            <button
-              type="button"
-              aria-label="Ajouter un exercice"
-              onClick={() => setAdding(true)}
-              className="flex h-12 shrink-0 items-center gap-2 rounded-2xl border border-dashed border-hair-strong px-4 text-base font-medium text-ink-muted transition active:bg-surface active:text-ink"
-            >
-              <PlusIcon />
-              Ajouter
-            </button>
-            {saveControl(save, dirty) === 'saved' ? (
-              <p
-                className="surface-card flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
-                role="status"
-                aria-live="polite"
-              >
-                <CheckIcon />
-                Séance enregistrée.
-              </p>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={empty || save.busy || !dirty}
-                className="btn btn-primary h-12 flex-1 rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
-              >
-                {save.busy
-                  ? 'Enregistrement…'
-                  : empty
-                    ? 'Ajoute au moins un exercice'
-                    : dirty
-                      ? 'Enregistrer'
-                      : 'Aucune modification'}
-              </button>
-            )}
-          </div>
-          {save.error && (
-            <p className="readout mt-2 break-words text-xs text-warn" role="alert">
-              {save.error}
-            </p>
-          )}
-          {/* Confirmation INLINE avant de perdre une saisie (jamais window.confirm). */}
-          {pendingLeave && prompt && (
-            <div className="mt-2 rounded-xl bg-surface-2/60 p-3" role="alertdialog" aria-label={prompt.label}>
-              <p className="text-sm text-ink">{prompt.title}</p>
-              <p className="mt-0.5 text-xs text-ink-muted">{prompt.detail}</p>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPendingLeave(null);
-                    // L'éditeur reste ouvert : « Séance enregistrée. » rend sa
-                    // place au bouton (cf. seance-dirty, `editingResumed`).
-                    setSave(editingResumed);
-                  }}
-                  className="btn btn-secondary h-11 flex-1 rounded-xl px-4 text-sm font-medium"
-                >
-                  Continuer l&apos;édition
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const leave = pendingLeave;
-                    setPendingLeave(null);
-                    // La garde tombe avec l'écran ; on la retire tout de suite
-                    // pour que la sortie confirmée ne repasse pas par elle. Le
-                    // blocage de rechargement aussi : la saisie est abandonnée,
-                    // et un changement d'onglet peut recharger dans la foulée.
-                    setLeaveGuard(null);
-                    releaseDraft();
-                    leave();
-                  }}
-                  className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium text-warn"
-                >
-                  Quitter
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      <CatalogSheet
+        open={adding}
+        catalogue={catalog}
+        rows={rows}
+        added={added.map((a) => a.name)}
+        onClose={closeCatalog}
+        onPick={pickFromCatalog}
+        onCreate={(prefill) => {
+          setAdding(false);
+          setCreatingExo({ prefill });
+        }}
+      />
+
+      {noteRow && (
+        <NoteSheet
+          exerciseName={noteRow.exerciseName}
+          note={notes[noteRow.exerciseId] ?? ''}
+          draft={noteDrafts[noteRow.exerciseId] ?? notes[noteRow.exerciseId] ?? ''}
+          onDraft={(body) => setNoteDrafts((prev) => ({ ...prev, [noteRow.exerciseId]: body }))}
+          hint={NOTE_HINT}
+          onSave={(body) => saveNote(noteRow.exerciseId, body)}
+          onClose={() => setNoteFor(null)}
+        />
+      )}
+
+      {leaveSheet}
+
+      {menuOpen && (
+        <SeanceActionsSheet
+          seanceName={seanceName}
+          routineName={actions.routineName}
+          copyName={actions.copyName}
+          items={menuItems}
+          inCurrentRoutine={actions.isCurrentRoutine}
+          unsaved={unsaved}
+          onClose={() => setMenuOpen(false)}
+          onRename={async (name) => {
+            await actions.onRename(name);
+            setMenuOpen(false);
+          }}
+          // Ouvre la copie par la garde de sortie : une saisie en cours la fait
+          // demander d'abord, et la garde ferme cette feuille.
+          onDuplicate={actions.onDuplicate}
+          // Archiver ou supprimer démonte l'éditeur (retour à la routine) : la
+          // garde et le blocage de rechargement tombent avec lui.
+          onArchive={actions.onArchive}
+          onDelete={actions.onDelete}
+        />
+      )}
+    </Screen>
   );
 }
 
 // =====================================================================
-// Carte d'un exo prescrit
+// Un exo de la séance
 // =====================================================================
 
-/** Résumé compact d'un champ : « 3 » (fixe) ou « 8-12 » (fourchette). */
-function fmtField(v: FieldValue): string {
-  return v.mode === 'fixe' ? String(v.min) : `${v.min}-${v.max}`;
-}
-
-/**
- * Format d'un compte FRACTIONNAIRE (issue #60, pondération par reps) : une
- * décimale, virgule décimale FR (jamais de point). « 1,8 » si min === max (valeur
- * fixe), sinon « 1,8-2,4 » (trait d'union court, jamais de tiret long, cf.
- * DESIGN.md). Les bornes égales après arrondi s'affichent en valeur unique.
- */
-function fmtCountRange(range: CountRange): string {
-  const min = formatCount(range.min);
-  const max = formatCount(range.max);
-  return min === max ? min : `${min}-${max}`;
-}
-
-/** Résumé d'une prescription, même format que la cible affichée en Capture. */
-function summarizeRow(row: EditorRow): string {
-  return `${fmtField(row.sets)} × ${fmtField(row.reps)} · RIR ${fmtField(row.rir)}`;
-}
-
-/**
- * Décompte PRÉVU des séries de la séance (issue #60, affine #37) : total + par
- * muscle principal, dérivé EN DIRECT des prescriptions courantes (recalculé à
- * chaque édition via useMemo) et PONDÉRÉ par reps (chaque série vaut
- * `min(reps_min,5)/5`). La prescription de reps est figée à sa borne basse ; seul
- * le NOMBRE de séries fait varier la fourchette du décompte (« 1,8-2,4 ») ;
- * séries fixes = valeur unique.
- *
- * DESIGN.md : chiffres mesurés en mono tabulaire (.readout) à une décimale
- * (virgule FR), un seul muscle par ligne pour que les comptes s'alignent en
- * colonne « cadran d'instrument », et AUCUN tiret long (la fourchette s'écrit
- * avec un trait d'union court). On NE parle PAS de « volume » (terme proscrit,
- * cf. GLOSSARY.md) : « séries par muscle ».
- */
-function PlannedSetCountCard({ rows }: { rows: EditorRow[] }) {
-  const count = useMemo(() => countPlannedSets(rowsToPlannedExercises(rows)), [rows]);
-  // Muscles présents, dans l'ordre canonique de GLOSSARY.md (colonne stable).
-  const muscles = orderMusclesCanonical(Object.keys(count.byMuscle));
-
+function ItemBlock({
+  row,
+  rank,
+  change,
+  note,
+  noteUnsaved,
+  open,
+  onToggle,
+  onField,
+  onNote,
+  onRemove,
+}: {
+  row: EditorRow;
+  rank: number;
+  change: 'ajouté' | 'modifié' | null;
+  note: string;
+  noteUnsaved: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onField: (k: FieldKey, f: FieldValue) => void;
+  onNote: () => void;
+  onRemove: () => void;
+}) {
+  const name = row.exerciseName;
+  const hasNote = !isBlankNote(note);
   return (
-    <section
-      className="surface-card mb-4 rounded-2xl p-3.5"
-      aria-label="Décompte des séries prévues"
-    >
-      <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-sm font-semibold text-ink">Séries prévues</h3>
-        <span className="readout text-lg font-medium tabular-nums text-ink">
-          {fmtCountRange(count.total)}
-          <span className="ml-1 text-xs font-normal text-ink-muted">au total</span>
+    <li id={`exo-${row.rowId}`} className="relative scroll-mt-[calc(var(--safe-top)+0.5rem)] border-b border-line">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex min-h-16 w-full items-start gap-3 px-5 py-3 text-left active:opacity-70"
+      >
+        <span className="tnum w-6 flex-none pt-px text-[15px] text-faint">{rank}</span>
+        <span className="min-w-0 flex-1">
+          <span className={`block break-words text-[17px] leading-[1.25] text-ink ${open ? 'font-semibold' : 'font-medium'}`}>{name}</span>
+          <span className="mt-1 flex flex-wrap gap-x-1.5 text-[14px] text-muted">
+            <span className="whitespace-nowrap text-ink">{summarizeRow(row)}</span>
+            {row.unilateral && <span>· unilatéral</span>}
+            {noteUnsaved ? <span className="font-medium text-ink">· note non enregistrée</span> : hasNote && <span>· note</span>}
+            {change && <span className="font-medium text-ink">· {change}</span>}
+          </span>
         </span>
-      </div>
+        {/* Toute la ligne déplie ; le chevron dit dans quel sens. */}
+        <span className="flex-none self-center text-muted">
+          <Icon name={open ? 'chevron-up' : 'chevron-down'} />
+        </span>
+      </button>
+      {open && (
+        <div className="pb-3">
+          <div className="border-t border-line">
+            {(['sets', 'reps', 'rir'] as const).map((k) => (
+              <FieldEditor key={k} k={k} value={row[k]} onChange={(f) => onField(k, f)} />
+            ))}
+          </div>
+          <div className="px-5 pt-2">
+            <div className="flex min-h-11 items-center justify-between gap-3">
+              <p className="text-[15px] font-semibold text-ink">Note d’instructions</p>
+              <IconButton icon="edit" tone="muted" className="-mr-2.5" onClick={onNote} label={`${hasNote ? 'Modifier' : 'Ajouter'} la note de ${name}`} />
+            </div>
+            {hasNote ? (
+              <p className="max-w-[40ch] whitespace-pre-line break-words text-[15px] leading-[1.45] text-muted">{note}</p>
+            ) : (
+              <p className="text-[15px] text-muted">Aucune.</p>
+            )}
+            {noteUnsaved && (
+              <TextLink className="mt-1" onClick={onNote}>
+                Reprendre la note non enregistrée
+              </TextLink>
+            )}
+          </div>
+          <div className="mt-3 flex border-t border-line px-5 pt-3">
+            <SecondaryButton size="sm" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
+              Retirer
+            </SecondaryButton>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
 
+/** Un champ de prescription : Fixe ou Fourchette, puis un ou deux steppers. */
+function FieldEditor({ k, value, onChange }: { k: FieldKey; value: FieldValue; onChange: (f: FieldValue) => void }) {
+  const label = FIELD_LABEL[k];
+  const floor = FIELD_FLOOR[k];
+  const ceil = FIELD_CEIL[k];
+  const mode = (
+    <Choice
+      label={`${label}, type de prescription`}
+      className="-ml-2.5 mt-0.5"
+      value={value.mode}
+      onChange={(m) => {
+        if (m !== value.mode) onChange(toggleMode(value));
+      }}
+      options={[
+        { value: 'fixe' as const, label: 'Fixe' },
+        { value: 'fourchette' as const, label: 'Fourchette' },
+      ]}
+    />
+  );
+  if (value.mode === 'fixe') {
+    return <Stepper label={label} meta={mode} value={value.min} min={floor} max={ceil} onChange={(n) => onChange(setMin(value, n, floor))} />;
+  }
+  return (
+    <>
+      <Stepper label={`${label} min`} meta={mode} value={value.min} min={floor} max={value.max} onChange={(n) => onChange(setMin(value, n, floor))} />
+      <Stepper label={`${label} max`} value={value.max} min={value.min} max={ceil} onChange={(n) => onChange(setMax(value, n, floor))} />
+    </>
+  );
+}
+
+// =====================================================================
+// Décompte des séries prévues (issues #37 et #60)
+// =====================================================================
+
+/**
+ * Total et séries par muscle principal, dérivés EN DIRECT des prescriptions et
+ * PONDÉRÉS par reps (chaque série vaut `min(reps_min,5)/5`). Avec un brouillon,
+ * chaque muscle qui bouge montre sa valeur d'avant. On ne parle pas de
+ * « volume » (GLOSSARY.md) : « séries prévues ».
+ */
+function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows: EditorRow[]; dirty: boolean }) {
+  const now = useMemo(() => countPlannedSets(rowsToPlannedExercises(rows)), [rows]);
+  const before = useMemo(() => countPlannedSets(rowsToPlannedExercises(savedRows)), [savedRows]);
+  const muscles = orderMusclesCanonical([...new Set([...Object.keys(now.byMuscle), ...(dirty ? Object.keys(before.byMuscle) : [])])]);
+  const zero = { min: 0, max: 0 };
+  const total = fmtCountRange(now.total);
+  const totalBefore = fmtCountRange(before.total);
+  return (
+    <section aria-label="Décompte des séries prévues">
+      <SectionTitle aside={dirty && total !== totalBefore ? `${total} au total · avant ${totalBefore}` : `${total} au total`}>Séries prévues</SectionTitle>
       {muscles.length === 0 ? (
-        <p className="mt-2 text-xs text-ink-muted">
-          Aucun muscle principal renseigné sur ces exercices.
-        </p>
+        <p className="border-t border-line px-5 pt-2.5 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
       ) : (
-        <ul className="mt-3 flex flex-col gap-1.5">
-          {muscles.map((muscle) => {
-            const range = count.byMuscle[muscle];
-            if (!range) return null;
+        <dl className="grid grid-cols-2 border-t border-line">
+          {muscles.map((m, i) => {
+            const v = fmtCountRange(now.byMuscle[m] ?? zero);
+            const b = fmtCountRange(before.byMuscle[m] ?? zero);
+            const changed = dirty && v !== b;
             return (
-              <li key={muscle} className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 truncate text-sm text-ink-muted">{muscle}</span>
-                <span className="readout shrink-0 text-sm tabular-nums text-ink">
-                  {fmtCountRange(range)}
-                </span>
-              </li>
+              <div key={m} className={`border-b border-line py-2.5 ${i % 2 === 0 ? 'border-r pl-5 pr-3' : 'pl-4 pr-5'}`}>
+                <dt className="text-[14px] text-muted">{muscleLabel(m)}</dt>
+                <dd className="mt-0.5 flex items-baseline gap-2">
+                  <span className={`text-[20px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
+                  {changed && <span className="text-[13px] text-faint">avant {b}</span>}
+                </dd>
+              </div>
             );
           })}
-        </ul>
+        </dl>
       )}
+      <p className="px-5 pt-2.5 text-[14px] leading-[1.45] text-faint">
+        Sous 5 reps, une série compte en partie ; un exo unilatéral compte double au total.
+      </p>
     </section>
   );
 }
 
-function Caret({ dir }: { dir: 'up' | 'down' }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d={dir === 'down' ? 'M6 9l6 6 6-6' : 'M18 15l-6-6-6 6'} />
-    </svg>
-  );
-}
-
-function ExerciseRowCard({
-  row,
-  position,
-  isFirst,
-  isLast,
-  note,
-  noteDraft,
-  onNoteDraft,
-  onMove,
-  onRemove,
-  onField,
-  onSaveNote,
-}: {
-  row: EditorRow;
-  position: number;
-  isFirst: boolean;
-  isLast: boolean;
-  /** Note d'instructions de l'exo (issue #26), '' si aucune. */
-  note: string;
-  /** Texte en cours de saisie de la note (égal à `note` tant qu'elle n'est pas touchée). */
-  noteDraft: string;
-  onNoteDraft: (body: string) => void;
-  onMove: (direction: -1 | 1) => void;
-  onRemove: () => void;
-  onField: (key: FieldKey, next: FieldValue) => void;
-  /** Enregistre la note d'instructions de l'exo (corps vidé = note effacée). */
-  onSaveNote: (body: string) => Promise<void>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="surface-card rounded-2xl p-3.5">
-      <div className="flex items-start gap-2">
-        <span
-          className="readout mt-0.5 w-6 shrink-0 text-center text-sm tabular-nums text-ink-muted"
-          aria-hidden="true"
-        >
-          {position}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-base font-semibold text-ink">{row.exerciseName}</span>
-          {row.muscleGroup && (
-            <span className="mt-0.5 block text-xs text-ink-muted">{row.muscleGroup}</span>
-          )}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          <IconButton
-            label={`Monter ${row.exerciseName}`}
-            disabled={isFirst}
-            onClick={() => onMove(-1)}
-            icon={<path d="M18 15l-6-6-6 6" />}
-          />
-          <IconButton
-            label={`Descendre ${row.exerciseName}`}
-            disabled={isLast}
-            onClick={() => onMove(1)}
-            icon={<path d="M6 9l6 6 6-6" />}
-          />
-          <IconButton
-            label={`Retirer ${row.exerciseName}`}
-            disabled={false}
-            onClick={onRemove}
-            tone="danger"
-            icon={<path d="M6 6l12 12M18 6L6 18" />}
-          />
-        </div>
-      </div>
-
-      {expanded ? (
-        <>
-          <div className="mt-3 flex flex-col gap-3">
-            <RangeField
-              label="Séries"
-              floor={FIELD_FLOOR.sets}
-              value={row.sets}
-              onChange={(next) => onField('sets', next)}
-            />
-            <RangeField
-              label="Reps"
-              floor={FIELD_FLOOR.reps}
-              value={row.reps}
-              onChange={(next) => onField('reps', next)}
-            />
-            <RangeField
-              label="RIR"
-              floor={FIELD_FLOOR.rir}
-              value={row.rir}
-              onChange={(next) => onField('rir', next)}
-            />
-            <ExerciseNoteEditor
-              exerciseName={row.exerciseName}
-              note={note}
-              draft={noteDraft}
-              onDraftChange={onNoteDraft}
-              onSave={onSaveNote}
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            aria-expanded
-            className="btn btn-ghost mt-3 h-11 w-full rounded-lg text-sm font-medium"
-          >
-            Replier
-            <Caret dir="up" />
-          </button>
-        </>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          aria-expanded={false}
-          className="mt-2.5 flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl bg-surface-2/40 px-3 text-left transition active:bg-surface-2"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="readout text-sm tabular-nums text-ink">{summarizeRow(row)}</span>
-            {/* Indicateur « note présente » : mot + icône, jamais la couleur seule. */}
-            {!isBlankNote(note) && (
-              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="13"
-                  height="13"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4 6h16M4 12h10M4 18h7" />
-                </svg>
-                Note
-              </span>
-            )}
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted">
-            Modifier
-            <Caret dir="down" />
-          </span>
-        </button>
-      )}
-    </div>
-  );
-}
-
 // =====================================================================
-// Note d'instructions de l'exo (issue #26)
+// Catalogue : recherche + filtre par muscle + exo perso
 // =====================================================================
 
-/**
- * Éditeur de la note d'instructions d'un exo, dans la carte dépliée. Persistée
- * à part du versionnage des prescriptions (bouton dédié), car la note vaut pour
- * l'exo lui-même, pas pour cette version de séance. Vider puis enregistrer
- * efface la note. Texte libre : <textarea> légitime (le ban clavier OS ne vise
- * que les chiffres mesurés).
- *
- * Le texte en cours (`draft`) appartient à l'éditeur de séance, pas à ce champ :
- * la garde de sortie et le blocage de rechargement doivent le voir.
- */
-function ExerciseNoteEditor({
-  exerciseName,
-  note,
-  draft,
-  onDraftChange,
-  onSave,
-}: {
-  exerciseName: string;
-  note: string;
-  draft: string;
-  onDraftChange: (body: string) => void;
-  onSave: (body: string) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+const ALL = 'tous';
 
-  const dirty = draft !== note;
-
-  // Toast « enregistré » (1,6 s) : id en ref + clear au démontage, pour ne pas
-  // tirer setSaved sur une instance démontée si l'éditeur ferme entre-temps.
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      await onSave(draft);
-      setSaved(true);
-      if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
-      savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="rounded-xl bg-surface-2/40 p-3">
-      <NoteField
-        id={`note-${exerciseName}`}
-        label="Note de l’exercice"
-        hint="Instructions persistantes, affichées en référence pendant la série."
-        value={draft}
-        placeholder="Prise serrée, coudes rentrés, descente contrôlée."
-        rows={3}
-        onChange={onDraftChange}
-      />
-      <div className="mt-2.5 flex items-center justify-end gap-2">
-        {saved && !dirty && (
-          <span className="mr-auto inline-flex items-center gap-1.5 text-xs font-medium text-good">
-            <CheckIcon />
-            Note enregistrée.
-          </span>
-        )}
-        <button
-          type="button"
-          disabled={!dirty || busy}
-          onClick={() => void submit()}
-          className="btn btn-primary h-11 rounded-xl px-4 text-sm disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
-        >
-          {busy ? 'Enregistrement…' : isBlankNote(draft) ? 'Effacer la note' : 'Enregistrer la note'}
-        </button>
-      </div>
-      {error && (
-        <p className="readout mt-2 break-words text-xs text-warn" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
-// =====================================================================
-// Un champ prescriptif : toggle fixe ⇄ fourchette + Stepper(s)
-// =====================================================================
-
-function RangeField({
-  label,
-  floor,
-  value,
-  onChange,
-}: {
-  label: string;
-  floor: number;
-  value: FieldValue;
-  onChange: (next: FieldValue) => void;
-}) {
-  return (
-    <div className="rounded-xl bg-surface-2/40 p-3">
-      <div className="mb-2.5 flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-ink">{label}</span>
-        <ModeToggle mode={value.mode} onToggle={() => onChange(toggleMode(value))} />
-      </div>
-
-      {value.mode === 'fixe' ? (
-        // Stepper « instrument » de Capture (boutons ronds, + en accent), variante
-        // compacte : même langage visuel que le log, et plus compact que l'ancien
-        // Stepper rectangulaire (qui s'écrasait en fourchette).
-        <ClusterStepper
-          label="valeur"
-          variant="compact"
-          value={value.min}
-          step={1}
-          min={floor}
-          onChange={(n) => onChange(setMin(value, n, floor))}
-        />
-      ) : (
-        // Fourchette : deux ClusterSteppers « min » / « max ». PAS de tiret long ni
-        // de séparateur (DESIGN.md). Boutons ronds compacts → tient sans écrasement.
-        <div className="grid grid-cols-2 gap-2.5">
-          <ClusterStepper
-            label="min"
-            variant="compact"
-            value={value.min}
-            step={1}
-            min={floor}
-            max={value.max}
-            onChange={(n) => onChange(setMin(value, n, floor))}
-          />
-          <ClusterStepper
-            label="max"
-            variant="compact"
-            value={value.max}
-            step={1}
-            min={value.min}
-            onChange={(n) => onChange(setMax(value, n, floor))}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Bascule fixe ⇄ fourchette. Segment actif en accent (seul accent de la carte). */
-function ModeToggle({ mode, onToggle }: { mode: 'fixe' | 'fourchette'; onToggle: () => void }) {
-  return (
-    <div
-      className="inline-flex rounded-lg bg-bg/60 p-0.5"
-      role="group"
-      aria-label="Type de prescription"
-    >
-      <SegButton label="Fixe" active={mode === 'fixe'} onClick={mode === 'fixe' ? undefined : onToggle} />
-      <SegButton
-        label="Fourchette"
-        active={mode === 'fourchette'}
-        onClick={mode === 'fourchette' ? undefined : onToggle}
-      />
-    </div>
-  );
-}
-
-function SegButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
-        active
-          ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
-          : 'text-ink-muted active:text-ink'
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-// =====================================================================
-// Sélecteur d'ajout d'exo : recherche + filtre muscle + créer perso
-// =====================================================================
-
-function AddExerciseSheet({
+function CatalogSheet({
+  open,
   catalogue,
-  onCancel,
+  rows,
+  added,
+  onClose,
   onPick,
-  onCreatePersonal,
+  onCreate,
 }: {
+  open: boolean;
   catalogue: CatalogueExercise[];
-  onCancel: () => void;
+  rows: EditorRow[];
+  /** Noms ajoutés depuis l'ouverture, dans l'ordre (accusé en pied de feuille). */
+  added: string[];
+  onClose: () => void;
   onPick: (exo: CatalogueExercise) => void;
-  onCreatePersonal: (input: PersonalExerciseFormInput) => Promise<void>;
+  /** Ouvre la création d'un exo perso, nom prérempli par la recherche. */
+  onCreate: (prefill: string) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [muscle, setMuscle] = useState<string>('');
-  const [creating, setCreating] = useState(false);
-
-  // Ouverture du choix d'exo (issue #57) : on remonte en haut de la zone de choix
-  // pour partir de la recherche, pas du scroll hérité de la séance.
-  useEffect(() => {
-    window.scrollTo({ top: 0 });
-  }, []);
-
-  const filtered = useMemo(() => {
-    const q = foldAccents(query.trim());
-    return catalogue
-      // Filtre par muscle sur la LISTE des muscles principaux (#33), pas le
-      // muscle_group legacy : sinon un exo multi-muscles (pris dans son seul 1er
-      // muscle) ou un muscle ajouté par override per-user (#50) serait raté. Repli
-      // sur muscleGroup quand la liste est vide (exo legacy non backfillé).
-      .filter((e) => {
-        if (!muscle) return true;
-        return e.primaryMuscles.length > 0
-          ? e.primaryMuscles.includes(muscle)
-          : e.muscleGroup === muscle;
-      })
-      .filter((e) => (q ? foldAccents(e.name).includes(q) : true))
-      .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-  }, [catalogue, query, muscle]);
-
+  const [q, setQ] = useState('');
+  const [muscle, setMuscle] = useState<string>(ALL);
+  const musclesOf = (e: CatalogueExercise) => (e.primaryMuscles.length > 0 ? e.primaryMuscles : e.muscleGroup ? [e.muscleGroup] : []);
+  const used = MUSCLE_GROUPS.filter((m) => catalogue.some((c) => musclesOf(c).includes(m)));
+  const fq = foldAccents(q.trim());
+  const shown = catalogue
+    // Filtre par muscle sur la LISTE des muscles principaux (#33), repli sur le
+    // muscle_group legacy quand la liste est vide (exo non backfillé).
+    .filter((c) => muscle === ALL || musclesOf(c).includes(muscle))
+    .filter((c) => !fq || foldAccents(c.name).includes(fq))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  const reset = () => {
+    setQ('');
+    setMuscle(ALL);
+  };
+  const close = () => {
+    reset();
+    onClose();
+  };
   return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-8 pt-3">
-      <BackButton label="Retour à la séance" onClick={onCancel} />
-
-      <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
-        Ajouter un exercice
-      </h2>
-      <p className="mb-4 mt-0.5 text-sm text-ink-muted">
-        Cherche dans ton catalogue, ou crée un exercice perso.
-      </p>
-
-      {creating ? (
-        <div className="mb-4">
-          <ExerciseForm
-            submitLabel="Créer et ajouter"
-            submitBusyLabel="Création…"
-            onCancel={() => setCreating(false)}
-            onSubmit={onCreatePersonal}
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-hair-strong bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
-        >
-          <PlusIcon />
-          Créer un exo perso
-        </button>
-      )}
-
-      {/* Recherche (texte libre : <input> légitime). */}
-      <input
-        type="text"
-        value={query}
-        placeholder="Rechercher un exercice"
-        enterKeyHint="search"
-        maxLength={80}
-        onChange={(e) => setQuery(e.target.value)}
-        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
-      />
-
-      {/* Filtre muscle : <select> natif (ce n'est pas un chiffre mesuré). */}
-      <select
-        value={muscle}
-        onChange={(e) => setMuscle(e.target.value)}
-        aria-label="Filtrer par groupe musculaire"
-        className="field mt-2.5 h-11 w-full rounded-xl px-3 text-base text-ink"
-      >
-        <option value="">Tous les muscles</option>
-        {MUSCLE_GROUPS.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
-
-      <p className="mt-4 mb-2 text-xs text-ink-muted">
-        <span className="readout tabular-nums">{filtered.length}</span>{' '}
-        {filtered.length > 1 ? 'exercices' : 'exercice'}
-      </p>
-
-      {filtered.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-8 text-center text-sm text-ink-muted">
-          Aucun exercice ne correspond. Ajuste ta recherche ou crée un exo perso.
+    <Sheet
+      open={open}
+      title="Ajouter un exo"
+      onClose={close}
+      footer={
+        // Toujours présent : la région annonce chaque ajout, même quand la ligne
+        // touchée sort de l'écran une fois la recherche vidée.
+        <>
+          <p role="status" aria-live="polite" className="text-[15px] font-medium leading-[1.45] text-ink empty:hidden">
+            {addedNote(added)}
+          </p>
+          {added.length > 0 && <PrimaryButton onClick={close}>Revenir à la séance</PrimaryButton>}
+        </>
+      }
+    >
+      <div className="px-5 pb-1">
+        <TextField type="search" label="Chercher un exo" hideLabel placeholder="Chercher un exo" value={q} onChange={setQ} enterKeyHint="search" />
+      </div>
+      <div className="overflow-x-auto px-3" style={{ scrollbarWidth: 'none' }}>
+        <Choice
+          label="Muscle"
+          wrap={false}
+          value={muscle}
+          onChange={setMuscle}
+          options={[{ value: ALL, label: 'Tous' }, ...used.map((m) => ({ value: m, label: muscleLabel(m) }))]}
+        />
+      </div>
+      {shown.length === 0 ? (
+        <p className="border-t border-line px-5 py-6 text-[15px] text-muted">
+          Aucun exo ne correspond{q.trim() ? ` à « ${q.trim()} »` : ''}
+          {muscle !== ALL ? ` dans ${muscleLabel(muscle)}` : ''}.
         </p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {filtered.map((exo) => (
-            <li key={exo.id}>
-              <button
-                type="button"
-                onClick={() => onPick(exo)}
-                className="surface-interactive flex min-h-[44px] w-full items-center gap-3 rounded-xl px-4 py-3 text-left"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-base font-medium text-ink">
-                    {exo.name}
-                  </span>
-                  <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                    {exo.muscleGroup && (
-                      <span className="truncate text-xs text-ink-muted">
-                        {exo.muscleGroup}
-                      </span>
-                    )}
-                    {exo.unilateral && <UnilateralBadge />}
-                  </span>
-                </span>
-                <PlusIcon className="shrink-0 text-ink-muted" />
-              </button>
-            </li>
-          ))}
-        </ul>
+        <List label="Catalogue">
+          {shown.map((c) => {
+            const n = rows.filter((r) => r.exerciseId === c.id).length;
+            return (
+              <Row
+                key={c.id}
+                title={c.name}
+                meta={
+                  <>
+                    {[...musclesOf(c).map(muscleLabel), ...(c.unilateral ? ['unilatéral'] : [])].join(' · ')}
+                    {n > 0 && <span className="block font-medium text-ink">déjà dans la séance{n > 1 ? `, ${n} fois` : ''}</span>}
+                  </>
+                }
+                value={c.personal ? <span className="text-[14px] font-normal text-muted">perso</span> : undefined}
+                // Le toucher ajoute sans quitter la feuille : un +, pas un chevron « ouvrir ».
+                chevron={false}
+                mark={<Icon name="plus" />}
+                ariaLabel={`Ajouter ${c.name} à la séance`}
+                onClick={() => {
+                  // La recherche se vide pour le suivant ; le filtre par muscle
+                  // reste (on ajoute souvent plusieurs exos du même muscle).
+                  setQ('');
+                  onPick(c);
+                }}
+              />
+            );
+          })}
+        </List>
       )}
-    </div>
-  );
-}
-
-/**
- * Marqueur « Unilatéral » pour un exo (issue #57). Mot EXPLICITE + pastille de
- * surface tonale : l'info n'est jamais portée par la seule couleur (DESIGN.md).
- * Sobre (surface-2 / ink-muted), pas d'accent violet : la One Voice Rule réserve
- * le violet à l'action primaire et à la sélection.
- */
-function UnilateralBadge() {
-  return (
-    <span className="inline-flex shrink-0 items-center rounded-md bg-surface-2 px-1.5 py-0.5 text-[0.6875rem] font-medium leading-none text-ink-muted">
-      Unilatéral
-    </span>
-  );
-}
-
-// =====================================================================
-// État vide + primitives
-// =====================================================================
-
-function EmptyState() {
-  // Plus de bouton ici : « Ajouter un exercice » vit dans la barre fixe du bas
-  // (toujours visible, pointillé), y compris séance vide. On ne garde que le message.
-  return (
-    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-hair-strong px-6 py-12 text-center">
-      <span
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-ink-muted"
-        aria-hidden="true"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="22"
-          height="22"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+      <div className="px-5 pt-4">
+        <SecondaryButton
+          className="w-full"
+          onClick={() => {
+            const prefill = q.trim();
+            reset();
+            onCreate(prefill);
+          }}
         >
-          <path d="M4 6h16M4 12h16M4 18h10" />
-        </svg>
-      </span>
-      <p className="text-sm text-ink-muted">
-        Aucun exercice prescrit. Ajoute le premier avec «&#8239;Ajouter&#8239;» en bas.
-      </p>
-    </div>
-  );
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  icon,
-  tone = 'neutral',
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  tone?: 'neutral' | 'danger';
-}) {
-  // Bouton-instrument cohérent avec le reste de l'app (retour Capture, swap picker) :
-  // bordure + surface + ombre interne, pas un ghost plat. Le ton « danger » (retirer)
-  // vire au warn à la pression.
-  const toneClass = tone === 'danger' ? 'active:text-warn' : 'active:text-ink';
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="20"
-        height="20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {icon}
-      </svg>
-    </button>
-  );
-}
-
-function PlusIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20 6L9 17l-5-5" />
-    </svg>
-  );
-}
-
-function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="btn btn-ghost -ml-1 min-h-[44px] self-start rounded-lg py-2 pr-3 text-sm font-medium"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="18"
-        height="18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M15 6l-6 6 6 6" />
-      </svg>
-      {label}
-    </button>
-  );
-}
-
-function ScreenSpinner({ label }: { label: string }) {
-  return (
-    <div
-      className="mx-auto w-full max-w-md px-4 pt-3"
-      role="status"
-      aria-label={label}
-    >
-      {/* Squelette : 3 cartes simulant des exercices prescrits. */}
-      <div className="mb-4 h-8 w-32 rounded-lg bg-surface-2 animate-pulse" />
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="surface-card mb-3 rounded-2xl p-3.5">
-          <div className="flex items-start gap-2">
-            <div className="mt-0.5 h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
-            <div className="flex-1 space-y-2">
-              <div className="h-4 w-3/5 rounded bg-surface-2 animate-pulse" />
-              <div className="h-3 w-2/5 rounded bg-surface-2 animate-pulse" />
-            </div>
-          </div>
-          <div className="mt-3 h-10 w-full rounded-xl bg-surface-2 animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScreenError({
-  message,
-  intro,
-  onRetry,
-}: {
-  message: string;
-  intro: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <p className="text-sm text-ink-muted">{intro}</p>
-      <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-      >
-        Réessayer
-      </button>
-    </div>
+          Créer un exo perso
+        </SecondaryButton>
+      </div>
+    </Sheet>
   );
 }

@@ -11,6 +11,8 @@ import {
   defaultSide,
   nextOrderForSide,
   loggedSetEquivalents,
+  targetSlotForSide,
+  slotOfOrder,
 } from './unilateral'
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet } from './types'
@@ -357,5 +359,49 @@ describe('nextOrderForSide', () => {
     expect(nextOrderForSide(sets, 'left')).toBe(2)
     // re-droite à l'order 2 (déjà fait) ouvrirait la série 3.
     expect(nextOrderForSide(sets, 'right')).toBe(3)
+  })
+})
+
+// La place, dans la bande, de la série que vise le côté courant : celle que sa
+// saisie complète ou ouvre (`nextOrderForSide`). Positionnelle : la bande range
+// les séries dans l'ordre de leurs rangs, une case chacune.
+describe('targetSlotForSide', () => {
+  const L = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'left' })
+  const R = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'right' })
+
+  it('rien de loggé : la 1re case', () => {
+    expect(targetSlotForSide([], 'left')).toBe(0)
+  })
+
+  it('série entamée à gauche : la droite la complète, la gauche en ouvre une autre', () => {
+    expect(targetSlotForSide([L(1)], 'right')).toBe(0)
+    expect(targetSlotForSide([L(1)], 'left')).toBe(1)
+  })
+
+  it('trois gauches de suite : trois séries, la droite complète la dernière, la gauche ouvre la 4e', () => {
+    const lefts = [L(1), L(2), L(3)]
+    expect(targetSlotForSide(lefts, 'right')).toBe(2)
+    expect(targetSlotForSide(lefts, 'left')).toBe(3)
+  })
+
+  it('un trou de rang ne décale rien : la place suit l’ordre des séries présentes', () => {
+    expect(targetSlotForSide([L(1), R(1), L(3)], 'right')).toBe(1)
+  })
+})
+
+describe('slotOfOrder', () => {
+  const L = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'left' })
+  const R = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'right' })
+
+  it('la place d’un rang parmi les séries présentes, la suivante s’il est absent', () => {
+    expect(slotOfOrder([], 1)).toBe(0)
+    expect(slotOfOrder([L(1), R(1), L(2)], 2)).toBe(1)
+    expect(slotOfOrder([L(1), R(1), L(3)], 3)).toBe(1)
+    expect(slotOfOrder([L(1), R(1)], 2)).toBe(1)
+  })
+
+  it('la série en cours de trois gauches de suite est la 3e, quel que soit le côté choisi', () => {
+    const lefts = [L(1), L(2), L(3)]
+    expect(slotOfOrder(lefts, currentSetOrder(lefts))).toBe(2)
   })
 })

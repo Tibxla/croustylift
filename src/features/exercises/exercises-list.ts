@@ -67,3 +67,24 @@ export function filterExercises(
   const personal = matched.filter((e) => isPersonalExercise(e.ownerId)).sort(byNameFr);
   return { base, personal };
 }
+
+/** Les muscles principaux d'un exo, avec repli sur le groupe legacy. */
+export function musclesOf(exo: ListExercise): string[] {
+  if (exo.primaryMuscles.length > 0) return exo.primaryMuscles;
+  return exo.muscleGroup ? [exo.muscleGroup] : [];
+}
+
+/**
+ * Les muscles qui ciblent au moins un exo du catalogue, dans l'ordre de
+ * `order` (l'ordre canonique de l'app) : ce sont les seuls que le filtre de
+ * l'onglet propose, un mot sans exo derrière ne servirait à rien.
+ */
+export function musclesInUse(catalogue: ListExercise[], order: readonly string[]): string[] {
+  const used = new Set(catalogue.flatMap(musclesOf));
+  return order.filter((m) => used.has(m));
+}
+
+/** Garde les exos qui ciblent `muscle` ; `null` ne filtre rien. */
+export function filterByMuscle(catalogue: ListExercise[], muscle: string | null): ListExercise[] {
+  return muscle === null ? catalogue : catalogue.filter((e) => musclesOf(e).includes(muscle));
+}

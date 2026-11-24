@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './useAuth'
-import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
+import { AuthShell } from './AuthShell'
+import { FieldError, PasswordField, PrimaryButton } from '../ui'
 import { networkErrorMessage } from '../lib/error-message'
 
 /** Longueur minimale du mot de passe, alignée sur la politique Supabase. */
@@ -66,13 +67,7 @@ export function ResetPasswordScreen() {
 
   if (done) {
     return (
-      <AuthShell
-        mark={false}
-        footer={false}
-        titleSize={30}
-        title="Mot de passe enregistré."
-        subtitle="Tu es maintenant connecté."
-      >
+      <AuthShell title="Mot de passe enregistré" meta="Ta session est ouverte.">
         <span className="sr-only">Mot de passe enregistré.</span>
       </AuthShell>
     )
@@ -80,63 +75,40 @@ export function ResetPasswordScreen() {
 
   return (
     <AuthShell
-      mark={false}
-      footer={false}
-      titleSize={30}
-      title="Ton mot de passe."
-      subtitle={`Choisis un mot de passe d’au moins ${MIN_PASSWORD_LENGTH} caractères.`}
-    >
-      <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
-        <div>
-          <FieldLabel htmlFor="new-password">Mot de passe</FieldLabel>
-          <PasswordField
-            id="new-password"
-            value={password}
-            onChange={setPassword}
-            autoComplete="new-password"
-            minLength={MIN_PASSWORD_LENGTH}
-          />
-        </div>
-
-        <div>
-          <FieldLabel htmlFor="confirm-password">Confirmer le mot de passe</FieldLabel>
-          <PasswordField
-            id="confirm-password"
-            value={confirm}
-            onChange={setConfirm}
-            autoComplete="new-password"
-            minLength={MIN_PASSWORD_LENGTH}
-          />
-        </div>
-
-        {error && (
-          <p role="alert" className="flex items-start gap-2 text-sm text-warn">
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              className="mt-0.5 shrink-0"
-            >
-              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-            </svg>
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting || !password || !confirm}
-          className="btn btn-primary h-14 w-full rounded-2xl text-base"
-        >
+      title="Ton mot de passe"
+      meta={`Choisis un mot de passe d’au moins ${MIN_PASSWORD_LENGTH} caractères.`}
+      onSubmit={handleSubmit}
+      bottom={
+        <PrimaryButton type="submit" disabled={submitting || !password || !confirm}>
           {submitting ? 'Enregistrement…' : 'Enregistrer le mot de passe'}
-        </button>
-      </form>
+        </PrimaryButton>
+      }
+    >
+      <PasswordField
+        id="new-password"
+        label="Mot de passe"
+        autoComplete="new-password"
+        required
+        value={password}
+        onChange={setPassword}
+        enterKeyHint="next"
+        className="px-5"
+      />
+      <PasswordField
+        id="confirm-password"
+        label="Confirmer le mot de passe"
+        autoComplete="new-password"
+        required
+        value={confirm}
+        onChange={setConfirm}
+        enterKeyHint="go"
+        className="px-5 pt-4"
+      />
+      {error && (
+        <div className="px-5">
+          <FieldError className="mt-4">{error}</FieldError>
+        </div>
+      )}
     </AuthShell>
   )
 }

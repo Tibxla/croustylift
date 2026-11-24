@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCount, formatRate } from './format'
+import { formatCount, formatDuration, formatRate } from './format'
 
 // Chiffres de l'Analyse en français : virgule décimale, vrai signe moins
 // (U+2212), jamais de point ni de trait d'union.
@@ -27,8 +27,21 @@ describe('formatRate', () => {
 })
 
 describe('formatCount', () => {
-  it('une décimale et une virgule, comme la fin de séance', () => {
+  it('une décimale et une virgule, un entier sans décimale, comme la fin de séance', () => {
     expect(formatCount(5.8)).toBe('5,8')
-    expect(formatCount(6)).toBe('6,0')
+    expect(formatCount(6)).toBe('6')
+    expect(formatCount(5.96)).toBe('6')
+  })
+})
+
+describe('formatDuration', () => {
+  it('une durée notée à 0 se dit « moins d’1 min », comme en fin de séance', () => {
+    expect(formatDuration(0)).toBe('moins d’1 min')
+  })
+
+  it('sous l’heure en minutes, au-delà en heures', () => {
+    expect(formatDuration(1)).toBe('1 min')
+    expect(formatDuration(58)).toBe('58 min')
+    expect(formatDuration(65)).toBe('1 h 05')
   })
 })

@@ -4,7 +4,8 @@ import { PendingWritesError } from './auth-context'
 import { heldCounts } from '../features/capture/outbox'
 import { heldWritesNotice } from '../features/capture/sync-label'
 import { ForgotPasswordScreen } from './ForgotPasswordScreen'
-import { AuthShell, FieldLabel, PasswordField } from './AuthShell'
+import { AuthShell } from './AuthShell'
+import { FieldError, Notice, PasswordField, PrimaryButton, SecondaryButton, TextField, TextLink } from '../ui'
 import { arrivalHash } from '../lib/supabase'
 import { arrivalFromHash } from './arrival-link'
 
@@ -17,10 +18,10 @@ type Mode = 'signin' | 'forgot'
 function frenchError(message: string): string {
   const m = message.toLowerCase()
   if (m.includes('invalid login credentials')) {
-    return 'Email ou mot de passe incorrect.'
+    return 'E-mail ou mot de passe incorrect.'
   }
   if (m.includes('email not confirmed')) {
-    return 'Email non confirmé. Vérifie ta boîte de réception.'
+    return 'E-mail non confirmé. Vérifie ta boîte de réception.'
   }
   if (m.includes('unable to validate email') || m.includes('invalid email')) {
     return 'Adresse email invalide.'
@@ -86,120 +87,96 @@ export function LoginScreen() {
 
   return (
     <AuthShell
-      title="Bon retour."
-      subtitle="Capture en salle. Progresse au calme."
+      title="Connexion"
+      meta="Une fois par appareil. Ensuite l’app s’ouvre même sans réseau."
+      onSubmit={handleSubmit}
+      bottom={
+        <PrimaryButton type="submit" disabled={submitting || !email || !password}>
+          {submitting ? 'Connexion…' : 'Se connecter'}
+        </PrimaryButton>
+      }
     >
       {pendingNotice && (
-        <div className="surface-card mb-6 rounded-[14px] px-4 py-3.5 text-left">
-          <p className="text-sm text-ink">{pendingNotice}</p>
+        <div className="px-5 pb-2">
           {confirmPurge ? (
-            <div className="mt-3 flex flex-col gap-2">
-              <p className="text-xs text-warn">
-                Changer de compte efface définitivement ces saisies de l'appareil.
-              </p>
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setConfirmPurge(false)}
-                  className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    forgetLocalData()
-                    setConfirmPurge(false)
-                    setError(null)
-                  }}
-                  className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
-                >
-                  Purger et changer de compte
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmPurge(true)}
-              className="mt-2 rounded text-xs font-medium text-ink-muted transition active:text-ink"
+            <Notice
+              role="alert"
+              title="Effacer ces saisies&#8239;?"
+              actions={
+                <>
+                  <SecondaryButton onClick={() => setConfirmPurge(false)}>Garder</SecondaryButton>
+                  <TextLink
+                    tone="muted"
+                    onClick={() => {
+                      forgetLocalData()
+                      setConfirmPurge(false)
+                      setError(null)
+                    }}
+                  >
+                    Purger et changer de compte
+                  </TextLink>
+                </>
+              }
             >
-              Changer de compte…
-            </button>
+              Changer de compte efface définitivement ces saisies de l’appareil.
+            </Notice>
+          ) : (
+            <Notice
+              actions={
+                <SecondaryButton onClick={() => setConfirmPurge(true)}>
+                  Changer de compte
+                </SecondaryButton>
+              }
+            >
+              <span className="text-ink">{pendingNotice}</span>
+            </Notice>
           )}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
-        <div>
-          <FieldLabel htmlFor="email">E-mail</FieldLabel>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="field h-[54px] w-full rounded-[14px] px-4 text-base"
-            placeholder="toi@exemple.com"
-          />
+      <TextField
+        id="email"
+        label="E-mail"
+        type="email"
+        inputMode="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={setEmail}
+        placeholder="toi@exemple.com"
+        enterKeyHint="next"
+        className="px-5 pt-4"
+      />
+      <PasswordField
+        id="password"
+        label="Mot de passe"
+        autoComplete="current-password"
+        required
+        value={password}
+        onChange={setPassword}
+        enterKeyHint="go"
+        className="px-5 pt-4"
+      />
+
+      {error && (
+        <div className="px-5">
+          <FieldError className="mt-4">{error}</FieldError>
         </div>
-
-        <div>
-          <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
-          <PasswordField
-            id="password"
-            value={password}
-            onChange={setPassword}
-            autoComplete="current-password"
-          />
-        </div>
-
-        {error && (
-          <p role="alert" className="flex items-start gap-2 text-sm text-warn">
-            {/* Glyphe d'alerte : double l'info couleur par une forme (DESIGN.md). */}
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              className="mt-0.5 shrink-0"
-            >
-              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-            </svg>
-            {error}
-          </p>
-        )}
-        {linkFailed && !error && (
-          <p className="text-sm text-ink-muted">
-            Ce lien a expiré ou a déjà servi. Demande un nouveau lien avec « Mot de passe
-            oublié », ou une nouvelle invitation.
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting || !email || !password}
-          className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
-        >
-          {submitting ? 'Connexion…' : 'Se connecter'}
-        </button>
-      </form>
+      )}
+      {linkFailed && !error && (
+        <p className="px-5 pt-4 text-[15px] leading-[1.45] text-muted">
+          Ce lien a expiré ou a déjà servi. Demande un nouveau lien avec « Mot de passe
+          oublié », ou une nouvelle invitation.
+        </p>
+      )}
 
       {/* Pas de lien « Créer un compte » : l'inscription est fermée, les comptes
           viennent par invitation (le lien d'e-mail mène à l'écran de mot de passe). */}
-      <button
-        type="button"
-        onClick={() => setMode('forgot')}
-        className="mt-5 block w-full rounded text-center text-sm font-medium text-accent-ink transition active:text-accent"
-      >
-        Mot de passe oublié&#8239;?
-      </button>
+      <div className="px-5 pt-3">
+        <TextLink tone="muted" onClick={() => setMode('forgot')}>
+          Mot de passe oublié&#8239;?
+        </TextLink>
+      </div>
     </AuthShell>
   )
 }

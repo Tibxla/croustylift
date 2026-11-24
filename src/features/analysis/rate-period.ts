@@ -13,14 +13,16 @@ const DAY_FORMAT = new Intl.DateTimeFormat('fr-FR', {
 })
 
 /**
- * 'YYYY-MM-DD' -> « 3 nov. », avec l'année si ce n'est pas `currentYear`
+ * 'YYYY-MM-DD' -> « 3 nov. » (« 1ᵉʳ juin » le premier du mois), avec l'année si ce n'est pas `currentYear`
  * (« 29 déc. 2025 »). Le jour est lu ET écrit en UTC : `Date.parse` d'un jour ISO
  * vaut minuit UTC, un format en heure locale rendrait la veille à l'ouest de
  * Greenwich. Renvoie l'entrée telle quelle si elle est mal formée.
  */
 export function formatDay(iso: string, currentYear: number): string {
   const t = Date.parse(iso)
-  return Number.isNaN(t) ? iso : DAY_FORMAT.format(t).replace(` ${currentYear}`, '')
+  if (Number.isNaN(t)) return iso
+  // « 1ᵉʳ juin », pas « 1 juin » : le premier du mois s'écrit en ordinal.
+  return DAY_FORMAT.format(t).replace(` ${currentYear}`, '').replace(/^1 /, '1ᵉʳ ')
 }
 
 /** « aucune séance », « 1 séance », « 4 séances ». */

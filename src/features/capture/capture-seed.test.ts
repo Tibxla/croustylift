@@ -120,6 +120,21 @@ describe('seedDraft — unilatéral (côté visé, issue #46/#63)', () => {
     expect(seed.weightKg).toBe(34); // réf droit order=1, pas le 30 du gauche
   });
 
+  it('2e côté d’un premier passage (G fait, rien pour D) : reprend les valeurs du G, pas le neutre', () => {
+    const loggedSets: PerformedSet[] = [{ weightKg: 25, reps: 10, rir: 1, order: 1, side: 'left' }];
+    const seed = seedDraft({ prescription, reference: null, loggedSets, side: 'right' });
+    expect(seed).toEqual({ weightKg: 25, reps: 10, rir: 1 });
+  });
+
+  it('2e côté sans repère de ce côté, à la 2e série : reprend aussi le côté loggé de CETTE série', () => {
+    const loggedSets: PerformedSet[] = [
+      { weightKg: 25, reps: 10, rir: 1, order: 1, side: 'left' },
+      { weightKg: 27.5, reps: 9, rir: 2, order: 2, side: 'left' },
+    ];
+    const seed = seedDraft({ prescription, reference: null, loggedSets, side: 'right' });
+    expect(seed).toEqual({ weightKg: 27.5, reps: 9, rir: 2 });
+  });
+
   it('côté sans référence ni saisie : point de départ neutre', () => {
     const seed = seedDraft({ prescription, reference: null, loggedSets: [], side: 'left' });
     expect(seed.weightKg).toBe(20);

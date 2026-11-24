@@ -14,10 +14,6 @@ function packageOf(id: string): string | null {
   return first.startsWith('@') ? `${first}/${second}` : first
 }
 
-// Vendors de l'Analyse : recharts et ce qu'il tire (d3, redux, immer...).
-const CHART_PACKAGES =
-  /^(recharts|d3-.+|internmap|victory-vendor|decimal\.js-light|eventemitter3|es-toolkit|tiny-invariant|clsx|redux|redux-thunk|@reduxjs\/toolkit|react-redux|reselect|immer|react-is|use-sync-external-store)$/
-
 export default defineConfig({
   define: {
     __APP_COMMIT__: JSON.stringify(buildCommit()),
@@ -64,7 +60,7 @@ export default defineConfig({
       manifest: {
         name: 'Croustylift',
         short_name: 'Croustylift',
-        description: 'Tracker de musculation, capture zero-friction en salle.',
+        description: 'Tracker de musculation, capture sans friction en salle.',
         lang: 'fr',
         // display standalone : se comporte comme une app native (pas de barre
         // de navigation navigateur), essentiel pour "Ajouter a l'ecran d'accueil".
@@ -72,9 +68,12 @@ export default defineConfig({
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
-        // Couleurs coherentes avec DESIGN.md : Noir d'instrument + violet electrique.
-        theme_color: '#7c3aed',
-        background_color: '#0d0d12',
+        // Le fond de l'app (--color-bg, DESIGN.md) pour les deux : barre du système
+        // et écran de lancement se fondent dans le premier écran.
+        theme_color: '#100e0c',
+        background_color: '#100e0c',
+        // Icônes E (public/) : règle graduée blanc cassé, aiguille au signal, sur
+        // le fond noir chaud, opaques et pleines (l'OS pose son propre masque).
         icons: [
           {
             src: '/icon-192.png',
@@ -113,15 +112,12 @@ export default defineConfig({
         // pas d'un déploiement à l'autre, le service worker ne retélécharge que le
         // code de l'app. En fonction, et par nom de paquet EXACT : la forme objet
         // (`react: ['react', 'react-dom']`) laissait `react-dom/client` dans le
-        // chunk applicatif. `recharts` a son propre chunk, chargé seulement avec
-        // l'Analyse (React.lazy) : sans lui, le chunk paresseux changeait de hash à
-        // chaque modification de l'app.
+        // chunk applicatif.
         manualChunks(id) {
           const pkg = packageOf(id)
           if (pkg === null) return undefined
           if (pkg === 'react' || pkg === 'react-dom' || pkg === 'scheduler') return 'react'
           if (pkg.startsWith('@supabase/')) return 'supabase'
-          if (CHART_PACKAGES.test(pkg)) return 'recharts'
           return undefined
         },
       },
@@ -134,5 +130,9 @@ export default defineConfig({
     // sans cette exclusion, vitest globbe leurs *.test.ts et teste du code périmé /
     // double-compte. On garde les exclusions par défaut + .claude.
     exclude: [...configDefaults.exclude, '**/.claude/**'],
+    // Un `navigator.locks` par fil : celui de Node est partagé entre les threads
+    // du processus, et `--pool=threads` faisait se bloquer deux fichiers de test
+    // sur le même verrou de flush (cf. src/test/thread-locks.ts).
+    setupFiles: ['./src/test/thread-locks.ts'],
   },
 })

@@ -30,6 +30,7 @@ import {
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
+  type PatchSetOp,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
 
@@ -83,6 +84,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const order: OutboxOp[] = [];
   const upsertExecution = vi.fn(async (op) => void order.push(op));
   const insertSet = vi.fn(async (op) => void order.push(op));
+  const patchSet = vi.fn(async (op) => void order.push(op));
   const deleteSet = vi.fn(async (op) => void order.push(op));
   const updateExecution = vi.fn(async (op) => void order.push(op));
   const upsertDatedNote = vi.fn(async (op) => void order.push(op));
@@ -90,9 +92,11 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const upsertExerciseNote = vi.fn(async (op) => void order.push(op));
   const deleteExerciseNote = vi.fn(async (op) => void order.push(op));
   const deleteExecution = vi.fn(async (op) => void order.push(op));
+  const deleteExecutionIfEmpty = vi.fn(async (op) => void order.push(op));
   return {
     upsertExecution,
     insertSet,
+    patchSet,
     deleteSet,
     updateExecution,
     upsertDatedNote,
@@ -100,6 +104,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
     upsertExerciseNote,
     deleteExerciseNote,
     deleteExecution,
+    deleteExecutionIfEmpty,
     calls: () => order,
   };
 }
@@ -1811,5 +1816,191 @@ describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)
     const seen = new Map([['sans-instant', new Set(['p1'])]]);
     const merged = mergeByEnqueueTime([uid('p1', 10), uid('p2', 20)], [uid('sans-instant')], seen);
     expect(ids(merged)).toEqual(['p1', 'sans-instant', 'p2']);
+  });
+});
+
+// --- Écritures partielles : un type d'op à part (onglet resté sur main) -----
+//
+// Une correction ou une remontée de rang était une `insertSet` marquée `only`.
+// Un onglet resté sur un bundle antérieur (main) ignore `only` et la rejoue en
+// upsert complet, avec les valeurs que l'émetteur voyait : il pouvait remettre
+// S2 à 80 kg après une correction à 90 kg faite ailleurs. Elles portent
+// désormais leur propre type, `patchSet`, que l'ancien client ne sait pas jouer :
+// il s'arrête dessus (cf. « op de type inconnu ») au lieu d'écraser.
+
+describe('écritures partielles (patchSet)', () => {
+  const STORAGE_KEY = 'croustylift:outbox';
+  const QUARANTINE_KEY = 'croustylift:outbox:quarantine';
+  const rejection = { code: '23514', message: 'rejet de la base', details: '', hint: '' };
+
+  function patchOp(id: string, only: 'values' | 'rank', fields: Partial<PatchSetOp> = {}): PatchSetOp {
+    return { ...setOp(id, 2), type: 'patchSet', only, ...fields };
+  }
+  /** Une écriture partielle telle que la branche l'enfilait avant ce type. */
+  function legacyPartial(id: string, only: 'values' | 'rank', fields: Record<string, unknown> = {}) {
+    return { ...setOp(id, 2), only, _uid: `uid-${id}-${only}`, ...fields };
+  }
+
+  it('une écriture partielle n’est jamais une `insertSet` : un ancien client ne la rejoue pas en upsert', async () => {
+    enqueue(execOp());
+    enqueue(patchOp('s2', 'values', { weightKg: 90 }));
+    const fns = okFns();
+
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(fns.patchSet).toHaveBeenCalledTimes(1);
+    expect(fns.patchSet).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'patchSet', id: 's2', only: 'values', weightKg: 90 }),
+    );
+  });
+
+  it('file héritée : une `insertSet` marquée `only` est lue comme un `patchSet` et envoyée en partiel', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([legacyPartial('s2', 'values', { weightKg: 90 }), legacyPartial('s3', 'rank', { setOrder: 1 })]),
+    );
+
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual(['patchSet:s2', 'patchSet:s3']);
+    expect(readQueue()[0]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
+
+    const fns = okFns();
+    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(fns.insertSet).not.toHaveBeenCalled();
+    expect(fns.calls().map((op) => `${op.type}:${op.id}:${(op as PatchSetOp).only}`)).toEqual([
+      'patchSet:s2:values',
+      'patchSet:s3:rank',
+    ]);
+  });
+
+  it('file héritée : une insertion complète (sans `only`) reste une `insertSet`', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([{ ...setOp('s1', 1), _uid: 'u1' }]));
+    expect(readQueue()[0]).toMatchObject({ type: 'insertSet', id: 's1' });
+    expect('only' in readQueue()[0]!).toBe(false);
+  });
+
+  it('file héritée réécrite : la forme héritée ne survit pas à la prochaine écriture de la file', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'values')]));
+    enqueue(execOp());
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as { type: string }[];
+    expect(raw.map((op) => op.type)).toEqual(['patchSet', 'upsertExecution']);
+  });
+
+  it('insertion refusée puis correction : la série part entière, reconstituée, et le refus est levé', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    enqueue(execOp());
+    enqueue(setOp('s2', 2));
+    const refusing = okFns();
+    (refusing.insertSet as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw rejection;
+    });
+    await flush(refusing);
+    expect(readQuarantine().map((q) => q.op.type)).toEqual(['insertSet']);
+
+    enqueue(patchOp('s2', 'values', { weightKg: 90, setOrder: 7 }));
+    const fns = okFns();
+    await flush(fns);
+
+    expect(fns.patchSet).not.toHaveBeenCalled();
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+    const sent = (fns.insertSet as ReturnType<typeof vi.fn>).mock.calls[0]![0] as InsertSetOp;
+    expect(sent).toMatchObject({ type: 'insertSet', id: 's2', weightKg: 90, setOrder: 2 });
+    expect('only' in sent).toBe(false);
+    expect(quarantineCount()).toBe(0);
+  });
+
+  it('refus hérité et correction héritée : la série part entière, reconstituée', async () => {
+    // Le refus d'une correction (forme héritée), puis la file avec une autre
+    // correction héritée de la même série dont l'insertion d'origine est refusée.
+    localStorage.setItem(
+      QUARANTINE_KEY,
+      JSON.stringify([
+        { op: { ...setOp('s2', 2), _uid: 'u-ins' }, reason: '23514 : rejet', at: '2026-11-24T10:00:00.000Z' },
+        { op: legacyPartial('s9', 'rank'), reason: '23514 : rejet', at: '2026-11-24T10:01:00.000Z' },
+      ]),
+    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'rank', { setOrder: 1, weightKg: 1 })]));
+
+    expect(readQuarantine().map((q) => `${q.op.type}:${q.op.id}`)).toEqual(['insertSet:s2', 'patchSet:s9']);
+
+    const fns = okFns();
+    await flush(fns);
+    expect(fns.patchSet).not.toHaveBeenCalled();
+    expect(fns.insertSet).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'insertSet', id: 's2', setOrder: 1, weightKg: 80 }),
+    );
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['s9']);
+  });
+
+  /** Les `insertSet` portant `only` encore écrites telles quelles sur l'appareil. */
+  function rawLegacyPartials(): string[] {
+    const queue = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as { type: string; id: string; only?: string }[];
+    const quarantine = JSON.parse(localStorage.getItem(QUARANTINE_KEY) ?? '[]') as { op: { type: string; id: string; only?: string } }[];
+    return [...queue, ...quarantine.map((q) => q.op)]
+      .filter((op) => op.type === 'insertSet' && op.only !== undefined)
+      .map((op) => op.id);
+  }
+
+  // Lue convertie, l'ancienne forme restait BRUTE dans le stockage tant que rien
+  // ne réécrivait la file : un onglet de main sur la même origine la rejouait
+  // alors en upsert complet (90 kg remis à 80). Le démarrage la réécrit.
+  it('au démarrage, la forme héritée est réécrite sur l’appareil, file et quarantaine', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([{ ...execOp(), _uid: 'u-exec' }, legacyPartial('s2', 'values', { weightKg: 90 })]),
+    );
+    localStorage.setItem(
+      QUARANTINE_KEY,
+      JSON.stringify([{ op: legacyPartial('s9', 'rank'), reason: '23514 : rejet', at: '2026-11-24T10:00:00.000Z' }]),
+    );
+    expect(rawLegacyPartials()).toEqual(['s2', 's9']);
+
+    adoptLegacyOps();
+
+    expect(rawLegacyPartials()).toEqual([]);
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as OutboxOp[];
+    expect(raw.map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
+    expect(raw[1]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
+    expect(readQuarantine()[0]).toMatchObject({ op: { type: 'patchSet', id: 's9' }, reason: '23514 : rejet' });
+  });
+
+  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([{ ...execOp(), _uid: 'u-exec', _owner: 'user-1' }]));
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    adoptLegacyOps();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('une forme héritée apparue après le démarrage (onglet d’une préversion) est réécrite au début du flush', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'values', { weightKg: 90 })]));
+    const fns = okFns();
+    (fns.patchSet as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // Pendant l'envoi : la file sur l'appareil porte déjà la forme nouvelle.
+      expect(rawLegacyPartials()).toEqual([]);
+      throw new TypeError('Failed to fetch');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await flush(fns);
+    expect(fns.patchSet).toHaveBeenCalledTimes(1);
+    expect(rawLegacyPartials()).toEqual([]);
+    expect(readQueue().map((op) => op.type)).toEqual(['patchSet']);
+  });
+
+  it('une écriture partielle suit son exécution : purgée avec elle, retenue si sa création est refusée', async () => {
+    enqueue(execOp('exec-1'));
+    enqueue(patchOp('s2', 'values'));
+    purgeByExecution('exec-1');
+    expect(readQueue()).toEqual([]);
+
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    enqueue(execOp('exec-2'));
+    enqueue(patchOp('s3', 'rank', { executionId: 'exec-2' }));
+    const fns = okFns();
+    (fns.upsertExecution as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw rejection;
+    });
+    await flush(fns);
+    expect(fns.patchSet).not.toHaveBeenCalled();
+    expect(readQuarantine().map((q) => `${q.op.type}:${q.op.id}`)).toEqual(['upsertExecution:exec-2', 'patchSet:s3']);
   });
 });

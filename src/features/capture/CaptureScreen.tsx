@@ -8,11 +8,10 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
-  type CSSProperties,
   type Dispatch,
 } from 'react';
 import {
@@ -42,10 +41,8 @@ import {
 } from './data';
 import type { PreviousDatedNote } from './fixtures';
 import {
-  addExercise,
   layoutEditOf,
   replayLayout,
-  swapExercise,
   templateExerciseIds,
 } from './session-edit';
 import {
@@ -56,7 +53,6 @@ import {
 import { datedNoteId } from '../notes/dated-note-id';
 import {
   adoptedVersionId,
-  capturePersistFailing,
   captureReducer,
   clearPersisted,
   getDatedNote,
@@ -77,6 +73,7 @@ import {
   previousDayIso,
   applyQueuedSets,
   reconcileProgress,
+  withReconciledProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
   todayIso,
@@ -85,13 +82,12 @@ import {
 } from './state';
 import {
   enqueue,
+  enqueueAll,
+  isSetInsertion,
   OUTBOX_CHANGED_EVENT,
-  pendingCount,
-  quarantineCount,
   purgeByExecution,
   readOwnQueue,
   readQueue,
-  storageFailing,
   unionOfQueueReads,
   type OutboxOp,
 } from './outbox';
@@ -100,17 +96,29 @@ import {
 // `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces. On
 // passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
 import { flushOutbox } from './sync';
-import { syncBannerLabel, type SyncTone } from './sync-label';
 import { boundSetValues } from './stepper-utils';
 import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
-import { pairSidesByOrder } from '../../domain/unilateral';
+import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import type { IndexItem } from './ExerciseIndex';
+import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
+import { formatWeight } from './format';
+import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
+import { useGoToSurface } from '../../shell/navigation';
+import { syncLine, type SyncState } from '../../shell/sync-line';
+import { useSyncState } from '../../shell/useSyncState';
+import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
-import { buildSummary, elapsedMinutesSince } from './summary';
+import { elapsedMinutesSince } from './summary';
+import { buildSessionRecap } from './session-recap';
+import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
+import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
+import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
+import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
 
 type LoadState =
   | { phase: 'loading' }
@@ -119,10 +127,9 @@ type LoadState =
   | { phase: 'empty' }
   | {
       phase: 'ready';
-      /** La séance du jour : le template de l'exécution, disposition rejouée. */
-      session: Session;
-      /** Les ids du TEMPLATE seul, référence du diff de déviations (ADR 0002). */
-      templateIds: string[];
+      template: Session;
+      /** Exos du journal de disposition, dans l'ordre des gestes. */
+      extras: (SessionExercise | null)[];
       /**
        * L'id d'exécution posé par ce chargement. Il entre dans la clé du tableau
        * de capture : un chargement qui adopte une AUTRE exécution (réponse
@@ -363,13 +370,6 @@ export function CaptureScreen() {
         ),
         previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
       });
-      // Le TEMPLATE de l'exécution, puis la séance du jour : le template sur
-      // lequel la disposition est rejouée (cf. `replayLayout`).
-      const template: Session = { ...base, exercises: withRows.map(derived) };
-      const session = replayLayout(template, layout, (_edit, index) => {
-        const extra = extras[index];
-        return extra ? derived(extra) : null;
-      });
       // On transporte l'init vers le reducer via une ref, posée AVANT le passage
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
@@ -397,8 +397,8 @@ export function CaptureScreen() {
       initRef.current = init;
       setLoad({
         phase: 'ready',
-        session,
-        templateIds: templateExerciseIds(template),
+        template: { ...base, exercises: withRows.map(derived) },
+        extras: extras.map((extra) => extra && derived(extra)),
         generation: loadGenRef.current,
         executionId: init.executionId,
         seanceVersionId,
@@ -471,9 +471,12 @@ export function CaptureScreen() {
             base: lateToday.progress,
             pendingSetIds: [
               ...lateToday.pendingSetIds,
-              ...queue.filter((op) => op.type === 'insertSet').map((op) => op.id),
+              ...queue.filter(isSetInsertion).map((op) => op.id),
             ],
             knownAtDeparture,
+            // Avec ses valeurs : une série corrigée ici pendant le trajet garde
+            // sa valeur locale (cf. `reconcileProgress`).
+            departure: restored.progress,
             // Les notes datées aussi : une note écrite ailleurs (autre appareil,
             // ancien client) que l'état local ignore est adoptée ; une note
             // locale ou en attente d'envoi n'est jamais touchée. Les écritures
@@ -592,51 +595,33 @@ export function CaptureScreen() {
   }
 
   if (load.phase === 'loading') {
+    // Une ligne, sans animation : le chargement est court et revient souvent.
     return (
-      <div className="flex min-h-surface items-center justify-center">
-        <div
-          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-          role="status"
-          aria-label="Chargement de la séance"
-        />
-      </div>
+      <p role="status" className="px-5 pt-6 text-[16px] text-muted">
+        Chargement de la séance…
+      </p>
     );
   }
 
   if (load.phase === 'empty') {
-    return (
-      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-ink-muted">
-          Rien à logger pour l'instant. Va dans l'onglet Séances pour choisir ta
-          routine courante et lui ajouter une séance.
-        </p>
-      </div>
-    );
+    return <NothingToLog />;
   }
 
   if (load.phase === 'error') {
     return (
-      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-sm text-ink-muted">
-          Impossible de charger ta séance.
-        </p>
-        <p className="max-w-full break-words text-xs text-warn">{load.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
-      </div>
+      <EmptyState
+        title="Impossible de charger ta séance."
+        body={<span className="break-words">{load.message}</span>}
+        action={<SecondaryButton onClick={() => setReloadKey((k) => k + 1)}>Réessayer</SecondaryButton>}
+      />
     );
   }
 
   return (
     <CaptureBoard
-      key={`${load.session.id}:${load.executionId}`}
-      session={load.session}
-      templateIds={load.templateIds}
+      key={`${load.template.id}:${load.executionId}`}
+      template={load.template}
+      extras={load.extras}
       lateBox={lateBox}
       boardStateRef={boardStateRef}
       generation={load.generation}
@@ -655,11 +640,10 @@ export function CaptureScreen() {
 // --- Choix de la séance (routine courante) ----------------------------------
 
 /**
- * Sélecteur de séance à l'arrivée en Capture : « quelle séance de ta routine
- * courante tu attaques ? ». N'apparaît que si la routine courante a au moins
- * deux séances (une seule est chargée direct ; aucune affiche l'état vide).
- * Calqué sur ExercisePicker pour l'unité visuelle (même conteneur, surfaces,
- * chevron). Pas d'accent décoratif : le violet reste pour l'action et l'état.
+ * « Quelle séance ? » à l'arrivée en Salle, parmi les séances de la routine
+ * courante. N'apparaît que si la routine en a au moins deux (une seule est
+ * chargée direct ; aucune affiche l'état vide). Une ligne par séance, dans
+ * l'ordre de la routine ; le nom suffit, rien d'inventé autour.
  */
 function SeancePicker({
   seances,
@@ -668,89 +652,47 @@ function SeancePicker({
   seances: SeanceChoice[];
   onPick: (seance: SeanceChoice) => void;
 }) {
-  // La bannière de sync est aussi pertinente ici (on revient en salle) : on réutilise
-  // le même hook que CaptureBoard, sans état nouveau.
-  const { status, pending } = useSyncStatus();
+  const go = useGoToSurface();
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-2">
-      <SyncBanner status={status} pending={pending} />
-
-      <header className="mb-6 mt-5 px-1">
-        <p className="readout mb-2 text-[12px] font-semibold uppercase tracking-[0.1em] text-accent-ink">
-          Routine courante
-        </p>
-        <h2 className="text-[32px] font-semibold leading-[1.05] tracking-[-0.025em] text-ink">
-          Ta séance
-        </h2>
-        <p className="mt-2 text-[15px] text-ink-muted">Quelle séance tu attaques&#8239;?</p>
-      </header>
-
-      <ul className="flex flex-col gap-[13px]">
-        {seances.map((seance, i) => (
-          <li key={seance.id} className="reveal" style={{ '--reveal-i': i } as CSSProperties}>
-            <button
-              type="button"
-              onClick={() => onPick(seance)}
-              className="surface-interactive flex w-full items-center gap-4 rounded-[20px] px-[18px] py-5 text-left"
-            >
-              {/* Badge lettre (position dans la routine), readout mono — signature instrument. */}
-              <span className="readout flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] border border-hair bg-surface-2 text-[17px] font-semibold text-ink-muted">
-                {String.fromCharCode(65 + (i % 26))}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-lg font-semibold text-ink">
-                {seance.name}
-              </span>
-              <svg
-                viewBox="0 0 24 24"
-                width="20"
-                height="20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="shrink-0 text-ink-muted"
-                aria-hidden="true"
-              >
-                <path d="M9 6l6 6-6 6" />
-              </svg>
-            </button>
-          </li>
+    <div className="flex flex-1 flex-col">
+      <SalleSync />
+      <ScreenHeader title="Quelle séance ?" meta="Parmi celles de ta routine courante." />
+      <List label="Séances de la routine courante">
+        {seances.map((seance) => (
+          <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
         ))}
-      </ul>
-
-      <p className="mt-6 rounded-2xl border border-dashed border-hair-strong px-4 py-4 text-center text-[13px] text-ink-faint">
-        Pas la bonne routine&#8239;? Change-la dans Séances.
-      </p>
+      </List>
+      {/* La question, puis le chemin sur sa propre ligne : la même mise en
+          page à 360 et à 390 px, cible de 44 px. */}
+      <div className="px-5 pt-4">
+        <p className="text-[15px] leading-[1.45] text-muted">Pas la bonne routine ?</p>
+        <TextLink tone="muted" onClick={() => go('seances')}>
+          Change-la dans Séances
+        </TextLink>
+      </div>
     </div>
   );
 }
 
-// --- Indicateur de sync réactif --------------------------------------------
-// La bannière est pilotée par la LONGUEUR de l'outbox + l'état réseau. On
-// expose la longueur via un petit store maison rafraîchi à chaque mutation /
-// flush / changement de connectivité, lu par useSyncExternalStore.
-
-const syncListeners = new Set<() => void>();
-
-/** À appeler après tout changement de file (enqueue / flush) pour rafraîchir l'UI. */
-function notifySync() {
-  for (const l of syncListeners) l();
+/** Aucune séance dans la routine courante : le chemin vers Séances est donné. */
+function NothingToLog() {
+  const go = useGoToSurface();
+  return (
+    <EmptyState
+      title="Rien à logger pour l’instant."
+      body="Choisis ta routine courante dans Séances et ajoute-lui une séance."
+      action={<TextLink onClick={() => go('seances')}>Aller dans Séances</TextLink>}
+    />
+  );
 }
 
-function subscribeSync(cb: () => void): () => void {
-  syncListeners.add(cb);
-  const onOnlineOffline = () => cb();
-  window.addEventListener('online', onOnlineOffline);
-  window.addEventListener('offline', onOnlineOffline);
-  // La file a bougé sans geste de cet écran (essai reprogrammé par l'outbox).
-  window.addEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
-  return () => {
-    syncListeners.delete(cb);
-    window.removeEventListener('online', onOnlineOffline);
-    window.removeEventListener('offline', onOnlineOffline);
-    window.removeEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
-  };
+// --- Fraîcheur de la ligne de synchro ---------------------------------------
+
+/** À appeler après tout changement de file (enqueue / flush) : la ligne de
+ *  synchro et le bouton Sommaire (src/shell/useSyncState.ts) relisent la file
+ *  tout de suite au lieu d'attendre leur relecture périodique. */
+function notifySync() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
 }
 
 /** Tente un flush puis notifie l'UI (longueur de file potentiellement changée). */
@@ -769,31 +711,20 @@ function enqueueAndFlush(...ops: Parameters<typeof enqueue>): void {
   void attemptFlush();
 }
 
-export type SyncStatus = 'synced' | 'pending' | 'offline';
-
-/** Statut de synchro dérivé : file vide = synchronisé ; sinon hors-ligne / en attente. */
-function useSyncStatus(): { status: SyncStatus; pending: number } {
-  const pending = useSyncExternalStore(
-    subscribeSync,
-    () => pendingCount(),
-    () => 0,
-  );
-  const online =
-    useSyncExternalStore(
-      subscribeSync,
-      () => (typeof navigator === 'undefined' ? true : navigator.onLine),
-      () => true,
-    ) ?? true;
-
-  if (pending === 0) return { status: 'synced', pending };
-  return { status: online ? 'pending' : 'offline', pending };
+/** Enfile les ops d'UN geste comme une unité (`enqueueAll`, outbox.ts : tout sur
+ *  l'appareil ou tout en mémoire), notifie l'UI et tente un flush. */
+function enqueueGestureAndFlush(ops: readonly OutboxOp[]): void {
+  if (ops.length === 0) return;
+  enqueueAll(ops);
+  notifySync();
+  void attemptFlush();
 }
 
 // --- Le tableau de capture (séance chargée) ---------------------------------
 
 function CaptureBoard({
-  session: initialSession,
-  templateIds,
+  template: initialTemplate,
+  extras: initialExtras,
   lateBox,
   boardStateRef,
   generation,
@@ -802,9 +733,8 @@ function CaptureBoard({
   init,
   onExitToLaunch,
 }: {
-  session: Session;
-  /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
-  templateIds: string[];
+  template: Session;
+  extras: (SessionExercise | null)[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
   lateBox: LateMailbox<ReconcileAction>;
   /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
@@ -828,12 +758,9 @@ function CaptureBoard({
   // nouveau board).
   const [date] = useState(() => init.date);
 
-  // La séance courante évolue à la volée : ajout / swap d'un exo hors template
-  // (issue #36). Elle arrive ici disposition DÉJÀ rejouée (exos ajoutés ou
-  // remplacés avant ce montage, cf. `loadSeance`). Le TEMPLATE d'origine reste la
-  // référence du diff de déviations : ses ids sont passés à part (`templateIds`),
-  // il n'est JAMAIS modifié (le versionné en base non plus).
-  const [session, setSession] = useState(initialSession);
+  // Garder aussi les exos masqués : une série du Journal peut les faire
+  // revenir avec leur prescription, leur historique et leur note.
+  const [sources, setSources] = useState({ template: initialTemplate, extras: initialExtras });
 
   // RÉFÉRENCE SUIVIE EN DIRECT (ADR 0020). La séance s'ouvre sur les copies
   // locales, que leur revalidation de fond rattrape juste APRÈS : une série
@@ -851,9 +778,9 @@ function CaptureBoard({
     let subscribed = true;
     const refresh = (onlyExerciseId?: string) => {
       if (!subscribed) return;
-      setSession((current) => {
+      setSources((current) => {
         let changed = false;
-        const exercises = current.exercises.map((ex) => {
+        const refreshExercise = (ex: SessionExercise) => {
           if (onlyExerciseId !== undefined && ex.exerciseId !== onlyExerciseId) return ex;
           const history = peekExerciseHistory(
             ex.exerciseId,
@@ -864,8 +791,10 @@ function CaptureBoard({
           if (history === null || sameExerciseHistory(ex, history)) return ex;
           changed = true;
           return { ...ex, ...history };
-        });
-        return changed ? { ...current, exercises } : current;
+        };
+        const exercises = current.template.exercises.map(refreshExercise);
+        const extras = current.extras.map((ex) => ex && refreshExercise(ex));
+        return changed ? { template: { ...current.template, exercises }, extras } : current;
       });
     };
     const unsubscribe = onExerciseRowsWritten(refresh);
@@ -889,7 +818,7 @@ function CaptureBoard({
     // (lue pendant le rendu, elle valait un warning `react-hooks/refs`).
     const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } = init;
     const fromSupabase = hydratedState(
-      initialSession,
+      initialTemplate,
       progress,
       datedNotes,
       adoptedDate,
@@ -906,7 +835,7 @@ function CaptureBoard({
     const { queuedOps } = init;
     const withQueued = (built: CaptureState): CaptureState => {
       const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
-      return progress === built.progress ? built : { ...built, progress };
+      return withReconciledProgress(built, progress);
     };
     if (!restored) return withQueued(versioned);
     const merged = mergeProgress(versioned, restored);
@@ -920,6 +849,11 @@ function CaptureBoard({
       progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
     });
   });
+
+  const session = useMemo(
+    () => replayLayout(sources.template, state.layout ?? [], (_edit, i) => sources.extras[i] ?? null),
+    [sources, state.layout],
+  );
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
   // capturé par les handlers est figé entre deux renders : deux taps « Logger »
@@ -982,7 +916,6 @@ function CaptureBoard({
   }, [state, session, date]);
 
   // --- Synchro via outbox ---------------------------------------------------
-  const { status, pending } = useSyncStatus();
 
   // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
   // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
@@ -1115,6 +1048,33 @@ function CaptureBoard({
     [],
   );
 
+  // Corriger ou supprimer une série quelconque de l'exo affiché (set-gestures.ts).
+  // Même enchaînement qu'un log : le geste se calcule sur la PROJECTION, l'action
+  // est dispatchée et la projection avancée du même pas, puis les écritures sont
+  // enfilées une à une, dans l'ordre rendu (suppressions d'abord, puis les
+  // renumérotations), EN UNE FOIS (`enqueueAll`). Une écriture de série exige l'exécution en base :
+  // elle y est dès qu'une série existe, ré-affirmée ici une fois par montage
+  // (insertion seule, le lancement ne bouge pas).
+  const applySetGesture = useCallback(
+    (gesture: SetGesture | null) => {
+      if (gesture === null) return;
+      dispatch(gesture.action);
+      stateRef.current = captureReducer(stateRef.current, gesture.action);
+      if (gesture.ops.some((op) => op.type === 'insertSet' || op.type === 'patchSet')) enqueueExecutionOnce();
+      enqueueGestureAndFlush(gesture.ops);
+    },
+    [enqueueExecutionOnce],
+  );
+  const handleCorrectSet = useCallback(
+    (exerciseId: string, setId: string, values: SetEntry) =>
+      applySetGesture(correctSet(stateRef.current, exerciseId, setId, values)),
+    [applySetGesture],
+  );
+  const handleDeleteSet = useCallback(
+    (exerciseId: string, setId: string) => applySetGesture(deleteSet(stateRef.current, exerciseId, setId)),
+    [applySetGesture],
+  );
+
   // Enregistre la NOTE DATÉE d'un exo (issue #26). L'id de ligne est stable :
   // réutilisé s'il existe déjà (édition en place), sinon généré une fois. On
   // enfile l'exécution AVANT la note (dépendance FK note->exécution, garantie
@@ -1157,11 +1117,11 @@ function CaptureBoard({
   // le nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
   // immédiat ; la durabilité est portée par l'outbox.
   const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
-    setSession((s) => ({
-      ...s,
-      exercises: s.exercises.map((ex) =>
-        ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
-      ),
+    const update = (ex: SessionExercise) =>
+      ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex;
+    setSources(({ template, extras }) => ({
+      template: { ...template, exercises: template.exercises.map(update) },
+      extras: extras.map((ex) => ex && update(ex)),
     }));
     enqueueAndFlush(exerciseNoteOutboxOp({ exerciseId, body }));
   }, []);
@@ -1178,17 +1138,43 @@ function CaptureBoard({
   // reconstruite du template plus ce journal (`replayLayout`). Sans cela l'exo
   // ajouté disparaissait du sélecteur et ses séries sortaient du récap.
   const handleAddExercise = useCallback((exercise: SessionExercise) => {
-    setSession((s) => addExercise(s, exercise));
+    setSources((s) => ({ ...s, extras: [...s.extras, exercise] }));
     dispatch({ type: 'edit-layout', edit: layoutEditOf(exercise) });
   }, []);
 
+  // Remplacer (`replaceExercise`, exercise-gestures.ts) : en place si l'exo n'a
+  // aucune série, sinon l'exo commencé garde ses séries et le remplaçant
+  // s'insère juste après lui. Le geste est journalisé (`edit-layout`) ; il
+  // n'écrit rien en base. Depuis le Sommaire, aucun exo n'est affiché dans
+  // l'instrument : `openExerciseId` y vaut toujours null, il est suivi quand même.
   const handleSwapExercise = useCallback(
     (targetExerciseId: string, replacement: SessionExercise) => {
-      setSession((s) => swapExercise(s, targetExerciseId, replacement));
-      dispatch({ type: 'edit-layout', edit: layoutEditOf(replacement, targetExerciseId) });
+      const gesture = replaceExercise(stateRef.current, session, targetExerciseId, replacement);
+      if (gesture === null) return;
+      // La séance affichée se reconstruit du template, des exos du journal
+      // (`sources.extras`, alignés sur `layout`) et du journal lui-même : le
+      // remplaçant entre aux sources, le geste au journal (il dit s'il s'insère
+      // après l'exo commencé ou prend sa place, `keepsReplaced`).
+      setSources((s) => ({ ...s, extras: [...s.extras, replacement] }));
+      dispatch(gesture.action);
+      stateRef.current = captureReducer(stateRef.current, gesture.action);
+      if (gesture.openExerciseId !== null) {
+        const open = { type: 'open-exercise', exerciseId: gesture.openExerciseId } as const;
+        dispatch(open);
+        stateRef.current = captureReducer(stateRef.current, open);
+      }
     },
-    [],
+    [session],
   );
+
+  // Remettre un exo passé (`restoreSkippedExercise`) : une marque de l'appareil,
+  // rien en base.
+  const handleRestoreExercise = useCallback((exerciseId: string) => {
+    const gesture = restoreSkippedExercise(stateRef.current, exerciseId);
+    if (gesture === null) return;
+    dispatch(gesture.action);
+    stateRef.current = captureReducer(stateRef.current, gesture.action);
+  }, []);
 
   // Phase locale de fin de séance + durée chronométrée. Déclarés AVANT les callbacks
   // qui les utilisent (handleReset/handleNewSession/openFinish) : sinon `setPhase` est
@@ -1198,31 +1184,37 @@ function CaptureBoard({
   const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
   const [durationMin, setDurationMin] = useState<number | null>(null);
 
-  // « Annuler la séance » (geste unique) : ABANDONNE l'exécution courante puis
-  // REVIENT à l'écran de lancement (onExitToLaunch), ADR 0011. On ne reconstruit
-  // PAS une capture en place (l'ancien « Réinitialiser ») : on quitte la séance.
-  const handleCancelSession = useCallback(() => {
-    clearPersisted(session, date);
-    // Purge de la file UNIQUEMENT les ops de l'exécution abandonnée (pas toute la
-    // file : d'autres exécutions/corrections offline doivent survivre). Les
-    // deleteSet/deleteDatedNote restent (idempotents par id, inoffensifs).
-    purgeByExecution(state.executionId);
-    // L'exécution a pu être PARTIELLEMENT synchronisée (upsert + séries déjà
-    // flushés) : purgeByExecution ne défait rien en base. On enfile un
-    // deleteExecution (idempotent, cascade DB) pour ne pas laisser d'orpheline que
-    // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
-    enqueueAndFlush({
-      type: 'deleteExecution',
-      id: state.executionId,
-      // Les exos déjà saisis : leurs copies locales seront relues à l'acquittement.
-      exerciseIds: Object.keys(stateRef.current.progress),
-    });
-    executionEnqueuedRef.current = false;
-    executionStartedRef.current = false;
-    // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution
-    // supprimée, donc rien de reprenable → on retombe sur le choix/« Démarrer ».
-    onExitToLaunch();
-  }, [session, date, state.executionId, onExitToLaunch]);
+  // Quitter la séance sans la ranger (`leaveSession`, session-gestures.ts) :
+  // « Changer de séance » quand rien n'est saisi (ici ni dans la file d'un autre
+  // onglet), « Annuler la séance », confirmée, sinon. Le plan est recalculé au
+  // geste, sur la projection et la file du moment : s'il demande une
+  // confirmation que le geste n'a pas reçue (saisie arrivée d'un autre onglet
+  // entre le rendu et le toucher), rien n'est fait et l'appelant la demande
+  // (rend `false`). Sinon, ADR 0011 :
+  //   1. le cache local de la séance quitte l'appareil ;
+  //   2. SI le plan le dit (« annuler » seulement), la file perd les écritures
+  //      de CETTE exécution, et elle seule ;
+  //   3. la suppression de l'exécution est enfilée : sans condition pour
+  //      « annuler », conditionnelle (ouverte et vide, tranché par la base) pour
+  //      « changer », qui ne peut rien effacer d'un autre onglet ;
+  //   4. retour à l'écran de lancement.
+  const handleLeaveSession = useCallback(
+    (confirmed: boolean): boolean => {
+      const plan = leaveSession(stateRef.current, {
+        executionStarted: executionStartedRef.current,
+        pendingOps: readQueue(),
+      });
+      if (plan.needsConfirmation && !confirmed) return false;
+      clearPersisted(session, date);
+      if (plan.purge) purgeByExecution(plan.executionId);
+      enqueueGestureAndFlush(plan.ops);
+      executionEnqueuedRef.current = false;
+      executionStartedRef.current = false;
+      onExitToLaunch();
+      return true;
+    },
+    [session, date, onExitToLaunch],
+  );
 
   // Après clôture, « Nouvelle séance » : la séance close est rangée (closed_at en
   // base, ADR 0009) et son cache déjà nettoyé. On NE vide PAS la file (ses ops
@@ -1237,17 +1229,27 @@ function CaptureBoard({
   // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
   // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
+  // La semaine (séries par muscle contre le prévu) se lit à l'ouverture de la
+  // fin, sans bloquer « Ranger la séance » : `null` tant qu'elle court.
+  const [week, setWeek] = useState<WeekMusclesInput | null>(null);
   const openFinish = useCallback(() => {
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
-  }, [state.startedAt]);
+    setWeek(null);
+    void loadWeekMuscles({ seanceId: session.id, dateIso: date, currentExecutionId: state.executionId }).then(setWeek);
+  }, [state.startedAt, state.executionId, session.id, date]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
   const loggedAny = session.exercises.some(
     (ex) => getProgress(state, ex.exerciseId).sets.length > 0,
   );
 
-  const summary = buildSummary(session, state);
+  const recap = buildSessionRecap(session, state);
+  const today = session.exercises.map((ex) => ({
+    unilateral: ex.unilateral ?? false,
+    primaryMuscles: ex.primaryMuscles ?? [],
+    sets: getProgress(state, ex.exerciseId).sets,
+  }));
 
   // La séance reprise est-elle celle d'un jour PASSÉ (restée ouverte) ? `date` est
   // figée au montage ; « hier » ou plus (cf. `formatRelativeDay`).
@@ -1273,7 +1275,8 @@ function CaptureBoard({
         type: 'updateExecution',
         id: state.executionId,
         bpmAvg: values.bpmAvg,
-        durationMin: durationMin ?? undefined,
+        // La durée retenue à la fin (chrono, ou corrigée par crans de 5 min).
+        durationMin: values.durationMin,
         // Matérialise la clôture EN BASE (ADR 0009) : `loadTodayExecution` filtre
         // sur `closed_at`, donc cette séance « rangée » n'est PLUS réhydratée — on
         // repart vraiment vierge même après un reload (le cache local, lui, est
@@ -1284,15 +1287,34 @@ function CaptureBoard({
       // (son état `saved`) ; le câblage de persistance nettoie alors le cache.
       dispatch({ type: 'close', closedAt: closedAtMs });
     },
-    [state.executionId, durationMin],
+    [state.executionId],
   );
+
+  // L'index du haut et le bouton Sommaire : l'état de chaque exo de la séance.
+  const indexItems: IndexItem[] = session.exercises.map((ex) => {
+    const p = getProgress(state, ex.exerciseId);
+    return {
+      exerciseId: ex.exerciseId,
+      name: ex.name,
+      state: exoState(p, ex.prescription.sets.min),
+      fill: Math.min(1, logicalSetsDone(p) / Math.max(1, ex.prescription.sets.min)),
+    };
+  });
+  // Exos faits, et passés à part : un exo passé n'est pas « fait ».
+  const counts = exoCounts(session, state);
+  const nextId = nextExerciseId(session, state, state.activeExerciseId);
+  const nextEx = nextId ? (session.exercises.find((e) => e.exerciseId === nextId) ?? null) : null;
 
   if (phase === 'finishing') {
     return (
-      <div className="min-h-surface">
-        <SyncBanner status={status} pending={pending} />
+      <div className="flex min-h-surface flex-col">
+        <SalleSync />
         <SessionEnd
-          summary={summary}
+          recap={recap}
+          today={today}
+          week={week}
+          dateIso={date}
+          startedAt={state.startedAt}
           durationMin={durationMin}
           onSave={handleFinish}
           onBack={() => setPhase('capture')}
@@ -1306,125 +1328,55 @@ function CaptureBoard({
   // transitoire (ADR 0009). Le récap juste après clôture reste assuré par la phase
   // locale 'finishing' (état `saved` de SessionEnd) ; au remontage le cache est
   // nettoyé et l'état restauré est forcément « en cours » (closedAt null), donc on
-  // retombe directement sur le picker / la capture vierge ci-dessous.
+  // retombe directement sur le Sommaire ou l'instrument ci-dessous.
 
   return (
-    <div className="min-h-surface">
-      <SyncBanner status={status} pending={pending} />
+    <div className="flex min-h-surface flex-col">
       {activeExercise ? (
         <CapturePanel
           key={activeExercise.exerciseId}
           exercise={activeExercise}
-          position={
-            session.exercises.findIndex(
-              (e) => e.exerciseId === activeExercise.exerciseId,
-            ) + 1
-          }
-          total={session.exercises.length}
           progress={getProgress(state, activeExercise.exerciseId)}
+          index={indexItems}
+          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
+          done={counts.done}
+          total={session.exercises.length}
+          canFinish={loggedAny}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           historyEpoch={realityEpoch}
           dispatch={dispatch}
           onLog={(set) => handleLog(activeExercise.exerciseId, set)}
           onUndo={() => handleUndo(activeExercise.exerciseId)}
+          onFinish={openFinish}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
-          onSaveExerciseNote={(body) =>
-            handleSaveExerciseNote(activeExercise.exerciseId, body)
-          }
+          onSaveExerciseNote={(body) => handleSaveExerciseNote(activeExercise.exerciseId, body)}
+          onCorrectSet={(setId, values) => handleCorrectSet(activeExercise.exerciseId, setId, values)}
+          onDeleteSet={(setId) => handleDeleteSet(activeExercise.exerciseId, setId)}
         />
       ) : (
         <>
-          {/* Séance d'un jour passé restée ouverte : on le dit, avec ses deux
-              sorties. Sans cela l'app s'ouvrait dans la séance d'hier sans un mot,
-              même quand on venait en faire une autre. */}
-          {staleSince && (
-            <div className="mx-auto mt-3 w-full max-w-md px-4">
-              <div className="surface-card rounded-2xl px-4 py-3.5" role="status">
-                <p className="text-sm text-ink">
-                  Cette séance date d’{staleSince} et n’a pas été terminée.
-                </p>
-                <p className="mt-1 text-[13px] text-ink-muted">
-                  {loggedAny
-                    ? 'Termine-la pour la ranger (sa durée ne sera pas comptée si elle n’est plus mesurable), ou annule-la.'
-                    : 'Annule-la pour en démarrer une autre.'}
-                </p>
-                {loggedAny && (
-                  <button
-                    type="button"
-                    onClick={openFinish}
-                    className="btn btn-secondary mt-3 h-11 rounded-xl px-4 text-sm"
-                  >
-                    Terminer cette séance
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          <SalleSync />
           <ExercisePicker
             session={session}
-            templateExerciseIds={templateIds}
+            templateExerciseIds={templateExerciseIds(initialTemplate)}
             state={state}
+            done={counts.done}
+            skipped={counts.skipped}
+            staleSince={staleSince}
+            canFinish={loggedAny}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
+            onSkip={(id) => dispatch({ type: 'skip-exercise', exerciseId: id })}
+            onFinish={openFinish}
             loadCatalog={listExercisesForCapture}
             loadCatalogExercise={(row) => loadCatalogExercise(row, historyCtx)}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
-            onCancelSession={handleCancelSession}
+            onRestore={handleRestoreExercise}
+            leaveKind={nothingEntered(state) && !enteredElsewhere(state, readQueue()) ? 'change' : 'cancel'}
+            onLeaveSession={handleLeaveSession}
           />
-          <FinishBar canFinish={loggedAny} onFinish={openFinish} />
         </>
       )}
-    </div>
-  );
-}
-
-/**
- * Indicateur de synchronisation, piloté par la LONGUEUR de l'outbox :
- *   - vide      → « Synchronisé » (vert, discret) ;
- *   - en ligne  → « N en attente » (info, sync en cours) ;
- *   - hors ligne→ « Hors ligne » (warn).
- * Par le STOCKAGE : s'il refuse les écritures (plein), la bannière passe à
- * l'ambre et le dit, la file ne tenant plus qu'en mémoire.
- * Et par la QUARANTAINE (ops rejetées par la base) : tant qu'elle n'est pas vide,
- * jamais « Synchronisé », une ligne ambre le dit (cf. `syncBannerLabel`). Elle
- * est lue ici, pas par les appelants : la bannière la signale partout où elle
- * s'affiche.
- * Couleur ET texte portent toujours l'info (jamais la couleur seule). « Synchronisé »
- * reste rendu pour stabiliser la mise en page et confirmer la reprise après coup.
- */
-export function SyncBanner({ status, pending }: { status: SyncStatus; pending: number }) {
-  const quarantined = useSyncExternalStore(
-    subscribeSync,
-    () => quarantineCount(),
-    () => 0,
-  );
-  // Stockage plein : la file ou la séance en cours ne tiennent qu'en mémoire.
-  const unsaved = useSyncExternalStore(
-    subscribeSync,
-    () => storageFailing() || capturePersistFailing(),
-    () => false,
-  );
-  const { tone, label } = syncBannerLabel({
-    pending,
-    quarantined,
-    online: status !== 'offline',
-    unsaved,
-  });
-  const tones: Record<SyncTone, { dot: string; text: string }> = {
-    good: { dot: 'bg-good shadow-[0_0_8px_var(--color-good)]', text: 'text-ink-muted' },
-    info: { dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]', text: 'text-ink-muted' },
-    warn: { dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]', text: 'text-warn' },
-  };
-  const v = { ...tones[tone], label };
-
-  return (
-    <div
-      className={`mx-auto flex w-full max-w-md items-center gap-2.5 px-4 pt-3 text-[12.5px] ${v.text}`}
-      role="status"
-      aria-live="polite"
-    >
-      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${v.dot}`} aria-hidden="true" />
-      {v.label}
     </div>
   );
 }
@@ -1437,35 +1389,69 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 /** L'action de réconciliation qu'une réponse tardive de la base remet au tableau. */
 type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
-/**
- * Libellé du bouton de log (issue #46) : explicite le côté pour un exo
- * unilatéral (« Logger le côté gauche/droite »), reste « Logger la série » pour
- * un bilatéral. L'info tient au TEXTE, jamais à la couleur seule (DESIGN.md).
- */
-function logButtonLabel(side: Side | null, reachedMax: boolean): string {
-  if (side === 'left') return 'Logger le côté gauche';
-  if (side === 'right') return 'Logger le côté droit';
-  return reachedMax ? 'Logger une série de plus' : 'Logger la série';
+/** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
+ *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, l'état
+ *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
+ *  sous la barre du pouce. */
+function SalleSync() {
+  const sync = useSyncState();
+  const openRefused = useOpenRefusedWrites();
+  return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
 }
+
+/** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
+ *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
+function sommaireDetail(sync: SyncState, done: number, total: number): string {
+  if (sync.unsaved) return 'stockage plein';
+  if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
+  if (sync.pending > 0) return `envoi · ${sync.pending}`;
+  if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
+  return `${done} sur ${total} faits`;
+}
+
+/** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
+ *  au-delà du plan. L'info tient au TEXTE, jamais à la couleur seule. */
+function logLabel(side: Side | null, rank: number, plannedMax: number): string {
+  if (side) return `Logger ${side === 'left' ? 'gauche' : 'droite'} · série ${rank}`;
+  return rank > plannedMax ? 'Logger une de plus' : `Logger la série ${rank}`;
+}
+
+/** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
+ *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
+const BAR_BTN =
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line';
+/** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
+const BAR_TITLE = 'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink';
 
 function CapturePanel({
   exercise,
-  position,
-  total,
   progress,
+  index,
+  next,
+  done,
+  total,
+  canFinish,
   datedNote,
   historyEpoch,
   dispatch,
   onLog,
   onUndo,
+  onFinish,
   onSaveDatedNote,
   onSaveExerciseNote,
+  onCorrectSet,
+  onDeleteSet,
 }: {
   exercise: SessionExercise;
-  /** Position de l'exo dans la séance (1-indexé) + total, pour le repère « EXO N / M ». */
-  position?: number;
-  total?: number;
   progress: ExerciseProgress;
+  index: IndexItem[];
+  /** L'exo que propose « Exo suivant » et où il reprend, ou null. */
+  next: { exerciseId: string; name: string; resume: string | null } | null;
+  /** Exos faits (pas les passés), et leur total (bouton Sommaire). */
+  done: number;
+  total: number;
+  /** Au moins une série loggée dans la séance : Terminer est possible. */
+  canFinish: boolean;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
   /** Incrémenté quand le réalisé change sans geste de l'utilisateur (réponse tardive). */
@@ -1473,41 +1459,43 @@ function CapturePanel({
   dispatch: Dispatch<CaptureAction>;
   onLog: (set: { weightKg: number; reps: number; rir: number; side?: Side }) => void;
   onUndo: () => void;
+  onFinish: () => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
+  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onDeleteSet: (setId: string) => void;
 }) {
-  // Brouillon de la série courante remonté ici pour que la barre fixe puisse
-  // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI au sélecteur
-  // (issue #63) : c'est ce côté que la barre commit, jamais un côté dérivé.
+  // Brouillon de la série courante remonté ici pour que la barre du bas puisse
+  // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI (issue #63) :
+  // c'est ce côté que la barre écrit, jamais un côté dérivé.
   const [draft, setDraft] = useState<{
     weightKg: number;
     reps: number;
     rir: number;
     side?: Side;
   } | null>(null);
+  const sync = useSyncState();
 
   const unilateral = exercise.unilateral ?? false;
-  // Côté que la barre va logger : pour un exo unilatéral, le côté CHOISI remonté
-  // dans le brouillon (issue #63). Tant que le brouillon n'a pas encore remonté
-  // de côté (1er rendu), on retombe sur le côté manquant de la série en cours
-  // (`pendingSide`/`defaultSide`). Null = bilatéral.
+  // Côté que la barre va logger : le côté CHOISI remonté dans le brouillon ; tant
+  // qu'il n'a pas remonté (1er rendu), le côté manquant de la série en cours.
   const currentSide: Side | null = unilateral
     ? draft?.side ?? pendingSide(progress) ?? 'left'
     : null;
-  // Nombre de SÉRIES complètes : pour l'unilatéral, une série = gauche + droite,
-  // donc on compte les ORDERS dont les DEUX côtés sont présents (blind F4 : compter
-  // les saisies droites restait à 0 si l'utilisateur loggeait deux fois le même
-  // côté). Bilatéral = une saisie/série. Sert au numéro annoncé en aria-live.
+  // SÉRIES complètes : en unilatéral, une série = gauche + droite au même order
+  // (blind F4) ; bilatéral = une saisie par série.
   const completedSets = unilateral
     ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
     : progress.sets.length;
-  const reachedMax = completedSets >= exercise.prescription.sets.max;
+  // Le rang que dit « Logger » : en unilatéral, la série que vise le côté
+  // choisi (la case en cours de la bande, `targetSlotForSide`).
+  const rank = currentSide ? targetSlotForSide(progress.sets, currentSide) + 1 : completedSets + 1;
+  const lastSet = progress.sets[progress.sets.length - 1] ?? null;
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
-
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
   const logSet = useCallback(
@@ -1515,87 +1503,131 @@ function CapturePanel({
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
-        `Série ${completedSets + 1}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
+        `Série ${rank}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, completedSets, currentSide],
+    [onLog, rank, currentSide],
   );
+
+  const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
+  const values = draft ? `${formatWeight(draft.weightKg)} × ${draft.reps} · RIR ${draft.rir}` : '';
+  // Annuler retire la DERNIÈRE ligne loggée : un côté en unilatéral (décision 2b).
+  const undoWhat = lastSet
+    ? lastSet.side
+      ? { aria: `Annuler le côté ${sideLabel(lastSet.side)} de la série ${lastSet.order}`, sub: sideLabel(lastSet.side) }
+      : { aria: `Annuler la série ${lastSet.order}`, sub: `série ${lastSet.order}` }
+    : null;
+
+  // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
+  // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
+  // par le serveur se disent en clair, en tête.
+  const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const openRefused = useOpenRefusedWrites();
 
   return (
     <>
+      <SyncBanner line={alarm} action={refusedAction(sync.refused, openRefused)} />
       <ExerciseCapture
         exercise={exercise}
-        position={position}
-        total={total}
         progress={progress}
+        index={index}
+        next={next}
         datedNote={datedNote}
         historyEpoch={historyEpoch}
-        onUndoLast={() => {
-          onUndo();
-          setAnnounce('Dernière série annulée.');
-        }}
-        onSkip={() => dispatch({ type: 'skip-exercise', exerciseId: exercise.exerciseId })}
-        onBack={() => dispatch({ type: 'back-to-picker' })}
+        onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
+        onNext={() => next && dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
+        onSommaire={() => dispatch({ type: 'back-to-picker' })}
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
         onSaveExerciseNote={onSaveExerciseNote}
+        onCorrectSet={(setId, values) => {
+          onCorrectSet(setId, values);
+          setAnnounce(`Série corrigée : ${values.weightKg} kilos, ${values.reps} répétitions, RIR ${values.rir}.`);
+        }}
+        onDeleteSet={(setId) => {
+          onDeleteSet(setId);
+          setAnnounce('Série supprimée.');
+        }}
       />
 
       <p className="sr-only" role="status" aria-live="assertive">
         {announce}
       </p>
 
-      {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. Fond en dégradé
-          transparent→bg : le bouton « flotte » au-dessus du contenu qui défile. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 bg-[linear-gradient(180deg,transparent,var(--color-bg)_30%)] px-4 pb-3 pt-6">
-        <div className="mx-auto w-full max-w-md">
+      {/* Zone du pouce, collée en bas (`sticky`, fond plein, encoche comprise ;
+          jamais `position: fixed`). Rangée du haut : Sommaire, Annuler, Exo
+          suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
+          geste répété, toujours au même endroit, sans enfoncement. Rien ne change
+          de place quand le minimum du plan est atteint (décision du 23/11). */}
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
+        {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
+            même largeur, qu'Annuler soit là ou non. */}
+        <div className="mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2">
           <button
             type="button"
-            disabled={!draft}
-            onClick={() => draft && logSet(draft)}
-            className="btn btn-primary h-[58px] w-full rounded-[18px] text-lg"
+            onClick={() => dispatch({ type: 'back-to-picker' })}
+            aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
+              sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
+            }`}
+            className={BAR_BTN}
           >
-            <svg
-              viewBox="0 0 24 24"
-              width="22"
-              height="22"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+            <span className={BAR_TITLE}>Sommaire</span>
+            {/* Une file en attente (ou un refus, un stockage plein) se voit d'un coup
+                d'œil : blanc cassé demi-gras, comme dans le prototype. */}
+            <span
+              className={`tnum w-full truncate text-[13px] leading-tight ${
+                sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
+              }`}
             >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            {logButtonLabel(currentSide, reachedMax)}
+              {sommaireDetail(sync, done, total)}
+            </span>
           </button>
+          {undoWhat ? (
+            <button
+              type="button"
+              onClick={() => {
+                onUndo();
+                setAnnounce(`${undoWhat.aria.replace('Annuler', 'Annulé :')}.`);
+              }}
+              aria-label={undoWhat.aria}
+              className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
+            >
+              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4">Annuler</span>
+              <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
+            </button>
+          ) : (
+            <span aria-hidden />
+          )}
+          {next ? (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
+              aria-label={`Exo suivant, ${next.name}${next.resume ? `, reprise ${next.resume}` : ''}`}
+              className={BAR_BTN}
+            >
+              <span className={BAR_TITLE}>Exo suivant</span>
+              <span className="w-full truncate text-[13px] leading-tight text-muted">{next.name}</span>
+            </button>
+          ) : canFinish ? (
+            <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>
+              <span className={BAR_TITLE}>Terminer</span>
+              <span className="truncate text-[13px] leading-tight text-muted">la séance</span>
+            </button>
+          ) : (
+            <span aria-hidden />
+          )}
         </div>
+        <PrimaryButton
+          over={label}
+          ariaLabel={`${label}, ${values}`}
+          press={false}
+          disabled={!draft}
+          onClick={() => draft && logSet(draft)}
+          className="w-full [@media(max-height:800px)]:h-12"
+        >
+          <span className="tnum">{values}</span>
+        </PrimaryButton>
       </div>
     </>
-  );
-}
-
-/**
- * Barre d'action fixe du bas du sélecteur : UNIQUEMENT « Terminer la séance », dès
- * qu'au moins une série est loggée (`canFinish`). L'annulation a quitté cette barre
- * pour l'en-tête du sélecteur (« Annuler la séance », toujours visible, même séance
- * vide). Collée à la nav (`pb-3`, sans `env(safe-area)` redondant). Cachée tant
- * qu'aucune série n'est loggée (rien à terminer).
- */
-function FinishBar({ canFinish, onFinish }: { canFinish: boolean; onFinish: () => void }) {
-  if (!canFinish) return null;
-  return (
-    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-3 pt-3 backdrop-blur-sm">
-      <div className="mx-auto w-full max-w-md">
-        <button
-          type="button"
-          onClick={onFinish}
-          className="btn btn-primary h-12 w-full rounded-2xl text-base"
-        >
-          Terminer la séance
-        </button>
-      </div>
-    </div>
   );
 }

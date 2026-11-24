@@ -5,7 +5,7 @@ describe('formatDay', () => {
   it('jour et mois abrégé, sans zéro, sans année dans l’année en cours', () => {
     expect(formatDay('2026-11-03', 2026)).toBe('3 nov.')
     expect(formatDay('2026-05-17', 2026)).toBe('17 mai')
-    expect(formatDay('2026-03-01', 2026)).toBe('1 mars')
+    expect(formatDay('2026-03-01', 2026)).toBe('1ᵉʳ mars')
   })
 
   it('l’année s’écrit quand ce n’est pas la courante', () => {
@@ -67,5 +67,13 @@ describe('rateCaption', () => {
     expect(rateCaption({ since: null, sessions: 2 }, false, 2026)).toBe(
       'Pas de pente : tout l’historique · 2 séances, il en faut 3 à des jours différents.',
     )
+  })
+})
+
+describe('formatDay, premier du mois', () => {
+  it('écrit « 1ᵉʳ » le premier, le chiffre seul ensuite', () => {
+    expect(formatDay('2026-06-01', 2026)).toBe('1ᵉʳ juin')
+    expect(formatDay('2026-06-11', 2026)).toBe('11 juin')
+    expect(formatDay('2025-12-01', 2026)).toBe('1ᵉʳ déc. 2025')
   })
 })

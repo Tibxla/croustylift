@@ -250,7 +250,9 @@ export function updateAlreadyInstalling(registration: {
 
 // --- Onglet à rouvrir après le rechargement -----------------------------------
 
-const SURFACES = ['capture', 'analysis', 'seances', 'exercises'] as const
+// Identifiants stables (stockés en sessionStorage) : 'capture' reste le nom de
+// la surface de salle, même si la navigation l'écrit « Salle ».
+const SURFACES = ['capture', 'analysis', 'seances', 'exercises', 'reglages'] as const
 export type SurfaceName = (typeof SURFACES)[number]
 
 /** Valide l'onglet mémorisé avant un rechargement (valeur lue du stockage). */

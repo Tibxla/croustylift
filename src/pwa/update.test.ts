@@ -133,6 +133,10 @@ describe('shouldReload', () => {
     expect(shouldReload({ ...base, trigger: 'surface-change', targetSurface: 'capture' })).toBe(false)
   })
 
+  it('un passage vers les Réglages recharge, comme vers les autres surfaces', () => {
+    expect(shouldReload({ ...base, trigger: 'surface-change', targetSurface: 'reglages' })).toBe(true)
+  })
+
   it('le bouton « Mettre à jour » recharge même après interaction', () => {
     expect(shouldReload({ ...base, trigger: 'manual', interactedSinceLoad: true })).toBe(true)
   })
@@ -190,6 +194,7 @@ describe('parseStoredSurface', () => {
   it("ne rend qu'un onglet connu", () => {
     expect(parseStoredSurface('analysis')).toBe('analysis')
     expect(parseStoredSurface('capture')).toBe('capture')
+    expect(parseStoredSurface('reglages')).toBe('reglages')
     expect(parseStoredSurface('admin')).toBeNull()
     expect(parseStoredSurface(null)).toBeNull()
   })

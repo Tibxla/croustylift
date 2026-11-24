@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import {
   contrastRatio,
+  hexContrast,
   luminance,
   oklchToLinearSrgb,
+  parseHexTokens,
   parseOklchTokens,
   tokenContrast,
 } from './contrast-lib.mjs'
@@ -44,5 +47,49 @@ describe('parseOklchTokens', () => {
       bg: [0.145, 0.012, 286],
       ink: [0.975, 0.004, 286],
     })
+  })
+})
+
+describe('contraste hexadécimal', () => {
+  it('blanc sur noir : 21:1, #777 sur blanc : 4,48:1', () => {
+    expect(hexContrast('#ffffff', '#000000')).toBeCloseTo(21, 1)
+    expect(hexContrast('#777777', '#ffffff')).toBeCloseTo(4.48, 1)
+  })
+
+  it('lit les tokens #rrggbb, garde la première déclaration, ignore le reste', () => {
+    const css = `
+      --color-bg: #100E0C;        /* fond */
+      --color-ink: #f4f0e7;
+      --color-sig: var(--sig);
+      --color-court: #fff;
+      --color-hair: rgba(255, 255, 255, 0.075);
+      --color-bg: #000000;        /* alias plus bas : ignoré */
+    `
+    expect(parseHexTokens(css)).toEqual({ bg: '#100e0c', ink: '#f4f0e7' })
+  })
+})
+
+// Garde CI du critère AA (registre U1) : les encres de texte de E tiennent 4,5:1
+// sur tous les fonds où du texte se pose, et chaque signal prédéfini aussi.
+describe('tokens de src/index.css', () => {
+  const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  const tokens = parseHexTokens(read('../src/index.css'))
+  const presets = JSON.parse(read('../src/settings/signal-presets.json'))
+
+  it.each(['ink', 'muted', 'faint'].flatMap((ink) => ['bg', 'raise'].map((bg) => [ink, bg])))(
+    '%s sur %s : 4,5:1 au moins',
+    (ink, bg) => {
+      expect(hexContrast(tokens[ink], tokens[bg])).toBeGreaterThanOrEqual(4.5)
+    },
+  )
+
+  it('bouton principal : libellé et ligne secondaire lisibles sur le blanc cassé', () => {
+    expect(hexContrast(tokens.bg, tokens.ink)).toBeGreaterThanOrEqual(4.5)
+    expect(hexContrast(tokens['on-ink'], tokens.ink)).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it.each(presets.map((p) => [p.name, p.hex]))('signal %s lisible sur le fond et sur les feuilles', (_name, hex) => {
+    expect(hexContrast(hex, tokens.bg)).toBeGreaterThanOrEqual(4.5)
+    expect(hexContrast(hex, tokens.raise)).toBeGreaterThanOrEqual(4.5)
   })
 })

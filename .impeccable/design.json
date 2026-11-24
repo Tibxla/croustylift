@@ -1,204 +1,174 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-06-24T09:12:54Z",
+  "generatedAt": "2026-11-24T12:00:00Z",
   "title": "Design System: Croustylift",
   "extensions": {
     "colorMeta": {
-      "accent": {
-        "role": "primary",
-        "displayName": "Violet électrique",
-        "canonical": "oklch(0.62 0.19 286)",
-        "tonalRamp": [
-          "oklch(0.20 0.10 286)",
-          "oklch(0.30 0.14 286)",
-          "oklch(0.40 0.17 286)",
-          "oklch(0.50 0.19 286)",
-          "oklch(0.62 0.19 286)",
-          "oklch(0.72 0.16 286)",
-          "oklch(0.82 0.11 286)",
-          "oklch(0.92 0.05 286)"
-        ]
-      },
-      "accent-ink": {
-        "role": "primary",
-        "displayName": "Encre accent",
-        "canonical": "oklch(0.74 0.16 288)"
-      },
-      "accent-soft": {
-        "role": "primary",
-        "displayName": "Violet voilé",
-        "canonical": "color-mix(in oklab, oklch(0.62 0.19 286), transparent 86%)"
-      },
       "bg": {
         "role": "neutral",
-        "displayName": "Noir d'instrument",
-        "canonical": "oklch(0.145 0.012 286)",
+        "displayName": "Noir chaud",
+        "canonical": "#100e0c",
         "tonalRamp": [
-          "oklch(0.145 0.012 286)",
-          "oklch(0.192 0.014 286)",
-          "oklch(0.238 0.016 286)",
-          "oklch(0.30 0.012 286)",
-          "oklch(0.45 0.012 286)",
-          "oklch(0.62 0.010 286)",
-          "oklch(0.80 0.008 286)",
-          "oklch(0.975 0.004 286)"
+          "#100e0c",
+          "#1a1815",
+          "#24211d",
+          "#3a3733",
+          "#6b6761",
+          "#8f8c85",
+          "#b5b0a9",
+          "#f4f0e7"
         ]
       },
-      "surface": {
+      "raise": {
         "role": "neutral",
-        "displayName": "Surface",
-        "canonical": "oklch(0.192 0.014 286)"
-      },
-      "surface-2": {
-        "role": "neutral",
-        "displayName": "Surface +2",
-        "canonical": "oklch(0.238 0.016 286)"
+        "displayName": "Levé",
+        "canonical": "#1a1815"
       },
       "ink": {
         "role": "neutral",
-        "displayName": "Encre",
-        "canonical": "oklch(0.975 0.004 286)"
+        "displayName": "Blanc cassé",
+        "canonical": "#f4f0e7"
       },
-      "ink-muted": {
+      "muted": {
         "role": "neutral",
-        "displayName": "Encre atténuée",
-        "canonical": "oklch(0.715 0.018 286)"
+        "displayName": "Gris",
+        "canonical": "#b5b0a9"
       },
-      "ink-faint": {
+      "faint": {
         "role": "neutral",
-        "displayName": "Encre discrète",
-        "canonical": "oklch(0.545 0.016 286)"
+        "displayName": "Gris discret",
+        "canonical": "#8f8c85"
       },
-      "good": {
-        "role": "secondary",
-        "displayName": "Vert froid",
-        "canonical": "oklch(0.80 0.13 158)",
-        "tonalRamp": [
-          "oklch(0.25 0.06 158)",
-          "oklch(0.35 0.09 158)",
-          "oklch(0.45 0.11 158)",
-          "oklch(0.55 0.12 158)",
-          "oklch(0.65 0.13 158)",
-          "oklch(0.72 0.13 158)",
-          "oklch(0.80 0.13 158)",
-          "oklch(0.90 0.08 158)"
-        ]
+      "dim": {
+        "role": "neutral",
+        "displayName": "Gris repère",
+        "canonical": "#6b6761"
       },
-      "warn": {
-        "role": "secondary",
-        "displayName": "Ambre",
-        "canonical": "oklch(0.82 0.115 80)",
+      "line": {
+        "role": "neutral",
+        "displayName": "Filet",
+        "canonical": "#3a3733"
+      },
+      "on-ink": {
+        "role": "neutral",
+        "displayName": "Encre sur blanc",
+        "canonical": "#4a463f"
+      },
+      "sig": {
+        "role": "primary",
+        "displayName": "Signal",
+        "canonical": "#f6d236",
         "tonalRamp": [
-          "oklch(0.30 0.05 80)",
-          "oklch(0.40 0.07 80)",
-          "oklch(0.50 0.09 80)",
-          "oklch(0.60 0.10 80)",
-          "oklch(0.70 0.11 80)",
-          "oklch(0.78 0.115 80)",
-          "oklch(0.82 0.115 80)",
-          "oklch(0.90 0.08 80)"
+          "#f6d236",
+          "#ff5d5d",
+          "#f27ad6",
+          "#b59cff",
+          "#6cc0ff",
+          "#5ed68f"
         ]
       }
     },
     "typographyMeta": {
-      "display": {
-        "displayName": "Display",
-        "purpose": "Nom de l'exo en cours / titre d'écran."
+      "weight-readout": {
+        "displayName": "Poids lu",
+        "purpose": "Charge de la série en cours, 72 px tabulaire (56 px en lecture secondaire)."
       },
-      "hero-readout": {
-        "displayName": "Hero Readout",
-        "purpose": "Poids de la série en cours, 62px mono, dans le cluster."
+      "weight-readout-small": {
+        "displayName": "Poids lu secondaire",
+        "purpose": "Charge d'une série passée ou corrigée, 56 px."
       },
-      "metric-readout": {
-        "displayName": "Metric Readout",
-        "purpose": "Métrique e1RM héros en Analyse, 52px mono."
+      "instrument-title": {
+        "displayName": "Titre d'instrument",
+        "purpose": "Nom de l'exo en salle, 32 px."
       },
-      "kicker": {
-        "displayName": "Kicker",
-        "purpose": "Mono majuscule traquée : ROUTINE COURANTE, SÉRIES LOGGÉES."
+      "screen-title": {
+        "displayName": "Titre d'écran",
+        "purpose": "En-tête de chaque écran, 28 px."
+      },
+      "key-figure": {
+        "displayName": "Chiffre clé",
+        "purpose": "e1RM, totaux, valeurs d'une ligne d'instrument, 22 px tabulaire."
+      },
+      "button": {
+        "displayName": "Bouton",
+        "purpose": "Libellé du bouton principal, 18 px demi-gras."
+      },
+      "section-title": {
+        "displayName": "Titre de section",
+        "purpose": "Titre de section en casse de phrase, 17 px demi-gras."
+      },
+      "body": {
+        "displayName": "Corps",
+        "purpose": "Phrases, liens, choix, 16 px."
+      },
+      "label": {
+        "displayName": "Libellé",
+        "purpose": "Mots de la navigation, sous-titres, 15 px."
+      },
+      "meta": {
+        "displayName": "Méta",
+        "purpose": "Ligne sous un titre, valeur d'appoint, 14 px."
+      },
+      "small": {
+        "displayName": "Petit",
+        "purpose": "Le plus petit autorisé, étiquettes de graduation, 13 px."
       }
     },
     "finishes": [
       {
-        "name": "hair",
-        "value": "rgba(255,255,255,0.075)",
-        "purpose": "Bordure 1px discrète des cartes."
+        "name": "line",
+        "value": "#3a3733",
+        "purpose": "Filet de 1 px : séparateurs, haut des feuilles."
       },
       {
-        "name": "hair-strong",
-        "value": "rgba(255,255,255,0.14)",
-        "purpose": "Bordure 1px des cartes clés."
+        "name": "rule-strong",
+        "value": "#b5b0a9",
+        "purpose": "Trait de 2 px entre deux familles de contenu."
       },
       {
-        "name": "spec",
-        "value": "rgba(255,255,255,0.055)",
-        "purpose": "Liseré spéculaire haut : box-shadow inset 0 1px 0."
+        "name": "current-mark",
+        "value": "#f4f0e7",
+        "purpose": "Trait de 3 px à gauche d'une ligne courante ou d'un message d'erreur."
       }
     ],
-    "shadows": [
-      {
-        "name": "card",
-        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 1px 2px rgba(0,0,0,0.45)",
-        "purpose": "Finition machinée des surfaces au repos (.panel)."
-      },
-      {
-        "name": "raised",
-        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 2px 4px rgba(0,0,0,0.3), 0 14px 32px -14px rgba(0,0,0,0.6)",
-        "purpose": "Feuilles modales et barres d'action flottantes."
-      },
-      {
-        "name": "cluster",
-        "value": "inset 0 1px 0 rgba(255,255,255,0.055), 0 14px 30px -18px rgba(0,0,0,0.7)",
-        "purpose": "Carte cluster instrument (écran roi)."
-      },
-      {
-        "name": "accent-glow",
-        "value": "0 0 14px -3px color-mix(in oklab, oklch(0.62 0.19 286), transparent 40%), 0 6px 20px -8px color-mix(in oklab, oklch(0.62 0.19 286), transparent 35%), inset 0 0 12px -6px color-mix(in oklab, oklch(0.62 0.19 286), transparent 50%)",
-        "purpose": "La seule lumière du système : halo du bouton primaire. Pas de dégradé, pas d'ombre noire dure."
-      },
-      {
-        "name": "focus-ring",
-        "value": "0 0 0 3px oklch(0.62 0.19 286 / 0.3)",
-        "purpose": "Anneau de focus clavier des champs (avec bordure accent)."
-      }
-    ],
+    "shadows": [],
     "motion": [
       {
-        "name": "ease-out-quart",
-        "value": "cubic-bezier(0.25, 1, 0.5, 1)",
-        "purpose": "Easing par défaut des transitions d'état."
+        "name": "ease-press",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Enfoncement d'un bouton, élan de la règle, sortie d'une feuille."
       },
       {
-        "name": "ease-out-quint",
-        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
-        "purpose": "Press / transform."
+        "name": "ease-drawer",
+        "value": "cubic-bezier(0.32, 0.72, 0, 1)",
+        "purpose": "Montée d'une feuille basse (courbe de tiroir iOS)."
       },
       {
-        "name": "ease-out-expo",
-        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "Reveals d'entrée, feuilles."
+        "name": "press",
+        "value": "140ms",
+        "purpose": "scale(0.97) au toucher, jamais sur un geste répété en salle."
       },
       {
-        "name": "dur-fast",
-        "value": "130ms",
-        "purpose": "Press, micro-feedback."
+        "name": "sheet-in",
+        "value": "240ms",
+        "purpose": "Entrée d'une feuille basse, par @starting-style."
       },
       {
-        "name": "dur",
-        "value": "200ms",
-        "purpose": "Transitions d'état standard."
+        "name": "sheet-out",
+        "value": "150ms",
+        "purpose": "Sortie d'une feuille, plus courte que l'entrée."
       },
       {
-        "name": "dur-slow",
-        "value": "360ms",
-        "purpose": "Reveals d'entrée uniquement."
+        "name": "ruler-throw",
+        "value": "320ms",
+        "purpose": "Élan d'un coup sec sur la règle, interruptible."
       }
     ],
     "breakpoints": [
       {
         "name": "content",
         "value": "28rem",
-        "purpose": "Largeur max de colonne (max-w-md) — l'app est mobile-first."
+        "purpose": "Largeur max de colonne (max-w-md) : l'app est pensée pour le téléphone."
       }
     ]
   },
@@ -207,130 +177,128 @@
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Action primaire — contour accent + halo doux. La seule surface pleinement violette par écran.",
+      "description": "Action principale : bloc blanc cassé plein, un seul par écran, en bas.",
       "html": "<button class=\"ds-btn-primary\">Logger la série</button>",
-      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;height:56px;padding:0 24px;border-radius:16px;font:600 17px/1.1 'Geist Variable','Inter Variable',system-ui,sans-serif;color:var(--color-accent-ink,oklch(0.74 0.16 288));background:var(--color-accent-soft,color-mix(in oklab,oklch(0.62 0.19 286),transparent 86%));border:1px solid var(--color-accent,oklch(0.62 0.19 286));box-shadow:0 0 14px -3px color-mix(in oklab,oklch(0.62 0.19 286),transparent 40%),0 6px 20px -8px color-mix(in oklab,oklch(0.62 0.19 286),transparent 35%),inset 0 0 12px -6px color-mix(in oklab,oklch(0.62 0.19 286),transparent 50%);cursor:pointer;transition:background-color .2s cubic-bezier(.25,1,.5,1),box-shadow .2s,transform .13s cubic-bezier(.22,1,.36,1)}.ds-btn-primary:hover{background:color-mix(in oklab,oklch(0.62 0.19 286),transparent 80%)}.ds-btn-primary:active{transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid oklch(0.62 0.19 286);outline-offset:2px}"
+      "css": ".ds-btn-primary{display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 16px;border:0;border-radius:6px;background:#f4f0e7;color:#100e0c;font:600 18px/1.1 'Inter Variable',system-ui,sans-serif;letter-spacing:-0.01em;transition:transform 140ms cubic-bezier(0.23,1,0.32,1)}.ds-btn-primary:active{background:#b5b0a9;transform:scale(.97)}.ds-btn-primary:disabled{background:#3a3733;color:#b5b0a9}.ds-btn-primary:focus-visible{outline:2px solid #f4f0e7;outline-offset:2px}"
     },
     {
       "name": "Secondary Button",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "Action secondaire TEXTE — bouton-fantôme cerclé (Modifier une note, Exporter, Annuler). Les actions routine/séance sont passées en bouton-instrument à icône.",
+      "description": "Action secondaire : contour blanc cassé de 1,5 px sur fond levé, libellé centré.",
       "html": "<button class=\"ds-btn-secondary\">Exporter</button>",
-      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:44px;padding:0 16px;border-radius:14px;font:500 14px/1.1 'Geist Variable','Inter Variable',system-ui,sans-serif;color:var(--color-ink,oklch(0.975 0.004 286));background:transparent;border:1px solid var(--color-hair-strong,rgba(255,255,255,0.14));cursor:pointer;transition:background-color .2s cubic-bezier(.25,1,.5,1),transform .13s}.ds-btn-secondary:hover{background:var(--color-surface,oklch(0.192 0.014 286))}.ds-btn-secondary:active{transform:scale(.97);background:var(--color-surface-2,oklch(0.238 0.016 286))}.ds-btn-secondary:focus-visible{outline:2px solid oklch(0.62 0.19 286);outline-offset:2px}"
+      "css": ".ds-btn-secondary{display:flex;align-items:center;justify-content:center;height:48px;padding:0 16px;border:1.5px solid #f4f0e7;border-radius:6px;background:#1a1815;color:#f4f0e7;font:600 16px/1.1 'Inter Variable',system-ui,sans-serif;transition:transform 140ms cubic-bezier(0.23,1,0.32,1)}.ds-btn-secondary:active{background:#3a3733;transform:scale(.97)}.ds-btn-secondary:disabled{border-color:#3a3733;background:transparent;color:#8f8c85}"
     },
     {
-      "name": "Icon Button",
-      "kind": "button",
-      "refersTo": "button-instrument-icon",
-      "description": "Affordance d'action à icône, partout : retour/overflow (Capture), swap (picker), monter/descendre/renommer/supprimer/éditer (éditeurs séance & routine). Bordé + surface + liseré. Ton par action ; ici neutre (crayon = Renommer).",
-      "html": "<button class=\"ds-icon-btn\" aria-label=\"Renommer\"><svg viewBox=\"0 0 24 24\" width=\"19\" height=\"19\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 20h9\"/><path d=\"M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z\"/></svg></button>",
-      "css": ".ds-icon-btn{display:flex;align-items:center;justify-content:center;height:44px;width:44px;border-radius:14px;color:var(--color-ink-muted,oklch(0.715 0.018 286));background:var(--color-surface,oklch(0.192 0.014 286));border:1px solid var(--color-hair,rgba(255,255,255,0.075));box-shadow:inset 0 1px 0 var(--spec,rgba(255,255,255,0.055));cursor:pointer;transition:transform .15s cubic-bezier(0.22,1,0.36,1),color .15s,border-color .15s}.ds-icon-btn:hover{color:var(--color-ink,oklch(0.975 0.004 286))}.ds-icon-btn:active{transform:scale(0.95)}.ds-icon-btn:focus-visible{outline:none;border-color:var(--color-accent,oklch(0.62 0.19 286));box-shadow:inset 0 1px 0 var(--spec,rgba(255,255,255,0.055)),0 0 0 3px color-mix(in oklab,oklch(0.62 0.19 286),transparent 70%)}"
+      "name": "Text Link",
+      "kind": "link",
+      "refersTo": "text-link",
+      "description": "Lien souligné, cible de 44 px : navigation, action mineure, option qui fait perdre des données.",
+      "html": "<button class=\"ds-link\">Voir dans l'Analyse</button>",
+      "css": ".ds-link{display:inline-flex;align-items:center;min-height:44px;border:0;background:none;color:#f4f0e7;font:400 16px 'Inter Variable',system-ui,sans-serif;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px}"
     },
     {
-      "name": "Text Field",
-      "kind": "input",
-      "refersTo": "field",
-      "description": "Champ de saisie machiné : hairline + liseré spéculaire au repos, halo accent au focus.",
-      "html": "<input class=\"ds-field\" placeholder=\"Chercher un exercice\" />",
-      "css": ".ds-field{height:54px;width:280px;padding:0 16px;border-radius:14px;font:400 16px 'Geist Variable','Inter Variable',system-ui,sans-serif;color:var(--color-ink,oklch(0.975 0.004 286));background:var(--color-surface,oklch(0.192 0.014 286));border:1px solid var(--color-hair,rgba(255,255,255,0.075));box-shadow:inset 0 1px 0 rgba(255,255,255,0.055);outline:none;transition:border-color .2s,box-shadow .2s}.ds-field::placeholder{color:var(--color-ink-faint,oklch(0.545 0.016 286))}.ds-field:focus{border-color:var(--color-accent,oklch(0.62 0.19 286));box-shadow:inset 0 1px 0 rgba(255,255,255,0.055),0 0 0 3px oklch(0.62 0.19 286/.3)}"
+      "name": "Row",
+      "kind": "list-item",
+      "refersTo": "row",
+      "description": "Ligne de liste : titre qui passe à la ligne, méta dessous, chevron si elle s'ouvre, filet bas.",
+      "html": "<div class=\"ds-row\"><span class=\"t\">Extension triceps à la poulie</span><span class=\"m\">3 séries · 10 à 12 reps</span></div>",
+      "css": ".ds-row{display:flex;flex-direction:column;min-height:56px;padding:12px 20px;border-bottom:1px solid #3a3733;font-family:'Inter Variable',system-ui,sans-serif}.ds-row .t{font-size:17px;font-weight:500;color:#f4f0e7}.ds-row .m{margin-top:2px;font-size:14px;color:#b5b0a9}"
     },
     {
-      "name": "Panel",
-      "kind": "card",
-      "refersTo": "panel",
-      "description": "Carte machinée : surface tonale + hairline 1px + liseré spéculaire + ombre chuchotée.",
-      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-k\">SÉRIE 3</div><div class=\"ds-panel-v\">82,5 kg × 8</div></div>",
-      "css": ".ds-panel{width:260px;padding:16px;border-radius:16px;background:var(--color-surface,oklch(0.192 0.014 286));border:1px solid var(--color-hair,rgba(255,255,255,0.075));box-shadow:inset 0 1px 0 rgba(255,255,255,0.055),0 1px 2px rgba(0,0,0,.45)}.ds-panel-k{font:600 10px 'Geist Mono Variable',ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--color-ink-faint,oklch(0.545 0.016 286))}.ds-panel-v{margin-top:6px;font:500 22px 'Geist Mono Variable',ui-monospace,monospace;font-variant-numeric:tabular-nums slashed-zero;color:var(--color-ink,oklch(0.975 0.004 286))}"
+      "name": "Surface Nav",
+      "kind": "navigation",
+      "refersTo": "surface-nav",
+      "description": "Cinq mots en haut de l'écran, le mot actif en demi-gras souligné.",
+      "html": "<nav class=\"ds-nav\"><a aria-current=\"page\">Salle</a><a>Analyse</a><a>Séances</a><a>Exos</a><a>Réglages</a></nav>",
+      "css": ".ds-nav{display:flex;justify-content:space-between;height:48px;align-items:center;padding:0 8px;background:#100e0c;font-family:'Inter Variable',system-ui,sans-serif}.ds-nav a{height:44px;display:inline-flex;align-items:center;padding:0 9px;font-size:15px;color:#b5b0a9}.ds-nav a[aria-current]{font-weight:600;color:#f4f0e7;text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:7px}"
     },
     {
-      "name": "Accent Chip",
-      "kind": "chip",
-      "refersTo": "chip-accent",
-      "description": "Chip d'état accent (Personnalisé, Unilatéral, segment courant) — mot + couleur, jamais la couleur seule.",
-      "html": "<span class=\"ds-chip-accent\">Personnalisé</span>",
-      "css": ".ds-chip-accent{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font:500 11.5px 'Geist Variable','Inter Variable',system-ui,sans-serif;color:var(--color-accent-ink,oklch(0.74 0.16 288));background:var(--color-accent-soft,color-mix(in oklab,oklch(0.62 0.19 286),transparent 86%));border:1px solid var(--color-accent,oklch(0.62 0.19 286))}"
+      "name": "Sheet",
+      "kind": "dialog",
+      "refersTo": "sheet",
+      "description": "Feuille basse : voile noir plein à 65 %, panneau levé à rayon haut de 10 px, filet haut.",
+      "html": "<div class=\"ds-sheet\"><h2>Remplacer l'exo</h2></div>",
+      "css": ".ds-sheet{background:#1a1815;color:#f4f0e7;border-top:1px solid #3a3733;border-radius:10px 10px 0 0;padding:8px 20px 24px;font-family:'Inter Variable',system-ui,sans-serif}.ds-sheet h2{font-size:17px;font-weight:600}"
     },
     {
-      "name": "Hero Readout",
-      "kind": "custom",
-      "refersTo": "hero-readout",
-      "description": "Le poids de la série en cours : 62px mono à chasse tabulaire, zéro barré. La signature instrument.",
-      "html": "<div class=\"ds-readout\"><span class=\"ds-readout-n\">82,5</span><span class=\"ds-readout-u\">kg</span></div>",
-      "css": ".ds-readout{display:flex;align-items:baseline;gap:8px}.ds-readout-n{font:500 62px/1 'Geist Mono Variable',ui-monospace,monospace;font-variant-numeric:tabular-nums slashed-zero;letter-spacing:-.03em;color:var(--color-ink,oklch(0.975 0.004 286))}.ds-readout-u{font:400 20px 'Geist Variable',system-ui,sans-serif;color:var(--color-ink-muted,oklch(0.715 0.018 286))}"
-    },
-    {
-      "name": "Trend Badge",
-      "kind": "custom",
-      "refersTo": "progression-badge",
-      "description": "Progrès / stagnation / régression : flèche ▲ ▬ ▼ + signe + couleur, sur fond teinté good-soft / warn-soft.",
-      "html": "<span class=\"ds-trend\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 13l5-6 5 6\"/></svg><span class=\"ds-trend-n\">+3,2 %/sem</span></span>",
-      "css": ".ds-trend{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:6px;color:var(--color-good,oklch(0.80 0.13 158));background:color-mix(in oklab,oklch(0.80 0.13 158),transparent 86%)}.ds-trend-n{font:500 12px 'Geist Mono Variable',ui-monospace,monospace;font-variant-numeric:tabular-nums slashed-zero}"
+      "name": "Status",
+      "kind": "badge",
+      "refersTo": "status",
+      "description": "Statut : couleur + signe + mot. Seul « mieux » prend le signal.",
+      "html": "<span class=\"ds-status up\">▲ battue</span> <span class=\"ds-status eq\">▬ égalée</span> <span class=\"ds-status down\">▼ en deçà</span>",
+      "css": ".ds-status{font:500 14px 'Inter Variable',system-ui,sans-serif}.ds-status.up{color:#f6d236}.ds-status.eq{color:#f4f0e7}.ds-status.down{color:#b5b0a9}"
     }
   ],
   "narrative": {
-    "northStar": "L'instrument de nuit",
-    "overview": "Un instrument de précision qu'on lit dans le noir, entre deux séries sous les néons puis au calme le soir. La scène force le mode sombre : fond mat quasi-noir, contraste élevé, données qui ressortent. La personnalité tient en trois mots — rapide, clean, impressionnant — où l'impressionnant vient de la précision (hiérarchie nette, un seul accent, chiffres alignés comme sur un cadran), pas de la décoration. On vole la sobriété sombre de Linear et la lisibilité des graphes d'Apple Fitness. La matière premium tient à des finitions machinées (hairlines, liseré spéculaire, ombres chuchotées) et à une seule lueur violette : celle du bouton d'action.",
+    "northStar": "Signal",
+    "overview": "Un cadran noir, du texte blanc cassé et une seule couleur qui veut dire quelque chose. Noir chaud, gris chauds, hiérarchie par la taille et la graisse d'Inter, filets et espace. Le signal (jaune par défaut, réglable) ne dit que « tu es ici » et « mieux que la dernière fois ». L'action principale est un bloc blanc cassé plein en bas, la navigation cinq mots en haut, le bas de l'écran appartient à la séance. Plat : ni ombre, ni dégradé, ni flou.",
     "keyCharacteristics": [
-      "Base mate quasi-noire teintée vers l'accent (mode sombre par nécessité).",
-      "Un seul accent violet, sur ≤10 % de l'écran, jamais décoratif.",
-      "Chiffres en mono tabulaire (Geist Mono, zéro barré) — la signature instrument.",
-      "Contraste WCAG AA plancher, pensé pour les néons et le bras tendu.",
-      "Densité au pouce : tap-targets ≥ 44px, tout d'une main.",
-      "Plat par paliers tonals + finition machinée ; seule lumière = halo accent de l'action primaire."
+      "Noir chaud, blanc cassé, gris chauds ; une seule couleur, le signal, réservée à deux sens.",
+      "Bouton principal en bloc blanc cassé plein, un par écran, en bas.",
+      "Inter partout, chiffres tabulaires pour les nombres seulement.",
+      "Plat : aucune ombre, aucun dégradé, aucun flou ; la structure est faite de filets.",
+      "Navigation en mots, en haut ; feuilles basses pour les choix de second rang.",
+      "Contraste AA prouvé par script, cibles de 44 px au moins."
     ],
     "rules": [
       {
-        "name": "The One Voice Rule",
-        "body": "L'accent violet ne couvre jamais plus de 10 % d'un écran : action primaire, sélection, progression. Sa rareté EST le message ; une seule surface pleinement violette par écran (le bouton primaire).",
+        "name": "The Two Meanings Rule",
+        "body": "Le signal dit « tu es ici » (aiguille) ou « mieux que la Référence » (▲). Jamais un fond, un bouton, un lien, un interrupteur activé, une sélection, une confirmation ou une erreur.",
         "section": "colors"
       },
       {
-        "name": "The No Fitness-Red Rule",
-        "body": "Le rouge/orange « énergie » est interdit comme accent. Le violet froid premium porte l'app ; une régression reste en ambre atténué, pas en alarme.",
+        "name": "The Status Triad Rule",
+        "body": "Un statut est couleur + signe + mot : mieux en signal ▲, égalé en blanc cassé ▬, en deçà en gris ▼. Le signal ne touche jamais le blanc cassé.",
         "section": "colors"
       },
       {
-        "name": "The Readout Rule",
-        "body": "Tout chiffre mesuré (poids, reps, RIR, e1RM, dates) est en mono à chasse tabulaire. Les chiffres s'alignent en colonne et ne dansent jamais entre deux séries.",
+        "name": "The No Gray-On-Gray Rule",
+        "body": "Tout texte porteur d'information tient 4,5:1 sur son fond ; le gris repère n'écrit pas de texte courant.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Numbers Rule",
+        "body": "Les nombres mesurés sont en chiffres tabulaires, le texte courant non (Inter tabulaire espace les traits d'union).",
         "section": "typography"
       },
       {
-        "name": "The Fixed-Scale Rule",
-        "body": "Échelle typographique en rem fixe, pas de clamp fluide : un outil se lit à DPI constant.",
+        "name": "The No Kicker Rule",
+        "body": "Aucun surtitre en majuscules ni étiquette mono au-dessus d'un titre.",
         "section": "typography"
       },
       {
-        "name": "The Flat-By-Default Rule",
-        "body": "Les surfaces sont plates au repos ; la profondeur vient des paliers tonals et de la finition hairline + spéculaire, pas d'une ombre décorative. L'ombre portée n'apparaît qu'en réponse à un état.",
+        "name": "The Flat Rule",
+        "body": "Aucune ombre, aucun halo, aucun dégradé, aucun flou : un filet, de l'espace ou le fond levé à la place.",
         "section": "elevation"
       },
       {
-        "name": "The Single-Glow Rule",
-        "body": "La seule surface qui rayonne est le bouton d'action primaire (halo accent doux). Tout autre élément reste mat ; un deuxième glow tuerait la One Voice Rule.",
-        "section": "elevation"
+        "name": "The Sticky Bar Rule",
+        "body": "Les barres basses sont collées en sticky, fond plein, encoche comprise ; jamais de position fixed.",
+        "section": "layout"
       }
     ],
     "dos": [
-      "Do garder l'accent violet sur ≤10 % de l'écran : action primaire, sélection, progression.",
-      "Do afficher tout chiffre mesuré en mono tabulaire ; les readouts s'alignent en colonne.",
-      "Do réserver la seule lueur de l'écran au bouton primaire (halo accent doux 3 couches).",
-      "Do tenir le contraste WCAG AA ; bumper le texte vers l'encre plutôt que vers le gris.",
-      "Do des tap-targets ≥ 44px, tout atteignable au pouce d'une main.",
-      "Do rester plat par défaut ; profondeur par paliers tonals + finition machinée.",
-      "Do une motion 150–250 ms ease-out qui sert l'état ; prefers-reduced-motion respecté.",
-      "Do coder progrès/stagnation/régression par couleur + signe/forme (▲ ▬ ▼)."
+      "Do réserver le signal à l'aiguille et au ▲ « mieux que la Référence ».",
+      "Do un seul bouton principal par écran, en bloc blanc cassé plein, en bas.",
+      "Do écrire chaque statut en couleur + signe + mot.",
+      "Do tenir 4,5:1 pour tout texte porteur d'information, prouvé par npm run contrast.",
+      "Do des cibles de 44 px au moins, liens compris.",
+      "Do coller les barres basses en sticky, fond plein, encoche comprise.",
+      "Do passer par le kit src/ui/ plutôt que de redessiner un bouton ou une feuille.",
+      "Do des chiffres tabulaires pour les nombres, et seulement pour eux."
     ],
     "donts": [
-      "Don't ressembler à Hevy / Strong / FitNotes : interfaces chargées, formulaires à rallonge.",
-      "Don't faire surgir le clavier OS : steppers et pavé custom au pouce.",
-      "Don't donner au bouton primaire un dégradé plein, un texte blanc-sur-violet ou une ombre noire dure : c'est le contour accent + halo.",
-      "Don't un deuxième élément qui rayonne : un seul glow violet par écran.",
-      "Don't utiliser le rouge/orange fitness comme accent ; un destructif est en ambre + bordure hair-strong.",
-      "Don't de décoration gratuite, ni ton coach motivant, ni emojis/confettis.",
-      "Don't de gris clair élégant sur fond sombre : première cause d'illisibilité.",
-      "Don't de tiret long (—) dans le texte affiché : un point médian · ou une virgule.",
-      "Don't (bans absolus) : bordure-latérale colorée > 1px, texte en dégradé, glassmorphism décoratif, template hero-metric, eyebrow majuscule au-dessus de chaque section."
+      "Don't ressembler à Hevy, Strong ou FitNotes.",
+      "Don't faire surgir le clavier en salle.",
+      "Don't utiliser le signal en fond, bouton, lien, sélection, interrupteur, confirmation ou erreur.",
+      "Don't de dégradé, de flou, de verre dépoli, de halo, de lueur, ni d'ombre floue.",
+      "Don't de carte arrondie avec icône dans un rond, de pilule de badge, de rounded-2xl.",
+      "Don't de surtitre en majuscules ni de mono en costume technique.",
+      "Don't d'emoji, d'icône décorative ni de microcopie motivante.",
+      "Don't de tiret long dans le texte affiché.",
+      "Don't de position fixed pour une barre collée.",
+      "Don't de gris sur gris."
     ]
   }
 }

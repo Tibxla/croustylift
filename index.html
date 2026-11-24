@@ -4,7 +4,9 @@
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover : en mode standalone iOS (status bar black-translucent),
          le contenu passe SOUS l'encoche ; combiné aux env(safe-area-inset-*) en CSS
-         (padding-top sur body, padding-bottom de la nav), l'UI reste dégagée. -->
+         (bande collée en haut, .safe-top-scrim ; encoche basse portée par les
+         barres collées),
+         l'UI reste dégagée. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Croustylift</title>
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -18,8 +20,9 @@
     <!-- Icone pour l'ecran d'accueil iOS (180x180 recommande pour iPhone retina) -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
-    <!-- Couleur de theme : violet electrique coherent avec DESIGN.md -->
-    <meta name="theme-color" content="#7c3aed" />
+    <!-- Couleur de thème : le fond de l'app (--color-bg, DESIGN.md), pour que la
+         barre du système se fonde dans l'écran au lieu de trancher dessus. -->
+    <meta name="theme-color" content="#100e0c" />
   </head>
   <body>
     <div id="root"></div>

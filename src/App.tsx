@@ -1,95 +1,136 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { flushSync } from 'react-dom'
+import { lazy, Suspense, useCallback, useEffect, useState, type ComponentType, type LazyExoticComponent } from 'react'
 import { useAuth } from './auth/useAuth'
-import { PendingWritesError } from './auth/auth-context'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
-import { SeancesScreen } from './features/authoring/SeancesScreen'
-import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { requestLeave } from './features/authoring/seance-dirty'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
-import { signOutRefusalLabel } from './features/capture/sync-label'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
 import { blockReloads, unblockReloads } from './pwa/blockers'
 import {
-  captureInProgress,
   recoverFromChunkFailure,
   requestReload,
   setLazyChunkPreloader,
   takeSurfaceAfterReload,
-  useUpdateReady,
 } from './pwa/register'
 import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
 import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
-import { openDiag } from './viewport/watch'
-import { APP_VERSION_LABEL } from './version'
+import { SurfaceNav } from './shell/SurfaceNav'
+import { SurfaceNavigationContext } from './shell/navigation'
+import { syncLine } from './shell/sync-line'
+import { useSyncState } from './shell/useSyncState'
+import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
+import { RefusedWritesContext, refusedAction } from './shell/refused-context'
+import { RefusedLoadFailed } from './shell/RefusedLoadFailed'
 import { errorMessage } from './lib/error-message'
 
-// L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
-// PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
-// « zéro-friction ») : recharts n'est téléchargé qu'à l'ouverture de l'onglet.
+// Seule la Salle (surface par défaut, « zéro-friction ») est dans le chunk
+// critique. L'Analyse, Séances (éditeur compris), Exos, Réglages et l'écran des
+// saisies refusées se chargent en PARESSEUX : leur code n'est téléchargé qu'à
+// l'ouverture (et préchargé quand une mise à jour s'annonce, voir plus bas).
 //
-// Si le fichier du chunk est introuvable (build remplacé sous la page, cache vidé
-// par le système), la suite dépend de ce que fait l'utilisateur À CE MOMENT :
-// - il est encore sur l'Analyse et un rechargement est permis : on recharge une
-//   fois pour retrouver un shell et des chunks cohérents, et on rouvre l'Analyse
-//   (la promesse reste en suspens, le Suspense tient jusqu'au rechargement) ;
+// Si le fichier d'un chunk de surface est introuvable (build remplacé sous la
+// page, cache vidé par le système), la suite dépend de ce que fait
+// l'utilisateur À CE MOMENT :
+// - il est encore sur la surface et un rechargement est permis : on recharge une
+//   fois pour retrouver un shell et des chunks cohérents, et on rouvre la même
+//   surface (la promesse reste en suspens, le Suspense tient jusqu'au
+//   rechargement) ;
 // - sa demande est périmée (il a quitté l'onglet, ou s'est déconnecté) : on ne
 //   recharge pas sous ses pieds, et on oublie l'échec (`React.lazy` le
 //   garderait) pour retenter s'il y revient ;
 // - sinon (hors ligne, séance en cours, déjà tenté) : l'erreur remonte à la
 //   frontière d'erreur, qui l'explique.
-const importAnalysis = () => import('./features/analysis/AnalysisScreen')
 
-/**
- * La demande d'import de l'Analyse en cours : ouverte quand l'import démarre,
- * périmée par AuthenticatedApp dès que l'utilisateur quitte l'onglet ou que
- * l'app authentifiée est démontée.
- */
-const analysisRequests = new ImportRequests()
+/** Un écran chargé à la demande, et la demande d'import en cours (ouverte quand
+ *  l'import démarre, périmée dès que l'utilisateur quitte l'onglet ou que l'app
+ *  authentifiée est démontée). */
+interface LazyScreen<P> {
+  Component: LazyExoticComponent<ComponentType<P>>
+  requests: ImportRequests
+  preload: () => void
+}
 
-function createAnalysisScreen() {
-  return lazy(() => {
-    const request = analysisRequests.begin()
-    return importAnalysis()
-      .then((m) => ({ default: m.AnalysisScreen }))
+function lazySurface<P extends object>(
+  surface: SurfaceName,
+  load: () => Promise<ComponentType<P>>,
+): LazyScreen<P> {
+  const requests = new ImportRequests()
+  const create = (): LazyExoticComponent<ComponentType<P>> =>
+    lazy(() => {
+      const request = requests.begin()
+      return load()
+        .then((Component) => ({ default: Component }))
+        .catch((err: unknown) => {
+          const action = recoverFromChunkFailure(surface, requests.isActive(request))
+          if (action === 'reload') return new Promise<never>(() => {})
+          if (action === 'ignore') screen.Component = create()
+          throw err
+        })
+    })
+  const screen: LazyScreen<P> = {
+    Component: create(),
+    requests,
+    preload: () => void load().catch(() => {}),
+  }
+  return screen
+}
+
+const lazyScreens = {
+  analysis: lazySurface('analysis', () => import('./features/analysis/AnalysisScreen').then((m) => m.AnalysisScreen)),
+  seances: lazySurface('seances', () => import('./features/authoring/SeancesScreen').then((m) => m.SeancesScreen)),
+  exercises: lazySurface('exercises', () => import('./features/exercises/ExercisesScreen').then((m) => m.ExercisesScreen)),
+  reglages: lazySurface('reglages', () => import('./features/settings/ReglagesScreen').then((m) => m.ReglagesScreen)),
+} as const
+
+// L'écran des saisies refusées est une feuille, pas une surface, mais son
+// chunk suit la même reprise protégée : introuvable pendant qu'elle est ouverte
+// et rechargement permis, la page recharge une fois et rouvre l'onglet en cours ;
+// sinon l'échec s'affiche dans la feuille (RefusedLoadFailed), avec une reprise.
+// L'import échoué est toujours oublié (`React.lazy` le garderait) : réessayer
+// redemande vraiment le fichier.
+const importRefused = () => import('./shell/RefusedWritesSheet')
+const refusedRequests = new ImportRequests()
+/** L'onglet affiché, rouvert si un rechargement de reprise a lieu (tenu par AuthenticatedApp). */
+let recoverySurface: SurfaceName = 'capture'
+const createRefusedSheet = (): LazyExoticComponent<ComponentType<{ open: boolean; onClose: () => void }>> =>
+  lazy(() => {
+    const request = refusedRequests.begin()
+    return importRefused()
+      .then((m) => ({ default: m.RefusedWritesSheet }))
       .catch((err: unknown) => {
-        const action = recoverFromChunkFailure('analysis', analysisRequests.isActive(request))
+        const action = recoverFromChunkFailure(recoverySurface, refusedRequests.isActive(request))
         if (action === 'reload') return new Promise<never>(() => {})
-        if (action === 'ignore') AnalysisScreen = createAnalysisScreen()
+        RefusedWritesSheet = createRefusedSheet()
         throw err
       })
   })
-}
-let AnalysisScreen = createAnalysisScreen()
+let RefusedWritesSheet = createRefusedSheet()
 
-// Une mise à jour s'annonce : le chunk de l'Analyse est chargé en mémoire tant
+// Une mise à jour s'annonce : les chunks paresseux sont chargés en mémoire tant
 // que l'ancien précache existe encore (voir `setLazyChunkPreloader`).
 setLazyChunkPreloader(() => {
-  void importAnalysis().catch(() => {})
+  for (const screen of Object.values(lazyScreens)) screen.preload()
+  void importRefused().catch(() => {})
 })
 
 type Surface = SurfaceName
 
 /**
- * Joue une mise à jour d'état derrière l'API native View Transitions : le passage
- * d'un onglet à l'autre se fait en crossfade court (0 ko, natif). `flushSync`
- * force React à appliquer le changement DANS la transition pour que l'ancien et
- * le nouvel écran soient capturés. Désactivé sous `prefers-reduced-motion` et là
- * où l'API n'existe pas (fallback : mise à jour directe, instantanée).
+ * Affiche une autre surface, instantanément : le geste revient des dizaines de
+ * fois par jour, aucune animation ne s'y justifie (DESIGN.md, Mouvement).
  *
- * Champ en cours de saisie : on lui retire le focus et on se passe de transition.
- * Sinon le champ est démonté pendant que le clavier descend et que le navigateur
- * photographie la page, ce qui sur iPhone peut laisser la fenêtre d'affichage
- * faussée et les barres du bas décrochées (registre R4).
+ * Champ en cours de saisie : on lui retire d'abord le focus. Sinon le champ est
+ * démonté pendant que le clavier descend, ce qui sur iPhone peut laisser la
+ * fenêtre d'affichage faussée et les barres du bas décrochées (registre R4).
+ * Puis on revient en haut : la nouvelle surface s'ouvre sur son en-tête.
  */
-function withViewTransition(update: () => void): void {
+function showSurface(update: () => void): void {
   const focused = typeof document === 'undefined' ? null : document.activeElement
   if (
     focused instanceof HTMLInputElement ||
@@ -97,29 +138,17 @@ function withViewTransition(update: () => void): void {
     focused instanceof HTMLSelectElement
   ) {
     focused.blur()
-    update()
-    return
   }
-  const reduce =
-    typeof window !== 'undefined' &&
-    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  // Accès défensif : l'API n'est pas typée dans toutes les versions de lib.dom.
-  const doc =
-    typeof document === 'undefined'
-      ? undefined
-      : (document as Document & { startViewTransition?: (cb: () => void) => unknown })
-  if (!reduce && typeof doc?.startViewTransition === 'function') {
-    doc.startViewTransition(() => flushSync(update))
-  } else {
-    update()
-  }
+  update()
+  if (typeof window !== 'undefined') window.scrollTo(0, 0)
 }
 
-// La hauteur de la tab bar vit dans une variable CSS partagée `--nav-height`
-// (`--nav-offset` = + safe-area iOS), définie une seule fois sur `:root`
-// (index.css). La surface réserve l'espace en bas via `var(--nav-offset)` et les
-// barres d'action fixes de la capture s'y alignent (`bottom-[var(--nav-offset)]`),
-// sans <style> injecté ni couplage cross-feature.
+// La navigation est une ligne de cinq mots en HAUT de l'écran (shell/SurfaceNav),
+// dans le flux : le bas appartient à l'action du moment, dans des barres collées
+// en `sticky` qui portent elles-mêmes l'encoche basse (DESIGN.md, Layout). La
+// surface occupe `min-h-surface` (index.css) : la fenêtre moins l'encoche haute
+// et la ligne de navigation, pour que le document ne défile pas quand le contenu
+// tient (registre R4).
 
 function App() {
   const { session, user, loading, signOut, isPasswordRecovery, localAccount, offlineRecognized } =
@@ -192,20 +221,46 @@ function AuthenticatedApp({
   // Après un rechargement décidé par l'app (mise à jour, chunk introuvable), on
   // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
   const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
-  const updateReady = useUpdateReady()
-  // La demande d'import de l'Analyse ne vaut que tant que cet écran la porte :
-  // elle est périmée au départ de l'onglet et au démontage (déconnexion).
+  // La demande d'import d'un écran paresseux ne vaut que tant que l'onglet le
+  // porte : elle est périmée au départ de l'onglet et au démontage (déconnexion).
   useEffect(() => {
-    if (surface !== 'analysis') return
-    return () => analysisRequests.invalidate()
+    recoverySurface = surface
   }, [surface])
-  // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
-  // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
-  const [signOutIssue, setSignOutIssue] = useState<
-    | { kind: 'pending'; pending: number; refused: number }
-    | { kind: 'error'; message: string }
-    | null
-  >(null)
+  useEffect(() => {
+    if (surface === 'capture') return
+    const screen = lazyScreens[surface]
+    return () => screen.requests.invalidate()
+  }, [surface])
+  // Le seul chemin d'une surface à l'autre, pour la navigation comme pour tout
+  // écran (shell/navigation.ts) : garde de sortie d'abord (modifications non
+  // enregistrées), puis rechargement sur une nouvelle version si une attend, puis
+  // la surface. L'ordre et ses raisons sont dans surface-switch.ts.
+  const goTo = useCallback(
+    (next: Surface) => {
+      switchSurface(next, surface, {
+        requestLeave,
+        requestReload,
+        show: (target) => showSurface(() => setSurface(target)),
+      })
+    },
+    [surface],
+  )
+  // Emplacement des feuilles basses du kit (src/ui/sheet.tsx), dernier enfant
+  // de la racine, collé au bas de la fenêtre.
+  const [sheetSlot, setSheetSlot] = useState<HTMLElement | null>(null)
+  // État réel de la file d'écritures, pour la ligne de synchro sous la navigation.
+  const sync = useSyncState()
+  // Écran des saisies refusées (feuille), ouvert depuis la ligne de synchro de
+  // toute surface ou depuis Réglages.
+  const [refusedOpen, setRefusedOpen] = useState(false)
+  // Chaque « Réessayer » remonte la frontière d'erreur de la feuille.
+  const [refusedAttempt, setRefusedAttempt] = useState(0)
+  // La demande d'import de la feuille ne vaut que tant qu'elle est ouverte.
+  useEffect(() => {
+    if (!refusedOpen) return
+    return () => refusedRequests.invalidate()
+  }, [refusedOpen])
+  const openRefused = useCallback(() => setRefusedOpen(true), [])
 
   useEffect(() => {
     let active = true
@@ -265,22 +320,24 @@ function AuthenticatedApp({
     return () => window.removeEventListener('online', flushAndRevalidate)
   }, [])
 
+  const { analysis, seances, exercises, reglages } = lazyScreens
+  const AnalysisScreen = analysis.Component
+  const SeancesScreen = seances.Component
+  const ExercisesScreen = exercises.Component
+  const ReglagesScreen = reglages.Component
+
   if (check.phase === 'checking') {
     return <FullScreenSpinner label="Chargement" />
   }
 
   if (check.phase === 'error') {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center text-ink">
-        <p className="text-base font-medium text-ink">Impossible de charger ton compte.</p>
-        <p className="readout max-w-full break-words text-xs text-ink-faint">{check.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
+      <main className="min-h-screen bg-bg text-ink">
+        <LoadError
+          intro="Impossible de charger ton compte."
+          message={check.message}
+          onRetry={() => setReloadKey((k) => k + 1)}
+        />
       </main>
     )
   }
@@ -302,308 +359,70 @@ function AuthenticatedApp({
 
   return (
     <main className="min-h-screen bg-bg text-ink">
-      {/* Scrim de status bar : en standalone iOS la webview passe SOUS l'heure
-          (viewport-fit=cover + status bar translucide, index.html). Sans cette
-          bande opaque, le contenu défilerait derrière l'heure et la batterie.
-          Elle ne coûte aucun pixel utile — la zone appartient déjà au système —
-          et garde la teinte de l'app plutôt que le noir pur d'iOS. */}
-      <div className="safe-top-scrim" aria-hidden="true" />
+      <SurfaceNav current={surface} onSelect={goTo} />
 
-      <div style={{ paddingBottom: 'var(--nav-offset)' }}>
-        {/* Frontière par surface (`key={surface}` la réarme au changement
-            d'onglet) : un crash de rendu d'un onglet n'efface pas la nav ni les
-            autres surfaces — l'utilisateur peut basculer pour s'en sortir. Le
-            Suspense couvre le chargement paresseux de l'Analyse. */}
-        <ErrorBoundary key={surface}>
-          <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
-            {surface === 'capture' && <CaptureScreen />}
-            {surface === 'analysis' && <AnalysisScreen />}
-            {surface === 'seances' && <SeancesScreen />}
-            {surface === 'exercises' && <ExercisesScreen />}
-          </Suspense>
-        </ErrorBoundary>
+      <SurfaceNavigationContext.Provider value={goTo}>
+        <RefusedWritesContext.Provider value={openRefused}>
+        <SheetSlotContext.Provider value={sheetSlot}>
+          {/* Colonne flexible de la hauteur de la fenêtre (sous la navigation) :
+              une barre collée en bas d'écran y reste même quand le contenu est
+              court. Frontière par surface (`key={surface}` la réarme au
+              changement) : un crash de rendu d'une surface n'efface pas la
+              navigation, l'utilisateur peut basculer pour s'en sortir. Le
+              Suspense couvre le chargement paresseux de l'Analyse. */}
+          <div className="flex min-h-surface flex-col">
+            {/* Ligne de synchro sous la navigation, sur toutes les surfaces sauf
+                la Salle, qui garde la sienne tant que l'écran de capture n'est
+                pas refait. Dans la colonne : sa hauteur compte dans celle de
+                l'écran, le document ne défile pas pour elle. */}
+            {surface !== 'capture' && (
+              <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />
+            )}
+            <ErrorBoundary key={surface}>
+              <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
+                {surface === 'capture' && <CaptureScreen />}
+                {surface === 'analysis' && <AnalysisScreen />}
+                {surface === 'seances' && <SeancesScreen />}
+                {surface === 'exercises' && <ExercisesScreen />}
+                {/* Compte (e-mail, Déconnexion), version et mise à jour vivent ici,
+                    au calme : rien de tout cela n'a sa place dans le chrome
+                    permanent ni en salle. App reste propriétaire de l'auth. */}
+                {surface === 'reglages' && <ReglagesScreen email={email} onSignOut={onSignOut} />}
+              </Suspense>
+            </ErrorBoundary>
+          </div>
+          {/* Montée à la première ouverture seulement : son chunk n'est demandé
+              qu'à ce moment. Un échec de chargement ne casse pas l'app (frontière
+              sans repli visible) et se retente à la prochaine ouverture. */}
+          {refusedOpen && (
+            <ErrorBoundary
+              key={refusedAttempt}
+              fallback={
+                <RefusedLoadFailed onRetry={() => setRefusedAttempt((n) => n + 1)} onClose={() => setRefusedOpen(false)} />
+              }
+            >
+              <Suspense fallback={null}>
+                <RefusedWritesSheet open onClose={() => setRefusedOpen(false)} />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+        </SheetSlotContext.Provider>
+        </RefusedWritesContext.Provider>
+      </SurfaceNavigationContext.Provider>
 
-        {/* Compte : email + Déconnexion, en pied de l'Analyse — l'écran « au
-            calme », consulté assis, hors salle. La Connexion arrive une fois par
-            appareil (cf. GLOSSARY.md) : cette action n'a rien à faire dans le
-            chrome permanent de l'app, où elle volait 56 px à tous les écrans, la
-            Capture comprise. App reste propriétaire de l'auth — l'Analyse n'en
-            reçoit aucune prop. */}
-        {surface === 'analysis' && (
-          <section className="mx-auto w-full max-w-md px-4 pb-8">
-            <div className="panel rounded-xl p-4">
-              <h2 className="text-sm font-medium text-ink">Compte</h2>
-              <p className="mt-1 truncate text-sm text-ink-muted">{email}</p>
-              {signOutIssue ? (
-                <div className="mt-3 flex flex-col gap-2.5">
-                  {signOutIssue.kind === 'pending' ? (
-                    <>
-                      <p className="text-sm text-ink">
-                        {signOutRefusalLabel({
-                          held: signOutIssue.pending,
-                          refused: signOutIssue.refused,
-                        })}
-                      </p>
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => setSignOutIssue(null)}
-                          className="btn btn-secondary h-9 rounded-lg px-3 text-sm"
-                        >
-                          Rester connecté
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            // Forçage explicite (ADR 0012) : la seule porte de purge —
-                            // la perte est nommée sur le bouton, pas dans un OK réflexe.
-                            setSignOutIssue(null)
-                            void onSignOut({ force: true }).catch(() => {})
-                          }}
-                          className="btn btn-ghost h-9 rounded-lg px-3 text-sm font-medium text-warn"
-                        >
-                          Déconnecter et perdre ces saisies
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="flex items-start justify-between gap-3 text-sm text-warn">
-                      <span className="min-w-0 break-words">
-                        Déconnexion impossible&#8239;: {signOutIssue.message}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSignOutIssue(null)}
-                        className="btn btn-ghost h-8 shrink-0 rounded-lg px-2.5 text-sm"
-                      >
-                        OK
-                      </button>
-                    </p>
-                  )}
-                </div>
-              ) : null}
-              {/* Version du build : le déploiement est manuel, c'est ici qu'on
-                  vérifie depuis le téléphone quel commit tourne. Si une version
-                  plus récente attend, elle s'installe au prochain changement
-                  d'onglet ; le bouton évite d'avoir à le deviner. */}
-              <p className="readout mt-1 text-xs text-ink-faint">Version {APP_VERSION_LABEL}</p>
-              {updateReady && (
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-sm text-ink-muted">
-                    {captureInProgress()
-                      ? 'Mise à jour prête, installée après ta séance.'
-                      : 'Mise à jour prête.'}
-                  </p>
-                  {!captureInProgress() && (
-                    <button
-                      type="button"
-                      onClick={() => requestReload('manual', 'analysis')}
-                      className="btn btn-secondary h-9 shrink-0 rounded-lg px-3 text-sm"
-                    >
-                      Mettre à jour
-                    </button>
-                  )}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await onSignOut()
-                    } catch (err) {
-                      if (err instanceof PendingWritesError) {
-                        setSignOutIssue({
-                          kind: 'pending',
-                          pending: err.pending,
-                          refused: err.refused,
-                        })
-                        return
-                      }
-                      setSignOutIssue({
-                        kind: 'error',
-                        message: errorMessage(err),
-                      })
-                    }
-                  })()
-                }}
-                className="btn btn-secondary mt-3 h-9 rounded-lg px-3 text-sm font-medium"
-              >
-                Se déconnecter
-              </button>
-            </div>
-          </section>
-        )}
-      </div>
-
-      <BottomNav
-        surface={surface}
-        onSelect={(s) => {
-          // Garde de sortie d'abord (modifications non enregistrées), puis
-          // rechargement sur une nouvelle version si une attend, puis l'onglet :
-          // l'ordre et ses raisons sont dans surface-switch.ts.
-          switchSurface(s, surface, {
-            requestLeave,
-            requestReload,
-            show: (next) => withViewTransition(() => setSurface(next)),
-          })
-        }}
-      />
+      {/* Emplacement des feuilles basses : collé en bas de la zone visible, sans
+          `position: fixed` (DESIGN.md, Layout). */}
+      <div ref={setSheetSlot} className="sticky bottom-0 z-40 h-0" />
     </main>
   )
 }
 
 function FullScreenSpinner({ label }: { label: string }) {
+  // Une phrase plutôt qu'une toupie (kit E, `Loading`).
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg text-ink">
-      <div
-        className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-        role="status"
-        aria-label={label}
-      />
+    <main className="min-h-screen bg-bg text-ink">
+      <Loading label={`${label}…`} />
     </main>
-  )
-}
-
-// --- Navigation entre les surfaces (zone du pouce, bas d'écran) ---------------
-
-/** Durée de l'appui long sur la barre d'onglets qui ouvre le relevé de diagnostic. */
-const DIAG_LONG_PRESS_MS = 1500
-
-function BottomNav({
-  surface,
-  onSelect,
-}: {
-  surface: Surface
-  onSelect: (s: Surface) => void
-}) {
-  // Appui long sur la barre d'onglets : ouvre le relevé de diagnostic (registre
-  // R4). C'est le seul geste disponible sur tous les écrans de l'app installée,
-  // qui n'a pas de barre d'adresse pour `?diag=1`. Le clic qui suit le relâcher
-  // est avalé, pour ne pas changer d'onglet en ouvrant le relevé.
-  const pressTimer = useRef<number | undefined>(undefined)
-  const longPressed = useRef(false)
-  const cancelPress = () => window.clearTimeout(pressTimer.current)
-
-  return (
-    <nav
-      className="fixed inset-x-0 bottom-0 z-30 select-none border-t border-hair bg-bg/80 backdrop-blur-md"
-      style={{ WebkitTouchCallout: 'none' }}
-      aria-label="Navigation principale"
-      onPointerDown={() => {
-        longPressed.current = false
-        cancelPress()
-        pressTimer.current = window.setTimeout(() => {
-          longPressed.current = true
-          openDiag()
-        }, DIAG_LONG_PRESS_MS)
-      }}
-      onPointerUp={cancelPress}
-      onPointerCancel={cancelPress}
-      onPointerLeave={cancelPress}
-      onContextMenu={(event) => event.preventDefault()}
-      onClickCapture={(event) => {
-        if (!longPressed.current) return
-        longPressed.current = false
-        event.preventDefault()
-        event.stopPropagation()
-      }}
-    >
-      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[var(--safe-bottom)]">
-        <TabButton
-          label="Capture"
-          active={surface === 'capture'}
-          onClick={() => onSelect('capture')}
-          icon={
-            <path d="M12 5v14M5 12h14" />
-          }
-        />
-        <TabButton
-          label="Analyse"
-          active={surface === 'analysis'}
-          onClick={() => onSelect('analysis')}
-          icon={
-            <>
-              <path d="M3 3v18h18" />
-              <path d="M7 14l4-4 3 3 5-6" />
-            </>
-          }
-        />
-        <TabButton
-          label="Séances"
-          active={surface === 'seances'}
-          onClick={() => onSelect('seances')}
-          icon={
-            <>
-              <path d="M8 6h11M8 12h11M8 18h11" />
-              <path d="M3 6h.01M3 12h.01M3 18h.01" />
-            </>
-          }
-        />
-        <TabButton
-          label="Exercices"
-          active={surface === 'exercises'}
-          onClick={() => onSelect('exercises')}
-          icon={
-            <>
-              <path d="M6.5 6.5l11 11" />
-              <path d="M4 9l-1.5-1.5M2 12l3 3 3-3-3-3zM20 12l-3-3-3 3 3 3zM20 15l1.5 1.5" />
-            </>
-          }
-        />
-      </div>
-    </nav>
-  )
-}
-
-function TabButton({
-  label,
-  active,
-  onClick,
-  icon,
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-  icon: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? 'page' : undefined}
-      // Tap-target ≥ 44px (h-14 = 56px). Onglet actif en accent violet sobre :
-      // texte + icône colorés, jamais de fond plein (One Voice Rule). Un fin
-      // indicateur en haut porte un `view-transition-name` : au changement
-      // d'onglet (derrière l'API View Transitions), il GLISSE de l'ancien vers le
-      // nouvel onglet (morph natif) au lieu d'apparaître/disparaître.
-      className={`relative flex h-14 flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors duration-200 ${
-        active ? 'text-accent-ink' : 'text-ink-faint active:text-ink'
-      }`}
-    >
-      {active && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 mx-auto h-[2.5px] w-7 rounded-full bg-accent shadow-[0_0_10px_0_var(--accent-glow)]"
-          style={{ viewTransitionName: 'nav-indicator' }}
-        />
-      )}
-      <svg
-        viewBox="0 0 24 24"
-        width="20"
-        height="20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        className={`transition-transform duration-200 ${active ? 'scale-105' : ''}`}
-      >
-        {icon}
-      </svg>
-      {label}
-    </button>
   )
 }
 

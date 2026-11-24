@@ -1,130 +1,95 @@
-// Le graphe BPM moyen + durée de séance (cf. issue #28, DESIGN.md). Deux
-// métriques LIÉES sur un même graphe à DOUBLE axe Y : BPM (accent violet, axe
-// gauche) et durée (ink-muted, axe droit), pour les lire ensemble sans les
-// confondre. L'accent va au BPM (le signal n°1 ici, One Voice Rule), la durée
-// reste en encre discrète.
+// Durée et BPM moyen dans le temps (cf. issue #28) : deux PETITS graphes
+// empilés qui partagent l'axe du temps et le même doigt, jamais un graphe à deux
+// axes Y (deux échelles sur un tracé se lisent l'une pour l'autre). Points
+// seuls : une mesure par séance, rien d'interpolé. Une séance sans BPM n'a pas
+// de point dans le second, et le curseur y passe quand même : un trou reste un
+// trou, jamais un zéro.
 //
-// Direction visuelle calquée sur E1rmChart : fond sombre, grille discrète,
-// ticks/labels en mono (Readout Rule), axe X = dates. Chaque courbe ignore les
-// trous (`connectNulls={false}`) : une séance peut n'avoir que l'une des deux.
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  type TooltipContentProps,
-} from 'recharts';
-import { shortDay } from './chart-time';
-import { ACCENT, HAIR, INK_MUTED, READOUT_TICK } from './chart-style';
+// Le relevé au-dessus suit le point choisi (le plus récent par défaut).
+import { useState } from 'react';
+import type { E1rmPoint } from '../../domain/types';
+import { Chart, type ChartSel } from './Chart';
+import { dayToTime, timeAxis, timeTick } from './chart-time';
+import { formatDuration } from './format';
+import { formatDay } from './rate-period';
 import type { SessionMetricPoint } from './session-metrics';
 
-
-
-// Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
-// fournit donc vides au typage statique → on les rend partielles.
-function SessionMetricsTooltip({
-  active,
-  payload,
-}: Partial<TooltipContentProps<number, string>>) {
-  if (!active || !payload || payload.length === 0) return null;
-  const first = payload[0];
-  if (!first) return null;
-  const point = first.payload as SessionMetricPoint;
-  return (
-    <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{shortDay(point.date)}</p>
-      {point.bpmAvg !== null && (
-        <p className="readout text-sm font-medium text-accent">
-          {Math.round(point.bpmAvg)}
-          <span className="ml-1 text-xs font-normal text-ink-muted">bpm</span>
-        </p>
-      )}
-      {point.durationMin !== null && (
-        <p className="readout text-sm font-medium text-ink-muted">
-          {Math.round(point.durationMin)}
-          <span className="ml-1 text-xs font-normal text-ink-muted">min</span>
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Résumé textuel pour les lecteurs d'écran (le SVG est muet). */
-function describeMetrics(points: SessionMetricPoint[]): string {
-  if (points.length === 0) return 'Graphe BPM moyen et durée de séance, aucune donnée.';
-  return `BPM moyen et durée de séance sur ${points.length} séances.`;
-}
-
 export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }) {
+  const [picked, setPicked] = useState<number | null>(null);
+  if (points.length === 0) return null;
+  const k = Math.min(picked ?? points.length - 1, points.length - 1);
+  const p = points[k]!;
+  const year = new Date().getFullYear();
+  // L'axe commun : `timeAxis` lit des points datés, la valeur n'y compte pas.
+  const axis = timeAxis([points.map((m): E1rmPoint => ({ date: m.date, e1rm: 0 }))]);
+  const ticks = (axis?.ticks ?? []).map((t) => ({ x: t, label: timeTick(t) }));
+  // Chaque graphe garde le rang de la séance dans `points`, pour lier le doigt.
+  const duration = points.flatMap((m, at) => (m.durationMin === null ? [] : [{ x: dayToTime(m.date), y: m.durationMin, at }]));
+  const bpm = points.flatMap((m, at) => (m.bpmAvg === null ? [] : [{ x: dayToTime(m.date), y: m.bpmAvg, at }]));
+  const selIn = (list: { at: number }[], id: string): ChartSel | null => {
+    const i = list.findIndex((q) => q.at === k);
+    return i >= 0 ? { series: id, index: i } : null;
+  };
+  const cursor = dayToTime(p.date);
+
   return (
-    <div className="h-40 w-full" role="img" aria-label={describeMetrics(points)}>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={points} margin={{ top: 8, right: 4, bottom: 4, left: -8 }}>
-          <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} opacity={0.4} />
-          <XAxis
-            dataKey="date"
-            tickFormatter={shortDay}
-            tick={READOUT_TICK}
-            tickLine={false}
-            axisLine={{ stroke: HAIR }}
-            minTickGap={24}
-            interval="preserveStartEnd"
+    <div>
+      <p className="flex items-baseline justify-between gap-3 px-5" aria-live="polite">
+        <span className="text-[15px] text-muted">{formatDay(p.date, year)}</span>
+        <span className="text-[17px] font-medium text-ink">
+          {p.durationMin !== null ? formatDuration(p.durationMin) : <span className="font-normal text-muted">durée non notée</span>}
+          <span className="text-muted"> · </span>
+          {p.bpmAvg !== null ? <span className="tnum">{Math.round(p.bpmAvg)} BPM</span> : <span className="font-normal text-muted">BPM non saisi</span>}
+        </span>
+      </p>
+      <div className="mt-3 px-5">
+        <p className="text-[14px] text-muted">Durée, en minutes</p>
+        {duration.length === 0 ? (
+          <p className="py-4 text-[15px] text-muted">Aucune durée notée pour l’instant.</p>
+        ) : (
+          <Chart
+            series={[{ id: 'duree', tone: 'ink', line: false, points: duration }]}
+            selected={selIn(duration, 'duree')}
+            onSelect={(s) => setPicked(duration[s.index]!.at)}
+            cursorX={cursor}
+            xDomain={axis?.domain}
+            xTicks={ticks}
+            yFormat={(v) => String(Math.round(v))}
+            yTarget={2}
+            height={112}
+            months
+            sliderLabel="Durée d’une séance"
+            valueText={(sel) => {
+              const m = points[duration[sel.index]!.at]!;
+              return `${formatDuration(m.durationMin ?? 0)}, ${formatDay(m.date, year)}`;
+            }}
+            ariaLabel={`Durée de ${duration.length} séances. Glisser ou flèches pour parcourir.`}
           />
-          {/* Axe gauche = BPM (accent) ; axe droit = durée (ink-muted). */}
-          <YAxis
-            yAxisId="bpm"
-            tick={READOUT_TICK}
-            tickLine={false}
-            axisLine={false}
-            width={32}
-            domain={['dataMin - 5', 'dataMax + 5']}
-            tickFormatter={(v: number) => `${Math.round(v)}`}
-            allowDecimals={false}
+        )}
+        <p className="mt-3 text-[14px] text-muted">BPM moyen, quand il a été saisi</p>
+        {bpm.length === 0 ? (
+          <p className="py-4 text-[15px] text-muted">Aucun BPM saisi pour l’instant.</p>
+        ) : (
+          <Chart
+            series={[{ id: 'bpm', tone: 'ink', line: false, points: bpm }]}
+            selected={selIn(bpm, 'bpm')}
+            onSelect={(s) => setPicked(bpm[s.index]!.at)}
+            cursorX={cursor}
+            xDomain={axis?.domain}
+            xTicks={ticks}
+            yFormat={(v) => String(Math.round(v))}
+            yTarget={2}
+            height={112}
+            months
+            sliderLabel="BPM moyen d’une séance"
+            valueText={(sel) => {
+              const m = points[bpm[sel.index]!.at]!;
+              return `${Math.round(m.bpmAvg ?? 0)} BPM, ${formatDay(m.date, year)}`;
+            }}
+            ariaLabel={`BPM moyen de ${bpm.length} séances. Glisser ou flèches pour parcourir.`}
           />
-          <YAxis
-            yAxisId="duration"
-            orientation="right"
-            tick={READOUT_TICK}
-            tickLine={false}
-            axisLine={false}
-            width={28}
-            domain={['dataMin - 5', 'dataMax + 5']}
-            tickFormatter={(v: number) => `${Math.round(v)}`}
-            allowDecimals={false}
-          />
-          <Tooltip
-            content={<SessionMetricsTooltip />}
-            cursor={{ stroke: HAIR, strokeWidth: 1 }}
-          />
-          <Line
-            yAxisId="bpm"
-            type="monotone"
-            dataKey="bpmAvg"
-            name="BPM"
-            stroke={ACCENT}
-            strokeWidth={2}
-            dot={{ r: 2.5, fill: ACCENT, strokeWidth: 0 }}
-            activeDot={{ r: 4, fill: ACCENT, strokeWidth: 0 }}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-          <Line
-            yAxisId="duration"
-            type="monotone"
-            dataKey="durationMin"
-            name="Durée"
-            stroke={INK_MUTED}
-            strokeWidth={1.5}
-            dot={{ r: 2, fill: INK_MUTED, strokeWidth: 0 }}
-            activeDot={{ r: 3.5, fill: INK_MUTED, strokeWidth: 0 }}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 }

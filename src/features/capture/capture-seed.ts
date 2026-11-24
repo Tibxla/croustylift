@@ -114,6 +114,13 @@ function lastRefFor(reference: PerformedSet[] | null, side: Side | undefined): P
  * deux lignes G/D ; `loggedSets.length + 1` en bilatéral, une ligne par série),
  * et le repère est filtré par `side` quand l'exo est unilatéral — sans quoi le
  * report piocherait la mauvaise ligne (mauvais order ET mauvais côté).
+ *
+ * Unilatéral, série entamée de l'AUTRE côté, et rien de connu pour CE côté (ni
+ * série loggée, ni Référence, ni repli) : le côté restant reprend les valeurs
+ * qu'on vient de logger (poids, reps, RIR) au lieu du neutre (20 kg). Un premier
+ * passage s'enchaîne ainsi gauche puis droite à la même charge. Dès que ce côté
+ * a son propre repère, c'est lui qui prime (issues #46, #63 : chaque bras a sa
+ * charge).
  */
 export function seedDraft({
   prescription,
@@ -132,6 +139,13 @@ export function seedDraft({
   const fallback = fallbackReference ?? null;
   const fallbackAt = refAt(fallback, nextOrder, side);
   const fallbackLast = lastRefFor(fallback, side);
+  const partner =
+    side === undefined
+      ? undefined
+      : loggedSets.find((s) => s.order === nextOrder && s.side !== undefined && s.side !== side);
+  if (partner && !last && !atPosition && !lastRef && !fallbackAt && !fallbackLast) {
+    return { weightKg: partner.weightKg, reps: partner.reps, rir: partner.rir };
+  }
 
   // POIDS : dès la 2ᵉ série (du même côté en unilatéral), report de la dernière
   // loggée. Sinon référence (position courante, à défaut dernière connue), sinon

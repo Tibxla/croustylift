@@ -18,18 +18,48 @@
 //     vit dans ExerciseForm, plus d'action note sur la carte de liste). Chargée à
 //     l'ouverture du form ; corps vide = suppression.
 //
-// Conventions DESIGN.md tenues ici :
-//   - accent violet parcimonieux : action primaire + chips actives du formulaire ;
-//   - statut « Base », « Unilatéral », « Personnalisé » = couleur + MOT (+ icône),
-//     jamais la couleur seule ;
-//   - aucun tiret long affiché ; tap-targets >= 44px ;
-//   - confirmations de suppression / réinitialisation INLINE (pas de window.confirm) ;
-//   - <input> texte pour la recherche (le ban du clavier OS vise les chiffres).
+// Pages (kit E, DESIGN.md), en état local comme l'Analyse :
+//   liste     recherche au clavier (texte libre, admis), filtre par muscle
+//             principal en mots soulignés, « Tes exos » puis « Catalogue
+//             commun ». Une ligne = nom, muscles, « unilatéral » en mot ; « ta
+//             version » à droite d'un exo de base personnalisé. Action
+//             principale en bas : créer un exo perso (pré-rempli par une
+//             recherche qui n'a rien trouvé).
+//   fiche     un exo : muscles, mouvement, origine ; note d'instructions lue,
+//             modifiée sur geste explicite dans la feuille de note commune à
+//             l'éditeur de séance (NoteSheet) ; puis la sortie (revenir à l'exo de
+//             base, ou supprimer un exo perso) derrière une confirmation en
+//             ligne où l'option sûre est le bouton.
+//   formulaire  ExerciseForm en écran entier : créer, modifier un exo perso,
+//             personnaliser un exo de base (override).
+// Aucun signal ici (rien n'y est « mieux que la dernière fois »), aucun badge :
+// un statut est un mot. Cibles de 44 px au moins, aucun tiret long affiché.
 //
 // Suppression SÛRE : la couche data (deletePersonalExercise) compte d'abord les
 // références (prescriptions + séries faites) et REFUSE avec un message lisible si
 // l'exo est encore utilisé, au lieu de laisser la base lever une violation de FK.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Alert,
+  Confirm,
+  EmptyState,
+  IconButton,
+  List,
+  LoadError,
+  Loading,
+  PrimaryButton,
+  Row,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  TextField,
+  TextLink,
+  Choice,
+} from '../../ui';
+import { MUSCLE_GROUPS } from '../authoring/exercise-input';
+import { localTemplates, seancesUsing } from './local-usage';
+import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { listExercises } from '../capture/data';
 import {
   createPersonalExercise,
@@ -37,6 +67,7 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
 import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   loadExerciseOverrides,
@@ -45,6 +76,7 @@ import {
 } from './overrides';
 import { isOverridden } from '../../domain/exercise-override';
 import { ExerciseForm, type ExerciseFormValue } from './ExerciseForm';
+import { scrollStep } from './page-scroll';
 
 /** Un champ d'exercice (nom / muscles / unilatéral) diffère-t-il des valeurs courantes ?
     Sert à n'écrire un override d'exo de base QUE si l'utilisateur a vraiment
@@ -57,7 +89,11 @@ function exerciseFieldsChanged(exo: ListExercise, value: ExerciseFormValue): boo
   return a !== b;
 }
 import {
+  filterByMuscle,
   filterExercises,
+  isPersonalExercise,
+  musclesInUse,
+  musclesOf,
   toListExercise,
   type ListExercise,
 } from './exercises-list';
@@ -111,16 +147,20 @@ export function ExercisesScreen() {
   }, [reloadKey]);
 
   if (load.phase === 'loading') {
-    return <ScreenSpinner label="Chargement des exercices" />;
+    return (
+      <Page>
+        <ScreenHeader title="Exercices" />
+        <Loading label="Chargement des exercices…" />
+      </Page>
+    );
   }
 
   if (load.phase === 'error') {
     return (
-      <ScreenError
-        message={load.message}
-        intro="Impossible de charger tes exercices."
-        onRetry={reload}
-      />
+      <Page>
+        <ScreenHeader title="Exercices" />
+        <LoadError intro="Impossible de charger tes exercices." message={load.message} onRetry={reload} />
+      </Page>
     );
   }
 
@@ -188,6 +228,31 @@ export interface ExercisesViewProps {
   onSaveNote: (exerciseId: string, body: string) => Promise<void>;
 }
 
+/** Où l'utilisateur se trouve dans l'onglet. */
+type Page =
+  | { kind: 'list' }
+  | { kind: 'fiche'; id: string }
+  | { kind: 'new'; prefill?: string }
+  | { kind: 'edit'; id: string };
+
+/** Profondeur d'une page : liste, puis fiche ou création, puis modification. */
+const pageDepth = (p: Page) => (p.kind === 'list' ? 0 : p.kind === 'edit' ? 2 : 1);
+
+/** Raison du blocage de rechargement tenu par une note d'exo en cours d'écriture. */
+const NOTE_DRAFT_BLOCK = 'brouillon-note-exercice';
+
+/** Valeur « tous les muscles » du filtre (un muscle canonique n'a pas ce nom). */
+const ALL = 'tous';
+
+const exos = (n: number) => `${n} exo${n > 1 ? 's' : ''}`;
+const capitalize = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
+/** Un muscle ne se coupe jamais en fin de ligne (« avant épaule »). */
+const keepTogether = (m: string) => m.replace(/ /g, ' ');
+
+function musclesLine(exo: ListExercise): string {
+  return [...musclesOf(exo).map((m) => keepTogether(capitalize(m))), ...(exo.unilateral ? ['unilatéral'] : [])].join(' · ');
+}
+
 export function ExercisesView({
   exercises,
   overridden,
@@ -199,748 +264,519 @@ export function ExercisesView({
   onLoadNote,
   onSaveNote,
 }: ExercisesViewProps) {
+  const [page, setPage] = useState<Page>({ kind: 'list' });
   const [query, setQuery] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [muscle, setMuscle] = useState<string>(ALL);
+  // Une phrase qui confirme le dernier geste (« créé », « supprimé »), sur la
+  // page où il mène ; effacée à la navigation suivante.
+  const [flash, setFlash] = useState<string | null>(null);
 
-  const { base, personal } = useMemo(
-    () => filterExercises(exercises, query),
-    [exercises, query],
-  );
+  // Changer de page : instantané, sans animation (geste fréquent). Une page
+  // plus profonde s'ouvre sur son en-tête, un retour retrouve la position
+  // quittée (comme l'Analyse), sauf s'il porte un message : la page s'ouvre
+  // alors en haut, sur la phrase (page-scroll.ts).
+  const scrolls = useRef<number[]>([]);
+  const pendingScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingScroll.current === null) return;
+    window.scrollTo(0, pendingScroll.current);
+    pendingScroll.current = null;
+  }, [page]);
+  const go = (next: Page, message: string | null = null) => {
+    const step = scrollStep(scrolls.current, pageDepth(page), pageDepth(next), window.scrollY, message !== null);
+    scrolls.current = step.stack;
+    pendingScroll.current = step.target;
+    setPage(next);
+    setFlash(message);
+  };
 
-  const total = base.length + personal.length;
+  const byId = (id: string) => exercises.find((e) => e.id === id);
+
+  if (page.kind === 'new') {
+    return (
+      <ExerciseForm
+        frame={{ title: 'Nouvel exo perso', meta: 'Visible de toi seul.', backLabel: 'Exercices' }}
+        prefillName={page.prefill}
+        submitLabel="Créer l’exo"
+        submitBusyLabel="Création…"
+        onCancel={() => go({ kind: 'list' })}
+        onSubmit={async (value) => {
+          await onCreate(value);
+          setQuery('');
+          setMuscle(ALL);
+          go({ kind: 'list' }, `« ${value.name} » est créé, dans Tes exos.`);
+        }}
+      />
+    );
+  }
+
+  if (page.kind === 'edit') {
+    const exo = byId(page.id);
+    if (!exo) return <Missing onBack={() => go({ kind: 'list' })} />;
+    const base = !isPersonalExercise(exo.ownerId);
+    const isOverridden = overridden.has(exo.id);
+    return (
+      <ExerciseForm
+        frame={{
+          title: base ? (isOverridden ? 'Ta version' : 'Personnaliser') : 'Modifier l’exo',
+          meta: base
+            ? 'Pour toi seul. Le catalogue commun ne change pas, ta note et ton historique non plus.'
+            : 'Exo perso, visible de toi seul.',
+          backLabel: exo.name,
+        }}
+        initial={{ name: exo.name, primaryMuscles: exo.primaryMuscles, unilateral: exo.unilateral }}
+        autoFocusName={false}
+        submitLabel="Enregistrer"
+        submitBusyLabel="Enregistrement…"
+        onCancel={() => go({ kind: 'fiche', id: exo.id })}
+        onSubmit={async (value) => {
+          const changed = exerciseFieldsChanged(exo, value);
+          // Exo de base : l'override ne s'écrit que si un champ a changé (rien
+          // n'est personnalisé pour un simple aller-retour).
+          if (base) {
+            if (changed) await onSaveOverride(exo.id, value);
+          } else if (changed) {
+            await onUpdate(exo.id, value);
+          }
+          go({ kind: 'fiche', id: exo.id }, changed ? 'Modifications enregistrées.' : null);
+        }}
+      />
+    );
+  }
+
+  if (page.kind === 'fiche') {
+    const exo = byId(page.id);
+    if (!exo) return <Missing onBack={() => go({ kind: 'list' })} />;
+    return (
+      <Fiche
+        key={exo.id}
+        exo={exo}
+        overridden={overridden.has(exo.id)}
+        flash={flash}
+        onBack={() => go({ kind: 'list' })}
+        onEdit={() => go({ kind: 'edit', id: exo.id })}
+        onFlash={setFlash}
+        onLoadNote={onLoadNote}
+        onSaveNote={onSaveNote}
+        onResetOverride={async () => {
+          await onResetOverride(exo.id);
+          setFlash('L’exo est revenu à sa version de base.');
+        }}
+        onDelete={async () => {
+          await onDelete(exo.id);
+          go({ kind: 'list' }, `« ${exo.name} » est supprimé.`);
+        }}
+      />
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-3">
-      <h2 className="text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
-        Exercices
-      </h2>
-      <p className="mb-5 mt-1 text-[15px] text-ink-muted">
-        Ton catalogue. Crée et gère tes exos perso ; les exos de base sont en
-        lecture seule.
-      </p>
+    <Catalogue
+      exercises={exercises}
+      overridden={overridden}
+      query={query}
+      onQuery={(q) => {
+        setQuery(q);
+        setFlash(null);
+      }}
+      muscle={muscle}
+      onMuscle={setMuscle}
+      flash={flash}
+      onOpen={(id) => go({ kind: 'fiche', id })}
+      onCreate={(prefill) => go({ kind: 'new', prefill })}
+    />
+  );
+}
 
-      {creating ? (
-        <div className="mb-4">
-          <p className="mb-2 text-sm font-semibold text-ink">Nouvel exercice perso</p>
-          <ExerciseForm
-            submitLabel="Créer"
-            submitBusyLabel="Création…"
-            onCancel={() => setCreating(false)}
-            onSubmit={async (value) => {
-              await onCreate(value);
-              setCreating(false);
-            }}
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="mb-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-hair-strong bg-surface text-base font-medium text-ink transition active:scale-[0.99] active:bg-surface-2"
-        >
-          <PlusIcon />
-          Créer un exo perso
-        </button>
-      )}
+// --- Liste ------------------------------------------------------------------
 
-      {/* Recherche (texte libre : <input> légitime), loupe à gauche. */}
-      <div className="relative">
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          aria-hidden="true"
-          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4-4" />
-        </svg>
-        <input
-          type="text"
+function Catalogue({
+  exercises,
+  overridden,
+  query,
+  onQuery,
+  muscle,
+  onMuscle,
+  flash,
+  onOpen,
+  onCreate,
+}: {
+  exercises: ListExercise[];
+  overridden: Set<string>;
+  query: string;
+  onQuery: (q: string) => void;
+  muscle: string;
+  onMuscle: (m: string) => void;
+  flash: string | null;
+  onOpen: (id: string) => void;
+  onCreate: (prefill?: string) => void;
+}) {
+  const used = useMemo(() => musclesInUse(exercises, MUSCLE_GROUPS), [exercises]);
+  const { base, personal } = useMemo(
+    () => filterExercises(filterByMuscle(exercises, muscle === ALL ? null : muscle), query),
+    [exercises, muscle, query],
+  );
+  const nPersonal = exercises.filter((e) => isPersonalExercise(e.ownerId)).length;
+  const typed = query.trim();
+  const shown = base.length + personal.length;
+  const filtered = typed !== '' || muscle !== ALL;
+
+  const row = (exo: ListExercise) => (
+    <Row
+      key={exo.id}
+      title={exo.name}
+      meta={musclesLine(exo)}
+      value={
+        overridden.has(exo.id) ? <span className="text-[14px] font-normal text-muted">ta version</span> : undefined
+      }
+      onClick={() => onOpen(exo.id)}
+      ariaLabel={overridden.has(exo.id) ? `${exo.name}, ta version` : undefined}
+    />
+  );
+
+  return (
+    <Page
+      bottom={
+        <PrimaryButton onClick={() => onCreate(typed && shown === 0 ? typed : undefined)}>Créer un exo perso</PrimaryButton>
+      }
+    >
+      <ScreenHeader title="Exercices" meta={`${exos(exercises.length)} · ${nPersonal} perso`} />
+
+      {flash && <Flash>{flash}</Flash>}
+
+      <div className="flex items-center gap-2 px-5">
+        <TextField
+          label="Chercher un exo"
+          hideLabel
           value={query}
-          placeholder="Chercher un exercice"
+          onChange={onQuery}
+          placeholder="Chercher un exo"
+          inputMode="search"
           enterKeyHint="search"
-          maxLength={80}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Rechercher un exercice"
-          className="field h-[46px] w-full rounded-[13px] pl-11 pr-4 text-base text-ink"
+          className="min-w-0 flex-1"
         />
+        {query && (
+          <TextLink tone="muted" onClick={() => onQuery('')} className="px-1">
+            Effacer
+          </TextLink>
+        )}
       </div>
 
-      <p className="mt-4 mb-2 text-xs text-ink-muted">
-        <span className="readout tabular-nums">{total}</span>{' '}
-        {total > 1 ? 'exercices' : 'exercice'}
-      </p>
-
-      {total === 0 ? (
-        <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-8 text-center text-sm text-ink-muted">
-          Aucun exercice ne correspond. Ajuste ta recherche ou crée un exo perso.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-6">
-          <Section title="Tes exercices" count={personal.length}>
-            {personal.length === 0 ? (
-              <EmptySection text="Tu n'as pas encore d'exo perso. Crée le premier ci-dessus." />
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {personal.map((exo) => (
-                  <li key={exo.id}>
-                    <PersonalRow
-                      exo={exo}
-                      onUpdate={onUpdate}
-                      onDelete={onDelete}
-                      onLoadNote={onLoadNote}
-                      onSaveNote={onSaveNote}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
-
-          <Section title="Catalogue de base" count={base.length}>
-            {base.length === 0 ? (
-              <EmptySection text="Aucun exo de base ne correspond." />
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {base.map((exo) => (
-                  <li key={exo.id}>
-                    <BaseRow
-                      exo={exo}
-                      overridden={overridden.has(exo.id)}
-                      onSaveOverride={onSaveOverride}
-                      onResetOverride={onResetOverride}
-                      onLoadNote={onLoadNote}
-                      onSaveNote={onSaveNote}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
+      {used.length > 1 && (
+        <div className="mt-1 overflow-x-auto px-3 [scrollbar-width:none]">
+          <Choice
+            label="Muscle principal"
+            wrap={false}
+            value={muscle}
+            onChange={onMuscle}
+            options={[{ value: ALL, label: 'Tous' }, ...used.map((m) => ({ value: m, label: capitalize(m) }))]}
+          />
         </div>
       )}
-    </div>
+
+      {shown === 0 ? (
+        <EmptyState
+          title={typed ? `Rien pour « ${typed} »` : 'Aucun exo pour ce muscle'}
+          body={typed ? 'Vérifie l’orthographe, ou crée-le : il sera visible de toi seul.' : undefined}
+          action={typed ? <SecondaryButton onClick={() => onCreate(typed)}>Créer « {typed} »</SecondaryButton> : undefined}
+        />
+      ) : (
+        <>
+          <SectionTitle aside={personal.length ? String(personal.length) : undefined}>Tes exos</SectionTitle>
+          {personal.length ? (
+            <List label="Tes exos">{personal.map(row)}</List>
+          ) : (
+            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">
+              {filtered ? 'Aucun de tes exos ne correspond.' : 'Pas encore d’exo perso. Le bouton du bas en crée un.'}
+            </p>
+          )}
+          <SectionTitle aside={String(base.length)}>Catalogue commun</SectionTitle>
+          {base.length ? (
+            <List label="Catalogue commun">{base.map(row)}</List>
+          ) : (
+            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">Aucun exo de base ne correspond.</p>
+          )}
+          <p className="px-5 pt-3 text-[14px] leading-[1.45] text-faint">
+            Un exo de base se personnalise pour toi seul : le catalogue commun ne change pas pour les autres.
+          </p>
+        </>
+      )}
+    </Page>
   );
 }
 
-// --- Sections ---------------------------------------------------------------
+// --- Fiche ------------------------------------------------------------------
 
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section>
-      <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold text-ink">
-        {title}
-        <span className="readout text-xs font-normal tabular-nums text-ink-muted">
-          {count}
-        </span>
-      </h3>
-      {children}
-    </section>
-  );
-}
+type NoteLoad = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; body: string };
 
-function EmptySection({ text }: { text: string }) {
-  return (
-    <p className="rounded-2xl border border-dashed border-hair-strong px-4 py-6 text-center text-sm text-ink-muted">
-      {text}
-    </p>
-  );
-}
-
-// --- Lignes -----------------------------------------------------------------
-
-/**
- * Ligne d'un exo de BASE : la ligne partagée reste lecture seule, mais l'user
- * peut la PERSONNALISER (override per-user, issue #50) et la réinitialiser, plus
- * éditer sa note. Le nom / les muscles affichés sont DÉJÀ fusionnés (override
- * gagnant) ; « Personnaliser » ouvre le même formulaire que les exos perso, dont
- * la soumission crée/maj l'override (jamais la ligne de base).
- */
-function BaseRow({
+function Fiche({
   exo,
   overridden,
-  onSaveOverride,
-  onResetOverride,
+  flash,
+  onBack,
+  onEdit,
+  onFlash,
   onLoadNote,
   onSaveNote,
+  onResetOverride,
+  onDelete,
 }: {
   exo: ListExercise;
   overridden: boolean;
-  onSaveOverride: (id: string, value: ExerciseFormValue) => Promise<void>;
-  onResetOverride: (id: string) => Promise<void>;
+  flash: string | null;
+  onBack: () => void;
+  onEdit: () => void;
+  onFlash: (message: string | null) => void;
   onLoadNote: (exerciseId: string) => Promise<string>;
   onSaveNote: (exerciseId: string, body: string) => Promise<void>;
+  onResetOverride: () => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'editLoading' | 'edit' | 'confirmReset'>(
-    'idle',
-  );
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const base = !isPersonalExercise(exo.ownerId);
+  const [note, setNote] = useState<NoteLoad>({ phase: 'loading' });
+  const [noteAttempt, setNoteAttempt] = useState(0);
+  // Brouillon de la note (null = pas touchée) : tenu ICI, pas dans la feuille,
+  // pour survivre à sa fermeture et tenir le blocage de rechargement.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [guard, setGuard] = useState<null | 'reset' | 'delete'>(null);
+  const [guardBusy, setGuardBusy] = useState(false);
+  const [guardError, setGuardError] = useState<string | null>(null);
 
-  // « Personnaliser / Modifier » : on charge d'abord la note (éditée dans le form),
-  // puis on ouvre le formulaire. Brève étape de chargement.
-  async function openEdit() {
-    setMode('editLoading');
-    setError(null);
-    try {
-      setNote(await onLoadNote(exo.id));
-      setMode('edit');
-    } catch (err) {
-      setError(errorMessage(err));
-      setMode('idle');
-    }
+  useEffect(() => {
+    let active = true;
+    void onLoadNote(exo.id)
+      .then((body) => active && setNote({ phase: 'ready', body }))
+      .catch((err: unknown) => active && setNote({ phase: 'error', message: errorMessage(err) }));
+    return () => {
+      active = false;
+    };
+  }, [exo.id, onLoadNote, noteAttempt]);
+
+  const saved = note.phase === 'ready' ? note.body : '';
+  const noteUnsaved = draft !== null && draft !== saved;
+  // Note en cours d'écriture : aucun rechargement automatique ne la jette.
+  const releaseNote = useReloadBlockWhile(NOTE_DRAFT_BLOCK, noteUnsaved);
+
+  /** Résolu = enregistrée (la feuille se ferme) ; un refus reste dans la feuille. */
+  async function saveNote(body: string) {
+    await onSaveNote(exo.id, body);
+    setNote({ phase: 'ready', body: body.trim() });
+    releaseNote();
+    setDraft(null);
+    onFlash(body.trim() ? 'Note enregistrée.' : 'Note effacée.');
   }
 
-  if (mode === 'edit') {
-    return (
-      <RowCard>
-        <p className="mb-2 text-sm font-semibold text-ink">
-          {overridden ? "Modifier ta version" : "Personnaliser l'exercice"}
-        </p>
-        <p className="mb-2 text-xs text-ink-muted">
-          Ta version reste privée. L'exercice de base n'est pas modifié pour les autres.
-        </p>
-        <ExerciseForm
-          initial={{
-            name: exo.name,
-            primaryMuscles: exo.primaryMuscles,
-            unilateral: exo.unilateral,
-          }}
-          autoFocusName={false}
-          initialNote={note}
-          submitLabel="Enregistrer"
-          submitBusyLabel="Enregistrement…"
-          onCancel={() => setMode('idle')}
-          onSubmit={async (value, noteBody) => {
-            // N'écrire l'override que si un champ a changé : éditer la seule note
-            // d'un exo de base ne doit pas créer de personnalisation.
-            if (exerciseFieldsChanged(exo, value)) await onSaveOverride(exo.id, value);
-            await onSaveNote(exo.id, noteBody ?? '');
-            setMode('idle');
-          }}
-        />
-      </RowCard>
-    );
-  }
-
-  async function confirmReset() {
-    setBusy(true);
-    setError(null);
+  async function runGuard(action: () => Promise<void>) {
+    setGuardBusy(true);
+    setGuardError(null);
     try {
-      await onResetOverride(exo.id);
-      // Succès : le conteneur recharge SANS démonter la ligne, qui revient à sa
-      // version de base. On referme la confirmation, sinon elle restait figée.
-      setMode('idle');
+      await action();
+      setGuard(null);
     } catch (err) {
-      setError(errorMessage(err));
+      // Suppression refusée (exo encore utilisé, cf. deletion-guard) ou échec
+      // réseau : la phrase reste sous la confirmation.
+      setGuardError(errorMessage(err));
     } finally {
-      setBusy(false);
+      setGuardBusy(false);
     }
   }
 
+  // Ce que l'appareil sait déjà de son usage (copies de la Salle) ; le refus du
+  // serveur reste le filet pour une séance jamais ouverte ici.
+  const usedIn = guard === 'delete' ? seancesUsing(exo.id, localTemplates()) : [];
+
+  const openGuard = (g: 'reset' | 'delete') => {
+    setGuard(g);
+    setGuardError(null);
+    onFlash(null);
+  };
+
+  const origin = base
+    ? overridden
+      ? 'Ta version d’un exo de base'
+      : 'Exo de base, catalogue commun'
+    : 'Exo perso, visible de toi seul';
+
   return (
-    <RowCard>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-medium text-ink">{exo.name}</p>
-          <MuscleLine
-            exo={exo}
-            extra={
-              <>
-                <BaseBadge />
-                {overridden && <CustomizedBadge />}
-              </>
-            }
-          />
-        </div>
-        {mode === 'idle' && (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <IconButton
-              label={overridden ? 'Modifier ta version' : "Personnaliser l'exercice"}
-              onClick={() => void openEdit()}
-            >
-              <EditIcon />
-            </IconButton>
-            {overridden && (
-              <IconButton
-                label="Réinitialiser à l'exercice de base"
-                onClick={() => setMode('confirmReset')}
-              >
-                <ResetIcon />
-              </IconButton>
-            )}
-          </div>
-        )}
+    <Page>
+      <ScreenHeader
+        title={exo.name}
+        meta={origin}
+        back={{ label: 'Exercices', onClick: onBack }}
+        action={
+          <SecondaryButton size="sm" onClick={onEdit}>
+            {base ? (overridden ? 'Modifier ta version' : 'Personnaliser') : 'Modifier'}
+          </SecondaryButton>
+        }
+      />
+
+      {flash && <Flash>{flash}</Flash>}
+
+      <div className="border-t border-line">
+        <Line label="Muscles">{musclesOf(exo).map((m) => keepTogether(capitalize(m))).join(', ') || 'aucun'}</Line>
+        <Line label="Mouvement" sub={exo.unilateral ? 'un côté à la fois, gauche et droite saisis à part' : undefined}>
+          {exo.unilateral ? 'unilatéral' : 'bilatéral'}
+        </Line>
       </div>
 
-      {mode === 'editLoading' && (
-        <p className="mt-3 text-sm text-ink-muted" role="status">
-          Chargement…
-        </p>
-      )}
+      <section>
+        <div className="flex min-h-11 items-center justify-between gap-3 px-5 pb-1 pt-5">
+          <h2 className="text-[17px] font-semibold text-ink">Note d’instructions</h2>
+          {note.phase === 'ready' && (
+            <IconButton
+              icon="edit"
+              framed
+              label={note.body ? 'Modifier la note' : 'Écrire une note'}
+              onClick={() => {
+                setNoteOpen(true);
+                onFlash(null);
+              }}
+            />
+          )}
+        </div>
+        <div className="px-5">
+          {note.phase === 'loading' ? (
+            <p role="status" className="text-[15px] text-muted">
+              Chargement de la note…
+            </p>
+          ) : note.phase === 'error' ? (
+            <div>
+              <Alert>Impossible de charger la note : {note.message}</Alert>
+              <SecondaryButton className="mt-3" onClick={() => {
+                setNote({ phase: 'loading' });
+                setNoteAttempt((n) => n + 1);
+              }}>
+                Réessayer
+              </SecondaryButton>
+            </div>
+          ) : note.body ? (
+            <p className="max-w-[36ch] whitespace-pre-line text-[16px] leading-[1.5] text-ink">{note.body}</p>
+          ) : (
+            <p className="text-[15px] leading-[1.45] text-muted">Aucune. Elle se lit en salle, dans les notes de l’exo.</p>
+          )}
+          {noteUnsaved && (
+            <TextLink
+              className="mt-1"
+              onClick={() => {
+                setNoteOpen(true);
+                onFlash(null);
+              }}
+            >
+              Reprendre la note non enregistrée
+            </TextLink>
+          )}
+        </div>
+      </section>
 
-      {mode === 'confirmReset' && (
-        <ConfirmReset
-          busy={busy}
-          error={error}
-          onConfirm={() => void confirmReset()}
-          onCancel={() => {
-            setError(null);
-            setMode('idle');
-          }}
+      {noteOpen && note.phase === 'ready' && (
+        <NoteSheet
+          exerciseName={exo.name}
+          note={saved}
+          draft={draft ?? saved}
+          hint={NOTE_HINT}
+          onDraft={setDraft}
+          onSave={saveNote}
+          onClose={() => setNoteOpen(false)}
         />
       )}
 
-      {mode === 'idle' && error && <RowError message={error} />}
-    </RowCard>
+      {(!base || overridden) && (
+        <section className="pt-8">
+          {guard === 'reset' ? (
+            <Confirm
+              destructive
+              keepLabel="Garder ta version"
+              confirmLabel="Revenir à l’exo de base"
+              busy={guardBusy}
+              error={guardError}
+              onCancel={() => setGuard(null)}
+              onConfirm={() => void runGuard(onResetOverride)}
+            >
+              <p className="font-medium">Revenir à la version de base ?</p>
+              <p className="mt-1 text-muted">Ton nom, tes muscles et ton réglage du mouvement sont retirés. Ta note et ton historique restent.</p>
+            </Confirm>
+          ) : guard === 'delete' && usedIn.length > 0 ? (
+            <div role="alert" className="mx-5 border-y border-line py-3">
+              <p className="text-[15px] leading-[1.45] text-ink">
+                Il figure dans {usedIn.join(', ')} : retire-le d’abord de {usedIn.length > 1 ? 'ces séances' : 'cette séance'}.
+              </p>
+              <div className="mt-3">
+                <SecondaryButton onClick={() => setGuard(null)}>Compris</SecondaryButton>
+              </div>
+            </div>
+          ) : guard === 'delete' ? (
+            <Confirm
+              destructive
+              keepLabel="Garder"
+              confirmLabel="Supprimer définitivement"
+              busy={guardBusy}
+              error={guardError}
+              onCancel={() => setGuard(null)}
+              onConfirm={() => void runGuard(onDelete)}
+            >
+              <p className="font-medium">Supprimer « {exo.name} » ?</p>
+              <p className="mt-1 text-muted">
+                Ce geste ne se défait pas.
+              </p>
+            </Confirm>
+          ) : (
+            <div className="px-5">
+              <SecondaryButton onClick={() => openGuard(base ? 'reset' : 'delete')}>
+                {base ? 'Revenir à l’exo de base' : 'Supprimer cet exo'}
+              </SecondaryButton>
+              <p className="mt-2 text-[14px] leading-[1.4] text-faint">
+                {base
+                  ? 'Ta version est retirée ; l’exo reprend son nom et ses muscles communs.'
+                  : 'Seul un exo qui n’a jamais servi peut se supprimer.'}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+    </Page>
   );
 }
 
-/** Ligne d'un exo PERSO : modifier (form pré-rempli), note, ou supprimer (inline). */
-function PersonalRow({
-  exo,
-  onUpdate,
-  onDelete,
-  onLoadNote,
-  onSaveNote,
-}: {
-  exo: ListExercise;
-  onUpdate: (id: string, value: ExerciseFormValue) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onLoadNote: (exerciseId: string) => Promise<string>;
-  onSaveNote: (exerciseId: string, body: string) => Promise<void>;
-}) {
-  const [mode, setMode] = useState<'idle' | 'editLoading' | 'edit' | 'confirmDelete'>(
-    'idle',
-  );
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+// --- Pièces locales ---------------------------------------------------------
 
-  // « Modifier » : on charge la note (éditée dans le form) puis on ouvre le form.
-  async function openEdit() {
-    setMode('editLoading');
-    setError(null);
-    try {
-      setNote(await onLoadNote(exo.id));
-      setMode('edit');
-    } catch (err) {
-      setError(errorMessage(err));
-      setMode('idle');
-    }
-  }
-
-  // Édition : ExerciseForm pré-rempli (nom + muscles + unilatéral + note). « Renommer »
-  // = changer le seul champ nom. Un seul flux, un seul « Enregistrer ».
-  if (mode === 'edit') {
-    return (
-      <RowCard>
-        <p className="mb-2 text-sm font-semibold text-ink">Modifier l'exercice</p>
-        <ExerciseForm
-          initial={{
-            name: exo.name,
-            primaryMuscles: exo.primaryMuscles,
-            unilateral: exo.unilateral,
-          }}
-          autoFocusName={false}
-          initialNote={note}
-          submitLabel="Enregistrer"
-          submitBusyLabel="Enregistrement…"
-          onCancel={() => setMode('idle')}
-          onSubmit={async (value, noteBody) => {
-            // ExerciseForm gère son propre état busy/erreur ; on laisse remonter.
-            await onUpdate(exo.id, value);
-            await onSaveNote(exo.id, noteBody ?? '');
-            setMode('idle');
-          }}
-        />
-      </RowCard>
-    );
-  }
-
-  async function confirmDelete() {
-    setBusy(true);
-    setError(null);
-    try {
-      await onDelete(exo.id);
-      // Succès : le conteneur recharge, cette ligne disparaît.
-    } catch (err) {
-      // Suppression refusée (exo référencé) ou échec réseau : message lisible.
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
-
+/** Une page de l'onglet : écran du kit, contenu centré (lisible sur PC aussi). */
+function Page({ children, bottom }: { children: ReactNode; bottom?: ReactNode }) {
   return (
-    <RowCard>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-medium text-ink">{exo.name}</p>
-          <MuscleLine exo={exo} />
-        </div>
-        {mode === 'idle' && (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <IconButton label="Modifier l'exercice" onClick={() => void openEdit()}>
-              <EditIcon />
-            </IconButton>
-            <IconButton
-              label="Supprimer l'exercice"
-              tone="danger"
-              onClick={() => setMode('confirmDelete')}
-            >
-              <TrashIcon />
-            </IconButton>
-          </div>
-        )}
-      </div>
-
-      {mode === 'editLoading' && (
-        <p className="mt-3 text-sm text-ink-muted" role="status">
-          Chargement…
-        </p>
-      )}
-
-      {mode === 'confirmDelete' && (
-        <ConfirmDelete
-          question={`Supprimer « ${exo.name} » ?`}
-          busy={busy}
-          error={error}
-          onConfirm={() => void confirmDelete()}
-          onCancel={() => {
-            setError(null);
-            setMode('idle');
-          }}
-        />
-      )}
-
-      {mode === 'idle' && error && <RowError message={error} />}
-    </RowCard>
+    <Screen bottom={bottom}>
+      <div className="mx-auto w-full max-w-2xl pb-16">{children}</div>
+    </Screen>
   );
 }
 
-/** Ligne « muscles principaux + unilatéral » en chips, jamais la couleur seule.
-    `extra` : badges supplémentaires posés en fin de ligne (Base, Personnalisé). */
-function MuscleLine({ exo, extra }: { exo: ListExercise; extra?: React.ReactNode }) {
-  const muscles =
-    exo.primaryMuscles.length > 0
-      ? exo.primaryMuscles
-      : exo.muscleGroup
-        ? [exo.muscleGroup]
-        : [];
+/** Ligne de la fiche : libellé gris à gauche, valeur à droite. */
+function Line({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-      {muscles.map((m) => (
-        <span
-          key={m}
-          className="rounded-md bg-surface-2 px-2 py-0.5 text-[11.5px] text-ink-muted"
-        >
-          {m}
-        </span>
-      ))}
-      {exo.unilateral && <UnilateralBadge />}
-      {extra}
+    <div className="flex min-h-12 items-baseline justify-between gap-4 border-b border-line px-5 py-3">
+      <span className="flex-none text-[16px] text-muted">{label}</span>
+      <span className="min-w-0 text-right">
+        <span className="block text-[16px] text-ink first-letter:uppercase">{children}</span>
+        {sub && <span className="mt-0.5 block text-[14px] text-faint">{sub}</span>}
+      </span>
     </div>
   );
 }
 
-// =====================================================================
-// Primitives (cohérentes avec SeancesScreen / SeanceEditor)
-// =====================================================================
-
-/** Badge « BASE » : readout mono, pastille surface-2 — statut lecture seule. */
-function BaseBadge() {
+/** Confirmation du dernier geste : entre deux filets, sans couleur. */
+function Flash({ children }: { children: ReactNode }) {
   return (
-    <span className="readout mt-0.5 inline-flex shrink-0 items-center rounded-md border border-hair bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
-      Base
-    </span>
-  );
-}
-
-/** Badge « Personnalisé » : icône (crayon) ET mot, jamais la couleur seule (issue #50). */
-function CustomizedBadge() {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-accent px-1.5 py-0.5 text-xs font-medium text-accent-ink">
-      <svg
-        viewBox="0 0 24 24"
-        width="12"
-        height="12"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-      </svg>
-      Personnalisé
-    </span>
-  );
-}
-
-/** Chip « Unilatéral » : MOT explicite + fond accent voilé, jamais la couleur seule. */
-function UnilateralBadge() {
-  return (
-    <span className="inline-flex items-center rounded-md border border-accent bg-accent-soft px-2 py-0.5 text-[11.5px] font-medium text-accent-ink">
-      Unilatéral
-    </span>
-  );
-}
-
-function RowCard({ children }: { children: React.ReactNode }) {
-  return <div className="surface-card rounded-2xl p-3.5">{children}</div>;
-}
-
-/** Action d'une ligne en ICÔNE : bouton-instrument bordé (border-hair + bg-surface
-    + liseré spéculaire), affordance d'action à icône partout (cf. DESIGN §5,
-    RowAction de SeancesScreen). Le libellé est porté par `aria-label`/`title` ; le
-    ton est porté par l'action — neutre par défaut, `warn` à la pression pour le
-    destructif. */
-function IconButton({
-  label,
-  onClick,
-  tone = 'neutral',
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  tone?: 'neutral' | 'danger';
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${
-        tone === 'danger' ? 'active:text-warn' : 'active:text-ink'
-      }`}
-    >
+    <Alert role="status" label={null} className="mx-5 mb-4">
       {children}
-    </button>
+    </Alert>
   );
 }
 
-function EditIcon() {
+/** Un exo qui n'existe plus (supprimé entre-temps). */
+function Missing({ onBack }: { onBack: () => void }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m1 0v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V7" />
-    </svg>
-  );
-}
-
-function ResetIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M3 3v6h6" />
-      <path d="M21 12A9 9 0 0 0 6 5.3L3 9" />
-    </svg>
-  );
-}
-
-function RowError({ message }: { message: string }) {
-  return (
-    <p className="mt-2 break-words text-xs text-warn" role="alert">
-      {message}
-    </p>
-  );
-}
-
-/** Confirmation de suppression INLINE (pas de window.confirm). */
-function ConfirmDelete({
-  question,
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  question: string;
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="mt-3 rounded-xl bg-surface-2/60 p-3">
-      <p className="text-sm text-ink">{question}</p>
-      <p className="mt-0.5 text-xs text-ink-muted">
-        Ton historique de séries reste intact.
-      </p>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] px-4 text-sm font-semibold text-warn transition active:scale-[0.98] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:opacity-50"
-        >
-          {busy ? 'Suppression…' : 'Supprimer'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </div>
-  );
-}
-
-/**
- * Confirmation de RÉINITIALISATION d'un exo de base INLINE (issue #50) : on
- * supprime l'override per-user, l'exo revient à sa version partagée. Action
- * NEUTRE (pas danger) : aucun historique n'est touché, seule ta personnalisation
- * disparaît.
- */
-function ConfirmReset({
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="mt-3 rounded-xl bg-surface-2/60 p-3">
-      <p className="text-sm text-ink">Revenir à l'exercice de base ?</p>
-      <p className="mt-0.5 text-xs text-ink-muted">
-        Ta personnalisation est retirée. Ton historique de séries reste intact.
-      </p>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
-        >
-          {busy ? 'Réinitialisation…' : 'Réinitialiser'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </div>
-  );
-}
-
-function PlusIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
-
-function ScreenSpinner({ label }: { label: string }) {
-  return (
-    <div className="mx-auto w-full max-w-md px-4 pt-3" role="status" aria-label={label}>
-      <div className="mb-4 h-8 w-32 rounded-lg bg-surface-2 animate-pulse" />
-      {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="surface-card mb-3 rounded-2xl p-3.5">
-          <div className="h-4 w-3/5 rounded bg-surface-2 animate-pulse" />
-          <div className="mt-2 h-3 w-2/5 rounded bg-surface-2 animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScreenError({
-  message,
-  intro,
-  onRetry,
-}: {
-  message: string;
-  intro: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <p className="text-sm text-ink-muted">{intro}</p>
-      <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-      >
-        Réessayer
-      </button>
-    </div>
+    <Page>
+      <ScreenHeader title="Exercice introuvable" back={{ label: 'Exercices', onClick: onBack }} />
+      <EmptyState title="Cet exercice n’existe plus." body="Il a peut-être été supprimé depuis un autre appareil." />
+    </Page>
   );
 }

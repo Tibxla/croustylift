@@ -1,20 +1,32 @@
-// Surface « Séances » : gestion des routines et de leurs séances (authoring).
+// Surface « Séances » : édition du plan, au calme (refonte E, DESIGN.md).
 //
-// Architecture (calquée sur AnalysisScreen) : on SÉPARE le chargement Supabase
-// de la PRÉSENTATION. `RoutinesView` et `SeancesView` sont des composants PURS
-// (props : données + callbacks) qui se montent tels quels dans le harness de
-// screenshot, sans réseau ni user de test. `SeancesScreen` est le conteneur :
-// il charge, mute, recharge, et porte la navigation routines <-> séances en
-// state local (routine sélectionnée), sans lib de routing (deux vues suffisent,
-// l'éditeur d'une séance est une troisième vue locale).
+// Trois niveaux, une page chacun, navigation en state local (pas de routeur) :
+//   routines  la courante en tête (titre en demi-gras + le mot), les autres, les
+//             archivées repliées (« Désarchiver » sur leur ligne) ; « Créer une
+//             routine » est l'action principale.
+//   routine   ses séances dans l'ordre de rotation (Réordonner = Monter /
+//             Descendre en mots, par la RPC `reorder_seances`), créer une séance
+//             vierge ou copiée d'une autre (ADR 0015), séances archivées
+//             repliées.
+//   éditeur   SeanceEditor : prescriptions, notes d'instructions.
 //
-// Conventions DESIGN.md tenues ici :
-//   - accent violet parcimonieux : action primaire + badge « courante » + (la nav
-//     active vit dans App.tsx). Le reste est neutre.
-//   - statut « courante » = couleur + MOT, jamais la couleur seule.
-//   - aucun tiret long (—) dans le texte affiché ; point ou virgule.
-//   - tap-targets >= 44px, confirmations de suppression INLINE (pas de
-//     window.confirm), édition des noms INLINE.
+// Un objet, une porte d'actions : son ⋯, sur sa ligne dans la liste parente
+// comme en tête de sa propre page, ouvre la même feuille (seances-ui.tsx ;
+// renommer, dupliquer, définir courante, archiver ou supprimer, ADR 0017). Ce
+// qui demande confirmation est décidé par object-actions.ts.
+//
+// Après chaque geste, une ligne d'état dit ce qui vient d'arriver, en tête de la
+// page où l'on se trouve ensuite (« Upper A est archivée. » et « Désarchiver ») ;
+// elle est tenue par `SeancesScreen` pour survivre au retour de l'éditeur, et
+// s'efface à la navigation suivante.
+//
+// Les conteneurs chargent et écrivent (features/authoring/data.ts) ; les vues
+// reçoivent données et callbacks. Chaque écriture est attendue : un refus
+// s'affiche là où le geste a été fait, en français (`errorMessage`).
+//
+// Aucun usage du signal ici : rien n'y est « mieux que la dernière fois ».
+// Aucune confirmation par `window.confirm` : dans la feuille (`Confirm`), le
+// texte dit ce qui sera perdu.
 import { useEffect, useState } from 'react';
 import type { Database } from '../../lib/database.types';
 import {
@@ -40,16 +52,130 @@ import {
 } from './data';
 import { SeanceEditor } from './SeanceEditor';
 import { nextFreeName } from '../../domain/unique-name';
-import { planRowActions } from './archive';
-import { ExportButton } from '../export/ExportButton';
-import { ImportButton } from '../export/ImportButton';
+import { menuLabel, routineMenu, seanceMenu } from './object-actions';
+import { requestLeave } from './seance-dirty';
 import { errorMessage } from '../../lib/error-message';
+import { exoCount, seanceCount } from './seance-format';
+import { NameSheet, ReorderRow, RoutineActionsSheet, SeanceActionsSheet, StatusLine, type PlanFlash } from './seances-ui';
+import {
+  ActionNote,
+  Disclosure,
+  EmptyState,
+  FieldError,
+  IconButton,
+  List,
+  LoadError,
+  Loading,
+  PrimaryButton,
+  Row,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  Sheet,
+  TextLink,
+} from '../../ui';
 
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
 type SeanceRow = Database['public']['Tables']['seances']['Row'];
 
+/** Ce que l'éditeur doit savoir de la séance ouverte, au-delà de la séance elle-même. */
+interface EditorContext {
+  routine: RoutineRow;
+  isCurrentRoutine: boolean;
+  /** Déjà exécutée : elle s'archive au lieu de se supprimer (ADR 0017). */
+  executed: boolean;
+  /** Noms des séances de la routine, archivées comprises : un nom y est unique. */
+  takenNames: string[];
+}
+
+/** Où l'utilisateur se trouve dans l'arbre routines -> routine -> éditeur. */
+type View =
+  | { kind: 'routines' }
+  | { kind: 'routine'; routineId: string }
+  | { kind: 'editor'; seance: SeanceRow; ctx: EditorContext };
+
+/** Rend au plan l'objet que la ligne d'état vient d'archiver. */
+async function restore(target: NonNullable<PlanFlash['unarchive']>): Promise<void> {
+  if (target.kind === 'seance') await unarchiveSeance(target.id);
+  else await unarchiveRoutine(target.id);
+}
+
+const archived = (kind: 'seance' | 'routine', id: string, name: string): PlanFlash => ({
+  text: `${name} est archivée.`,
+  unarchive: { kind, id, name },
+});
+
+export function SeancesScreen() {
+  const [view, setView] = useState<View>({ kind: 'routines' });
+  const [flash, setFlash] = useState<PlanFlash | null>(null);
+  // Toute navigation efface la phrase ; un geste qui navigue pose la sienne.
+  const go = (next: View, note: PlanFlash | null = null) => {
+    setView(next);
+    setFlash(note);
+  };
+
+  if (view.kind === 'editor') {
+    const { seance, ctx } = view;
+    const toRoutine = (note: PlanFlash) => go({ kind: 'routine', routineId: ctx.routine.id }, note);
+    return (
+      <SeanceEditor
+        key={seance.id}
+        seanceId={seance.id}
+        seanceName={seance.name}
+        routineName={ctx.routine.name}
+        isCurrentRoutine={ctx.isCurrentRoutine}
+        executed={ctx.executed}
+        copyName={nextFreeName(seance.name, ctx.takenNames)}
+        flash={flash?.text ?? null}
+        onBack={() => go({ kind: 'routine', routineId: ctx.routine.id })}
+        onRename={async (name) => {
+          const renamed = await renameSeance(seance.id, name);
+          go(
+            { kind: 'editor', seance: renamed, ctx: { ...ctx, takenNames: ctx.takenNames.map((n) => (n === seance.name ? renamed.name : n)) } },
+            { text: `La séance s’appelle maintenant ${renamed.name}.` },
+          );
+        }}
+        onDuplicate={async (name) => {
+          const copy = await duplicateSeance(ctx.routine.id, seance.id, name);
+          // Ouvrir la copie fait disparaître cet éditeur : par la garde de sortie.
+          requestLeave(() =>
+            go(
+              { kind: 'editor', seance: copy, ctx: { ...ctx, executed: false, takenNames: [...ctx.takenNames, copy.name] } },
+              { text: `Copie de ${seance.name} créée. Elle part sans historique.` },
+            ),
+          );
+        }}
+        onArchive={async () => {
+          await archiveSeance(seance.id);
+          toRoutine(archived('seance', seance.id, seance.name));
+        }}
+        onDelete={async () => {
+          await deleteSeance(seance.id);
+          toRoutine({ text: `${seance.name} est supprimée.` });
+        }}
+      />
+    );
+  }
+
+  if (view.kind === 'routine') {
+    return (
+      <RoutineContainer
+        key={view.routineId}
+        routineId={view.routineId}
+        flash={flash}
+        onFlash={setFlash}
+        onBack={(note) => go({ kind: 'routines' }, note ?? null)}
+        onEdit={(seance, ctx, note) => go({ kind: 'editor', seance, ctx }, note ?? null)}
+      />
+    );
+  }
+
+  return <RoutinesContainer flash={flash} onFlash={setFlash} onOpen={(routineId) => go({ kind: 'routine', routineId })} />;
+}
+
 // =====================================================================
-// Conteneur : chargement + mutations + navigation locale
+// Routines
 // =====================================================================
 
 type RoutinesLoad =
@@ -59,80 +185,348 @@ type RoutinesLoad =
       phase: 'ready';
       routines: RoutineRow[];
       currentRoutineId: string | null;
-      executedRoutineIds: Set<string>;
-    };
-
-type SeancesLoad =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | {
-      phase: 'ready';
-      seances: SeanceRow[];
       catalog: SeanceCatalogEntry[];
-      executedSeanceIds: Set<string>;
+      executedRoutineIds: ReadonlySet<string>;
     };
 
-/** Où l'utilisateur se trouve dans l'arbre routines -> séances -> éditeur. */
-type View =
-  | { kind: 'routines' }
-  | { kind: 'seances'; routine: RoutineRow }
-  | { kind: 'editor'; routine: RoutineRow; seance: SeanceRow };
-
-export function SeancesScreen() {
-  const [view, setView] = useState<View>({ kind: 'routines' });
-
-  if (view.kind === 'editor') {
-    return (
-      <SeanceEditor
-        seanceId={view.seance.id}
-        seanceName={view.seance.name}
-        onBack={() => setView({ kind: 'seances', routine: view.routine })}
-      />
-    );
-  }
-
-  if (view.kind === 'seances') {
-    return (
-      <SeancesContainer
-        routine={view.routine}
-        onBack={() => setView({ kind: 'routines' })}
-        onEdit={(seance) => setView({ kind: 'editor', routine: view.routine, seance })}
-      />
-    );
-  }
-
-  return (
-    <RoutinesContainer onOpen={(routine) => setView({ kind: 'seances', routine })} />
-  );
-}
-
-// --- Conteneur Routines -----------------------------------------------------
-
-function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }) {
+function RoutinesContainer({
+  flash,
+  onFlash,
+  onOpen,
+}: {
+  flash: PlanFlash | null;
+  onFlash: (note: PlanFlash | null) => void;
+  onOpen: (routineId: string) => void;
+}) {
   const [load, setLoad] = useState<RoutinesLoad>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
+  // Un rafraîchissement après une écriture garde la liste montée.
   const reload = () => setReloadKey((k) => k + 1);
 
   useEffect(() => {
     let active = true;
-    // Loader au 1er chargement seulement ; un rafraîchissement (reload() après
-    // un save) garde le contenu monté → pas de saut de scroll en haut.
-    if (reloadKey === 0) setLoad({ phase: 'loading' });
-
     void (async () => {
       try {
-        // Les deux lectures sont indépendantes : on les parallélise.
-        const [routines, currentRoutineId, history] = await Promise.all([
+        // Lectures indépendantes, en parallèle. Le catalogue des séances donne le
+        // nombre de séances de chaque routine ; l'historique du plan dit qui
+        // s'archive et qui se supprime (ADR 0017).
+        const [routines, currentRoutineId, catalog, history] = await Promise.all([
           listRoutines(),
           getCurrentRoutineId(),
-          // Ce qui a déjà été exécuté s'archive au lieu de se supprimer (ADR 0017).
+          loadSeanceCatalog(),
           loadPlanHistory(),
         ]);
         if (!active) return;
+        setLoad({ phase: 'ready', routines, currentRoutineId, catalog, executedRoutineIds: history.executedRoutineIds });
+      } catch (err) {
+        if (!active) return;
+        setLoad({ phase: 'error', message: errorMessage(err) });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  if (load.phase === 'loading') {
+    return (
+      <Screen>
+        <ScreenHeader title="Routines" />
+        <Loading label="Chargement des routines…" />
+      </Screen>
+    );
+  }
+  if (load.phase === 'error') {
+    return (
+      <Screen>
+        <ScreenHeader title="Routines" />
+        <LoadError
+          intro="Impossible de charger tes routines."
+          message={load.message}
+          onRetry={() => {
+            setLoad({ phase: 'loading' });
+            reload();
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  const currentName = load.routines.find((r) => r.id === load.currentRoutineId)?.name ?? null;
+  /** Écrit, rafraîchit la liste, puis dit ce qui vient d'arriver. */
+  const write = async (action: () => Promise<unknown>, note: PlanFlash) => {
+    await action();
+    reload();
+    onFlash(note);
+  };
+
+  return (
+    <RoutinesView
+      routines={load.routines}
+      currentRoutineId={load.currentRoutineId}
+      currentRoutineName={currentName}
+      catalog={load.catalog}
+      executedRoutineIds={load.executedRoutineIds}
+      flash={flash}
+      onOpen={onOpen}
+      onCreate={async (name) => {
+        const created = await createRoutine({ name });
+        onOpen(created.id);
+      }}
+      onRename={(r, name) => write(() => renameRoutine(r.id, name), { text: `${r.name} s’appelle maintenant ${name}.` })}
+      onSetCurrent={(r) => write(() => setCurrentRoutine(r.id), { text: `${r.name} est la routine courante. Un nouveau bloc commence.` })}
+      onArchive={(r) => write(() => archiveRoutine(r.id), archived('routine', r.id, r.name))}
+      onDelete={(r) => write(() => deleteRoutine(r.id), { text: `${r.name} est supprimée.` })}
+      onUnarchive={(r) => write(() => unarchiveRoutine(r.id), { text: `${r.name} est désarchivée.` })}
+      onUndoArchive={async (target) => write(() => restore(target), { text: `${target.name} est désarchivée.` })}
+    />
+  );
+}
+
+/** Nombre de séances actives d'une routine, lu dans le catalogue. */
+function activeSeanceCount(catalog: readonly SeanceCatalogEntry[], routineId: string): number {
+  return catalog.filter((e) => e.routineId === routineId && !e.isArchived).length;
+}
+
+export function RoutinesView({
+  routines,
+  currentRoutineId,
+  currentRoutineName,
+  catalog,
+  executedRoutineIds,
+  flash,
+  onOpen,
+  onCreate,
+  onRename,
+  onSetCurrent,
+  onArchive,
+  onDelete,
+  onUnarchive,
+  onUndoArchive,
+}: {
+  routines: RoutineRow[];
+  currentRoutineId: string | null;
+  currentRoutineName: string | null;
+  catalog: SeanceCatalogEntry[];
+  /** Routines dont une séance a été exécutée : elles s'archivent (ADR 0017). */
+  executedRoutineIds: ReadonlySet<string>;
+  flash: PlanFlash | null;
+  onOpen: (routineId: string) => void;
+  onCreate: (name: string) => Promise<void>;
+  onRename: (routine: RoutineRow, name: string) => Promise<void>;
+  onSetCurrent: (routine: RoutineRow) => Promise<void>;
+  onArchive: (routine: RoutineRow) => Promise<void>;
+  onDelete: (routine: RoutineRow) => Promise<void>;
+  onUnarchive: (routine: RoutineRow) => Promise<void>;
+  onUndoArchive: (target: NonNullable<PlanFlash['unarchive']>) => Promise<void>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [menuFor, setMenuFor] = useState<RoutineRow | null>(null);
+  const [unarchiving, setUnarchiving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const live = routines.filter((r) => r.archived_at === null);
+  const current = live.find((r) => r.id === currentRoutineId);
+  const others = live.filter((r) => r.id !== currentRoutineId);
+  const archivedRoutines = routines.filter((r) => r.archived_at !== null);
+  const meta = (r: RoutineRow) => seanceCount(activeSeanceCount(catalog, r.id));
+  const undo = flash?.unarchive;
+  const menuOf = (r: RoutineRow) =>
+    routineMenu({ executed: executedRoutineIds.has(r.id), isCurrent: r.id === currentRoutineId, archived: r.archived_at !== null });
+  // Le geste fini, la feuille se ferme : la ligne d'état prend le relais.
+  const closing = (action: (r: RoutineRow) => Promise<void>) => async (r: RoutineRow) => {
+    await action(r);
+    setMenuFor(null);
+  };
+  const more = (r: RoutineRow) => (
+    <IconButton
+      icon="more"
+      tone="muted"
+      className="-mr-2.5"
+      label={menuLabel(
+        menuOf(r).items.map((i) => i.key),
+        r.name,
+      )}
+      onClick={() => setMenuFor(r)}
+    />
+  );
+
+  return (
+    <Screen bottom={<PrimaryButton onClick={() => setCreating(true)}>Créer une routine</PrimaryButton>}>
+      <ScreenHeader title="Routines" />
+      {flash && <StatusLine flash={flash} onUnarchive={undo ? () => onUndoArchive(undo) : undefined} />}
+      {live.length === 0 && archivedRoutines.length === 0 ? (
+        <EmptyState
+          title="Aucune routine"
+          body="Une routine regroupe les séances que tu enchaînes en salle. Crée la première, puis ajoutes-y ses séances."
+        />
+      ) : (
+        <>
+          {current && (
+            <List label="Routine courante">
+              <Row
+                current
+                title={current.name}
+                meta={
+                  <>
+                    <span className="font-medium text-ink">courante</span> · {meta(current)}
+                  </>
+                }
+                onClick={() => onOpen(current.id)}
+                ariaLabel={`${current.name}, routine courante, ${meta(current)}`}
+                trailing={more(current)}
+              />
+            </List>
+          )}
+          {others.length > 0 && (
+            <>
+              <SectionTitle>{current ? 'Autres routines' : 'Tes routines'}</SectionTitle>
+              <List label="Autres routines">
+                {others.map((r) => (
+                  <Row key={r.id} title={r.name} meta={meta(r)} onClick={() => onOpen(r.id)} trailing={more(r)} />
+                ))}
+              </List>
+            </>
+          )}
+          {archivedRoutines.length > 0 && (
+            <Disclosure label="Routines archivées" count={archivedRoutines.length} open={showArchived} onToggle={() => setShowArchived((v) => !v)}>
+              <p className="px-5 pb-3 text-[14px] leading-[1.45] text-muted">
+                Hors du plan. Leurs courbes et leurs blocs restent dans l’analyse.
+              </p>
+              <List label="Routines archivées">
+                {archivedRoutines.map((r) => (
+                  <Row
+                    key={r.id}
+                    muted
+                    title={r.name}
+                    meta="archivée"
+                    onClick={() => onOpen(r.id)}
+                    trailing={
+                      <TextLink
+                        tone="muted"
+                        className="-mr-1 flex-none px-1 text-[15px]"
+                        ariaLabel={`Désarchiver ${r.name}`}
+                        onClick={
+                          unarchiving
+                            ? undefined
+                            : () => {
+                                setUnarchiving(r.id);
+                                setError(null);
+                                onUnarchive(r)
+                                  .catch((err: unknown) => setError(errorMessage(err)))
+                                  .finally(() => setUnarchiving(null));
+                              }
+                        }
+                      >
+                        {unarchiving === r.id ? 'Un instant…' : 'Désarchiver'}
+                      </TextLink>
+                    }
+                  />
+                ))}
+              </List>
+              {error && <FieldError className="mx-5">{error}</FieldError>}
+            </Disclosure>
+          )}
+        </>
+      )}
+
+      <NameSheet
+        open={creating}
+        title="Nouvelle routine"
+        label="Nom de la routine"
+        submitLabel="Créer la routine"
+        busyLabel="Création…"
+        intro={live.length === 0 ? 'Tu y ajoutes ensuite ses séances, dans l’ordre où tu les enchaînes.' : undefined}
+        onClose={() => setCreating(false)}
+        onSubmit={async (name) => {
+          await onCreate(name);
+          setCreating(false);
+        }}
+      />
+      {menuFor && (
+        <RoutineActionsSheet
+          key={menuFor.id}
+          routineName={menuFor.name}
+          currentRoutineName={currentRoutineName}
+          menu={menuOf(menuFor)}
+          seanceTotal={catalog.filter((e) => e.routineId === menuFor.id).length}
+          onClose={() => setMenuFor(null)}
+          onRename={(name) => closing((r) => onRename(r, name))(menuFor)}
+          onSetCurrent={() => closing(onSetCurrent)(menuFor)}
+          onArchive={() => closing(onArchive)(menuFor)}
+          onDelete={() => closing(onDelete)(menuFor)}
+        />
+      )}
+    </Screen>
+  );
+}
+
+// =====================================================================
+// Une routine : ses séances
+// =====================================================================
+
+type RoutineLoad =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'missing' }
+  | {
+      phase: 'ready';
+      routine: RoutineRow;
+      routines: RoutineRow[];
+      currentRoutineId: string | null;
+      seances: SeanceRow[];
+      catalog: SeanceCatalogEntry[];
+      executedSeanceIds: ReadonlySet<string>;
+      executedRoutineIds: ReadonlySet<string>;
+    };
+
+function RoutineContainer({
+  routineId,
+  flash,
+  onFlash,
+  onBack,
+  onEdit,
+}: {
+  routineId: string;
+  flash: PlanFlash | null;
+  onFlash: (note: PlanFlash | null) => void;
+  /** Retour à la liste, avec la phrase du geste qui y renvoie (archivée, supprimée). */
+  onBack: (note?: PlanFlash) => void;
+  onEdit: (seance: SeanceRow, ctx: EditorContext, note?: PlanFlash) => void;
+}) {
+  const [load, setLoad] = useState<RoutineLoad>({ phase: 'loading' });
+  const [reloadKey, setReloadKey] = useState(0);
+  // Un rafraîchissement après une écriture garde le contenu monté : pas de
+  // saut en haut de page, pas de chargement affiché.
+  const reload = () => setReloadKey((k) => k + 1);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        // Le catalogue (ADR 0015) sert à la fois au nombre d'exos de chaque
+        // séance et à la copie d'une séance existante.
+        const [routines, currentRoutineId, seances, catalog, history] = await Promise.all([
+          listRoutines(),
+          getCurrentRoutineId(),
+          listSeances(routineId),
+          loadSeanceCatalog(),
+          loadPlanHistory(),
+        ]);
+        if (!active) return;
+        const routine = routines.find((r) => r.id === routineId);
+        if (!routine) {
+          setLoad({ phase: 'missing' });
+          return;
+        }
         setLoad({
           phase: 'ready',
+          routine,
           routines,
           currentRoutineId,
+          seances,
+          catalog,
+          executedSeanceIds: history.executedSeanceIds,
           executedRoutineIds: history.executedRoutineIds,
         });
       } catch (err) {
@@ -140,330 +534,199 @@ function RoutinesContainer({ onOpen }: { onOpen: (routine: RoutineRow) => void }
         setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
-
     return () => {
       active = false;
     };
-  }, [reloadKey]);
+  }, [reloadKey, routineId]);
 
+  const back = { label: 'Routines', onClick: () => onBack() };
   if (load.phase === 'loading') {
-    return <ScreenSpinner label="Chargement des routines" />;
+    return (
+      <Screen>
+        <ScreenHeader title="Routine" back={back} />
+        <Loading label="Chargement des séances…" />
+      </Screen>
+    );
   }
-
   if (load.phase === 'error') {
     return (
-      <ScreenError
-        message={load.message}
-        intro="Impossible de charger tes routines."
-        onRetry={reload}
-      />
+      <Screen>
+        <ScreenHeader title="Routine" back={back} />
+        <LoadError
+          intro="Impossible de charger cette routine."
+          message={load.message}
+          onRetry={() => {
+            setLoad({ phase: 'loading' });
+            reload();
+          }}
+        />
+      </Screen>
+    );
+  }
+  if (load.phase === 'missing') {
+    return (
+      <Screen>
+        <ScreenHeader title="Routine introuvable" back={back} />
+        <EmptyState title="Cette routine n’existe plus" body="Elle a pu être supprimée depuis un autre appareil." />
+      </Screen>
     );
   }
 
-  return (
-    <RoutinesView
-      routines={load.routines}
-      currentRoutineId={load.currentRoutineId}
-      executedRoutineIds={load.executedRoutineIds}
-      onOpen={onOpen}
-      onCreate={async (name) => {
-        await createRoutine({ name });
-        reload();
-      }}
-      onRename={async (id, name) => {
-        await renameRoutine(id, name);
-        reload();
-      }}
-      onDelete={async (id) => {
-        await deleteRoutine(id);
-        reload();
-      }}
-      onArchive={async (id) => {
-        await archiveRoutine(id);
-        reload();
-      }}
-      onUnarchive={async (id) => {
-        await unarchiveRoutine(id);
-        reload();
-      }}
-      onSetCurrent={async (id) => {
-        await setCurrentRoutine(id);
-        reload();
-      }}
-    />
-  );
-}
-
-// --- Conteneur Séances d'une routine ----------------------------------------
-
-function SeancesContainer({
-  routine,
-  onBack,
-  onEdit,
-}: {
-  routine: RoutineRow;
-  onBack: () => void;
-  onEdit: (seance: SeanceRow) => void;
-}) {
-  const [load, setLoad] = useState<SeancesLoad>({ phase: 'loading' });
-  const [reloadKey, setReloadKey] = useState(0);
-  const reload = () => setReloadKey((k) => k + 1);
-
-  useEffect(() => {
-    let active = true;
-    // Loader au 1er chargement seulement ; un rafraîchissement (reload() après
-    // un save) garde le contenu monté → pas de saut de scroll en haut.
-    if (reloadKey === 0) setLoad({ phase: 'loading' });
-
-    void (async () => {
-      try {
-        // Le catalogue (ADR 0015) se charge avec la liste : l'option « partir
-        // d'une séance existante » ne doit apparaître que s'il y a une source.
-        const [seances, catalog, history] = await Promise.all([
-          listSeances(routine.id),
-          loadSeanceCatalog(),
-          loadPlanHistory(),
-        ]);
-        if (!active) return;
-        setLoad({
-          phase: 'ready',
-          seances,
-          catalog,
-          executedSeanceIds: history.executedSeanceIds,
-        });
-      } catch (err) {
-        if (!active) return;
-        setLoad({ phase: 'error', message: errorMessage(err) });
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [reloadKey, routine.id]);
-
-  if (load.phase === 'loading') {
-    return <ScreenSpinner label="Chargement des séances" />;
-  }
-
-  if (load.phase === 'error') {
-    return (
-      <ScreenError
-        message={load.message}
-        intro="Impossible de charger les séances."
-        onRetry={reload}
-      />
-    );
-  }
+  const { routine, seances } = load;
+  const isCurrent = routine.id === load.currentRoutineId;
+  const currentName = load.routines.find((r) => r.id === load.currentRoutineId)?.name ?? null;
+  const takenNames = seances.map((s) => s.name);
+  const ctxOf = (seance: SeanceRow): EditorContext => ({
+    routine,
+    isCurrentRoutine: isCurrent,
+    executed: load.executedSeanceIds.has(seance.id),
+    takenNames,
+  });
+  /** Écrit, rafraîchit la page, puis dit ce qui vient d'arriver. */
+  const write = async (action: () => Promise<unknown>, note: PlanFlash) => {
+    await action();
+    reload();
+    onFlash(note);
+  };
 
   return (
-    <SeancesView
-      routineName={routine.name}
-      seances={load.seances}
-      catalog={load.catalog}
+    <RoutineView
+      routine={routine}
+      isCurrent={isCurrent}
+      currentRoutineName={currentName}
+      executed={load.executedRoutineIds.has(routine.id)}
       executedSeanceIds={load.executedSeanceIds}
-      onBack={onBack}
-      onEdit={onEdit}
-      onCreate={async (name) => {
-        await createSeance(routine.id, { name });
-        reload();
-      }}
-      onDuplicate={async (sourceSeanceId, name) => {
-        await duplicateSeance(routine.id, sourceSeanceId, name);
-        reload();
-      }}
-      onRename={async (id, name) => {
-        await renameSeance(id, name);
-        reload();
-      }}
-      onDelete={async (id) => {
-        await deleteSeance(id);
-        reload();
-      }}
-      onArchive={async (id) => {
-        await archiveSeance(id);
-        reload();
-      }}
-      onUnarchive={async (id) => {
-        await unarchiveSeance(id);
-        reload();
+      seances={seances}
+      catalog={load.catalog}
+      flash={flash}
+      onBack={() => onBack()}
+      onEdit={(seance) => onEdit(seance, ctxOf(seance))}
+      onCreateSeance={async (name, sourceId) => {
+        const created = sourceId ? await duplicateSeance(routine.id, sourceId, name) : await createSeance(routine.id, { name });
+        // Une séance neuve s'ouvre aussitôt dans l'éditeur : on y ajoute ses exos.
+        onEdit(created, { routine, isCurrentRoutine: isCurrent, executed: false, takenNames: [...takenNames, created.name] });
       }}
       onReorder={async (orderedIds) => {
         await reorderSeances(routine.id, orderedIds);
         reload();
       }}
+      onRenameSeance={async (s, name) => {
+        const renamed = await renameSeance(s.id, name);
+        reload();
+        onFlash({ text: `${s.name} s’appelle maintenant ${renamed.name}.` });
+      }}
+      onDuplicateSeance={async (s, name) => {
+        const copy = await duplicateSeance(routine.id, s.id, name);
+        // La copie s'ouvre, comme depuis l'éditeur : on vient la modifier.
+        onEdit(
+          copy,
+          { routine, isCurrentRoutine: isCurrent, executed: false, takenNames: [...takenNames, copy.name] },
+          { text: `Copie de ${s.name} créée. Elle part sans historique.` },
+        );
+      }}
+      onArchiveSeance={(s) => write(() => archiveSeance(s.id), archived('seance', s.id, s.name))}
+      onDeleteSeance={(s) => write(() => deleteSeance(s.id), { text: `${s.name} est supprimée.` })}
+      onUnarchiveSeance={(s) => write(() => unarchiveSeance(s.id), { text: `${s.name} est désarchivée.` })}
+      onUndoArchive={(target) => write(() => restore(target), { text: `${target.name} est désarchivée.` })}
+      onRename={(name) => write(() => renameRoutine(routine.id, name), { text: `La routine s’appelle maintenant ${name}.` })}
+      onSetCurrent={() => write(() => setCurrentRoutine(routine.id), { text: `${routine.name} est la routine courante. Un nouveau bloc commence.` })}
+      onArchive={async () => {
+        // Archivée, elle quitte la liste : on y retourne, la phrase et « Désarchiver » en tête.
+        await archiveRoutine(routine.id);
+        onBack(archived('routine', routine.id, routine.name));
+      }}
+      onUnarchive={() => write(() => unarchiveRoutine(routine.id), { text: `${routine.name} est désarchivée.` })}
+      onDelete={async () => {
+        await deleteRoutine(routine.id);
+        onBack({ text: `${routine.name} est supprimée.` });
+      }}
     />
   );
 }
 
-// =====================================================================
-// Présentation pure (montable sans réseau dans le harness)
-// =====================================================================
-
-// Les callbacks renvoient une Promise : les sous-composants attendent la
-// résolution avant de quitter l'état d'édition / de confirmation, ce qui couvre
-// loading/error au niveau de l'action sans recharger toute la vue.
-
-export interface RoutinesViewProps {
-  routines: RoutineRow[];
-  currentRoutineId: string | null;
-  /** Routines dont une séance a déjà été exécutée : elles s'archivent (ADR 0017). */
-  executedRoutineIds?: ReadonlySet<string>;
-  onOpen: (routine: RoutineRow) => void;
-  onCreate: (name: string) => Promise<void>;
-  onRename: (id: string, name: string) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onArchive?: (id: string) => Promise<void>;
-  onUnarchive?: (id: string) => Promise<void>;
-  onSetCurrent: (id: string) => Promise<void>;
-}
-
-export function RoutinesView({
-  routines: allRoutines,
-  currentRoutineId,
-  executedRoutineIds = new Set(),
-  onOpen,
-  onCreate,
-  onRename,
-  onDelete,
-  onArchive = async () => {},
-  onUnarchive = async () => {},
-  onSetCurrent,
-}: RoutinesViewProps) {
-  const [creating, setCreating] = useState(false);
-  // Archivées à part (ADR 0017) : hors de la liste, dans une section repliée.
-  const routines = allRoutines.filter((r) => r.archived_at === null);
-  const archived = allRoutines.filter((r) => r.archived_at !== null);
-
-  return (
-    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
-      <h2 className="mb-1.5 text-3xl font-semibold tracking-[-0.025em] text-ink">Routines</h2>
-      <p className="mb-5 text-[15px] text-ink-muted">
-        Tes programmes. Choisis ta routine courante, ouvre une routine pour gérer ses
-        séances.
-      </p>
-
-      {routines.length === 0 && !creating ? (
-        <EmptyState
-          message="Aucune routine. Crée ta première routine."
-          actionLabel="Créer une routine"
-          onAction={() => setCreating(true)}
-        />
-      ) : (
-        <>
-          <ul className="flex flex-col gap-2.5">
-            {routines.map((routine) => (
-              <li key={routine.id}>
-                <RoutineRowItem
-                  routine={routine}
-                  isCurrent={routine.id === currentRoutineId}
-                  executed={executedRoutineIds.has(routine.id)}
-                  onOpen={() => onOpen(routine)}
-                  onRename={(name) => onRename(routine.id, name)}
-                  onDelete={() => onDelete(routine.id)}
-                  onArchive={() => onArchive(routine.id)}
-                  onSetCurrent={() => onSetCurrent(routine.id)}
-                />
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-4">
-            {creating ? (
-              <CreateForm
-                placeholder="Nom de la routine"
-                submitLabel="Créer"
-                onSubmit={async (name) => {
-                  await onCreate(name);
-                  setCreating(false);
-                }}
-                onCancel={() => setCreating(false)}
-              />
-            ) : (
-              <PrimaryAddButton label="Créer une routine" onClick={() => setCreating(true)} />
-            )}
-          </div>
-        </>
-      )}
-
-      {archived.length > 0 && (
-        <ArchivedSection count={archived.length}>
-          {archived.map((routine) => (
-            <li key={routine.id}>
-              <ArchivedRowItem
-                name={routine.name}
-                onOpen={() => onOpen(routine)}
-                onUnarchive={() => onUnarchive(routine.id)}
-              />
-            </li>
-          ))}
-        </ArchivedSection>
-      )}
-
-      <DataSection />
-    </div>
-  );
-}
-
-/**
- * Section « Données » : backup JSON de tout le compte (issue #8). Discrète, en
- * bas de l'écran d'accueil des routines : c'est l'endroit « au calme » naturel
- * pour exporter, sans alourdir la capture en salle.
- */
-function DataSection() {
-  return (
-    <section className="mt-8 border-t border-hair pt-5">
-      <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">Données</h3>
-      <p className="mb-3 text-sm text-ink-muted">
-        Télécharge une sauvegarde JSON de tes exos perso, routines, séances et historique.
-        Garde-la en cas de perte du stockage local. Pour restaurer, importe le fichier
-        de sauvegarde.
-      </p>
-      <div className="flex flex-col gap-2.5">
-        <ExportButton />
-        <ImportButton />
-      </div>
-    </section>
-  );
-}
-
-/** Une routine : nom + badge courante, et actions (étendues à la demande). */
-function RoutineRowItem({
+export function RoutineView({
   routine,
   isCurrent,
+  currentRoutineName,
   executed,
-  onOpen,
+  executedSeanceIds,
+  seances: allSeances,
+  catalog,
+  flash,
+  onBack,
+  onEdit,
+  onCreateSeance,
+  onReorder,
+  onRenameSeance,
+  onDuplicateSeance,
+  onArchiveSeance,
+  onDeleteSeance,
+  onUnarchiveSeance,
+  onUndoArchive,
   onRename,
-  onDelete,
-  onArchive,
   onSetCurrent,
+  onArchive,
+  onUnarchive,
+  onDelete,
 }: {
   routine: RoutineRow;
   isCurrent: boolean;
+  /** Nom de la routine courante (pour dire ce que « Définir courante » remplace). */
+  currentRoutineName: string | null;
   executed: boolean;
-  onOpen: () => void;
+  /** Séances déjà exécutées : elles s'archivent au lieu de se supprimer. */
+  executedSeanceIds: ReadonlySet<string>;
+  seances: SeanceRow[];
+  catalog: SeanceCatalogEntry[];
+  flash: PlanFlash | null;
+  onBack: () => void;
+  onEdit: (seance: SeanceRow) => void;
+  /** Crée une séance vierge (`sourceId` absent) ou la copie d'une existante. */
+  onCreateSeance: (name: string, sourceId: string | null) => Promise<void>;
+  onReorder: (orderedIds: string[]) => Promise<void>;
+  onRenameSeance: (seance: SeanceRow, name: string) => Promise<void>;
+  onDuplicateSeance: (seance: SeanceRow, name: string) => Promise<void>;
+  onArchiveSeance: (seance: SeanceRow) => Promise<void>;
+  onDeleteSeance: (seance: SeanceRow) => Promise<void>;
+  onUnarchiveSeance: (seance: SeanceRow) => Promise<void>;
+  onUndoArchive: (target: NonNullable<PlanFlash['unarchive']>) => Promise<void>;
   onRename: (name: string) => Promise<void>;
-  onDelete: () => Promise<void>;
-  onArchive: () => Promise<void>;
   onSetCurrent: () => Promise<void>;
+  onArchive: () => Promise<void>;
+  onUnarchive: () => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete' | 'confirmArchive'>(
-    'idle',
-  );
-  const actions = planRowActions({ executed, archived: false, isCurrent });
+  const [reorder, setReorder] = useState(false);
+  const [moved, setMoved] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [routineMenuOpen, setRoutineMenuOpen] = useState(false);
+  const [seanceMenuFor, setSeanceMenuFor] = useState<SeanceRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unarchiving, setUnarchiving] = useState<string | null>(null);
+
+  const archivedRoutine = routine.archived_at !== null;
+  const seances = allSeances.filter((s) => s.archived_at === null);
+  const archivedSeances = allSeances.filter((s) => s.archived_at !== null);
+  const takenNames = allSeances.map((s) => s.name);
+  const menu = routineMenu({ executed, isCurrent, archived: archivedRoutine });
+  const exerciseCountOf = (id: string) => catalog.find((e) => e.seanceId === id)?.exerciseCount;
+  const exos = (id: string) => {
+    const n = exerciseCountOf(id);
+    return n === undefined ? undefined : exoCount(n);
+  };
+  const seanceItems = (s: SeanceRow) =>
+    seanceMenu({ executed: executedSeanceIds.has(s.id), inCurrentRoutine: isCurrent, hasExercises: (exerciseCountOf(s.id) ?? 0) > 0 });
+  const status = archivedRoutine ? 'archivée' : isCurrent ? 'routine courante' : null;
+  const undo = flash?.unarchive;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError(null);
     try {
       await action();
-      // Succès : la liste se recharge SANS démonter la ligne (pas de loader au
-      // rafraîchissement, cf. 3c7a209). On referme donc nous-mêmes le mode en
-      // cours : sans ça, un renommage restait figé sur « Enregistrement… » et
-      // les flèches de réordonnancement restaient désactivées.
-      setMode('idle');
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -471,360 +734,232 @@ function RoutineRowItem({
     }
   }
 
-  if (mode === 'rename') {
-    return (
-      <RowCard>
-        <InlineNameForm
-          initial={routine.name}
-          submitLabel="Renommer"
-          onSubmit={(name) => run(() => onRename(name))}
-          onCancel={() => setMode('idle')}
-          busy={busy}
-          error={error}
-        />
-      </RowCard>
-    );
+  async function move(index: number, dir: -1 | 1) {
+    const target = index + dir;
+    const ids = seances.map((s) => s.id);
+    const a = ids[index];
+    const b = ids[target];
+    if (a === undefined || b === undefined) return;
+    ids[index] = b;
+    ids[target] = a;
+    setMoving(true);
+    setError(null);
+    try {
+      await onReorder(ids);
+      setMoved(a);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setMoving(false);
+    }
   }
 
-  return (
-    <RowCard accent={isCurrent}>
-      <div className="flex items-center gap-2">
-        {/* Le nom est cliquable : il ouvre les séances de la routine. */}
-        <button
-          type="button"
-          onClick={onOpen}
-          className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left transition active:opacity-80"
-        >
-          <span className="min-w-0 flex-1">
-            {isCurrent && (
-              <span className="readout mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-accent-ink">
-                Routine courante
-              </span>
-            )}
-            <span className="block truncate text-lg font-semibold text-ink">
-              {routine.name}
-            </span>
-          </span>
-          <Chevron />
-        </button>
-      </div>
+  const toggleReorder = () => {
+    setReorder((v) => !v);
+    setMoved(null);
+    setError(null);
+  };
+  // Le geste fini, la feuille se ferme : la ligne d'état prend le relais.
+  const closingSeance = (action: (s: SeanceRow) => Promise<void>) => async () => {
+    if (!seanceMenuFor) return;
+    await action(seanceMenuFor);
+    setSeanceMenuFor(null);
+  };
+  const closingRoutine = (action: () => Promise<void>) => async () => {
+    await action();
+    setRoutineMenuOpen(false);
+  };
 
-      {mode === 'confirmDelete' ? (
-        <ConfirmDelete
-          question="Supprimer cette routine et ses séances ?"
-          busy={busy}
-          error={error}
-          onConfirm={() => run(onDelete)}
-          onCancel={() => setMode('idle')}
-        />
-      ) : mode === 'confirmArchive' ? (
-        <ConfirmArchive
-          question="Archiver cette routine ?"
-          detail="Elle quitte ta liste. Ses séances, ses courbes et ses blocs restent dans l'analyse. Tu pourras la désarchiver."
-          busy={busy}
-          error={error}
-          onConfirm={() => run(onArchive)}
-          onCancel={() => setMode('idle')}
-        />
-      ) : (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {isCurrent ? (
-            <span className="inline-flex h-9 items-center px-1 text-xs text-ink-muted">
-              Routine courante.
-            </span>
+  return (
+    <Screen
+      bottom={
+        !archivedRoutine && !reorder ? <PrimaryButton onClick={() => setCreating(true)}>Créer une séance</PrimaryButton> : undefined
+      }
+    >
+      <ScreenHeader
+        title={routine.name}
+        meta={
+          <>
+            {status && <span className={isCurrent ? 'font-medium text-ink' : ''}>{status} · </span>}
+            {seanceCount(seances.length)}
+          </>
+        }
+        back={{ label: 'Routines', onClick: onBack }}
+        action={
+          archivedRoutine ? undefined : reorder ? (
+            <SecondaryButton size="sm" onClick={toggleReorder} disabled={moving}>
+              Terminé
+            </SecondaryButton>
           ) : (
-            <RowAction
-              label="Définir courante"
-              icon={STAR_ICON}
-              busy={busy}
-              onClick={() => run(onSetCurrent)}
-            />
-          )}
-          <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
-          {actions.canArchive && (
-            <RowAction
-              label="Archiver"
-              icon={ARCHIVE_ICON}
-              onClick={() => setMode('confirmArchive')}
-            />
-          )}
-          {actions.canDelete && (
-            <RowAction
-              label="Supprimer"
-              icon={DELETE_ICON}
-              tone="danger"
-              onClick={() => setMode('confirmDelete')}
-            />
-          )}
+            <>
+              {seances.length > 1 && (
+                <SecondaryButton size="sm" onClick={toggleReorder} ariaLabel="Réordonner les séances">
+                  Réordonner
+                </SecondaryButton>
+              )}
+              <IconButton
+                icon="more"
+                framed
+                label={menuLabel(
+                  menu.items.map((i) => i.key),
+                  routine.name,
+                )}
+                onClick={() => setRoutineMenuOpen(true)}
+              />
+            </>
+          )
+        }
+      />
+
+      {flash && <StatusLine flash={flash} onUnarchive={undo ? () => onUndoArchive(undo) : undefined} />}
+
+      {archivedRoutine && (
+        <div className="pb-2">
+          <ul>
+            <ActionNote>Archivée, hors du plan : ses séances ne s’ouvrent plus. Désarchive-la pour les ouvrir ou les modifier.</ActionNote>
+          </ul>
+          <div className="px-5">
+            <TextLink onClick={busy ? undefined : () => void run(onUnarchive)}>{busy ? 'Un instant…' : 'Désarchiver'}</TextLink>
+          </div>
+          {error && <FieldError className="mx-5">{error}</FieldError>}
         </div>
       )}
 
-      {error && mode === 'idle' && <RowError message={error} />}
-    </RowCard>
-  );
-}
-
-// --- Vue Séances d'une routine ----------------------------------------------
-
-export /**
- * Où en est la création d'une séance (ADR 0015) : bouton, choix de la source,
- * sélection de la séance à copier, puis nom. `blank` court-circuite le choix
- * quand il n'y a rien à copier.
- */
-type CreateStep =
-  | { step: 'idle' }
-  | { step: 'choice' }
-  | { step: 'blank' }
-  | { step: 'pick' }
-  | { step: 'name'; source: SeanceCatalogEntry };
-
-interface SeancesViewProps {
-  routineName: string;
-  seances: SeanceRow[];
-  onBack: () => void;
-  onEdit: (seance: SeanceRow) => void;
-  onCreate: (name: string) => Promise<void>;
-  onRename: (id: string, name: string) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
-  onReorder: (orderedIds: string[]) => Promise<void>;
-  /**
-   * Séances copiables, toutes routines confondues (ADR 0015). Absent ou vide :
-   * la création reste directe, sans choix de source (compte neuf, ou harness).
-   */
-  catalog?: SeanceCatalogEntry[];
-  onDuplicate?: (sourceSeanceId: string, name: string) => Promise<void>;
-  /** Séances déjà exécutées : elles s'archivent au lieu de se supprimer (ADR 0017). */
-  executedSeanceIds?: ReadonlySet<string>;
-  onArchive?: (id: string) => Promise<void>;
-  onUnarchive?: (id: string) => Promise<void>;
-}
-
-export function SeancesView({
-  routineName,
-  seances: allSeances,
-  onBack,
-  onEdit,
-  onCreate,
-  onRename,
-  onDelete,
-  onReorder,
-  catalog = [],
-  onDuplicate,
-  executedSeanceIds = new Set(),
-  onArchive = async () => {},
-  onUnarchive = async () => {},
-}: SeancesViewProps) {
-  const [create, setCreate] = useState<CreateStep>({ step: 'idle' });
-  // Archivées à part (ADR 0017) : hors de l'ordre de la routine, section repliée.
-  const seances = allSeances.filter((s) => s.archived_at === null);
-  const archived = allSeances.filter((s) => s.archived_at !== null);
-
-  // La duplication n'a de sens qu'avec une source ET un handler : sinon le
-  // bouton mène droit au formulaire vierge, comme avant.
-  const canDuplicate = catalog.length > 0 && onDuplicate !== undefined;
-  const openCreate = () => setCreate({ step: canDuplicate ? 'choice' : 'blank' });
-  const closeCreate = () => setCreate({ step: 'idle' });
-
-  function moveSeance(index: number, direction: -1 | 1): Promise<void> {
-    const target = index + direction;
-    if (target < 0 || target >= seances.length) return Promise.resolve();
-    const orderedIds = seances.map((s) => s.id);
-    const a = orderedIds[index];
-    const b = orderedIds[target];
-    if (a === undefined || b === undefined) return Promise.resolve();
-    orderedIds[index] = b;
-    orderedIds[target] = a;
-    return onReorder(orderedIds);
-  }
-
-  return (
-    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-3">
-      <BackButton label="Retour aux routines" onClick={onBack} />
-
-      <h2 className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-ink">{routineName}</h2>
-      <p className="mb-5 text-[15px] text-ink-muted">Séances de cette routine, dans l'ordre.</p>
-
-      {seances.length === 0 && create.step === 'idle' ? (
+      {seances.length === 0 ? (
         <EmptyState
-          message="Aucune séance. Ajoute la première séance de cette routine."
-          actionLabel="Créer une séance"
-          onAction={openCreate}
+          title={archivedRoutine || archivedSeances.length > 0 ? 'Aucune séance active' : 'Aucune séance dans cette routine'}
+          body={
+            archivedRoutine
+              ? undefined
+              : archivedSeances.length > 0
+                ? 'Crée une séance, ou désarchive-en une plus bas.'
+                : 'Crée sa première séance, puis ajoutes-y ses exos.'
+          }
         />
       ) : (
         <>
-          <ul className="flex flex-col gap-2.5">
-            {seances.map((seance, index) => (
-              <li key={seance.id}>
-                <SeanceRowItem
-                  seance={seance}
-                  index={index}
-                  isFirst={index === 0}
-                  isLast={index === seances.length - 1}
-                  executed={executedSeanceIds.has(seance.id)}
-                  onEdit={() => onEdit(seance)}
-                  onMove={(direction) => moveSeance(index, direction)}
-                  onRename={(name) => onRename(seance.id, name)}
-                  onDelete={() => onDelete(seance.id)}
-                  onArchive={() => onArchive(seance.id)}
+          <SectionTitle aside={reorder ? 'ordre de rotation' : undefined}>Séances</SectionTitle>
+          <List label={`Séances de ${routine.name}`}>
+            {seances.map((s, i) =>
+              reorder ? (
+                <ReorderRow
+                  key={s.id}
+                  rank={i + 1}
+                  title={s.name}
+                  first={i === 0}
+                  last={i === seances.length - 1}
+                  moved={moved === s.id}
+                  disabled={moving}
+                  onMove={(d) => void move(i, d)}
                 />
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-4">
-            <CreateFlow
-              step={create}
-              catalog={catalog}
-              // Un nom reste réservé pendant l'archivage : archivées comprises.
-              takenNames={allSeances.map((s) => s.name)}
-              onOpen={openCreate}
-              onStep={setCreate}
-              onCancel={closeCreate}
-              onCreate={onCreate}
-              onDuplicate={onDuplicate}
-            />
-          </div>
+              ) : (
+                <Row
+                  key={s.id}
+                  lead={i + 1}
+                  title={s.name}
+                  meta={exos(s.id)}
+                  muted={archivedRoutine}
+                  onClick={archivedRoutine ? undefined : () => onEdit(s)}
+                  trailing={
+                    archivedRoutine ? undefined : (
+                      <IconButton
+                        icon="more"
+                        tone="muted"
+                        className="-mr-2.5"
+                        label={menuLabel(
+                          seanceItems(s).map((it) => it.key),
+                          s.name,
+                        )}
+                        onClick={() => setSeanceMenuFor(s)}
+                      />
+                    )
+                  }
+                />
+              ),
+            )}
+          </List>
+          {reorder && error && <FieldError className="mx-5">{error}</FieldError>}
         </>
       )}
 
-      {archived.length > 0 && (
-        <ArchivedSection count={archived.length}>
-          {archived.map((seance) => (
-            <li key={seance.id}>
-              <ArchivedRowItem name={seance.name} onUnarchive={() => onUnarchive(seance.id)} />
-            </li>
-          ))}
-        </ArchivedSection>
-      )}
-    </div>
-  );
-}
-
-/** Une séance : nom, réordonnancement, et actions. Position en readout mono. */
-function SeanceRowItem({
-  seance,
-  index,
-  isFirst,
-  isLast,
-  executed,
-  onEdit,
-  onMove,
-  onRename,
-  onDelete,
-  onArchive,
-}: {
-  seance: SeanceRow;
-  index: number;
-  isFirst: boolean;
-  isLast: boolean;
-  executed: boolean;
-  onEdit: () => void;
-  onMove: (direction: -1 | 1) => Promise<void>;
-  onRename: (name: string) => Promise<void>;
-  onDelete: () => Promise<void>;
-  onArchive: () => Promise<void>;
-}) {
-  const [mode, setMode] = useState<'idle' | 'rename' | 'confirmDelete' | 'confirmArchive'>(
-    'idle',
-  );
-  const actions = planRowActions({ executed, archived: false, isCurrent: false });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-      // Succès : la liste se recharge SANS démonter la ligne (pas de loader au
-      // rafraîchissement, cf. 3c7a209). On referme donc nous-mêmes le mode en
-      // cours : sans ça, un renommage restait figé sur « Enregistrement… » et
-      // les flèches de réordonnancement restaient désactivées.
-      setMode('idle');
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (mode === 'rename') {
-    return (
-      <RowCard>
-        <InlineNameForm
-          initial={seance.name}
-          submitLabel="Renommer"
-          onSubmit={(name) => run(() => onRename(name))}
-          onCancel={() => setMode('idle')}
-          busy={busy}
-          error={error}
-        />
-      </RowCard>
-    );
-  }
-
-  return (
-    <RowCard>
-      <div className="flex items-center gap-2">
-        <span
-          className="readout w-6 shrink-0 text-center text-sm tabular-nums text-ink-muted"
-          aria-hidden="true"
-        >
-          {index + 1}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-base font-medium text-ink">
-          {seance.name}
-        </span>
-        <ReorderControls
-          isFirst={isFirst}
-          isLast={isLast}
-          busy={busy}
-          onUp={() => run(() => onMove(-1))}
-          onDown={() => run(() => onMove(1))}
-        />
-      </div>
-
-      {mode === 'confirmDelete' ? (
-        <ConfirmDelete
-          question="Supprimer cette séance ?"
-          busy={busy}
-          error={error}
-          onConfirm={() => run(onDelete)}
-          onCancel={() => setMode('idle')}
-        />
-      ) : mode === 'confirmArchive' ? (
-        <ConfirmArchive
-          question="Archiver cette séance ?"
-          detail="Elle ne se choisit plus en salle. Son historique reste dans l'analyse. Tu pourras la désarchiver."
-          busy={busy}
-          error={error}
-          onConfirm={() => run(onArchive)}
-          onCancel={() => setMode('idle')}
-        />
-      ) : (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <RowAction label="Éditer" icon={EDIT_ICON} tone="accent" onClick={onEdit} />
-          <RowAction label="Renommer" icon={RENAME_ICON} onClick={() => setMode('rename')} />
-          {actions.canArchive && (
-            <RowAction
-              label="Archiver"
-              icon={ARCHIVE_ICON}
-              onClick={() => setMode('confirmArchive')}
-            />
-          )}
-          {actions.canDelete && (
-            <RowAction
-              label="Supprimer"
-              icon={DELETE_ICON}
-              tone="danger"
-              onClick={() => setMode('confirmDelete')}
-            />
-          )}
-        </div>
+      {archivedSeances.length > 0 && !reorder && (
+        <Disclosure label="Séances archivées" count={archivedSeances.length} open={showArchived} onToggle={() => setShowArchived((v) => !v)}>
+          <p className="px-5 pb-3 text-[14px] leading-[1.45] text-muted">
+            Elles ne se choisissent plus en salle. Leur historique reste dans l’analyse.
+          </p>
+          <List label="Séances archivées">
+            {archivedSeances.map((s) => (
+              <Row
+                key={s.id}
+                muted
+                title={s.name}
+                meta={exos(s.id)}
+                trailing={
+                  archivedRoutine ? undefined : (
+                    <TextLink
+                      tone="muted"
+                      className="-mr-1 flex-none px-1 text-[15px]"
+                      ariaLabel={`Désarchiver ${s.name}`}
+                      onClick={
+                        unarchiving
+                          ? undefined
+                          : () => {
+                              setUnarchiving(s.id);
+                              setError(null);
+                              onUnarchiveSeance(s)
+                                .catch((err: unknown) => setError(errorMessage(err)))
+                                .finally(() => setUnarchiving(null));
+                            }
+                      }
+                    >
+                      {unarchiving === s.id ? 'Un instant…' : 'Désarchiver'}
+                    </TextLink>
+                  )
+                }
+              />
+            ))}
+          </List>
+          {!archivedRoutine && !reorder && error && <FieldError className="mx-5">{error}</FieldError>}
+        </Disclosure>
       )}
 
-      {error && mode === 'idle' && <RowError message={error} />}
-    </RowCard>
+      {routineMenuOpen && (
+        <RoutineActionsSheet
+          routineName={routine.name}
+          currentRoutineName={currentRoutineName}
+          menu={menu}
+          seanceTotal={allSeances.length}
+          onClose={() => setRoutineMenuOpen(false)}
+          onRename={(name) => closingRoutine(() => onRename(name))()}
+          onSetCurrent={closingRoutine(onSetCurrent)}
+          onArchive={closingRoutine(onArchive)}
+          onDelete={closingRoutine(onDelete)}
+        />
+      )}
+      {seanceMenuFor && (
+        <SeanceActionsSheet
+          key={seanceMenuFor.id}
+          seanceName={seanceMenuFor.name}
+          routineName={routine.name}
+          copyName={nextFreeName(seanceMenuFor.name, takenNames)}
+          items={seanceItems(seanceMenuFor)}
+          inCurrentRoutine={isCurrent}
+          onClose={() => setSeanceMenuFor(null)}
+          onRename={(name) => closingSeance((s) => onRenameSeance(s, name))()}
+          onDuplicate={(name) => closingSeance((s) => onDuplicateSeance(s, name))()}
+          onArchive={closingSeance(onArchiveSeance)}
+          onDelete={closingSeance(onDeleteSeance)}
+        />
+      )}
+      <CreateSeanceSheet
+        open={creating}
+        routineName={routine.name}
+        catalog={catalog}
+        takenNames={takenNames}
+        onClose={() => setCreating(false)}
+        onCreate={onCreateSeance}
+      />
+    </Screen>
   );
 }
 
@@ -832,816 +967,103 @@ function SeanceRowItem({
 // Création d'une séance : vierge, ou copiée d'une existante (ADR 0015)
 // =====================================================================
 
-/** Aiguillage du flux de création. Chaque étape rend un seul bloc, en place. */
-function CreateFlow({
-  step,
+type Step = { step: 'choice' } | { step: 'pick' } | { step: 'name'; source: SeanceCatalogEntry | null };
+
+function CreateSeanceSheet({
+  open,
+  routineName,
   catalog,
   takenNames,
-  onOpen,
-  onStep,
-  onCancel,
+  onClose,
   onCreate,
-  onDuplicate,
 }: {
-  step: CreateStep;
+  open: boolean;
+  routineName: string;
+  /** Séances copiables, toutes routines confondues, la courante en tête. */
   catalog: SeanceCatalogEntry[];
-  /** Noms des séances de la routine d'arrivée : un nom y est unique. */
   takenNames: string[];
-  onOpen: () => void;
-  onStep: (next: CreateStep) => void;
-  onCancel: () => void;
-  onCreate: (name: string) => Promise<void>;
-  onDuplicate?: (sourceSeanceId: string, name: string) => Promise<void>;
+  onClose: () => void;
+  onCreate: (name: string, sourceId: string | null) => Promise<void>;
 }) {
-  if (step.step === 'idle') {
-    return <PrimaryAddButton label="Créer une séance" onClick={onOpen} />;
-  }
-
-  if (step.step === 'choice') {
-    return (
-      <CreateChoice
-        onBlank={() => onStep({ step: 'blank' })}
-        onExisting={() => onStep({ step: 'pick' })}
-        onCancel={onCancel}
-      />
-    );
-  }
-
-  if (step.step === 'pick') {
-    return (
-      <SeancePicker
-        catalog={catalog}
-        onPick={(source) => onStep({ step: 'name', source })}
-        onCancel={() => onStep({ step: 'choice' })}
-      />
-    );
-  }
+  // Rien à copier (compte neuf) : on va droit au nom.
+  const first: Step = catalog.length > 0 ? { step: 'choice' } : { step: 'name', source: null };
+  const [step, setStep] = useState<Step>(first);
+  const close = () => {
+    setStep(first);
+    onClose();
+  };
 
   if (step.step === 'name') {
-    const source = step.source;
+    const src = step.source;
     return (
-      <CreateForm
-        // Le nom de la source est proposé tel quel s'il est libre dans cette
-        // routine (copie vers une autre routine), sinon « Push 2 » : un nom de
-        // séance est unique dans sa routine (migration 0013).
-        initial={nextFreeName(source.seanceName, takenNames)}
-        placeholder="Nom de la séance"
-        submitLabel="Dupliquer"
-        intro={`Copie de « ${source.seanceName} », dans ${source.routineName}.`}
+      <NameSheet
+        open={open}
+        title={src ? `Copier ${src.seanceName}` : 'Séance vierge'}
+        label="Nom de la séance"
+        // Le nom de la source est repris s'il est libre dans cette routine, sinon
+        // « Push 2 » : un nom de séance est unique dans sa routine (migration 0013).
+        initial={src ? nextFreeName(src.seanceName, takenNames) : ''}
+        intro={
+          src
+            ? `Copie de ${src.seanceName} · ${src.routineName}, dans ${routineName}. Les deux séances seront indépendantes. La copie part sans Référence ni courbe tant qu’elle n’a pas été faite ; tes records restent affichés.`
+            : `Dans ${routineName}. Tu ajoutes les exos ensuite.`
+        }
+        submitLabel={src ? 'Créer la copie' : 'Créer la séance'}
+        busyLabel="Création…"
+        onClose={close}
         onSubmit={async (name) => {
-          await onDuplicate?.(source.seanceId, name);
-          onCancel();
+          await onCreate(name, src?.seanceId ?? null);
+          setStep(first);
         }}
-        onCancel={() => onStep({ step: 'pick' })}
       />
     );
   }
 
-  return (
-    <CreateForm
-      placeholder="Nom de la séance"
-      submitLabel="Créer"
-      onSubmit={async (name) => {
-        await onCreate(name);
-        onCancel();
-      }}
-      onCancel={onCancel}
-    />
-  );
-}
-
-/** Choix de la source : page blanche, ou séance existante à copier. */
-function CreateChoice({
-  onBlank,
-  onExisting,
-  onCancel,
-}: {
-  onBlank: () => void;
-  onExisting: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <RowCard>
-      <p className="text-[15px] font-medium text-ink">Nouvelle séance</p>
-      <div className="mt-3 flex flex-col gap-2">
-        <ChoiceButton
-          label="Séance vierge"
-          hint="Ajouter les exos un par un."
-          onClick={onBlank}
-        />
-        <ChoiceButton
-          label="Partir d'une séance existante"
-          hint="Copier ses exos et ses prescriptions, puis ajuster."
-          onClick={onExisting}
-        />
-      </div>
-      <CancelRow onCancel={onCancel} />
-    </RowCard>
-  );
-}
-
-/** Une option du choix : libellé fort, explication en dessous. */
-function ChoiceButton({
-  label,
-  hint,
-  onClick,
-}: {
-  label: string;
-  hint: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="field flex min-h-[56px] w-full flex-col items-start justify-center gap-0.5 rounded-xl px-3.5 py-2.5 text-left transition active:scale-[0.99]"
-    >
-      <span className="text-[15px] font-medium text-ink">{label}</span>
-      <span className="text-[13px] text-ink-muted">{hint}</span>
-    </button>
-  );
-}
-
-/**
- * Sélecteur de la séance à copier : toutes les séances de l'utilisateur, la
- * routine courante en tête (`buildSeanceCatalog`). Une séance sans exercice y
- * figure avec « 0 exercice » plutôt que d'être masquée sans explication.
- */
-function SeancePicker({
-  catalog,
-  onPick,
-  onCancel,
-}: {
-  catalog: SeanceCatalogEntry[];
-  onPick: (source: SeanceCatalogEntry) => void;
-  onCancel: () => void;
-}) {
-  return (
-    <RowCard>
-      <p className="text-[15px] font-medium text-ink">Copier quelle séance ?</p>
-      <p className="mt-1 text-[13px] text-ink-muted">
-        La copie repart sans repère : ni dernière fois, ni courbe, tant qu'elle n'a pas été
-        faite une première fois. Tes records personnels, eux, restent affichés.
-      </p>
-      <ul className="mt-3 flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
-        {catalog.map((entry) => (
-          <li key={entry.seanceId}>
-            <button
-              type="button"
-              onClick={() => onPick(entry)}
-              className="field flex min-h-[56px] w-full flex-col items-start justify-center gap-0.5 rounded-xl px-3.5 py-2.5 text-left transition active:scale-[0.99]"
-            >
-              <span className="w-full truncate text-[15px] font-medium text-ink">
-                {entry.seanceName}
-              </span>
-              <span className="w-full truncate text-[13px] text-ink-muted">
-                {entry.routineName}
-                {entry.isCurrentRoutine ? ' (courante)' : ''} · {exerciseCountLabel(entry.exerciseCount)}
-                {entry.isArchived ? ' · archivée' : ''}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <CancelRow onCancel={onCancel} />
-    </RowCard>
-  );
-}
-
-/** « 0 exercice » / « 1 exercice » / « 4 exercices ». */
-function exerciseCountLabel(count: number): string {
-  return count > 1 ? `${count} exercices` : `${count} exercice`;
-}
-
-/** Ligne « Annuler » seule, sous un bloc de choix. */
-function CancelRow({ onCancel }: { onCancel: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onCancel}
-      className="btn btn-ghost mt-2 h-11 w-full rounded-xl px-4 text-sm font-medium"
-    >
-      Annuler
-    </button>
-  );
-}
-
-// =====================================================================
-// Primitives partagées
-// =====================================================================
-
-function RowCard({
-  children,
-  accent = false,
-}: {
-  children: React.ReactNode;
-  /** Carte « clé » accentuée (routine courante) : gradient accent-soft + bordure accent. */
-  accent?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-2xl p-3.5 ${
-        accent
-          ? 'panel border-accent bg-[linear-gradient(160deg,var(--color-accent-soft),transparent)]'
-          : 'surface-card'
-      }`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/** Icônes des actions de ligne (réglages / crayon / corbeille / étoile). Knobs du
- *  glyphe « réglages » remplis pour se lire à petite taille. */
-const EDIT_ICON = (
-  <>
-    <line x1="4" y1="7" x2="20" y2="7" />
-    <circle cx="10" cy="7" r="2.4" fill="currentColor" stroke="none" />
-    <line x1="4" y1="12" x2="20" y2="12" />
-    <circle cx="15" cy="12" r="2.4" fill="currentColor" stroke="none" />
-    <line x1="4" y1="17" x2="20" y2="17" />
-    <circle cx="8" cy="17" r="2.4" fill="currentColor" stroke="none" />
-  </>
-);
-const RENAME_ICON = (
-  <>
-    <path d="M12 20h9" />
-    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-  </>
-);
-const DELETE_ICON = (
-  <>
-    <path d="M4 7h16" />
-    <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-    <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
-    <path d="M10 11v6M14 11v6" />
-  </>
-);
-const ARCHIVE_ICON = (
-  <>
-    <rect x="3" y="4" width="18" height="4" rx="1" />
-    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
-    <path d="M10 12h4" />
-  </>
-);
-const STAR_ICON = (
-  <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.2l5.9-.9L12 3z" />
-);
-
-/**
- * Action de ligne en BOUTON-INSTRUMENT à icône (décision UI 2026-06-23 : routine
- * et séance, comme l'éditeur). `label` porte l'`aria-label` (icône seule). Tons :
- * accent (action principale, Éditer) = bordure + glyphe accent ; danger
- * (Supprimer) = glyphe qui vire au warn à la pression ; neutre = ink-muted.
- */
-function RowAction({
-  label,
-  icon,
-  onClick,
-  tone = 'neutral',
-  busy = false,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  tone?: 'neutral' | 'accent' | 'danger';
-  busy?: boolean;
-}) {
-  const toneClass =
-    tone === 'accent'
-      ? 'border-accent text-accent-ink'
-      : tone === 'danger'
-        ? 'text-ink-muted active:text-warn'
-        : 'text-ink-muted active:text-ink';
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={busy}
-      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="19"
-        height="19"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {icon}
-      </svg>
-    </button>
-  );
-}
-
-function RowError({ message }: { message: string }) {
-  return (
-    <p className="mt-2 break-words text-xs text-warn" role="alert">
-      {message}
-    </p>
-  );
-}
-
-/** Flèches haut/bas de réordonnancement. Désactivées aux extrémités. */
-function ReorderControls({
-  isFirst,
-  isLast,
-  busy,
-  onUp,
-  onDown,
-}: {
-  isFirst: boolean;
-  isLast: boolean;
-  busy: boolean;
-  onUp: () => void;
-  onDown: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      <IconButton
-        label="Monter"
-        disabled={isFirst || busy}
-        onClick={onUp}
-        icon={<path d="M18 15l-6-6-6 6" />}
-      />
-      <IconButton
-        label="Descendre"
-        disabled={isLast || busy}
-        onClick={onDown}
-        icon={<path d="M6 9l6 6 6-6" />}
-      />
-    </div>
-  );
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  icon,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink disabled:opacity-30"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="20"
-        height="20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        {icon}
-      </svg>
-    </button>
-  );
-}
-
-function Chevron() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className="shrink-0 text-ink-muted"
-    >
-      <path d="M9 6l6 6-6 6" />
-    </svg>
-  );
-}
-
-/** Confirmation de suppression INLINE (pas de window.confirm, cf. brief). */
-function ConfirmDelete({
-  question,
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  question: string;
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="mt-2 rounded-xl bg-surface-2/60 p-3">
-      <p className="text-sm text-ink">{question}</p>
-      <p className="mt-0.5 text-xs text-ink-muted">Cette action est définitive.</p>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="inline-flex h-11 flex-1 items-center justify-center rounded-xl border border-warn bg-[color-mix(in_oklab,var(--color-warn),transparent_85%)] px-4 text-sm font-semibold text-warn transition active:scale-[0.98] active:bg-[color-mix(in_oklab,var(--color-warn),transparent_78%)] disabled:opacity-50"
-        >
-          {busy ? 'Suppression…' : 'Supprimer'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </div>
-  );
-}
-
-/**
- * Confirmation d'archivage INLINE (ADR 0017). Ton neutre, pas d'alerte : rien ne
- * se perd, le geste se défait. Le détail dit ce qui reste.
- */
-function ConfirmArchive({
-  question,
-  detail,
-  busy,
-  error,
-  onConfirm,
-  onCancel,
-}: {
-  question: string;
-  detail: string;
-  busy: boolean;
-  error: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="mt-2 rounded-xl bg-surface-2/60 p-3">
-      <p className="text-sm text-ink">{question}</p>
-      <p className="mt-0.5 text-xs text-ink-muted">{detail}</p>
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm disabled:opacity-50"
-        >
-          {busy ? 'Archivage…' : 'Archiver'}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </div>
-  );
-}
-
-/** Section repliée des éléments archivés, en bas de liste (ADR 0017). */
-function ArchivedSection({ count, children }: { count: number; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="mt-6 border-t border-hair pt-3">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex min-h-[44px] w-full items-center justify-between text-sm font-medium text-ink-muted transition active:text-ink"
-      >
-        <span>
-          Archivées <span className="readout tabular-nums text-ink-faint">{count}</span>
-        </span>
-        <svg
-          viewBox="0 0 20 20"
-          width="16"
-          height="16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          className={`transition-transform ${open ? 'rotate-180' : ''}`}
-        >
-          <path d="M5 8l5 5 5-5" />
-        </svg>
-      </button>
-      {open && <ul className="mt-2 flex flex-col gap-2.5">{children}</ul>}
-    </section>
-  );
-}
-
-/** Une routine ou une séance archivée : son nom, et le geste qui la rend au plan. */
-function ArchivedRowItem({
-  name,
-  onOpen,
-  onUnarchive,
-}: {
-  name: string;
-  /** Routine : ouvrir ses séances reste possible. Absent pour une séance. */
-  onOpen?: () => void;
-  onUnarchive: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Source : les séances groupées par routine, dans l'ordre du catalogue
+  // (routine courante en tête, archivées comprises : leur contenu peut resservir).
+  const groups: { routineId: string; routineName: string; current: boolean; entries: SeanceCatalogEntry[] }[] = [];
+  for (const entry of catalog) {
+    const group = groups.find((g) => g.routineId === entry.routineId);
+    if (group) group.entries.push(entry);
+    else groups.push({ routineId: entry.routineId, routineName: entry.routineName, current: entry.isCurrentRoutine, entries: [entry] });
+  }
 
   return (
-    <RowCard>
-      <div className="flex items-center gap-2">
-        {onOpen ? (
-          <button
-            type="button"
-            onClick={onOpen}
-            className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left transition active:opacity-80"
-          >
-            <span className="block min-w-0 flex-1 truncate text-base font-medium text-ink-muted">
-              {name}
-            </span>
-            <Chevron />
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-base font-medium text-ink-muted">
-            {name}
-          </span>
-        )}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await onUnarchive();
-            } catch (err) {
-              setError(errorMessage(err));
-              setBusy(false);
-            }
-          }}
-          className="btn btn-ghost h-11 shrink-0 rounded-xl px-3.5 text-sm font-medium disabled:opacity-50"
-        >
-          {busy ? 'Désarchivage…' : 'Désarchiver'}
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </RowCard>
-  );
-}
-
-/**
- * Formulaire de saisie d'un nom (texte libre, donc <input> légitime : le ban du
- * clavier OS de DESIGN.md vise les chiffres mesurés, pas les noms). Réutilisé
- * pour la création et le renommage inline.
- */
-function InlineNameForm({
-  initial = '',
-  placeholder,
-  submitLabel,
-  onSubmit,
-  onCancel,
-  busy = false,
-  error = null,
-}: {
-  initial?: string;
-  placeholder?: string;
-  submitLabel: string;
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-  busy?: boolean;
-  error?: string | null;
-}) {
-  const [value, setValue] = useState(initial);
-  const trimmed = value.trim();
-  const canSubmit = trimmed.length > 0 && !busy;
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (canSubmit) onSubmit(trimmed);
-      }}
-    >
-      <input
-        type="text"
-        value={value}
-        placeholder={placeholder}
-        autoFocus
-        enterKeyHint="done"
-        maxLength={80}
-        onChange={(e) => setValue(e.target.value)}
-        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
-      />
-      <div className="mt-2 flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm"
-        >
-          {busy ? 'Enregistrement…' : submitLabel}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onCancel}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && <RowError message={error} />}
-    </form>
-  );
-}
-
-/** Formulaire de création (encadré, dans un RowCard) avec gestion d'erreur. */
-function CreateForm({
-  initial,
-  placeholder,
-  submitLabel,
-  intro,
-  onSubmit,
-  onCancel,
-}: {
-  /** Nom pré-rempli (duplication) ; absent = champ vide (séance vierge). */
-  initial?: string;
-  placeholder: string;
-  submitLabel: string;
-  /** Rappel de ce qu'on est en train de créer, au-dessus du champ. */
-  intro?: string;
-  onSubmit: (name: string) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <RowCard>
-      {intro && <p className="mb-2 text-[13px] text-ink-muted">{intro}</p>}
-      <InlineNameForm
-        initial={initial}
-        placeholder={placeholder}
-        submitLabel={submitLabel}
-        busy={busy}
-        error={error}
-        onCancel={onCancel}
-        onSubmit={async (name) => {
-          setBusy(true);
-          setError(null);
-          try {
-            await onSubmit(name);
-          } catch (err) {
-            setError(errorMessage(err));
-            setBusy(false);
-          }
-        }}
-      />
-    </RowCard>
-  );
-}
-
-/** Bouton d'action primaire « + Créer… » pleine largeur (accent violet). */
-function PrimaryAddButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="btn btn-primary h-12 w-full rounded-2xl text-base"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="20"
-        height="20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M12 5v14M5 12h14" />
-      </svg>
-      {label}
-    </button>
-  );
-}
-
-/** État vide : message + action primaire de création. */
-function EmptyState({
-  message,
-  actionLabel,
-  onAction,
-}: {
-  message: string;
-  actionLabel: string;
-  onAction: () => void;
-}) {
-  return (
-    <div className="mt-2 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-hair-strong px-6 py-10 text-center">
-      <p className="text-sm text-ink-muted">{message}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-      >
-        {actionLabel}
-      </button>
-    </div>
-  );
-}
-
-function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="btn btn-ghost -ml-1 min-h-[44px] self-start rounded-lg py-2 pr-3 text-sm font-medium"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="18"
-        height="18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M15 6l-6 6 6 6" />
-      </svg>
-      {label}
-    </button>
-  );
-}
-
-function ScreenSpinner({ label }: { label: string }) {
-  return (
-    <div
-      className="mx-auto w-full max-w-md px-4 pt-5"
-      role="status"
-      aria-label={label}
-    >
-      {/* Squelette : titre + 2-3 cartes simulant des lignes de liste. */}
-      <div className="mb-4 h-7 w-40 rounded-lg bg-surface-2 animate-pulse" />
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="surface-card mb-2.5 rounded-2xl p-3.5">
-          <div className="flex items-center gap-2">
-            <div className="h-5 w-5 shrink-0 rounded bg-surface-2 animate-pulse" />
-            <div className="h-4 flex-1 rounded bg-surface-2 animate-pulse" />
+    <Sheet open={open} title={step.step === 'choice' ? 'Nouvelle séance' : 'Copier quelle séance ?'} onClose={close}>
+      {step.step === 'choice' ? (
+        <List label="Point de départ">
+          <Row title="Séance vierge" meta="tu ajoutes les exos un par un" onClick={() => setStep({ step: 'name', source: null })} />
+          <Row
+            title="Partir d’une séance existante"
+            meta="copie ses exos et ses prescriptions, puis tu ajustes"
+            onClick={() => setStep({ step: 'pick' })}
+          />
+        </List>
+      ) : (
+        <>
+          <div className="px-5">
+            <TextLink tone="muted" onClick={() => setStep({ step: 'choice' })}>
+              Revenir au choix
+            </TextLink>
           </div>
-          <div className="mt-3 flex gap-2">
-            <div className="h-8 w-24 rounded-lg bg-surface-2 animate-pulse" />
-            <div className="h-8 w-20 rounded-lg bg-surface-2 animate-pulse" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScreenError({
-  message,
-  intro,
-  onRetry,
-}: {
-  message: string;
-  intro: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <p className="text-sm text-ink-muted">{intro}</p>
-      <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-      >
-        Réessayer
-      </button>
-    </div>
+          {groups.map((g) => (
+            <section key={g.routineId}>
+              <SectionTitle aside={g.current ? 'courante' : undefined}>{g.routineName}</SectionTitle>
+              <List label={g.routineName}>
+                {g.entries.map((e) => (
+                  <Row
+                    key={e.seanceId}
+                    title={e.seanceName}
+                    meta={`${e.exerciseCount === 0 ? 'aucun exo' : exoCount(e.exerciseCount)}${e.isArchived ? ' · archivée' : ''}`}
+                    muted={e.isArchived}
+                    onClick={() => setStep({ step: 'name', source: e })}
+                  />
+                ))}
+              </List>
+            </section>
+          ))}
+        </>
+      )}
+    </Sheet>
   );
 }

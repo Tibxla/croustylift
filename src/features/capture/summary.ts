@@ -3,8 +3,22 @@
 import type { CaptureState } from './state';
 import { getProgress } from './state';
 import type { Session } from './fixtures';
-import type { SessionSummary } from './SessionEnd';
 import { countLogicalSetsDone, countPerformedSets } from '../../domain/set-count';
+
+/** Récap sobre de l'exécution : exos faits / total + décompte des séries. La fin
+ *  de séance affiche désormais `buildSessionRecap` (session-recap.ts). */
+export interface SessionSummary {
+  sessionName: string;
+  /** Exos dont le minimum prescrit est atteint. Un exo passé n'en fait pas partie. */
+  exercisesDone: number;
+  /** Exos explicitement passés, sans égard à leurs séries : affichés à part. */
+  exercisesSkipped: number;
+  exercisesTotal: number;
+  /** Total des séries, pondéré par reps (issue #60, ADR 0006). Valeur fractionnaire. */
+  totalSets: number;
+  /** Décompte réel des séries par muscle principal, pondéré par reps. Valeurs fractionnaires. */
+  setsByMuscle: Record<string, number>;
+}
 
 /**
  * Durée maximale d'une séance, en minutes (10 h) : le même plafond que l'éditeur
