@@ -89,14 +89,16 @@ function signed(n: number, decimals: number): string {
 }
 
 /** Écart du brouillon à la Référence, dans la mesure du juge (e1RM, ou reps
- *  effectives à 0 kg des deux côtés). Null si les deux ne se comparent pas. */
-function gapToRef(draft: PerformedSet, ref: PerformedSet): string | null {
+ *  effectives à 0 kg des deux côtés), avec le nom de cette mesure : un « +3,3 kg »
+ *  sans nom se lisait comme 3,3 kg à ajouter sur la barre. Null si les deux ne se
+ *  comparent pas. */
+function gapToRef(draft: PerformedSet, ref: PerformedSet): { measure: 'e1RM' | 'reps eff.'; value: string; unit: string } | null {
   if (isZeroLoad(draft.weightKg) && isZeroLoad(ref.weightKg)) {
-    return `${signed(effectiveReps(draft.reps, draft.rir) - effectiveReps(ref.reps, ref.rir), 0)} reps`;
+    return { measure: 'reps eff.', value: signed(effectiveReps(draft.reps, draft.rir) - effectiveReps(ref.reps, ref.rir), 0), unit: 'reps' };
   }
   const a = draftE1rm(draft.weightKg, draft.reps, draft.rir);
   const b = draftE1rm(ref.weightKg, ref.reps, ref.rir);
-  return a === null || b === null ? null : `${signed(a - b, 1)} kg`;
+  return a === null || b === null ? null : { measure: 'e1RM', value: signed(a - b, 1), unit: 'kg' };
 }
 
 export function ExerciseCapture({
@@ -487,9 +489,11 @@ export function ExerciseCapture({
           <Measure compact={compact} label={livePerf?.label ?? 'e1RM'} live>
             {livePerf ? <Figure value={livePerf.value} unit={livePerf.unit} compact={compact} /> : <Missing compact={compact}>·</Missing>}
           </Measure>
-          <Measure compact={compact} label={compact ? 'Écart' : 'Écart à la réf.'}>
+          {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
+              couleur ni ▲ (ADR 0010, draft-e1rm.ts). */}
+          <Measure compact={compact} label={`Écart ${gap?.measure ?? 'e1RM'}`}>
             {gap ? (
-              <Figure value={gap.split(' ')[0]!} unit={gap.split(' ')[1] ?? null} compact={compact} />
+              <Figure value={gap.value} unit={gap.unit} compact={compact} />
             ) : (
               <Missing compact={compact}>{compact ? 'sans réf.' : 'aucune réf.'}</Missing>
             )}
