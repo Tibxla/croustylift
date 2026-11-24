@@ -19,8 +19,8 @@ L'acte volontaire de retirer la Session locale de l'appareil, qui purge les donn
 _Avoid_: Logout, expiration (une session locale n'expire pas d'elle-même)
 
 **Saisie refusée**:
-Une écriture (série, note, clôture, suppression) que le serveur a rejetée pour de bon : la renvoyer telle quelle échouerait encore. Elle n'est ni en base ni en attente. L'appareil la garde de côté, la bannière de synchro annonce « n saisie(s) refusée(s) par le serveur » au lieu de « Synchronisé », et les saisies suivantes continuent de partir. Une saisie dont l'envoi a échoué faute de réseau n'est pas refusée : elle attend. Les saisies refusées comptent parmi ce qui bloque la Déconnexion.
-_Avoid_: Erreur de synchro (trop large), saisie perdue (elle est conservée) ; « quarantaine » est le nom technique du même état (ADR 0018), pas un mot d'interface
+Une écriture (série, note, clôture, suppression) que le serveur a rejetée pour de bon : la renvoyer telle quelle échouerait encore. Elle n'est ni en base ni en attente. L'appareil la garde de côté, la bannière de synchro annonce « n saisie(s) refusée(s) par le serveur » au lieu de « Synchronisé », et les saisies suivantes continuent de partir. Une saisie dont l'envoi a échoué faute de réseau n'est pas refusée : elle attend. Une saisie dont la séance a été refusée est retenue avec elle : elle compte parmi les saisies refusées et repart avec sa séance. Renvoyer une saisie refusée la remet en attente ; l'abandonner la retire de l'appareil, avec ce qui en dépendait (les saisies de sa séance, la correction de sa série). Les saisies refusées comptent parmi ce qui bloque la Déconnexion.
+_Avoid_: Erreur de synchro (trop large), saisie perdue (elle est conservée) ; « quarantaine » est l'ancien nom technique du même état (ADR 0018), pas un mot d'interface
 
 ### Exercices
 

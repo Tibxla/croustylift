@@ -44,3 +44,7 @@ La fusion de l'outbox couvre une série tant qu'elle attend. Une fois acquittée
 ## Amendement du 2026-11-23 (Lot 3)
 
 Le même principe vaut désormais pour la note d'instructions d'un exo éditée en Capture : tant que son écriture attend, la Capture la lit dans la file, par-dessus la copie (`applyPendingExerciseNote`). À l'acquittement, son corps est posé dans la copie (`seedRead`), sous seuil et sous garde de compte. C'est la seule écriture directe d'une copie, que cet ADR écarte pour les lignes d'historique : une note est une chaîne, sa forme locale est sa forme serveur.
+
+## Amendement du 2026-11-24 : la copie porte son estampille
+
+La Référence applique la même règle que le tableau de la Salle (ADR 0025) : la copie d'historique, puis les écritures locales qu'elle ne contient pas. La copie garde pour cela l'estampille de la lecture qui l'a écrite. Une série acquittée après le départ de cette lecture est donc encore appliquée, alors qu'elle a quitté l'attente : le trou entre l'acquittement et la relecture de la copie est couvert pendant la rétention du registre (dix minutes), puis par la relecture elle-même (ADR 0020). Une copie écrite avant ce champ n'a pas d'estampille : seules les écritures non acquittées lui sont appliquées, comme avant. La limite « série dont l'`upsertExecution` est déjà partie » ne vaut plus que passé cette rétention.

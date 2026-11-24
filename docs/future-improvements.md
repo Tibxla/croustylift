@@ -83,7 +83,7 @@ figure pas n'est pas connu.
   `started_at` (le réancrage ne vise qu'une exécution pas encore née, ADR 0011).
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
-  n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
+  n'adopte pas une exécution qu'une écriture locale clôt ou supprime (`isExecutionRetired`),
   sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. Une
   clôture ou une suppression sortie de la file relève les lignes qu'elle a touchées : zéro
   ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
@@ -115,13 +115,25 @@ perte), finition.
 ### File d'écritures et stockage plein
 
 - **Écriture ancienne envoyée après une correction déjà partie** (finition). Stockage
-  plein, deux onglets : une écriture tenue en mémoire par l'un est désormais replacée
-  dans la file à son instant d'enfilement, donc avant une correction de la même ligne
-  encore en file (y compris celle d'un onglet resté sur un bundle antérieur, qui
-  n'écrit pas d'instant : elle est située par ce que la file portait déjà quand
-  l'écriture est entrée en mémoire). Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
-  et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
-  se présente : dater les écritures d'une même ligne côté base.
+  plein, deux onglets : une écriture tenue en mémoire par l'un garde son numéro
+  d'enfilement, qui suit l'horloge, donc sa place avant une correction de la même ligne
+  encore en attente (registre d'écritures, ADR 0025). Si l'autre onglet a DÉJÀ envoyé sa
+  correction, l'ancienne part après et gagne en base, sur les colonnes qu'elle écrit :
+  c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas se présente : dater
+  les écritures d'une même ligne côté base.
+- **Deux onglets qui écrivent le registre au même instant** (finition). Chaque transition
+  est une lecture-modification-écriture synchrone d'un seul enregistrement, mais
+  `localStorage` n'a pas de verrou entre processus : deux enfilements simultanés dans
+  deux onglets peuvent se marcher dessus, comme avec la file d'avant. La passe d'envoi,
+  le renvoi et l'abandon sont ordonnés par le verrou du navigateur. Piste : un stockage
+  transactionnel (écarté pour l'instant, ADR 0025).
+- **Version inconnue du registre** (finition). Un onglet resté sur une version plus
+  ancienne que celle qui a écrit le registre n'envoie plus rien et demande de recharger ;
+  ce qu'on y saisit d'ici là ne tient qu'en mémoire. Piste, à la première montée de
+  format : laisser à l'ancienne version une clé de dépôt que la nouvelle reprend.
+- **Reprise de l'ancien format** (à retirer après le 2026-12-31). La conversion de la
+  file et de la quarantaine d'avant le registre, et leur reprise en continu
+  (`absorbLegacy`, `fromLegacy`), ne servent qu'aux onglets restés sur l'ancienne version.
 - **État de séance retenu en mémoire, réécrit par-dessus un autre onglet** (mineure,
   acceptée). Stockage plein, deux onglets : l'onglet A quitte la Capture avec son état
   refusé, retenu en mémoire. L'onglet B écrit ensuite une disposition plus récente de
@@ -132,8 +144,8 @@ perte), finition.
   respecter la clôture et garder la plus récente (`retryPersistCaptureState`,
   `capture/state.ts`).
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
-  à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
-  quarantaine, qui se décide par écriture.
+  à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait le
+  refus, qui se décide par écriture.
 
 ### Comptes
 

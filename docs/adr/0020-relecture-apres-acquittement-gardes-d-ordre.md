@@ -40,3 +40,7 @@ On compare à la dernière réponse écrite, pas à la dernière lecture partie.
 - Le brouillon de la série en cours est marqué « touché » à la première interaction dans la zone de saisie (tap, focus, frappe même non validée) et ne bouge alors plus : seul l'historique change. Un brouillon intact suit le nouveau préremplissage. Le marqueur est levé quand une nouvelle saisie commence (série loggée ou annulée, changement de côté ou d'exo) (`shouldReseedDraft`).
 
 Reste : hors ligne, rien ne revalide, la copie garde son retard jusqu'au retour du réseau.
+
+## Amendement du 2026-11-24 : le flush dit ce qu'il a acquitté
+
+La conséquence « `flush` ne dit pas quelles ops sont passées » est levée. La passe rend le sort de chaque écriture traitée, avec les exos dont l'historique vient de changer en base (ADR 0025), et `flushOutbox` relit leurs copies. Les fonctions de sync ne notent plus rien de côté. Pour une suppression, les exos sont ceux que l'émetteur nomme, ceux des écritures de la même série ou de la même exécution que le registre retient encore (dix minutes, à la place de la mémoire de session), et les copies qui contiennent la ligne. Une suppression conditionnelle que la base n'a pas faite ne relit rien. Les trois gardes d'ordre ne changent pas.
