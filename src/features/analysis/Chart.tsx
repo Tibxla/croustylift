@@ -8,7 +8,8 @@
 //   - axe Y à droite, graduations à pas ronds (1, 2, 2,5, 5 × 10ⁿ : registre
 //     U42), grille en filets ;
 //   - les séries : traits droits entre les points (aucune interpolation qui
-//     inventerait un creux ou une bosse), points pleins. La série qui porte la
+//     inventerait un creux ou une bosse), points pleins tant qu'ils ne se
+//     touchent pas (écart moyen au-delà de 6 px ; sinon le dernier seul). La série qui porte la
 //     lecture est blanc cassé, les autres grises ET pointillées : jamais la seule
 //     couleur pour distinguer deux séries ;
 //   - un repère vertical pointillé (le début du bloc de la pente) ;
@@ -349,7 +350,15 @@ export function Chart({
                 stroke="var(--color-muted)"
                 strokeDasharray="2 4"
               />
-              <text x={geo.plot.left} y={geo.y(refLine.y) - 6} fontSize={FONT} fill="var(--color-faint)" style={TEXT_STYLE}>
+              {/* Sous le trait quand il frôle le haut du tracé : le libellé ne
+                  touche jamais la grille. */}
+              <text
+                x={geo.plot.left}
+                y={geo.y(refLine.y) - geo.plot.top < 16 ? geo.y(refLine.y) + 15 : geo.y(refLine.y) - 6}
+                fontSize={FONT}
+                fill="var(--color-faint)"
+                style={TEXT_STYLE}
+              >
                 {refLine.label}
               </text>
             </g>
@@ -380,6 +389,12 @@ export function Chart({
               )}
               {s.points.map((p, i) => {
                 const up = s.lastUp && i === s.points.length - 1;
+                // Points serrés (écart moyen de 6 px ou moins) : le trait seul,
+                // plus le dernier point ; le point lu a son disque à part.
+                const n = s.points.length;
+                const dense =
+                  s.line !== false && n > 1 && Math.abs(geo.x(s.points[n - 1]!.x) - geo.x(s.points[0]!.x)) / (n - 1) <= 6;
+                if (dense && i !== n - 1) return null;
                 return (
                   <circle
                     key={i}

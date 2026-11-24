@@ -87,7 +87,14 @@ export function E1rmChart({
     id: s.id,
     tone: i === 0 ? 'ink' : 'muted',
     dashed: i > 0,
-    lastUp: i === 0 && lastBeatsPrevious(s.curve),
+    // Le signal ne marque le dernier point que lorsqu'il est le point lu : le
+    // relevé dit alors « ▲ mieux que la séance d'avant » (signe + mot). Ailleurs,
+    // un point jaune muet serait une couleur sans mot.
+    lastUp:
+      i === 0 &&
+      lastBeatsPrevious(s.curve) &&
+      selected?.series === s.id &&
+      selected.index === s.curve.length - 1,
     // Une pause de plus de trois semaines coupe le trait : pas de tendance inventée.
     points: s.curve.map((p, k) => ({ x: dayToTime(p.date), y: p.e1rm, break: breaks[k] })),
     };
