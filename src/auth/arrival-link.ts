@@ -71,7 +71,7 @@ export function arrivalFromHash(hash: string): ArrivalLink {
  * Les invitations envoyées à partir de cette date portent l'obligation côté
  * serveur. Avant, l'app ne la tenait pas.
  */
-export const INVITATIONS_SINCE = Date.parse('2026-11-23T00:00:00Z');
+export const INVITATIONS_SINCE = Date.parse('2026-11-24T00:00:00Z');
 
 /** Ce que l'obligation lit d'une session supabase-js. */
 export interface SetupSession {
