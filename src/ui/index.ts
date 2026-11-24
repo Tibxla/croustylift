@@ -14,8 +14,12 @@
 // couleur + signe + mot, jamais la couleur seule (`Status`).
 //
 // Hiérarchie : taille et graisse d'Inter. Chiffres tabulaires (`tnum`) pour les
-// nombres seulement. L'action principale d'un écran est UN bloc blanc cassé plein
-// en bas, dans la barre collée (`Screen bottom`). Le reste : bouton secondaire à
+// nombres seuls, jamais pour une fourchette à trait d'union (« 8-12 ») ni du
+// texte : Inter tabulaire donne au trait d'union une chasse de chiffre. Les
+// emplacements déjà tabulaires du kit (`Row value`, `PrimaryButton meta`, `lead`)
+// ne reçoivent donc qu'un nombre ou un « poids × reps ».
+// L'action principale d'un écran est UN bloc blanc cassé plein en bas, dans la
+// barre collée (`Screen bottom`). Le reste : bouton secondaire à
 // contour, liens soulignés, lignes et filets. Icônes : seulement les icônes
 // fonctionnelles de `icons.tsx`, là où elles sont lues sans hésiter ; une icône
 // seule a un nom (aria-label) et 44 px. Plus les trois marques d'état d'un exo
