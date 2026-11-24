@@ -161,7 +161,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
         </>
       }
     >
-      <ScreenHeader title="Fin de séance" meta={`${recap.sessionName} · ${fmtDay(dateIso)}`} back={{ label: 'Retour à la capture', onClick: onBack }} />
+      <ScreenHeader title="Fin de séance" meta={`${recap.sessionName} · ${fmtDay(dateIso)}`} back={{ label: 'Séance', onClick: onBack }} />
 
       <Figures recap={recap} />
 
