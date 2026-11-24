@@ -148,9 +148,10 @@ export function ExercisePicker({
 
         {/* Séance d'un jour passé restée ouverte : on le dit, avec ses sorties. */}
         {staleSince && (
-          // Filets haut et bas, pas de trait latéral (plancher : aucune barre
-          // sur un seul côté d'un bloc).
-          <div role="status" className="mx-5 mb-4 border-y border-line py-3">
+          // Entre deux filets, sans trait latéral (plancher : aucune barre sur
+          // un seul côté d'un bloc) : le filet haut ici, le bas est celui qui
+          // ouvre la liste juste dessous (un seul trait, pas deux).
+          <div role="status" className="mx-5 border-t border-line pb-4 pt-3">
             <p className="text-[15px] leading-[1.45] text-ink">Cette séance date d’{staleSince} et n’a pas été terminée.</p>
             <p className="mt-1 text-[14px] leading-[1.45] text-muted">
               {canFinish
