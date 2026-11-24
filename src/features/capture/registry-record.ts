@@ -58,6 +58,8 @@ export interface Entry {
   refusal?: { reason: string; at: string; superseded?: true };
   /** Pour une écriture acquittée : le numéro pris à l'acquittement. */
   ack?: number;
+  /** Pour une écriture acquittée : l'heure de l'appareil à cet instant (rétention, cf. `isExpired`). */
+  at?: number;
   /** Les écritures qu'elle a écartées (cf. « LIGNÉE »), par identité. */
   replaces?: string[];
 }
@@ -439,7 +441,7 @@ export function acknowledge(
   const entry = draft.get(uid);
   if (!entry || entry.fate !== 'pending') return null;
   const touches = effect === 'none' ? [] : touchedExercises(draft.record, sent, entry.owner);
-  draft.patch(uid, { fate: 'acked', ack: draft.next(), op: sent, parents: undefined });
+  draft.patch(uid, { fate: 'acked', ack: draft.next(), at: draft.now(), op: sent, parents: undefined });
   const acked = draft.get(uid)!;
   if (sent.type === 'upsertExecution') {
     // L'exécution existe en base : un ancien refus de sa création ne retient
@@ -552,7 +554,15 @@ export function prune(draft: Draft): void {
  * registre n'est nettoyé qu'à la transition suivante).
  */
 export function isExpired(entry: Entry, now: number): boolean {
-  return entry.fate === 'acked' && now - (entry.ack ?? 0) > ACKED_RETENTION_MS;
+  if (entry.fate !== 'acked') return false;
+  // L'âge se compte à l'HEURE de l'acquittement, pas à son numéro : le numéro
+  // ne recule jamais, il peut donc être en avance sur une horloge qui a reculé,
+  // et l'écriture était alors rejouée bien au-delà de sa rétention. Une heure
+  // d'acquittement dans le futur (l'horloge a reculé depuis) ne dit plus rien
+  // de l'âge : l'écriture est tenue pour passée, plutôt que gardée sans borne.
+  if (entry.at === undefined) return now - (entry.ack ?? 0) > ACKED_RETENTION_MS;
+  const age = now - entry.at;
+  return age > ACKED_RETENTION_MS || age < 0;
 }
 
 /** Remet une écriture refusée en attente, à sa place d'origine. */
@@ -609,9 +619,32 @@ function stripQueueFields(op: LegacyOp): OutboxOp {
   return rest as OutboxOp;
 }
 
+/**
+ * Les deux écritures que le registre pose lui-même dans l'ancienne file, sous
+ * une même identité : le VERROU (`'stop'`, cf. outbox.ts), et le REPÈRE
+ * (`'anchor'`), qui garde l'instant d'une écriture datée retirée tant qu'une
+ * voisine sans instant en a besoin pour tenir sa place.
+ */
+export const LEGACY_MARK_UID = 'registre-actif';
+export function legacyMark(op: unknown): 'stop' | 'anchor' | null {
+  const raw = op as { _uid?: unknown; _at?: unknown } | null;
+  if (raw?._uid !== LEGACY_MARK_UID) return null;
+  return typeof raw._at === 'number' && raw._at > 0 ? 'anchor' : 'stop';
+}
+
+/**
+ * Rend son type à une écriture marquée sur place pour arrêter l'ancienne
+ * version (initiale en majuscule, cf. « POSE », outbox.ts).
+ */
+function unmarked<T>(op: T): T {
+  const type = (op as { type?: unknown } | null)?.type;
+  if (typeof type !== 'string' || !/^[A-Z]/.test(type)) return op;
+  return { ...op, type: type.charAt(0).toLowerCase() + type.slice(1) };
+}
+
 /** L'identité au registre d'une écriture de l'ancien format : son UUID d'enfilement, à défaut son contenu. */
 export function legacyIdentity(op: unknown): string {
-  return (op as { _uid?: string } | null)?._uid ?? `legacy:${JSON.stringify(op)}`;
+  return (op as { _uid?: string } | null)?._uid ?? `legacy:${JSON.stringify(unmarked(op))}`;
 }
 
 /** Une écriture reprise de l'ancien format ; `n` nul : instant d'enfilement inconnu. */
@@ -633,6 +666,7 @@ export function fromLegacy(queue: readonly unknown[], quarantine: readonly unkno
   for (const raw of quarantine) {
     const q = raw as LegacyQuarantined | null;
     if (!q || typeof q !== 'object' || !q.op || typeof q.op !== 'object') continue;
+    q.op = unmarked(q.op);
     const at = typeof q.at === 'string' ? q.at : new Date(0).toISOString();
     const refusedAt = Date.parse(at);
     const base = {
@@ -645,9 +679,9 @@ export function fromLegacy(queue: readonly unknown[], quarantine: readonly unkno
     if (reason.startsWith('dépend de l')) out.push({ ...base, fate: 'pending' });
     else out.push({ ...base, fate: 'refused', refusal: { reason, at, ...(q.superseded ? { superseded: true as const } : {}) } });
   }
-  const ops = queue.filter(
-    (raw): raw is LegacyOp => typeof raw === 'object' && raw !== null && typeof (raw as LegacyOp).type === 'string',
-  );
+  const ops = queue
+    .filter((raw): raw is LegacyOp => typeof raw === 'object' && raw !== null && typeof (raw as LegacyOp).type === 'string')
+    .map(unmarked);
   let previous = 0;
   ops.forEach((op, index) => {
     // L'ordre de la file fait foi entre ses écritures : jamais un numéro plus
@@ -658,6 +692,8 @@ export function fromLegacy(queue: readonly unknown[], quarantine: readonly unkno
     if (op._at !== undefined) previous = Math.max(previous, op._at);
     const next = ops.slice(index + 1).find((later) => later._at !== undefined)?._at;
     const n = op._at !== undefined || previous > 0 ? previous : (next ?? null);
+    // Un repère ne porte que l'instant d'une voisine retirée (cf. `legacyMark`).
+    if (legacyMark(op) !== null) return;
     out.push({
       n,
       uid: identity(op),

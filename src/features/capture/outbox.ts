@@ -67,7 +67,9 @@ import {
   fromLegacy,
   heldBy,
   isExpired,
+  LEGACY_MARK_UID,
   legacyIdentity,
+  legacyMark,
   parseRecord,
   refuse,
   replay,
@@ -409,9 +411,20 @@ const CORRUPT_KEY = 'croustylift:outbox:corrupt';
 
 // ANCIEN FORMAT (avant le registre) : une file et une quarantaine, deux clés.
 // Converties à la première ouverture, puis REPRISES EN CONTINU : un onglet resté
-// sur la version d'avant écrit encore dans ces clés (cf. `absorb`).
+// sur la version d'avant écrit encore dans ces clés, SANS verrou (son
+// enfilement est une lecture-modification-écriture de sa file).
+//
+// UNE RÈGLE pour tout ce qui touche ces clés (`settleLegacy`), stockage plein
+// ou non : on n'en retire que ce que CETTE transition y a lu, par identité, et
+// seulement quand le registre n'en a plus besoin (il est écrit sur l'appareil,
+// ou l'écriture est réglée : acquittée, abandonnée, purgée). Jamais de
+// remplacement en bloc : ce que l'ancien onglet a enfilé depuis la lecture
+// reste. Tant que le registre n'est pas écrit, une écriture qu'il retient
+// garde sa copie dans ces clés, avec celles qu'elle a écartées (sa lignée) :
+// après un rechargement, l'état se reconstruit tel qu'il était.
+//
 // À RETIRER après le 2026-12-31 (plus aucun onglet de l'ancienne version) :
-// ces deux clés, le verrou de l'ancienne file, `readLegacy`, `trimLegacy`,
+// ces deux clés, le verrou de l'ancienne file, `readLegacy`, `settleLegacy`,
 // `adoptLegacyOps` côté ancien format, et `fromLegacy` /
 // `completeLegacyNoteDeletes` (registry-record.ts).
 const LEGACY_QUEUE_KEY = 'croustylift:outbox';
@@ -424,44 +437,111 @@ const LEGACY_QUARANTINE_KEY = 'croustylift:outbox:quarantine';
 // l'ancienne file commence donc par une écriture d'un type que l'ancienne
 // version ne sait pas jouer : sa passe S'ARRÊTE dessus (règle « type d'op
 // inconnu », qu'elle applique déjà) et n'envoie plus rien. Ce qu'elle enfile
-// derrière est repris ici (`absorb`), à sa place dans l'ordre d'envoi.
+// derrière est repris ici, à sa place dans l'ordre d'envoi.
 // Sous une session, l'ancienne version ne regarde que les écritures de son
 // compte : le verrou est posé pour CHAQUE compte que l'appareil a reconnu
 // (complété à chaque passe, donc dès la passe qui suit une connexion), plus un
 // sans compte tant qu'aucun n'est connu.
-const LEGACY_STOP_UID = 'registre-actif';
-const isLegacyStop = (op: unknown): boolean => (op as { _uid?: unknown } | null)?._uid === LEGACY_STOP_UID;
+//
+// POSE : avant toute autre écriture de la passe (le verrou d'abord, le
+// registre ensuite), en faisant de la place au besoin (copies de lecture non
+// essentielles). Si l'appareil refuse quand même ces quelques octets, le
+// verrou est posé SANS GRANDIR : la première écriture du compte dans
+// l'ancienne file change de type sur place (initiale en majuscule, même
+// taille, relue telle quelle ici), ce qui arrête l'ancienne version de la même
+// façon. S'il n'y a rien à marquer, le compte reste sans verrou : c'est dit
+// (`storageFailing`) et retenté à chaque passe.
+const STOP = { type: 'registreActif', id: 'registre', _uid: LEGACY_MARK_UID, _at: 0 };
+type RawLegacy = { type?: unknown; _owner?: unknown; _at?: unknown } | null;
 
-/** Les verrous que l'ancienne file doit porter : ceux qu'elle a déjà, plus celui du compte reconnu. */
-function legacyStops(queue: readonly unknown[]): unknown[] {
+/** Les comptes pour lesquels l'ancienne file doit être arrêtée : ceux qui le sont déjà, plus le compte reconnu. */
+function stopOwners(queue: readonly unknown[]): Set<string> {
   const owners = new Set<string>();
   for (const op of queue) {
-    const owner = (op as { _owner?: unknown } | null)?._owner;
-    if (isLegacyStop(op) && typeof owner === 'string') owners.add(owner);
+    const owner = (op as RawLegacy)?._owner;
+    if (legacyMark(op) === 'stop' && typeof owner === 'string') owners.add(owner);
   }
   const current = loadLocalAccount()?.userId;
   if (current) owners.add(current);
-  const stop = { type: 'registreActif', id: 'registre', _uid: LEGACY_STOP_UID, _at: 0 };
-  return owners.size === 0 ? [stop] : [...owners].map((owner) => ({ ...stop, _owner: owner }));
+  return owners;
+}
+
+/** L'écriture arrête-t-elle l'ancienne version sur place (type changé, cf. « POSE ») ? */
+const stopsInPlace = (op: unknown): boolean => /^[A-Z]/.test(String((op as RawLegacy)?.type ?? ''));
+
+/** Vrai tant qu'un compte reconnu n'a pas son verrou dans l'ancienne file (appareil plein). */
+let legacyUnguarded = false;
+
+function trySet(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Tient l'ancienne file sous son verrou. `keepWrites` faux : elle est réduite à
- * ses verrous et l'ancienne quarantaine effacée (tout est au registre, écrit
- * sur l'appareil). `keepWrites` vrai (stockage plein : ces clés restent la
- * seule trace durable de ce qu'elles portent) : les verrous sont posés EN
- * TÊTE, sans rien retirer. Rien n'est écrit si rien ne change.
+ * Règle les clés de l'ancien format (cf. « UNE RÈGLE » plus haut), en UNE
+ * écriture par clé, sur leur contenu RELU à l'instant :
+ *   - retire les écritures que `read` porte (lues par cette transition) et dont
+ *     le registre n'a plus besoin : toutes si `durable` (il est écrit sur
+ *     l'appareil), sinon celles que `record` ne retient plus, lignée comprise ;
+ *   - garde un REPÈRE à la place d'une écriture datée retirée tant qu'une
+ *     écriture sans instant reste dans la file : celle-ci tient son numéro de
+ *     sa voisine datée (`fromLegacy`), et ne doit pas changer de place parce
+ *     que sa voisine est partie ;
+ *   - pose ou complète le verrou de l'ancienne file.
+ * `read` nul : le verrou seul. Aucune de ces écritures ne grandit, sauf la pose
+ * d'un verrou neuf, qui a son repli (cf. « POSE »).
  */
-function guardLegacy(keepWrites: boolean): void {
+function settleLegacy(read: ReadonlySet<string> | null, record: RegistryRecord | null, durable: boolean): void {
+  if (typeof localStorage === 'undefined') return;
+  const retained = new Set((record?.entries ?? []).filter((e) => e.fate !== 'acked').flatMap((e) => [e.uid, ...(e.replaces ?? [])]));
+  const settled = (op: unknown): boolean => {
+    if (read === null || legacyMark(op) !== null) return false;
+    const uid = legacyIdentity(op);
+    return read.has(uid) && (durable || !retained.has(uid));
+  };
   try {
     const raw = localStorage.getItem(LEGACY_QUEUE_KEY);
     const queue = legacyArray(LEGACY_QUEUE_KEY);
-    const wanted = JSON.stringify([...legacyStops(queue), ...(keepWrites ? queue.filter((op) => !isLegacyStop(op)) : [])]);
-    if (!keepWrites && localStorage.getItem(LEGACY_QUARANTINE_KEY) !== null) localStorage.removeItem(LEGACY_QUARANTINE_KEY);
-    if (raw !== wanted) localStorage.setItem(LEGACY_QUEUE_KEY, wanted);
+    const undated = queue.some((op) => legacyMark(op) === null && !settled(op) && (op as RawLegacy)?._at === undefined);
+    const body = queue.flatMap((op) => {
+      const mark = legacyMark(op);
+      if (mark === 'stop') return [];
+      if (mark === 'anchor') return undated ? [op] : [];
+      if (!settled(op)) return [op];
+      const at = (op as RawLegacy)?._at;
+      return undated && typeof at === 'number' && at > 0 ? [{ ...STOP, _at: at }] : [];
+    });
+    const owners = stopOwners(queue);
+    const stops = owners.size === 0 ? [STOP] : [...owners].map((owner) => ({ ...STOP, _owner: owner }));
+    const wanted = JSON.stringify([...stops, ...body]);
+    legacyUnguarded = false;
+    if (raw !== wanted && !writeMakingRoom(() => trySet(LEGACY_QUEUE_KEY, wanted))) {
+      // Pas la place d'un verrou neuf : sans grandir (cf. « POSE »).
+      const had = queue.filter((op) => legacyMark(op) === 'stop');
+      const covered = new Set(had.map((op) => (op as RawLegacy)?._owner));
+      const marked = body.map((op) => {
+        const owner = (op as RawLegacy)?._owner;
+        if (legacyMark(op) !== null || typeof owner !== 'string' || !owners.has(owner) || covered.has(owner)) return op;
+        covered.add(owner);
+        const type = String((op as RawLegacy)?.type ?? '');
+        return stopsInPlace(op) ? op : { ...(op as object), type: type.charAt(0).toUpperCase() + type.slice(1) };
+      });
+      const shrunk = JSON.stringify([...had, ...marked]);
+      const written = raw === shrunk || (raw !== null && trySet(LEGACY_QUEUE_KEY, shrunk));
+      legacyUnguarded = !written || [...owners].some((owner) => !covered.has(owner));
+    }
+    const quarantine = legacyArray(LEGACY_QUARANTINE_KEY);
+    const kept = quarantine.filter((q) => !settled((q as { op?: unknown } | null)?.op));
+    if (kept.length === 0) {
+      if (localStorage.getItem(LEGACY_QUARANTINE_KEY) !== null) localStorage.removeItem(LEGACY_QUARANTINE_KEY);
+    } else if (kept.length !== quarantine.length) localStorage.setItem(LEGACY_QUARANTINE_KEY, JSON.stringify(kept));
   } catch {
-    // Verrou impossible à écrire (appareil plein) : l'ancienne file reste telle
-    // quelle, et ses écritures repartiront au pire en double, sans effet.
+    // Elles restent telles quelles : rien n'en est perdu, et tout sera retenté
+    // à la transition suivante.
   }
 }
 
@@ -481,10 +561,14 @@ function guardLegacy(keepWrites: boolean): void {
 // L'enregistrement persisté est alors en retard d'un seul tenant (jamais une
 // écriture à deux endroits) : ce qui y attend encore repartira, sans effet
 // (idempotence par id). Liées à l'objet `localStorage` qui les a vues naître.
-let volatile: { storage: Storage; log: Transition[]; outdated: boolean } | null = null;
+//
+// `boxes` : les gestes que l'appareil n'a pas pu écrire dans la boîte d'entrée.
+// Ils entrent au registre par le MÊME chemin que ceux de la boîte (`open`,
+// `admit`) : leur parenté est posée comme pour les autres.
+let volatile: { storage: Storage; log: Transition[]; boxes: Entry[][]; outdated: boolean } | null = null;
 let deferred: { storage: Storage; log: Transition[] } | null = null;
 
-function activeVolatile(): { log: Transition[]; outdated: boolean } | null {
+function activeVolatile(): { log: Transition[]; boxes: Entry[][]; outdated: boolean } | null {
   if (volatile === null || typeof localStorage === 'undefined') return null;
   return volatile.storage === localStorage ? volatile : null;
 }
@@ -494,15 +578,21 @@ function activeDeferred(): Transition[] {
   return deferred.storage === localStorage ? deferred.log : [];
 }
 
-/** Tient en mémoire des transitions que l'appareil n'a pas pu écrire. */
-function holdInMemory(log: Transition[], outdated: boolean): void {
-  if (activeVolatile() === null && !outdated) {
+/** Tient en mémoire des transitions, ou le geste `box`, que l'appareil n'a pas pu écrire. */
+function holdInMemory(log: Transition[], outdated: boolean, box?: Entry[]): void {
+  const gap = activeVolatile();
+  if (gap === null && !outdated) {
     console.warn(
       '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
         'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
     );
   }
-  volatile = { storage: localStorage, log: [...(activeVolatile()?.log ?? []), ...log], outdated };
+  volatile = {
+    storage: localStorage,
+    log: [...(gap?.log ?? []), ...log],
+    boxes: [...(gap?.boxes ?? []), ...(box ? [box] : [])],
+    outdated,
+  };
 }
 
 // Le plus grand numéro que cette page a vu au registre. Une estampille relevée
@@ -586,7 +676,7 @@ function readLegacy(): LegacyEntry[] {
   if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) {
     return [];
   }
-  const queue = legacyArray(LEGACY_QUEUE_KEY).filter((op) => !isLegacyStop(op));
+  const queue = legacyArray(LEGACY_QUEUE_KEY).filter((op) => legacyMark(op) !== 'stop');
   return fromLegacy(queue, legacyArray(LEGACY_QUARANTINE_KEY));
 }
 
@@ -595,6 +685,10 @@ interface Opened {
   outdated: boolean;
   /** Les clés de la boîte d'entrée lues : à effacer une fois leur contenu écrit au registre. */
   inboxKeys: string[];
+  /** Les identités lues dans les clés de l'ancien format : les seules qu'on en retirera. */
+  legacyRead: ReadonlySet<string>;
+  /** Où finissent, dans le journal du brouillon, les entrées faites par la lecture. */
+  admitted: number;
 }
 
 /**
@@ -606,15 +700,23 @@ interface Opened {
  * le journal du brouillon : la première écriture sous verrou les persiste.
  */
 function open(): Opened {
+  // ORDRE DES LECTURES : la boîte d'entrée et les anciennes clés AVANT
+  // l'enregistrement. Un autre onglet qui fait entrer une saisie écrit
+  // l'enregistrement puis efface la clé : lue dans cet ordre, la saisie est
+  // dans l'une des deux lectures, quel que soit l'instant du transfert. Dans
+  // l'autre ordre, elle pouvait n'être dans aucune.
+  const inbox = readInbox();
+  const legacy = readLegacy();
   const { record, outdated } = readPersisted();
   // Le compteur ne recule jamais sous les yeux de cette page, même si
   // l'enregistrement a été purgé ou mis de côté entre-temps (cf. `highestSeq`).
   record.seq = Math.max(record.seq, highestSeq);
   const draft = new Draft(record, Date.now);
-  const inbox = readInbox();
-  const incoming = inbox.flatMap((box) => box.entries).sort((x, y) => x.n - y.n);
+  const incoming = [...inbox.flatMap((box) => box.entries), ...(activeVolatile()?.boxes.flat() ?? [])].sort(
+    (x, y) => x.n - y.n,
+  );
   for (const entry of incoming) admit(draft, entry);
-  for (const entry of readLegacy()) {
+  for (const entry of legacy) {
     // Sans instant d'enfilement : le numéro pris la première fois que cette
     // page l'a vue, pour qu'elle garde sa place d'une lecture à l'autre.
     if (legacyNumbers.storage !== localStorage) legacyNumbers = { storage: localStorage, seen: new Map() };
@@ -625,41 +727,23 @@ function open(): Opened {
     }
     admitLegacy(draft, { ...entry, n });
   }
+  const admitted = draft.log.length;
   // La mémoire en dernier : elle peut retirer ou modifier ce qui vient d'entrer.
   replay(record, activeVolatile()?.log ?? []);
   replay(record, activeDeferred());
   highestSeq = Math.max(highestSeq, record.seq);
-  return { draft, outdated, inboxKeys: inbox.map((box) => box.key) };
+  return {
+    draft,
+    outdated,
+    inboxKeys: inbox.map((box) => box.key),
+    legacyRead: new Set(legacy.map((entry) => entry.uid)),
+    admitted,
+  };
 }
 
 /** Lecture seule du registre (cf. `open`). */
 function view(): RegistryRecord {
   return open().draft.record;
-}
-
-/**
- * Sous stockage plein, les clés de l'ancien format restent la seule trace
- * durable de ce qu'elles portent (cf. `absorb`). Elles ne gardent alors que ce
- * que le registre retient encore : une écriture acquittée, abandonnée ou purgée
- * ici en est retirée, sinon elle rentrerait de nouveau à la lecture suivante.
- * Les réduire libère de la place : l'écriture passe.
- */
-function trimLegacy(record: RegistryRecord): void {
-  if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) return;
-  const kept = new Set(record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
-  const stays = (op: unknown) => isLegacyStop(op) || kept.has(legacyIdentity(op));
-  try {
-    const queue = legacyArray(LEGACY_QUEUE_KEY);
-    const trimmedQueue = queue.filter(stays);
-    if (trimmedQueue.length !== queue.length) localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(trimmedQueue));
-    const quarantine = legacyArray(LEGACY_QUARANTINE_KEY);
-    const trimmedQuarantine = quarantine.filter((q) => stays((q as { op?: unknown } | null)?.op));
-    if (trimmedQuarantine.length !== quarantine.length) {
-      localStorage.setItem(LEGACY_QUARANTINE_KEY, JSON.stringify(trimmedQuarantine));
-    }
-  } catch {
-    // Elles restent telles quelles : leurs écritures repartiront, sans effet.
-  }
 }
 
 /** Retire des clés de l'appareil, sans jamais jeter. */
@@ -694,44 +778,58 @@ function persist(record: RegistryRecord): boolean {
  */
 function commit(opened: Opened): boolean {
   if (typeof localStorage === 'undefined') return false;
-  const { draft, outdated, inboxKeys } = opened;
-  const pending = [...activeDeferred(), ...draft.log];
+  const { draft, outdated, inboxKeys, admitted } = opened;
+  // Le journal de secours ne porte QUE ce qui a suivi les entrées faites par la
+  // lecture : les gestes faits hors du verrou, puis cette transition. Les
+  // entrées elles-mêmes n'y sont pas : leur source (boîte d'entrée, mémoire,
+  // anciennes clés) reste lue à chaque ouverture tant qu'elles ne sont ni
+  // écrites au registre ni réglées, et les fait entrer AVANT le rejeu. Notées
+  // au journal, elles y revenaient après un retrait : la saisie d'une séance
+  // annulée, ou une écriture déjà acquittée, repartait.
+  const pending = [...activeDeferred(), ...draft.log.slice(admitted)];
   deferred = null;
-  if (!outdated) {
-    let written = persist(draft.record);
-    if (!written) {
-      const acked = draft.record.entries.filter((e) => e.fate === 'acked').map((e) => e.uid);
-      if (acked.length > 0) {
-        draft.drop(acked);
-        pending.push({ t: 'drop', uids: acked });
-        written = persist(draft.record);
-      }
-    }
-    if (!written) written = writeMakingRoom(() => persist(draft.record));
-    // Ce que les clés de l'ancien format portaient et qui est réglé ici n'a
-    // plus à y rester : relu, il repartirait à chaque passe.
-    if (!written) trimLegacy(draft.record);
-    // Plus rien à retenir (tout est acquitté) : retirer l'enregistrement passe
-    // même sur un appareil plein, et rien n'est alors en retard sur l'appareil.
-    if (!written && draft.record.entries.length === 0) written = removeKeys([REGISTRY_KEY]);
-    if (written) {
-      volatile = null;
-      // Le contenu de ces clés est au registre : elles ont fini de servir. Une
-      // clé apparue depuis la lecture (un geste dans un autre onglet) n'est pas
-      // dans cette liste, et reste.
-      removeKeys(inboxKeys);
-      return true;
-    }
-    // Pas écrit : une clé de la boîte dont tout le contenu est réglé ne doit
-    // pas rentrer de nouveau à la lecture suivante.
-    const retained = new Set(draft.record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
-    removeKeys(
-      readInbox()
-        .filter((box) => inboxKeys.includes(box.key) && box.entries.every((e) => !retained.has(e.uid)))
-        .map((box) => box.key),
-    );
+  if (outdated) {
+    holdInMemory(pending, true);
+    return false;
   }
-  holdInMemory(pending, outdated);
+  let written = persist(draft.record);
+  if (!written) {
+    const acked = draft.record.entries.filter((e) => e.fate === 'acked').map((e) => e.uid);
+    if (acked.length > 0) {
+      draft.drop(acked);
+      pending.push({ t: 'drop', uids: acked });
+      written = persist(draft.record);
+    }
+  }
+  if (!written) written = writeMakingRoom(() => persist(draft.record));
+  if (!written) {
+    // Ce que les clés de l'ancien format portaient et qui est réglé ici n'a
+    // plus à y rester : relu, il repartirait à chaque passe. Les réduire libère
+    // de la place : l'écriture est retentée.
+    settleLegacy(opened.legacyRead, draft.record, false);
+    written = persist(draft.record);
+  }
+  // Plus rien à retenir (tout est acquitté) : retirer l'enregistrement passe
+  // même sur un appareil plein, et rien n'est alors en retard sur l'appareil.
+  if (!written && draft.record.entries.length === 0) written = removeKeys([REGISTRY_KEY]);
+  if (written) {
+    volatile = null;
+    // Le contenu de ces clés est au registre : elles ont fini de servir. Une
+    // clé apparue depuis la lecture (un geste dans un autre onglet) n'est pas
+    // dans cette liste, et reste.
+    removeKeys(inboxKeys);
+    settleLegacy(opened.legacyRead, draft.record, true);
+    return true;
+  }
+  // Pas écrit : une clé de la boîte dont tout le contenu est réglé ne doit
+  // pas rentrer de nouveau à la lecture suivante.
+  const retained = new Set(draft.record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
+  removeKeys(
+    readInbox()
+      .filter((box) => inboxKeys.includes(box.key) && box.entries.every((e) => !retained.has(e.uid)))
+      .map((box) => box.key),
+  );
+  holdInMemory(pending, false);
   return false;
 }
 
@@ -757,18 +855,20 @@ function transact<T>(change: (draft: Draft) => T, force = false): T {
  * suivante (une écriture déjà connue n'entre pas deux fois, cf. `admit`).
  *
  * EN CONTINU : au début de chaque passe d'envoi, parce qu'un onglet resté sur
- * la version d'avant écrit encore dans ses clés. Les anciennes clés ne sont
- * vidées que si TOUT le registre est écrit sur l'appareil : tant qu'une partie
- * ne tient qu'en mémoire (stockage plein), elles restent la seule trace durable
- * de ce qu'elles portent, et ne reçoivent que leur verrou (`guardLegacy`).
+ * la version d'avant écrit encore dans ses clés. Ce qui en est retiré, et
+ * quand : `settleLegacy`.
  */
 function absorb(): void {
   if (typeof localStorage === 'undefined') return;
-  const opened = open();
   // Sous une version plus récente, rien n'est écrit ni effacé.
+  if (registryOutdated()) return;
+  // Le verrou de l'ancienne file AVANT toute autre écriture : c'est lui qui a
+  // le plus besoin des derniers octets de l'appareil.
+  settleLegacy(null, null, false);
+  const opened = open();
   if (opened.outdated) return;
   if (opened.draft.log.length > 0 || activeDeferred().length > 0 || activeVolatile() !== null) commit(opened);
-  guardLegacy(activeVolatile() !== null);
+  else settleLegacy(opened.legacyRead, opened.draft.record, true);
 }
 
 /**
@@ -824,19 +924,16 @@ export function registryOutdated(): boolean {
  */
 export function storageFailing(): boolean {
   const gap = activeVolatile();
-  return gap !== null && !gap.outdated;
+  // Aussi quand l'appareil n'a pas pu recevoir le verrou de l'ancienne file.
+  return (gap !== null && !gap.outdated) || legacyUnguarded;
 }
 
-/** Les écritures enfilées que l'appareil n'a écrites nulle part : ni registre, ni boîte, ni ancien format. */
+/** Les écritures enfilées que l'appareil n'a écrites nulle part, et que le registre retient encore. */
 function unpersistedAdds(): Entry[] {
   const gap = activeVolatile();
-  if (gap === null || gap.outdated) return [];
-  const added = new Set(gap.log.flatMap((t) => (t.t === 'add' ? [t.entry.uid] : [])));
-  if (added.size === 0) return [];
-  const persisted = new Set(
-    [...readPersisted().record.entries, ...readInbox().flatMap((box) => box.entries), ...readLegacy()].map((e) => e.uid),
-  );
-  return view().entries.filter((e) => e.fate !== 'acked' && added.has(e.uid) && !persisted.has(e.uid));
+  if (gap === null || gap.outdated || gap.boxes.length === 0) return [];
+  const held = new Set(gap.boxes.flat().map((e) => e.uid));
+  return view().entries.filter((e) => e.fate !== 'acked' && held.has(e.uid));
 }
 
 /**
@@ -885,7 +982,9 @@ export function retryPersistQueue(): boolean {
   if (gap.outdated) return false;
   const adds = unpersistedAdds();
   if (adds.length > 0 && !writeInbox(adds)) return false;
-  if (gap.log.every((t) => t.t === 'add')) {
+  // Ces gestes sont dans la boîte d'entrée : la mémoire n'a plus à les porter.
+  gap.boxes = [];
+  if (gap.log.length === 0) {
     // Tout ce que la mémoire tenait est maintenant sur l'appareil.
     volatile = null;
     // La ligne « stockage plein » se relit sur cet événement.
@@ -1057,6 +1156,7 @@ export function clearQueue(): void {
   const { record, outdated } = readPersisted();
   volatile = null;
   deferred = null;
+  legacyUnguarded = false;
   if (typeof localStorage === 'undefined') return;
   removeKeys([LEGACY_QUEUE_KEY, LEGACY_QUARANTINE_KEY, CORRUPT_KEY, ...keysWith(INBOX_PREFIX)]);
   if (outdated) return;
@@ -1162,12 +1262,7 @@ export function enqueueAll(ops: readonly OutboxOp[]): string[] {
   }));
   highestSeq = Math.max(highestSeq, draft.record.seq);
   // Sous une version plus récente, rien n'est écrit : la saisie tient en mémoire.
-  if (outdated || !writeInbox(entries)) {
-    holdInMemory(
-      entries.map((entry) => ({ t: 'add' as const, entry })),
-      outdated,
-    );
-  }
+  if (outdated || !writeInbox(entries)) holdInMemory([], outdated, entries);
   return entries.map((entry) => entry.uid);
 }
 

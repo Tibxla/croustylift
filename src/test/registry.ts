@@ -88,6 +88,7 @@ export function otherTabAcknowledgesAll(storage: Enumerable = localStorage): voi
 export function legacyQueueWrites(storage: KeyValue = localStorage): unknown[] {
   const raw = storage.getItem('croustylift:outbox');
   const queue = raw ? (JSON.parse(raw) as { _uid?: string }[]) : [];
+  // Ni le verrou ni les repères que le registre y pose lui-même.
   return queue.filter((op) => op._uid !== 'registre-actif');
 }
 

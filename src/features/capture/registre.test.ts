@@ -23,6 +23,7 @@ import {
   heldCounts,
   listRefused,
   pendingCount,
+  purgeByExecution,
   readQueue,
   readStamp,
   registryOutdated,
@@ -898,5 +899,298 @@ describe('second tour : un ancien onglet enfile derrière le verrou, la reprise 
     storageEvent(null);
 
     expect(runner).not.toHaveBeenCalled();
+  });
+});
+
+// --- Troisième tour (constats C, E et I) ------------------------------------------
+
+/** Le stockage refuse désormais toute écriture du registre et de sa boîte d'entrée (quota plein). */
+function registryStorageFull(): void {
+  const setItem = localStorage.setItem.bind(localStorage);
+  localStorage.setItem = (k: string, v: string) => {
+    if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
+    setItem(k, v);
+  };
+}
+
+describe('troisième tour : le journal de secours suit l’ordre réel des transitions', () => {
+  it('séance annulée puis stockage plein : sa saisie, reprise de l’ancienne file, ne revient pas', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    localStorage.setItem(
+      LEGACY_QUEUE,
+      JSON.stringify([
+        { ...insert('gardée', 1, { executionId: 'exec-2' }), _uid: 'q1', _owner: 'user-1', _at: 1000 },
+        { ...insert('annulée'), _uid: 'q2', _owner: 'user-1', _at: 1001 },
+      ]),
+    );
+    registryStorageFull();
+
+    purgeByExecution('exec-1');
+    await registrySettled();
+
+    expect(readQueue().map((op) => op.id)).toEqual(['gardée']);
+    // Même après une passe (réseau coupé) et une autre lecture.
+    await flush(base({ cuts: () => true }).fns);
+    expect(readQueue().map((op) => op.id)).toEqual(['gardée']);
+  });
+});
+
+describe('troisième tour : une écriture acquittée sans pouvoir être écrite ne repart pas', () => {
+  it('un geste de trois écritures, registre impossible à écrire : les deux acquittées partent une fois, pas plus', async () => {
+    enqueueAll([insert('s1'), insert('s2', 2), insert('s3', 3)]);
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    // Le réseau tombe sur la troisième : elle reste, et sa clé de la boîte d'entrée avec elle.
+    const b = base({ cuts: (op) => op.id === 's3' });
+
+    await flush(b.fns);
+    await flush(b.fns);
+
+    expect(b.sent).toEqual(['insertSet:s1', 'insertSet:s2']);
+    expect(readQueue().map((op) => op.id)).toEqual(['s3']);
+  });
+});
+
+describe('troisième tour : un geste tenu en mémoire entre au registre comme les autres', () => {
+  it('stockage plein, séance refusée : sa série, tenue en mémoire, est retenue et ne part pas', async () => {
+    registryStorageFull();
+    enqueueAll([exec(), insert('s1')]);
+    expect(storageFailing()).toBe(true);
+
+    const b = base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) });
+    await flush(b.fns);
+
+    expect(b.sent).toEqual([]);
+    expect(refusal('insertSet', 's1')).toMatchObject({ heldBy: refusal('upsertExecution', 'exec-1').refusalId });
+  });
+
+  it('la séance renvoyée avec succès : la série repart avec elle', async () => {
+    registryStorageFull();
+    enqueueAll([exec(), insert('s1')]);
+    await flush(base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) }).fns);
+
+    await retryRefused(refusal('upsertExecution', 'exec-1').refusalId);
+    const b = base();
+    await flush(b.fns);
+
+    expect(b.sent).toEqual(['upsertExecution:exec-1', 'insertSet:s1']);
+    expect(listRefused()).toEqual([]);
+  });
+});
+
+describe('troisième tour : la rétention des acquittées tient à l’heure réelle de l’acquittement', () => {
+  it('horloge reculée d’une heure avant l’acquittement : onze minutes après, l’écriture n’est plus rejouée', async () => {
+    let now = Date.now() + 3_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stamp = readStamp();
+    enqueue(insert('s1'));
+    // L'horloge recule : le numéro d'acquittement, lui, ne recule pas.
+    now -= 60 * 60 * 1000;
+    await flush(base().fns);
+    expect(writesSince(stamp).map((w) => w.op.id)).toEqual(['s1']);
+
+    now += 11 * 60 * 1000;
+
+    expect(writesSince(stamp)).toEqual([]);
+  });
+
+  it('horloge reculée APRÈS l’acquittement : l’écriture ne dépasse pas dix minutes non plus', async () => {
+    let now = Date.now() + 4_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stamp = readStamp();
+    enqueue(insert('s1'));
+    await flush(base().fns);
+
+    now -= 60 * 60 * 1000;
+
+    expect(writesSince(stamp)).toEqual([]);
+  });
+});
+
+// --- Troisième tour (constats A, B, F et G : les clés de l'ancien format) ------------
+
+/** Un rechargement de la page : un module neuf, sans rien de ce que l'ancien tenait en mémoire. */
+async function reloaded(): Promise<typeof import('./outbox')> {
+  vi.resetModules();
+  return import('./outbox');
+}
+
+/** L'appareil est plein : aucune clé ne peut être créée, aucune valeur ne peut grandir. */
+function deviceFull(): { free: () => void } {
+  const setItem = localStorage.setItem.bind(localStorage);
+  let full = true;
+  localStorage.setItem = (k: string, v: string) => {
+    const old = localStorage.getItem(k);
+    if (full && (old === null || v.length > old.length)) throw new Error('QuotaExceededError');
+    setItem(k, v);
+  };
+  return { free: () => void (full = false) };
+}
+
+const legacyQueueNow = () => JSON.parse(localStorage.getItem(LEGACY_QUEUE) ?? '[]') as { type: string; _uid?: string; _owner?: string; _at?: number }[];
+const OLD_TYPES = [
+  'upsertExecution', 'insertSet', 'patchSet', 'deleteSet', 'updateExecution', 'upsertDatedNote',
+  'deleteDatedNote', 'upsertExerciseNote', 'deleteExerciseNote', 'deleteExecution', 'deleteExecutionIfEmpty',
+];
+/** Ce que la passe de l'ANCIENNE version jouerait pour ce compte : la première écriture du compte, si elle sait la jouer. */
+const oldTabWouldSend = (owner: string) => {
+  const head = legacyQueueNow().find((op) => op._owner === owner);
+  return head !== undefined && OLD_TYPES.includes(head.type) ? head : null;
+};
+
+describe('troisième tour : la reprise ne retire des anciennes clés que ce qu’elle a lu', () => {
+  beforeEach(async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    adoptLegacyOps();
+    await registrySettled();
+  });
+
+  it('l’ancien onglet enfile PENDANT la reprise : sa saisie reste dans sa file, et part à la passe suivante', async () => {
+    const read = { ...insert('lue'), _uid: 'old-1', _owner: 'user-1', _at: Date.now() };
+    const late = { ...insert('tardive', 2), _uid: 'old-2', _owner: 'user-1', _at: Date.now() + 1 };
+    const lateRefused = {
+      op: { ...insert('refus-tardif', 3), _uid: 'old-r', _owner: 'user-1', _at: Date.now() + 2 },
+      reason: '23514 : check',
+      at: '2026-11-24T10:00:00.000Z',
+    };
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([...legacyQueueNow(), read]));
+    // L'ancien onglet écrit entre la lecture de la reprise et son écriture des anciennes clés.
+    const setItem = localStorage.setItem.bind(localStorage);
+    let written = false;
+    localStorage.setItem = (k: string, v: string) => {
+      setItem(k, v);
+      if (k !== REGISTRY_KEY || written) return;
+      written = true;
+      setItem(LEGACY_QUEUE, JSON.stringify([...legacyQueueNow(), late]));
+      setItem(LEGACY_QUARANTINE, JSON.stringify([lateRefused]));
+    };
+
+    await flush(base({ cuts: () => true }).fns);
+
+    expect(legacyQueueWrites()).toMatchObject([{ _uid: 'old-2' }]);
+    expect(JSON.parse(localStorage.getItem(LEGACY_QUARANTINE)!)).toMatchObject([{ op: { _uid: 'old-r' } }]);
+    const b = base();
+    await flush(b.fns);
+    expect(b.sent).toEqual(['insertSet:lue', 'insertSet:tardive']);
+    expect(listRefused().map((r) => r.refusalId)).toEqual(['old-r']);
+    expect(legacyQueueWrites()).toEqual([]);
+  });
+});
+
+describe('troisième tour : le verrou de l’ancienne file sur un appareil plein', () => {
+  beforeEach(() => saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' }));
+
+  it('il est écrit AVANT le registre : c’est lui qui prend les derniers octets', async () => {
+    const order: string[] = [];
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      order.push(k);
+      setItem(k, v);
+    };
+    enqueue(insert('s1'));
+
+    await flush(base().fns);
+
+    expect(order.indexOf(LEGACY_QUEUE)).toBeGreaterThan(-1);
+    expect(order.indexOf(LEGACY_QUEUE)).toBeLessThan(order.indexOf(REGISTRY_KEY));
+  });
+
+  it('plus un octet : la première écriture du compte arrête l’ancienne version sur place, et reste lisible ici', async () => {
+    const op = { ...insert('seule-trace'), _uid: 'q1', _owner: 'user-1', _at: 1000 };
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([op, { ...insert('suivante', 2), _uid: 'q2', _owner: 'user-1', _at: 1001 }]));
+    expect(oldTabWouldSend('user-1')).not.toBeNull();
+    const size = localStorage.getItem(LEGACY_QUEUE)!.length;
+    deviceFull();
+
+    await flush(base({ cuts: () => true }).fns);
+
+    // L'ancienne version ne sait plus jouer la tête de sa file : sa passe s'arrête.
+    expect(oldTabWouldSend('user-1')).toBeNull();
+    expect(localStorage.getItem(LEGACY_QUEUE)!.length).toBeLessThanOrEqual(size);
+    // Ici, rien n'a changé : les deux écritures attendent, sous leur vrai type.
+    expect(readQueue().map((o) => `${o.type}:${o.id}`)).toEqual(['insertSet:seule-trace', 'insertSet:suivante']);
+
+    // La première part : la suivante prend le relais, l'ancienne version reste arrêtée.
+    const b = base({ cuts: (o) => o.id === 'suivante' });
+    await flush(b.fns);
+    expect(b.sent).toEqual(['insertSet:seule-trace']);
+    expect(legacyQueueWrites()).toMatchObject([{ _uid: 'q2' }]);
+    expect(oldTabWouldSend('user-1')).toBeNull();
+    // Après un rechargement, l'écriture marquée est toujours une insertion.
+    const tab = await reloaded();
+    expect(tab.readQueue().map((o) => `${o.type}:${o.id}`)).toEqual(['insertSet:suivante']);
+  });
+
+  it('rien à marquer et pas un octet : c’est dit, puis posé dès que la place revient', async () => {
+    const device = deviceFull();
+
+    await flush(base().fns);
+    expect(localStorage.getItem(LEGACY_QUEUE)).toBeNull();
+    expect(storageFailing()).toBe(true);
+
+    device.free();
+    await flush(base().fns);
+    expect(legacyQueueNow()).toMatchObject([{ _uid: 'registre-actif', _owner: 'user-1' }]);
+    expect(storageFailing()).toBe(false);
+  });
+});
+
+describe('troisième tour : sous stockage plein, une série refusée garde sa trace après un rechargement', () => {
+  it('correction héritée renvoyée comme série entière et refusée : la série est toujours parmi les refus', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    localStorage.setItem(
+      LEGACY_QUARANTINE,
+      JSON.stringify([{ op: { ...insert('s1'), _uid: 'r1', _owner: 'user-1', _at: 1000 }, reason: '23514 : check', at: '2026-11-23T10:00:00.000Z' }]),
+    );
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([{ ...correction('s1', 90), _uid: 'q1', _owner: 'user-1', _at: 2000 }]));
+    registryStorageFull();
+    // La correction part comme la série entière, et la base la refuse à son tour.
+    await flush(base({ refuses: () => '23514' }).fns);
+    expect(listRefused().map((r) => `${r.op.type}:${r.op.id}`)).toEqual(['insertSet:s1']);
+
+    const tab = await reloaded();
+
+    // Avant : l'insertion d'origine avait quitté l'ancienne quarantaine, la
+    // correction brute s'acquittait sur zéro ligne et la série disparaissait.
+    expect(tab.listRefused().map((r) => r.op.id)).toContain('s1');
+    const b = base();
+    await tab.flush(b.fns);
+    expect(b.sent).not.toContain('patchSet:s1');
+  });
+});
+
+describe('troisième tour : sous stockage plein, une écriture héritée sans instant garde sa place', () => {
+  it('sa voisine datée est acquittée puis retirée, la page recharge : elle part toujours AVANT la correction faite ici ensuite', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    // Ici, écrite sur l'appareil : 90 kg.
+    enqueue(correction('s1', 90));
+    await flush(base({ cuts: () => true }).fns);
+    const before = storedWrites()[0]!.n - 60_000;
+    // L'ancienne file : une écriture datée d'avant, puis une correction à 85 kg sans instant.
+    const stops = legacyQueueNow();
+    localStorage.setItem(
+      LEGACY_QUEUE,
+      JSON.stringify([
+        ...stops,
+        { ...insert('autre', 1, { exerciseId: 'squat' }), _uid: 'q1', _owner: 'user-1', _at: before },
+        { ...correction('s1', 85), _uid: 'q2', _owner: 'user-1' },
+      ]),
+    );
+    registryStorageFull();
+    // La voisine datée part ; la passe s'arrête sur la correction (réseau coupé).
+    const first = base({ cuts: (op) => op.type === 'patchSet' });
+    await flush(first.fns);
+    expect(first.sent).toEqual(['insertSet:autre']);
+    expect(legacyQueueWrites()).toMatchObject([{ _uid: 'q2' }]);
+
+    const tab = await reloaded();
+    const weights: number[] = [];
+    const fns = new Proxy({}, { get: () => async (op: { weightKg: number }) => void weights.push(op.weightKg) }) as SyncFns;
+    await tab.flush(fns);
+
+    expect(weights).toEqual([85, 90]);
   });
 });

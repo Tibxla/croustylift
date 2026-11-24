@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OutboxOp, SyncFns } from './outbox';
 
-import { storedPendingIds } from '../../test/registry';
+import { otherTabRewrites, storedPendingIds } from '../../test/registry';
 
 type Outbox = typeof import('./outbox');
 
@@ -395,5 +395,68 @@ describe('enfilement dans un onglet pendant l’acquittement dans l’autre', ()
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatch(/^croustylift:registre:in:/);
     expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
+  });
+});
+
+describe('troisième tour : une saisie reste lisible pendant son transfert de la boîte d’entrée au registre', () => {
+  /**
+   * Joue `read` dans l'onglet A pendant que l'onglet B fait entrer la saisie
+   * au registre (écriture de l'enregistrement, puis effacement de la clé),
+   * juste avant le `at`-ième accès de A au stockage. Rend faux quand `read`
+   * fait moins de `at` accès : toutes les positions ont été essayées.
+   */
+  async function duringTransfer(at: number, read: (a: Outbox, uid: string) => void): Promise<boolean> {
+    storage = new SharedStorage();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = storage as unknown as Storage;
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = b.enqueueAll([setOp('S1')]);
+    let accesses = 0;
+    let moved = false;
+    const transfer = () => {
+      accesses += 1;
+      if (moved || accesses !== at) return;
+      moved = true;
+      // Ce que fait la passe de B sous le verrou : la saisie entre à
+      // l'enregistrement, sa clé de la boîte d'entrée disparaît.
+      otherTabRewrites((writes) => writes, storage);
+    };
+    const getItem = storage.getItem.bind(storage);
+    const key = storage.key.bind(storage);
+    storage.getItem = (k: string) => (transfer(), getItem(k));
+    storage.key = (i: number) => (transfer(), key(i));
+    read(a, uid!);
+    storage.getItem = getItem;
+    storage.key = key;
+    return moved;
+  }
+
+  it('son sort ne passe jamais par « disparue » : la sauvegarde n’est pas annoncée trop tôt', async () => {
+    let positions = 0;
+    for (let at = 1; ; at += 1) {
+      let fate: string | undefined;
+      const moved = await duringTransfer(at, (a, uid) => void ([fate] = a.fatesOf([uid])));
+      if (!moved) break;
+      positions += 1;
+      expect(`${at}:${fate}`).toBe(`${at}:pending`);
+    }
+    expect(positions).toBeGreaterThan(1);
+  });
+
+  it('« Annuler la séance » pendant le transfert : la saisie de la séance est bien retirée', async () => {
+    let positions = 0;
+    for (let at = 1; ; at += 1) {
+      let a: Outbox | undefined;
+      const moved = await duringTransfer(at, (tab) => {
+        a = tab;
+        tab.purgeByExecution('exec-1');
+      });
+      if (!moved) break;
+      positions += 1;
+      expect(`${at}:${a!.readQueue().map((op) => op.id).join()}`).toBe(`${at}:`);
+      // L'écriture sur l'appareil suit, sous le verrou.
+      await vi.waitFor(() => expect(`${at}:${persistedIds().join()}`).toBe(`${at}:`));
+    }
+    expect(positions).toBeGreaterThan(1);
   });
 });
