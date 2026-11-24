@@ -156,3 +156,42 @@ perte), finition.
   `upperA` (`capture/fixtures.ts`) sont des auxiliaires des tests, gardés tels quels.
   Les autres exports sans appelant extérieur servent dans leur propre fichier : ce
   sont des `export` posés pour les tests, pas du code mort.
+
+## Résiduels connus de la branche d'intégration (2026-11-24)
+
+Trois constats de gravité moyenne de la dernière vérification, laissés ouverts. La
+barre de livraison est tenue : aucun ne perd ni ne fausse une donnée en usage normal
+(un seul appareil, réseau intermittent). Ils demandent deux onglets ouverts en même
+temps, un import simultané, ou un mode de test inhabituel.
+
+- **Deux onglets peuvent encore écraser une copie fraîche du Journal** (importante, à
+  deux onglets seulement). Chaque lecture d'écran note la génération d'acquittement
+  partagée (`lib/read-cache.ts`) à son départ et la revérifie juste avant d'écrire, sans
+  rien d'asynchrone entre les deux. Mais rien ne verrouille ces deux gestes contre les
+  autres onglets. Scénario : l'onglet A relève la génération et part lire le Journal ;
+  l'onglet B acquitte un DELETE (génération changée), relit et écrit la copie fraîche ;
+  si l'intercalage tombe entre la vérification et l'écriture de A, sa réponse d'avant le
+  DELETE écrase la copie, et la séance supprimée revient au Journal, y compris hors
+  ligne, jusqu'à la relecture suivante. Fenêtre de l'ordre de l'instruction, reproduite
+  avec un stockage instrumenté. Piste : un verrou commun aux onglets
+  (`navigator.locks`) autour du changement de génération, du marquage des copies, et du
+  couple vérification puis écriture.
+- **Un désarchivage peut s'interbloquer avec un import simultané** (mineure, sans
+  perte). Le trigger `seances_en_fin` (migration 0026) prend le verrou de la routine
+  alors que l'UPDATE du désarchivage tient déjà la ligne de la séance archivée. Un
+  import complet (`import_user_data`, 0024) qui tient la routine par son UPSERT, puis
+  attend cette même séance, ferme le cycle. Postgres détecte l'interblocage et annule
+  l'une des deux transactions : le geste (désarchiver, ou restaurer la sauvegarde)
+  échoue avec une erreur et est à relancer ; rien n'est écrit à moitié. Piste :
+  prendre le verrou de la routine avant celui de la séance sur le chemin du
+  désarchivage (une fonction `unarchive_seance` qui verrouille la routine, puis met à
+  jour la séance), et couvrir le scénario au banc avec deux sessions.
+- **`sync-vues.test.ts` échoue en `--no-isolate`** (finition, tests seulement). Sans
+  isolation, les fichiers de test partagent le même registre de modules et le même
+  état de module (copies, file, mocks) : `sync-vues.test.ts` échoue après
+  `reference-fraicheur.test.ts`, et l'inverse échoue aussi en thread unique. Cause
+  exacte non isolée. Les modes normal,
+  `--pool=threads` et `--pool=threads` en thread unique passent (BroadcastChannel isolé
+  par fichier, `src/test/broadcast-isolation.ts`). Piste, si ce mode devient utile :
+  réinitialiser l'état des modules entre fichiers (`vi.resetModules` et mocks à
+  restaurer), ou le refuser dans la configuration.
