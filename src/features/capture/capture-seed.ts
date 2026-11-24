@@ -14,9 +14,15 @@
 //     côté en unilatéral, G et D pouvant porter des charges distinctes. 1ʳᵉ
 //     série : report de la référence (« dernière fois ») à la position courante,
 //     ou de sa dernière série connue, sinon un point de départ neutre.
-//   - REPS : toujours la borne BASSE de la fourchette prescrite (`reps.min`),
-//     ou la valeur fixe (`min === max`). C'est l'objectif minimal à viser, plus
-//     prévisible qu'un report des reps réellement faites.
+//   - REPS : même logique que le poids (décision de Thibaud du 24/11/2026, qui
+//     revient sur la règle « borne basse » de l'issue #58). Dès la 2ᵉ série, les
+//     reps de la DERNIÈRE série loggée (du même côté en unilatéral) ; 1ʳᵉ série,
+//     celles de la Référence au même rang (à défaut sa dernière série connue) ;
+//     sans aucun repère, la borne BASSE de la fourchette (`reps.min`, ou la
+//     valeur fixe). En surcharge progressive on vit au-dessus du plancher : un
+//     Logger tapé sans retoucher les reps enregistrait 8 au lieu de 10, une
+//     donnée fausse qui abaissait la Référence suivante. Le repli cross-séances
+//     ne donne pas les reps (il reste réservé au poids).
 //   - RIR : report de la référence à la position courante si elle la couvre,
 //     sinon de la dernière série loggée, sinon un point de départ neutre
 //     (comportement préservé : l'issue ne touche pas au RIR).
@@ -158,8 +164,9 @@ export function seedDraft({
       fallbackLast?.weightKg ??
       NEUTRAL.weightKg;
 
-  // REPS : toujours la borne basse prescrite (valeur fixe si min === max).
-  const reps = prescription.reps.min;
+  // REPS : dernière loggée, sinon Référence (rang courant, à défaut dernière
+  // connue), sinon borne basse prescrite (valeur fixe si min === max).
+  const reps = last?.reps ?? atPosition?.reps ?? lastRef?.reps ?? prescription.reps.min;
 
   // RIR : référence à la position courante, sinon dernière loggée, sinon neutre.
   const rir = atPosition?.rir ?? last?.rir ?? lastRef?.rir ?? NEUTRAL.rir;

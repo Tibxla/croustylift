@@ -107,11 +107,14 @@ import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
 import { useGoToSurface } from '../../shell/navigation';
-import { syncLine, type SyncState } from '../../shell/sync-line';
+import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
+import { sommaireDetail } from './sommaire-detail';
+import { isDoubleTap, type LogStamp } from './log-guard';
+import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
@@ -641,9 +644,10 @@ export function CaptureScreen() {
 
 /**
  * « Quelle séance ? » à l'arrivée en Salle, parmi les séances de la routine
- * courante. N'apparaît que si la routine en a au moins deux (une seule est
- * chargée direct ; aucune affiche l'état vide). Une ligne par séance, dans
- * l'ordre de la routine ; le nom suffit, rien d'inventé autour.
+ * courante. Une ligne par séance, dans l'ordre de la routine : son nom, et
+ * dessous quand elle a été faite pour la dernière fois et combien d'exos elle
+ * compte (seance-meta.ts), pour ne pas lancer la mauvaise d'une routine A/B. La
+ * liste s'affiche sans attendre cette méta : sa ligne est réservée.
  */
 function SeancePicker({
   seances,
@@ -653,13 +657,43 @@ function SeancePicker({
   onPick: (seance: SeanceChoice) => void;
 }) {
   const go = useGoToSurface();
+  const idsKey = seances.map((s) => s.id).join(',');
+  const [stored, setStored] = useState(peekSeancesMeta);
+  const [queue, setQueue] = useState(readOwnQueue);
+  useEffect(() => {
+    const onQueue = () => setQueue(readOwnQueue());
+    window.addEventListener(OUTBOX_CHANGED_EVENT, onQueue);
+    // La lecture réseau est chargée à la demande (seance-meta-load.ts) : sans
+    // elle, la copie locale reste ce qui s'affiche.
+    let off = () => {};
+    let alive = true;
+    void import('./seance-meta-load').then(
+      (m) => {
+        if (alive) off = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+      window.removeEventListener(OUTBOX_CHANGED_EVENT, onQueue);
+      off();
+    };
+  }, [idsKey]);
+  const meta = useMemo(() => mergePendingExecutions(stored, queue), [stored, queue]);
+  const today = todayIso();
   return (
     <div className="flex flex-1 flex-col">
       <SalleSync />
       <ScreenHeader title="Quelle séance ?" meta="Parmi celles de ta routine courante." />
       <List label="Séances de la routine courante">
         {seances.map((seance) => (
-          <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
+          <Row
+            key={seance.id}
+            title={seance.name}
+            // Espace insécable tant que rien n'est connu : la hauteur est tenue.
+            meta={seanceMetaLine(meta[seance.id] ?? null, today) ?? '\u00a0'}
+            onClick={() => onPick(seance)}
+          />
         ))}
       </List>
       {/* La question, puis le chemin sur sa propre ligne : la même mise en
@@ -1391,23 +1425,13 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
 /** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
- *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, l'état
- *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
- *  sous la barre du pouce. */
+ *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, pas de
+ *  ligne (elle pousserait la rangée RIR sous la barre du pouce) : seules les
+ *  alarmes s'y disent, le bouton Sommaire garde la progression. */
 function SalleSync() {
   const sync = useSyncState();
   const openRefused = useOpenRefusedWrites();
   return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
-}
-
-/** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
- *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
-function sommaireDetail(sync: SyncState, done: number, total: number): string {
-  if (sync.unsaved) return 'stockage plein';
-  if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
-  if (sync.pending > 0) return `envoi · ${sync.pending}`;
-  if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
-  return `${done} sur ${total} faits`;
 }
 
 /** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
@@ -1418,11 +1442,19 @@ function logLabel(side: Side | null, rank: number, plannedMax: number): string {
 }
 
 /** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
- *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
+ *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales).
+ *  Sous 340 px (320) : marges de 8 px et titre à 15 px, sinon « Sommai… » et
+ *  « Exo sui… » (cf. la colonne du milieu, `BAR_GRID`). */
 const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line';
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line [@media(max-width:339px)]:px-2';
 /** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
-const BAR_TITLE = 'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink';
+const BAR_TITLE =
+  'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink [@media(max-width:339px)]:text-[15px]';
+/** Rangée du haut : colonne du milieu (Annuler) à largeur bornée, Sommaire et
+ *  Exo suivant gardent la même largeur, qu'Annuler soit là ou non ; resserrée
+ *  sous 340 px pour laisser leurs titres entiers. */
+const BAR_GRID =
+  'mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2 [@media(max-width:339px)]:grid-cols-[1fr_minmax(48px,60px)_1fr]';
 
 function CapturePanel({
   exercise,
@@ -1499,15 +1531,21 @@ function CapturePanel({
   const [announce, setAnnounce] = useState('');
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
+  // Garde contre le rebond de doigt (log-guard.ts) : un second Logger du même
+  // exo sous 600 ms (250 ms si le côté a basculé) n'écrit rien et n'annonce rien.
+  const lastLogRef = useRef<LogStamp | null>(null);
   const logSet = useCallback(
-    (set: { weightKg: number; reps: number; rir: number }) => {
+    (set: { weightKg: number; reps: number; rir: number; side?: Side }) => {
+      const stamp: LogStamp = { exerciseId: exercise.exerciseId, side: set.side, at: performance.now() };
+      if (isDoubleTap(lastLogRef.current, stamp)) return;
+      lastLogRef.current = stamp;
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
         `Série ${rank}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, rank, currentSide],
+    [onLog, rank, currentSide, exercise.exerciseId],
   );
 
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
@@ -1523,6 +1561,7 @@ function CapturePanel({
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
   // par le serveur se disent en clair, en tête.
   const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
   return (
@@ -1560,27 +1599,21 @@ function CapturePanel({
           suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
           geste répété, toujours au même endroit, sans enfoncement. Rien ne change
           de place quand le minimum du plan est atteint (décision du 23/11). */}
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
-        {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
-            même largeur, qu'Annuler soit là ou non. */}
-        <div className="mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2">
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
+        <div className={BAR_GRID}>
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
-              sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
+              detail.alarm ? `, ${detail.text}` : ''
             }`}
             className={BAR_BTN}
           >
             <span className={BAR_TITLE}>Sommaire</span>
-            {/* Une file en attente (ou un refus, un stockage plein) se voit d'un coup
-                d'œil : blanc cassé demi-gras, comme dans le prototype. */}
-            <span
-              className={`tnum w-full truncate text-[13px] leading-tight ${
-                sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
-              }`}
-            >
-              {sommaireDetail(sync, done, total)}
+            {/* La progression, toujours (sommaire-detail.ts) ; une alarme (stockage
+                plein, refus) prend sa place, en blanc cassé demi-gras. */}
+            <span className={`tnum w-full truncate text-[13px] leading-tight ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
+              {detail.text}
             </span>
           </button>
           {undoWhat ? (
@@ -1593,7 +1626,7 @@ function CapturePanel({
               aria-label={undoWhat.aria}
               className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
             >
-              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4">Annuler</span>
+              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4 [@media(max-width:339px)]:text-[15px]">Annuler</span>
               <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
             </button>
           ) : (

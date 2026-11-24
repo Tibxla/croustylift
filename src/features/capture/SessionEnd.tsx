@@ -115,6 +115,10 @@ function recordValue(r: RecapRecord): string {
   return r.axis === 'e1rm' ? `e1RM ${formatE1rm(r.value)}` : `${formatWeight(r.set.weightKg)} × ${r.set.reps}`;
 }
 
+/** Le mot du record, comme dans la Salle : « record charge » pour la charge
+ *  seule, « record » pour l'e1RM. */
+const recordNoun = (r: RecapRecord) => (r.axis === 'charge' ? 'record charge' : 'record');
+
 // Un seul mot pour un exo commencé, partout : « en cours ».
 const STATUS_WORD: Record<ExerciseStatus, string> = { fait: 'fait', 'en-cours': 'en cours', passe: 'passé', 'pas-fait': 'pas fait' };
 const STATUS_MARK: Record<ExerciseStatus, ExoState> = { fait: 'done', 'en-cours': 'partial', passe: 'skipped', 'pas-fait': 'todo' };
@@ -327,7 +331,7 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
             {e.newRecords.map((r) => (
-              <Status key={`${r.axis}-${r.side ?? ''}`} v="up" word={`record${r.side ? ` ${sideWord(r.side)}` : ''} ${recordValue(r)}`} />
+              <Status key={`${r.axis}-${r.side ?? ''}`} v="up" word={`${recordNoun(r)}${r.side ? ` ${sideWord(r.side)}` : ''} ${recordValue(r)}`} />
             ))}
             {origin && <span>· {origin}</span>}
           </span>
@@ -586,7 +590,7 @@ function RecordFact({ r }: { r: RecapRecord }) {
           {r.side ? `, ${sideWord(r.side)}` : ''}
         </span>
         <span className="mt-0.5 block text-[14px]">
-          <Status v="up" word="nouveau record" />
+          <Status v="up" word={`nouveau ${recordNoun(r)}`} />
         </span>
       </dt>
       <dd className="tnum flex-none text-right text-[16px] font-medium text-sig">{recordValue(r)}</dd>

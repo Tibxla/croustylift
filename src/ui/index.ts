@@ -64,4 +64,4 @@ export { Alert, LoadError, Loading } from './states';
 export { Sign, Status } from './status';
 export { SyncBanner } from './sync-banner';
 export { TONE, type Verdict } from './status-tone';
-export { useCompact } from './use-compact';
+export { useCompact, useCompactTight } from './use-compact';

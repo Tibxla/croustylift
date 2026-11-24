@@ -33,6 +33,8 @@ export function NumberRow({
   onPick,
   compact = false,
   rangeWord = 'plan',
+  onLabel,
+  labelHint,
 }: {
   label: string;
   min: number;
@@ -46,6 +48,12 @@ export function NumberRow({
   /** Le mot devant la fourchette soulignée : « plan » en salle, « loggé » quand
    *  on corrige une série passée (la fourchette est alors la valeur d'origine). */
   rangeWord?: string;
+  /** Le libellé se touche (ex. « RIR » ouvre sa définition) : souligné d'un filet
+   *  gris, cible élargie en largeur seulement, pour ne voler aucun toucher aux
+   *  cases du dessus ni du dessous. */
+  onLabel?: () => void;
+  /** Nom lu du libellé touchable (« RIR, ce que ça veut dire »). */
+  labelHint?: string;
 }) {
   const row = useRef<HTMLDivElement>(null);
   const values = range0(min, max);
@@ -100,7 +108,18 @@ export function NumberRow({
   return (
     <div>
       <div className="flex items-baseline justify-between px-5">
-        <span className="text-[15px] font-semibold text-ink">{label}</span>
+        {onLabel ? (
+          <button
+            type="button"
+            onClick={onLabel}
+            aria-label={labelHint}
+            className="-mx-2.5 min-w-11 px-2.5 text-left text-[15px] font-semibold text-ink underline decoration-dim decoration-1 underline-offset-[4px] active:opacity-70"
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="text-[15px] font-semibold text-ink">{label}</span>
+        )}
         <span className="text-[14px] text-muted">
           {rangeWord} {presc[0] === presc[1] ? presc[0] : `${presc[0]}-${presc[1]}`}
           {refValue !== null && <span> · réf. {refValue}</span>}

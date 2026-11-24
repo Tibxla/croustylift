@@ -31,6 +31,7 @@ import {
   Alert,
   BottomBar,
   EmptyState,
+  Icon,
   IconButton,
   List,
   PrimaryButton,
@@ -414,6 +415,7 @@ function CatalogSheet({
     <Sheet open={target !== null} title={title} onClose={onClose}>
       {target && (
         <CatalogList
+          mode={target.mode}
           existingExerciseIds={existingExerciseIds}
           loadCatalog={loadCatalog}
           loadCatalogExercise={loadCatalogExercise}
@@ -425,11 +427,14 @@ function CatalogSheet({
 }
 
 function CatalogList({
+  mode,
   existingExerciseIds,
   loadCatalog,
   loadCatalogExercise,
   onChosen,
 }: {
+  /** Ajout ou remplacement : le toucher ajoute l'exo, ou remplace celui visé. */
+  mode: CatalogTarget['mode'];
   existingExerciseIds: string[];
   loadCatalog: () => Promise<ExerciseRow[]>;
   loadCatalogExercise: (row: Pick<ExerciseRow, 'id' | 'name'>) => Promise<SessionExercise>;
@@ -530,6 +535,11 @@ function CatalogList({
               title={row.name}
               meta={row.unilateral ? 'unilatéral' : undefined}
               value={picking === row.id ? <span className="text-[14px] font-normal text-muted">chargement…</span> : undefined}
+              // Le toucher ne mène nulle part, il choisit : pas de chevron
+              // « ouvrir ». En ajout, un « + » à sa place, comme dans Séances.
+              chevron={false}
+              mark={mode === 'add' ? <Icon name="plus" /> : undefined}
+              ariaLabel={`${mode === 'add' ? `Ajouter ${row.name} à la séance` : `Remplacer par ${row.name}`}${row.unilateral ? ', unilatéral' : ''}`}
               onClick={picking === null ? () => void handlePick(row) : undefined}
             />
           ))}
