@@ -316,6 +316,9 @@ export function ExerciseCapture({
   const { stepKg } = useReglages();
   // La ligne dont la feuille de correction est ouverte, ou null.
   const [editId, setEditId] = useState<string | null>(null);
+  // Stable : la feuille refocalise son titre quand `onClose` change, et tout
+  // rendu du parent (un envoi acquitté) volerait sinon le focus de la saisie.
+  const closeEdit = useCallback(() => setEditId(null), [setEditId]);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
@@ -528,7 +531,7 @@ export function ExerciseCapture({
             onDeleteSet(editId);
             setEditId(null);
           }}
-          onClose={() => setEditId(null)}
+          onClose={closeEdit}
         />
       )}
       <NotesSheet

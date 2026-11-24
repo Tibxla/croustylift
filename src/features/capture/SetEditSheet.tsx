@@ -67,8 +67,11 @@ export function SetEditSheet({
 
   const unilateral = exercise.unilateral ?? false;
   const side = orig.side ?? null;
-  const rank = orig.order;
-  const ref = exercise.reference?.find((r) => r.order === rank && r.side === orig.side) ?? null;
+  // Le rang LU est la place de la série dans la bande (rangs distincts, triés),
+  // comme la bande le numérote ; la Référence et le badge se lisent sur `order`,
+  // comme `computeSetBadges`. Les deux coïncident sauf trou laissé ailleurs.
+  const rank = [...new Set(progress.sets.map((s) => s.order))].sort((a, b) => a - b).indexOf(orig.order) + 1;
+  const ref = exercise.reference?.find((r) => r.order === orig.order && r.side === orig.side) ?? null;
 
   // Le badge APRÈS correction : les séries de l'exo, celle-ci aux valeurs réglées.
   const badge = useMemo(() => {
@@ -88,8 +91,8 @@ export function SetEditSheet({
 
   // Ce que la suppression emporte : la série logique (ses deux côtés) et le
   // nombre de séries suivantes qui remontent.
-  const pair = unilateral ? pairSidesByOrder(progress.sets).find((p) => (p.left ?? p.right)?.order === rank) ?? null : null;
-  const later = new Set(progress.sets.filter((s) => s.order > rank).map((s) => s.order)).size;
+  const pair = unilateral ? pairSidesByOrder(progress.sets).find((p) => (p.left ?? p.right)?.order === orig.order) ?? null : null;
+  const later = new Set(progress.sets.filter((s) => s.order > orig.order).map((s) => s.order)).size;
   const what = side ? `Série ${rank}, ${sideWord(side)}` : `Série ${rank}`;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
   const majorEvery = Math.max(1, Math.round(5 / stepKg));
