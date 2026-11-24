@@ -367,7 +367,7 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
             : seances.length > 0
               ? `Avant : ${seances.map((s) => `${s.name} (${weekday(s.performedOn)})`).join(', ')}.`
               : 'Première de la semaine.',
-          week.planned === null ? 'Prévu de la routine indisponible.' : `Prévu : les ${plural(week.planned.seanceCount, 'séance')} de la routine.`,
+          week.planned === null ? 'Prévu de la routine indisponible.' : week.planned.seanceCount > 1 ? `Prévu : les ${week.planned.seanceCount} séances de la routine.` : 'Prévu : la séance de la routine.',
           'Sous 5 reps, une série compte en partie.',
         ].join(' ');
 
@@ -388,7 +388,7 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
       {others.length > 0 && (
         <div className="px-5 pt-1">
           <TextLink tone="muted" onClick={() => setAll((v) => !v)}>
-            {all ? 'Seulement les muscles du jour' : `Voir les ${others.length} autres muscles`}
+            {all ? 'Seulement les muscles du jour' : others.length > 1 ? `Voir les ${others.length} autres muscles` : 'Voir l’autre muscle'}
           </TextLink>
         </div>
       )}

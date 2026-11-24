@@ -288,8 +288,8 @@ export function ExercisePicker({
 }
 
 /** Ce qu'« Annuler la séance » fait perdre, en une phrase : les séries (ou les
- *  côtés saisis sans série complète), les notes du jour, les exos ajoutés ou
- *  remplacés. */
+ *  côtés saisis sans série complète) et les notes du jour, effacées ici et en
+ *  base, puis les exos ajoutés et les remplacements, qui n'existent qu'ici. */
 function lossText(session: Session, state: CaptureState): string {
   let sets = 0;
   let lines = 0;
@@ -299,13 +299,16 @@ function lossText(session: Session, state: CaptureState): string {
     lines += progress.sets.length;
   }
   const plural = (n: number, one: string) => `${n} ${one}${n > 1 ? 's' : ''}`;
+  const added = (state.layout ?? []).filter((e) => e.kind === 'added').length;
+  const swapped = (state.layout ?? []).length - added;
   const parts = [
     sets > 0 ? plural(sets, 'série') : lines > 0 ? `${plural(lines, 'côté')} saisi${lines > 1 ? 's' : ''}` : null,
     Object.values(state.datedNotes).some((n) => !isBlankNote(n.body)) ? 'tes notes du jour' : null,
-    (state.layout?.length ?? 0) > 0 ? 'les exos ajoutés ou remplacés' : null,
+    added > 0 ? `${plural(added, 'exo')} ajouté${added > 1 ? 's' : ''}` : null,
+    swapped > 0 ? plural(swapped, 'remplacement') : null,
   ].filter((p): p is string => p !== null);
   const what = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} et ${parts[parts.length - 1]}` : (parts[0] ?? 'rien de saisi');
-  return `Ce qui part : ${what}, ici et en base. Rien n’entre au journal.`;
+  return `Ce qui part : ${what}. Rien n’entre au journal.`;
 }
 
 // --- Feuille de sélection dans le catalogue ---------------------------------

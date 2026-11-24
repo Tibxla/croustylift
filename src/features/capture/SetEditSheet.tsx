@@ -172,9 +172,7 @@ export function SetEditSheet({
               <Status v={badge.v} word={badge.word} />
             ) : ref ? (
               <Status v="down" word="en deçà de la réf." />
-            ) : (
-              <span className="text-muted">aucune réf. à ce rang</span>
-            )}
+            ) : null /* rien à juger : la ligne du haut le dit déjà, la place reste */}
           </p>
           <div className="mt-1 flex flex-col gap-0.5">
             <NumberRow
