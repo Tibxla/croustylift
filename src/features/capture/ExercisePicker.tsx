@@ -38,8 +38,12 @@ import {
   SecondaryButton,
   Sheet,
   StateMark,
+  Status,
   TextLink,
+  type ExoState,
 } from '../../ui';
+import type { Side } from '../../domain/types';
+import { buildSessionRecap } from './session-recap';
 import { EXO_STATE_WORD, exoState, logicalSetsDone } from './salle-progress';
 
 interface ExercisePickerProps {
@@ -111,6 +115,12 @@ export function ExercisePicker({
     return map;
   }, [templateExerciseIds, session]);
 
+  // Séries battues et côté resté seul, par exo : le même calcul que la fin de séance.
+  const recapById = useMemo(
+    () => new Map(buildSessionRecap(session, state).exercises.map((e) => [e.exerciseId, e] as const)),
+    [session, state],
+  );
+
   const [catalog, setCatalog] = useState<CatalogTarget | null>(null);
   // Les options d'un exo pas fait : `done` = séries déjà faites (« Passer » disparaît).
   const [options, setOptions] = useState<{ exerciseId: string; name: string; done: number } | null>(null);
@@ -174,14 +184,15 @@ export function ExercisePicker({
                   ariaLabel={`Ouvrir ${ex.name}`}
                   onClick={() => onPick(ex.exerciseId)}
                   meta={
-                    <span className="flex flex-wrap items-center gap-x-2">
-                      <StateMark state={st} size={14} className={st === 'todo' || st === 'skipped' ? '' : 'text-ink'}>
-                        {EXO_STATE_WORD[st]}
-                        {count > 0 && ` · ${count} sur ${formatRange(ex.prescription.sets)}`}
-                      </StateMark>
-                      <span>{plan}</span>
-                      {deviation && <span>· {deviation === 'added' ? 'ajouté' : 'remplacé'}</span>}
-                    </span>
+                    <SommaireMeta
+                      state={st}
+                      count={count}
+                      min={ex.prescription.sets.min}
+                      plan={plan}
+                      origin={deviation === 'added' ? 'ajouté' : deviation === 'swapped' ? 'remplacé' : null}
+                      openSide={recapById.get(ex.exerciseId)?.openSide ?? null}
+                      beaten={recapById.get(ex.exerciseId)?.beaten ?? 0}
+                    />
                   }
                   trailing={
                     st === 'skipped' ? (
@@ -298,6 +309,51 @@ export function ExercisePicker({
         }}
       />
     </div>
+  );
+}
+
+/** Méta d'une ligne du Sommaire, UNE ligne : la prescription tant que l'exo est
+ *  à faire, sinon sa marque d'état, son mot et son bilan (« en cours · 1 série
+ *  sur 3 », « fait · 3 séries », le côté resté seul en unilatéral) ; la
+ *  déviation (« ajouté », « remplacé ») en fin de cette même ligne ; les séries
+ *  battues en signal. La prescription se relit dans l'instrument. */
+function SommaireMeta({
+  state,
+  count,
+  min,
+  plan,
+  origin,
+  openSide,
+  beaten,
+}: {
+  state: ExoState;
+  count: number;
+  min: number;
+  plan: string;
+  origin: string | null;
+  openSide: Side | null;
+  beaten: number;
+}) {
+  const series = (n: number) => `${n} série${n > 1 ? 's' : ''}`;
+  const side = openSide ? `${openSide === 'left' ? 'gauche' : 'droite'} faite` : null;
+  const tail = origin && <span className="font-normal text-muted"> · {origin}</span>;
+  return (
+    <span className="flex flex-wrap items-center gap-x-2">
+      {state === 'todo' ? (
+        <span className="text-muted">
+          {plan}
+          {tail}
+        </span>
+      ) : (
+        <StateMark state={state} size={14} className={state === 'skipped' ? 'text-muted' : 'font-medium text-ink'}>
+          {state === 'skipped' && EXO_STATE_WORD.skipped}
+          {state === 'partial' && ['en cours', count > 0 ? `${series(count)} sur ${min}` : null, side].filter(Boolean).join(' · ')}
+          {state === 'done' && ['fait', series(count), side].filter(Boolean).join(' · ')}
+          {tail}
+        </StateMark>
+      )}
+      {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
+    </span>
   );
 }
 
