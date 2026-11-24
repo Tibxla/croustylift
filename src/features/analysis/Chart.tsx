@@ -189,8 +189,8 @@ export function Chart({
     const kept: { px: number; label: string; anchor: 'start' | 'middle' | 'end'; tx: number }[] = [];
     let lastRight = -Infinity;
     // Au mois si l'axe est en temps et qu'au moins deux 1ers du mois tiennent,
-    // une étiquette tous les 56 px au plus ; sinon les dates de l'appelant.
-    const byMonth = months && xDomain ? monthTicks(xDomain, Math.floor((geo.plot.right - geo.plot.left) / 56)) : [];
+    // une étiquette tous les 66 px au plus (le libellé le plus long et son écart) ; sinon les dates de l'appelant.
+    const byMonth = months && xDomain ? monthTicks(xDomain, Math.floor((geo.plot.right - geo.plot.left) / 66)) : [];
     const ticks = byMonth.length > 0 ? byMonth : xTicks;
     for (const t of [...ticks].sort((a, b) => a.x - b.x)) {
       const px = geo.x(t.x);

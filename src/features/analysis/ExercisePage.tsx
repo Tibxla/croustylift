@@ -102,28 +102,31 @@ export function ExercisePage({
         </p>
       ) : (
         <>
-          <section aria-label="Relevé" className="flex items-end justify-between gap-4 px-5">
-            <div className="min-w-0" aria-live="polite">
-              <p className="flex items-baseline gap-2">
+          <section aria-label="Relevé" className="px-5">
+            <div className="flex items-end justify-between gap-4">
+              <p className="flex items-baseline gap-2" aria-live="polite">
                 <span className="tnum text-[56px] font-[650] leading-none tracking-[-0.045em] text-ink">
                   {Math.round(point.e1rm)}
                 </span>
                 <span className="text-[22px] font-medium text-muted">{unit}</span>
               </p>
-              <p className="mt-2 text-[14px] text-muted">
-                {formatDay(point.date, year)}
-                {multi ? ` · ${selCurve.label}` : ''}
-              </p>
-              <p className="mt-1 min-h-[21px] text-[14px]">
-                {isLeadLast && lastBeatsPrevious(lead.curve) && <Status v="up" word="mieux que la séance d’avant" />}
-              </p>
+              <dl className="flex-none pb-0.5 text-right">
+                <dt className="text-[13px] text-muted">Pente{multi ? `, ${lead.seanceName}` : ''}</dt>
+                <dd className="mt-1 text-[16px] font-medium">
+                  <SlopeStatus weeklyRate={lead.weeklyRate} period={lead.ratePeriod} short size={12} />
+                </dd>
+              </dl>
             </div>
-            <dl className="flex-none pb-0.5 text-right">
-              <dt className="text-[13px] text-muted">Pente{multi ? `, ${lead.seanceName}` : ''}</dt>
-              <dd className="mt-1 text-[16px] font-medium">
-                <SlopeStatus weeklyRate={lead.weeklyRate} period={lead.ratePeriod} short size={12} />
-              </dd>
-            </dl>
+            {/* Date et verdict sur toute la largeur, une ligne chacun : la place de
+                « mieux que la séance d'avant » est réservée, le graphe ne saute pas
+                quand on quitte le dernier point. */}
+            <p className="mt-2 text-[14px] text-muted">
+              {formatDay(point.date, year)}
+              {multi ? ` · ${selCurve.label}` : ''}
+            </p>
+            <p className="mt-1 h-[21px] whitespace-nowrap text-[14px]">
+              {isLeadLast && lastBeatsPrevious(lead.curve) && <Status v="up" word="mieux que la séance d’avant" />}
+            </p>
           </section>
 
           <div className="mt-4 px-5">
