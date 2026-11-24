@@ -11,6 +11,13 @@
 import { useState, type ReactNode } from 'react';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import { formatCount } from './format';
+
+/** Décompte pondéré de la fin de séance (ADR 0006) sans « ,0 » inutile : « 4 »,
+ *  « 3,6 ». Les autres écrans gardent la forme à une décimale fixe. */
+function formatTally(value: number): string {
+  const s = formatCount(value);
+  return s.endsWith(',0') ? s.slice(0, -2) : s;
+}
 import { errorMessage } from '../../lib/error-message';
 import { PrimaryButton, Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, TextLink } from '../../ui';
 
@@ -200,7 +207,7 @@ function Figures({ summary, durationMin }: { summary: SessionSummary; durationMi
           </>
         }
       />
-      <Line label="Séries" value={formatCount(summary.totalSets)} />
+      <Line label="Séries" value={formatTally(summary.totalSets)} />
       {durationMin != null && <Line label="Durée" value={`${durationMin} min`} />}
     </div>
   );
@@ -227,7 +234,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
             <li key={muscle} className="border-b border-line px-5 py-2.5">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-[16px] text-ink">{muscle}</span>
-                <span className="tnum flex-none text-[16px] text-ink">{formatCount(value)}</span>
+                <span className="tnum flex-none text-[16px] text-ink">{formatTally(value)}</span>
               </div>
               <div className="mt-1.5 h-[3px] bg-line">
                 <div className="h-full bg-muted" style={{ width: `${Math.round((value / max) * 100)}%` }} />
