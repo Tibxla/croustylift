@@ -24,7 +24,7 @@ const BUDGETS = {
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
   // À la demande.
-  'AnalysisScreen.js': 20_300, // code de l'Analyse (mesuré : 19 348 au lot 4 de la refonte E, graphe SVG maison et éditeur de séance passée au kit ; 17 518 avant)
+  'AnalysisScreen.js': 23_100, // code de l'Analyse (mesuré : 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 
