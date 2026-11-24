@@ -35,11 +35,19 @@ export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }
   return (
     <div>
       <p className="flex items-baseline justify-between gap-3 px-5" aria-live="polite">
-        <span className="text-[15px] text-muted">{formatDay(p.date, year)}</span>
-        <span className="text-[17px] font-medium text-ink">
-          {p.durationMin !== null ? formatDuration(p.durationMin) : <span className="font-normal text-muted">durée non notée</span>}
+        <span className="whitespace-nowrap text-[15px] text-muted">{formatDay(p.date, year)}</span>
+        <span className="text-right text-[17px] font-medium text-ink">
+          {p.durationMin !== null ? (
+            <span className="whitespace-nowrap">{formatDuration(p.durationMin)}</span>
+          ) : (
+            <span className="whitespace-nowrap font-normal text-muted">durée non notée</span>
+          )}
           <span className="text-muted"> · </span>
-          {p.bpmAvg !== null ? <span className="tnum">{Math.round(p.bpmAvg)} BPM</span> : <span className="font-normal text-muted">BPM non saisi</span>}
+          {p.bpmAvg !== null ? (
+            <span className="tnum whitespace-nowrap">{Math.round(p.bpmAvg)} BPM</span>
+          ) : (
+            <span className="whitespace-nowrap font-normal text-muted">BPM non saisi</span>
+          )}
         </span>
       </p>
       <div className="mt-3 px-5">
