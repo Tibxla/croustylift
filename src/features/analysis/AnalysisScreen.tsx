@@ -17,7 +17,7 @@
 // les données affichées restent jusqu'à l'arrivée des nouvelles.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Choice, EmptyState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
-import { useGoToSurface } from '../../shell/navigation';
+import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import { errorMessage } from '../../lib/error-message';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
 import { resolveCaptureRoutineId } from '../capture/data';
@@ -118,11 +118,16 @@ function useLoad<T>(fetch: () => Promise<T>, enabled = true) {
 }
 
 export function AnalysisScreen() {
-  const [tab, setTab] = useState<Tab>('exos');
+  // Arrivée par « Voir au Journal » (Séance rangée) : l'onglet Journal d'emblée,
+  // la séance rangée en tête (le plus récent d'abord). Intention lue au rendu,
+  // effacée au montage (navigation.ts).
+  const [openOnJournal] = useState(() => peekSurfaceIntent('analysis')?.open === 'journal');
+  useEffect(() => clearSurfaceIntent('analysis'), []);
+  const [tab, setTab] = useState<Tab>(openOnJournal ? 'journal' : 'exos');
   const [stack, setStack] = useState<View[]>([{ page: 'index' }]);
   const view = stack[stack.length - 1]!;
   // Le journal ne se lit qu'à l'ouverture de son onglet (il peut être lourd).
-  const [journalWanted, setJournalWanted] = useState(false);
+  const [journalWanted, setJournalWanted] = useState(openOnJournal);
   const overview = useLoad(loadOverview);
   const journal = useLoad(loadRawLog, journalWanted);
 

@@ -7,12 +7,12 @@
 //      (`weekSetsByMuscle`, lu par week-muscles.ts) ; la durée chronométrée,
 //      corrigeable par crans de 5 min (`nudgeDuration`) ; le BPM moyen
 //      facultatif, réglé à la règle (jamais de clavier).
-//   2. Après : « Séance rangée », le récap court, le lien « Voir dans
-//      l'Analyse » et « Nouvelle séance ». La Clôture est transitoire (ADR
-//      0009) : remontée, la page ne revient pas. Le lien ouvre la surface
-//      Analyse (onglet Exos), pas la séance au Journal : `useGoToSurface` ne
-//      prend qu'un nom de surface et l'Analyse garde onglet et pile en état
-//      local ; une séance encore en file n'y serait d'ailleurs pas encore.
+//   2. Après : « Séance rangée », le récap court, le lien « Voir au
+//      Journal » et « Nouvelle séance ». La Clôture est transitoire (ADR
+//      0009) : remontée, la page ne revient pas. Le lien ouvre l'Analyse sur
+//      son onglet Journal (intention d'ouverture, shell/navigation.ts), où la
+//      séance rangée est en tête ; une séance encore en file n'y est qu'au
+//      retour du réseau, comme le dit la ligne au-dessus.
 //
 // Le signal ne sert qu'à « mieux que la dernière fois » : séries battues ▲ et
 // nouveaux records, chacun dans son axe, son unité et son côté (`RecapRecord` :
@@ -28,7 +28,7 @@ import { errorMessage } from '../../lib/error-message';
 import type { PerformedExercise } from '../../domain/set-count';
 import { weekStartIso } from '../../domain/week';
 import { useSyncState } from '../../shell/useSyncState';
-import { useGoToSurface } from '../../shell/navigation';
+import { setSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import {
   Alert,
   IconButton,
@@ -562,7 +562,14 @@ function SessionDone({
         {savedLine(sync)}
       </p>
       <div className="px-5 pt-2">
-        <TextLink onClick={() => go('analysis')}>Voir dans l’Analyse</TextLink>
+        <TextLink
+          onClick={() => {
+            setSurfaceIntent({ surface: 'analysis', open: 'journal' });
+            go('analysis');
+          }}
+        >
+          Voir au Journal
+        </TextLink>
       </div>
     </Screen>
   );
