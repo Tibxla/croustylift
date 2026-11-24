@@ -251,7 +251,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Salle
 
-- **Lecture du poids** (`WeightReadout`) : 72 px, chiffres tabulaires, la partie entière finit pile au centre (au-dessus de l'aiguille), les décimales commencent au centre, « kg » tient une place fixe au bord droit : rien ne saute de 80 à 82,5. La toucher ouvre le clavier numérique pour une valeur précise (virgule acceptée, bornée) ; Entrée ou toucher ailleurs valide, Échap ou vide annule, la règle se recale.
+- **Lecture du poids** (`WeightReadout`) : 72 px, chiffres tabulaires, la valeur entière centrée sur l'aiguille (80 comme 82,5 ou 126,25), « kg » accroché à sa droite sur la ligne de base, hors centrage ; une valeur trop longue réduit sa taille juste assez pour ne toucher ni le bord ni « kg ». La toucher ouvre le clavier numérique pour une valeur précise (virgule acceptée, bornée) ; Entrée ou toucher ailleurs valide, Échap ou vide annule, la règle se recale.
 - **Règle de poids** : au pas de Réglages, graduation majeure tous les 5 kg, élan sur un coup sec ; jusqu'à 500 kg (au-delà, le clavier).
 - **Rangées de numéros** (`NumberRow`) : reps 1 à 50, RIR 0 à 10, élargies si la valeur en sort ; un tap, une valeur.
 - **Barre du pouce** : rangée du haut à trois places fixes (Sommaire, Annuler la série n, Exo suivant ou Terminer), Sommaire et Exo suivant au même gabarit (48 px, deux lignes, même ligne de base) ; dessous, Logger en bloc plein, toujours au même endroit, sans enfoncement. Rien ne change de place au minimum du plan.
