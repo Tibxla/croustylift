@@ -32,6 +32,7 @@ import type { SessionMetricPoint } from './session-metrics';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { ExerciseList } from './ExerciseList';
 import { journalVerdicts } from './journal-verdicts';
+import { analysisFrame } from './analysis-frame';
 import { ExercisePage } from './ExercisePage';
 import { PastSessionEditor } from './PastSessionEditor';
 import { RawLogView, SessionPage } from './RawLogView';
@@ -154,6 +155,25 @@ export function AnalysisScreen() {
     journal.refresh();
   };
 
+  // La correction ne lit pas l'aperçu : elle reste montée quoi qu'il devienne
+  // (coupure réseau sans copie, relecture), son brouillon avec (analysis-frame).
+  if (view.page === 'edit' && analysisFrame(view.page, overview.state.phase) === 'page') {
+    return (
+      <PastSessionEditor
+        key={view.id}
+        executionId={view.id}
+        onClose={back}
+        onSaved={() => {
+          afterMutation();
+          back();
+        }}
+        onDeleted={() => {
+          afterMutation();
+          popTo('index');
+        }}
+      />
+    );
+  }
   if (overview.state.phase === 'loading') {
     return (
       <Page>
@@ -245,21 +265,6 @@ export function AnalysisScreen() {
       );
     }
     case 'edit':
-      return (
-        <PastSessionEditor
-          key={view.id}
-          executionId={view.id}
-          onClose={back}
-          onSaved={() => {
-            afterMutation();
-            back();
-          }}
-          onDeleted={() => {
-            afterMutation();
-            popTo('index');
-          }}
-        />
-      );
     case 'index':
       break;
   }
