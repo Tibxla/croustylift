@@ -206,8 +206,9 @@ export function ExerciseCapture({
   );
 
   // Brouillon de la série courante (steppers), pré-rempli par `seedDraft` (issue
-  // #58, logique pure testée) : poids reporté de la dernière série loggée dès la
-  // 2ᵉ, reps cadrées sur la borne basse prescrite. En unilatéral (issue #46/#63),
+  // #58 et décision du 24/11, logique pure testée) : poids et reps reportés de la
+  // dernière série loggée dès la 2ᵉ, de la Référence à la 1ʳᵉ, la borne basse
+  // prescrite sans aucun repère. En unilatéral (issue #46/#63),
   // on passe le côté CHOISI pour aligner le repère sur la bonne ligne G/D (série
   // logique + côté), au lieu de dériver avec les rangs doublés. Ré-amorcé au
   // changement d'exo, au log/annulation d'une série (loggedCount), ou au bascule

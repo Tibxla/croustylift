@@ -19,22 +19,47 @@ const reference: PerformedSet[] = [
   { weightKg: 80, reps: 8, rir: 1, order: 3 },
 ];
 
-describe('seedDraft — reps préremplies (point 2 #58)', () => {
-  it('prend la borne basse de la fourchette de reps prescrite', () => {
-    const seed = seedDraft({ prescription, reference, loggedSets: [] });
-    expect(seed.reps).toBe(8); // reps.min de [8, 12]
+describe('seedDraft — reps préremplies (décision du 24/11, revient sur #58)', () => {
+  // Reps de la Référence différentes du bas de la fourchette (8), pour que
+  // chaque cas distingue « report » et « plancher ».
+  const refReps: PerformedSet[] = [
+    { weightKg: 82.5, reps: 10, rir: 2, order: 1 },
+    { weightKg: 82.5, reps: 9, rir: 1, order: 2 },
+  ];
+
+  it('1re série : les reps de la série 1 de la Référence, pas le bas de la fourchette', () => {
+    const seed = seedDraft({ prescription, reference: refReps, loggedSets: [] });
+    expect(seed.reps).toBe(10);
   });
 
-  it('prend la valeur fixe quand la prescription de reps est un singleton', () => {
+  it('série suivante : les reps de la série qu’on vient de logger, pas la Référence du rang', () => {
+    const loggedSets: PerformedSet[] = [{ weightKg: 82.5, reps: 11, rir: 1, order: 1 }];
+    const seed = seedDraft({ prescription, reference: refReps, loggedSets });
+    expect(seed.reps).toBe(11);
+  });
+
+  it('série suivante sans Référence : la série loggée reste le repère', () => {
+    const loggedSets: PerformedSet[] = [{ weightKg: 60, reps: 12, rir: 0, order: 1 }];
+    const seed = seedDraft({ prescription, reference: null, loggedSets });
+    expect(seed.reps).toBe(12);
+  });
+
+  it('sans Référence ni série loggée : le bas de la fourchette', () => {
+    const seed = seedDraft({ prescription, reference: null, loggedSets: [] });
+    expect(seed.reps).toBe(8);
+  });
+
+  it('prend la valeur fixe quand la prescription de reps est un singleton (aucun repère)', () => {
     const fixed: Prescription = { sets: range(3, 3), reps: range(6, 6), rir: range(2, 2) };
     const seed = seedDraft({ prescription: fixed, reference: null, loggedSets: [] });
     expect(seed.reps).toBe(6);
   });
 
-  it('garde reps = reps_min même après des séries loggées (pas de report)', () => {
-    const loggedSets: PerformedSet[] = [{ weightKg: 80, reps: 11, rir: 0, order: 1 }];
-    const seed = seedDraft({ prescription, reference, loggedSets });
-    expect(seed.reps).toBe(8); // reste reps.min, ne reporte pas les 11 reps faites
+  it('le repli cross-séances ne donne pas les reps : il reste réservé au poids', () => {
+    const fallback: PerformedSet[] = [{ weightKg: 100, reps: 5, rir: 2, order: 1 }];
+    const seed = seedDraft({ prescription, reference: null, fallbackReference: fallback, loggedSets: [] });
+    expect(seed.weightKg).toBe(100);
+    expect(seed.reps).toBe(8);
   });
 });
 
@@ -141,9 +166,31 @@ describe('seedDraft — unilatéral (côté visé, issue #46/#63)', () => {
     expect(seed.rir).toBe(1);
   });
 
-  it('reps reste la borne basse prescrite, indépendamment du côté', () => {
-    const seed = seedDraft({ prescription, reference: refUni, loggedSets: [], side: 'right' });
-    expect(seed.reps).toBe(8); // reps.min de [8, 12]
+  it('1re série : les reps de la Référence du MÊME côté', () => {
+    const ref: PerformedSet[] = [
+      { weightKg: 30, reps: 11, rir: 2, order: 1, side: 'left' },
+      { weightKg: 34, reps: 9, rir: 1, order: 1, side: 'right' },
+    ];
+    expect(seedDraft({ prescription, reference: ref, loggedSets: [], side: 'left' }).reps).toBe(11);
+    expect(seedDraft({ prescription, reference: ref, loggedSets: [], side: 'right' }).reps).toBe(9);
+  });
+
+  it('série suivante : les reps de la dernière saisie du MÊME côté', () => {
+    const loggedSets: PerformedSet[] = [
+      { weightKg: 30, reps: 12, rir: 2, order: 1, side: 'left' },
+      { weightKg: 34, reps: 10, rir: 1, order: 1, side: 'right' },
+    ];
+    expect(seedDraft({ prescription, reference: refUni, loggedSets, side: 'left' }).reps).toBe(12);
+    expect(seedDraft({ prescription, reference: refUni, loggedSets, side: 'right' }).reps).toBe(10);
+  });
+
+  it('2e côté de la 1re série : les reps de la Référence de ce côté, pas celles du côté saisi', () => {
+    const ref: PerformedSet[] = [
+      { weightKg: 30, reps: 8, rir: 2, order: 1, side: 'left' },
+      { weightKg: 34, reps: 9, rir: 1, order: 1, side: 'right' },
+    ];
+    const loggedSets: PerformedSet[] = [{ weightKg: 30, reps: 11, rir: 1, order: 1, side: 'left' }];
+    expect(seedDraft({ prescription, reference: ref, loggedSets, side: 'right' }).reps).toBe(9);
   });
 });
 
