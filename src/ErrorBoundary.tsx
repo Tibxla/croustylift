@@ -65,7 +65,9 @@ export class ErrorBoundary extends Component<Props, State> {
  * que des saisies ne tiennent qu'en mémoire, ou qu'un brouillon ou une écriture
  * est en cours, il ne recharge pas, dit pourquoi et propose de revenir à la
  * Salle (dans le shell authentifié), ou de la réafficher si c'est elle qui a
- * planté (`salleExit`).
+ * planté (`salleExit`). Le message technique de l'erreur, souvent en anglais
+ * (« Failed to fetch dynamically imported module »), ne s'affiche pas : il
+ * reste en console (`componentDidCatch`).
  */
 export function RecoveryScreen({
   error,
@@ -93,7 +95,6 @@ export function RecoveryScreen({
           ? "Cet écran n'a pas pu se charger : l'app a été mise à jour, ou le réseau manque."
           : "Quelque chose a planté à l'affichage."}
       </p>
-      <p className="mt-2 max-w-full break-words text-[14px] text-faint">{error.message}</p>
       {refusal && (
         <Alert label="Pas de rechargement" className="mt-4">
           {refusal === 'unsaved'

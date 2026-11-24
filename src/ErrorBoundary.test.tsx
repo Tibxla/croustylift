@@ -56,4 +56,11 @@ describe('sortie de secours vers la Salle', () => {
     fallback.props.onReset();
     expect(boundary.render()).toBe(child);
   });
+
+  it('le message technique de l’erreur, souvent en anglais, n’est pas à l’écran (il reste en console)', () => {
+    const html = screen('analysis', new Error('Failed to fetch dynamically imported module: /assets/AnalysisScreen.js'));
+    expect(html).not.toContain('Failed to fetch');
+    expect(html).not.toContain('AnalysisScreen.js');
+    expect(screen('capture', new Error('Cannot read properties of undefined'))).not.toContain('Cannot read');
+  });
 });
