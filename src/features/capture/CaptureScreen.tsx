@@ -1532,13 +1532,13 @@ function CapturePanel({
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
   // Garde contre le rebond de doigt (log-guard.ts) : un second Logger du même
-  // exo sous 600 ms n'écrit rien et n'annonce rien.
+  // exo sous 600 ms (250 ms si le côté a basculé) n'écrit rien et n'annonce rien.
   const lastLogRef = useRef<LogStamp | null>(null);
   const logSet = useCallback(
-    (set: { weightKg: number; reps: number; rir: number }) => {
-      const now = performance.now();
-      if (isDoubleTap(lastLogRef.current, exercise.exerciseId, now)) return;
-      lastLogRef.current = { exerciseId: exercise.exerciseId, at: now };
+    (set: { weightKg: number; reps: number; rir: number; side?: Side }) => {
+      const stamp: LogStamp = { exerciseId: exercise.exerciseId, side: set.side, at: performance.now() };
+      if (isDoubleTap(lastLogRef.current, stamp)) return;
+      lastLogRef.current = stamp;
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
