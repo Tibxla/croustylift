@@ -6,6 +6,7 @@ import type { Session } from './fixtures';
 import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
 import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
+import { ranksAfterDeletion } from './set-ranks';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -151,6 +152,11 @@ export type CaptureAction =
       setId: string;
       values: Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
     }
+  // Supprime la série LOGIQUE de rang `order` de l'exo, où qu'elle soit : toutes
+  // ses lignes (gauche et droite en unilatéral). Les rangs des suivantes suivent
+  // la règle de `ranksAfterDeletion` (set-ranks.ts). Construite par `deleteSet`
+  // (set-gestures.ts), qui rend aussi les écritures à enfiler.
+  | { type: 'delete-set'; exerciseId: string; order: number }
   // Note datée d'un exo (issue #26). `noteId` = UUID client de la ligne
   // `dated_notes`, fourni par le caller pour que l'état et l'op d'outbox visent
   // la même ligne. Un `body` vide est conservé tel quel dans l'état ; c'est la
@@ -706,6 +712,37 @@ export function applyQueuedSets(
   return out;
 }
 
+/**
+ * Les séries que l'utilisateur a touchées sur cet appareil depuis le départ
+ * d'une lecture : celles dont la valeur (rang compris) diffère de celle du
+ * départ, et celles que l'état portait au départ et ne porte plus (supprimées).
+ * Sans `departure`, seules les suppressions se voient (par `knownAtDeparture`).
+ */
+function touchedSinceDeparture(
+  local: Record<string, ExerciseProgress>,
+  departure: Record<string, ExerciseProgress> | undefined,
+  knownAtDeparture: readonly string[],
+): Set<string> {
+  const now = new Map<string, PerformedSet>();
+  for (const p of Object.values(local)) {
+    p.setIds.forEach((id, i) => {
+      const set = p.sets[i];
+      if (id !== null && set) now.set(id, set);
+    });
+  }
+  const touched = new Set<string>();
+  for (const id of knownAtDeparture) if (!now.has(id)) touched.add(id);
+  for (const p of Object.values(departure ?? {})) {
+    p.setIds.forEach((id, i) => {
+      const before = p.sets[i];
+      if (id === null || !before) return;
+      const current = now.get(id);
+      if (current === undefined || !sameSet(before, current)) touched.add(id);
+    });
+  }
+  return touched;
+}
+
 function sameSet(a: PerformedSet, b: PerformedSet): boolean {
   return (
     a.weightKg === b.weightKg &&
@@ -959,6 +996,27 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'delete-set': {
+      const prev = getProgress(state, action.exerciseId);
+      if (!prev.sets.some((set) => set.order === action.order)) return state;
+      // Les ids suivent leurs séries : on renumérote des paires (série, id).
+      const rows = ranksAfterDeletion(
+        prev.sets.map((set, i) => ({ ...set, id: prev.setIds[i] ?? null })),
+        action.order,
+      );
+      return {
+        ...state,
+        progress: {
+          ...state.progress,
+          [action.exerciseId]: {
+            ...prev,
+            sets: rows.map(({ id: _id, ...set }) => set),
+            setIds: rows.map((row) => row.id),
+          },
+        },
+      };
+    }
+
     case 'skip-exercise': {
       const prev = getProgress(state, action.exerciseId);
       return {
@@ -992,10 +1050,19 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         knownAtDeparture: action.knownAtDeparture,
         departure: action.departure,
       });
+      // Les séries que l'utilisateur a touchées ICI pendant le trajet (corrigées,
+      // renumérotées, supprimées) ne sont pas rejouées depuis la file : l'état
+      // local est plus récent que les écritures relevées au départ, même
+      // acquittées depuis. Sans cela une série annulée ressuscitait, et une
+      // ancienne écriture ramenait un rang d'avant la suppression.
+      const touched = touchedSinceDeparture(state.progress, action.departure, action.knownAtDeparture);
+      const queued = (action.queuedOps ?? []).filter(
+        (op) => !((op.type === 'insertSet' || op.type === 'deleteSet') && touched.has(op.id)),
+      );
       return {
         ...state,
         progress: action.queuedOps
-          ? applyQueuedSets(reconciled, action.queuedOps, state.executionId)
+          ? applyQueuedSets(reconciled, queued, state.executionId)
           : reconciled,
         datedNotes: action.datedNotes
           ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])

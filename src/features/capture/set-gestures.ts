@@ -32,9 +32,29 @@
 // des séries (`computeSetBadges`, set-badges.ts), donc suivent la correction.
 // Unilatéral : chaque côté est une ligne, avec son id. Corriger un côté ne
 // touche ni l'autre ni le rang de la série.
+//
+// SUPPRIMER UNE SÉRIE (`deleteSet`), n'importe laquelle. On désigne une ligne par
+// son id ; c'est sa série LOGIQUE qui part : en unilatéral, la gauche ET la
+// droite (c'est ce que dit la confirmation à l'écran). Les rangs des séries
+// suivantes suivent LA règle de `ranksAfterDeletion` (set-ranks.ts : remontée
+// par défaut, ADR 0024 proposé ; une constante à changer pour laisser un trou).
+// Écritures, dans cet ordre : un `deleteSet` par ligne supprimée, PUIS un
+// `insertSet` (upsert) par ligne dont le rang a changé. Suppressions d'abord,
+// comme dans l'éditeur de séance passée : le flush peut s'interrompre entre
+// deux ops, et aucune série gardée ne doit partager un rang avec celle qui s'en
+// va. Aucune unicité ne porte sur le rang en base. Une ligne sans id (cache
+// d'ancien format) est retirée ou renumérotée à l'écran sans écriture.
+// « Annuler la dernière série » (`undo-last-set`) reste le geste d'une touche
+// juste après un log ; en unilatéral il ne retire que le dernier côté saisi.
+//
+// Réponse tardive de la base : une série corrigée, renumérotée ou supprimée ici
+// pendant le trajet d'une lecture garde son état local à l'arrivée de la
+// réponse, que ses écritures soient encore en file ou déjà acquittées
+// (`reconcileProgress` et le cas `reconcile-progress` du réducteur, state.ts).
 
 import type { PerformedSet } from '../../domain/types';
 import type { InsertSetOp, OutboxOp } from './outbox';
+import { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
 import { getProgress, type CaptureAction, type CaptureState } from './state';
 
@@ -91,5 +111,39 @@ export function correctSet(
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
     ops: [writeSetOp(state, exerciseId, setId, { ...current, ...next })],
+  };
+}
+
+export { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion, type RankPolicy } from './set-ranks';
+
+/**
+ * Supprime la série à laquelle appartient la ligne d'id `setId` dans l'exo
+ * `exerciseId` (cf. en-tête). `null` si aucune ligne de cet exo ne porte cet id.
+ */
+export function deleteSet(state: CaptureState, exerciseId: string, setId: string): SetGesture | null {
+  const progress = getProgress(state, exerciseId);
+  const index = progress.setIds.indexOf(setId);
+  const target = index === -1 ? undefined : progress.sets[index];
+  if (target === undefined) return null;
+
+  const rows = progress.sets.map((set, i) => ({ set, id: progress.setIds[i] ?? null }));
+  const removed = rows.filter((row) => row.set.order === target.order);
+  const after = ranksAfterDeletion(
+    rows.map((row) => ({ ...row.set, id: row.id })),
+    target.order,
+    RANK_POLICY_AFTER_DELETION,
+  );
+  const orderBefore = new Map(rows.map((row) => [row.id, row.set.order] as const));
+
+  const deletes: OutboxOp[] = removed.flatMap((row) =>
+    // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
+    row.id === null ? [] : [{ type: 'deleteSet' as const, id: row.id, exerciseIds: [exerciseId] }],
+  );
+  const rewrites: OutboxOp[] = after.flatMap(({ id, ...set }) =>
+    id === null || orderBefore.get(id) === set.order ? [] : [writeSetOp(state, exerciseId, id, set)],
+  );
+  return {
+    action: { type: 'delete-set', exerciseId, order: target.order },
+    ops: [...deletes, ...rewrites],
   };
 }
