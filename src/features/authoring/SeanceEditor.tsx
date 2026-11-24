@@ -815,7 +815,6 @@ function ItemBlock({
   const hasNote = !isBlankNote(note);
   return (
     <li id={`exo-${row.rowId}`} className="relative scroll-mt-[calc(var(--safe-top)+0.5rem)] border-b border-line">
-      {open && <span aria-hidden className="absolute left-0 top-3 h-10 w-[3px] bg-ink" />}
       <button
         type="button"
         aria-expanded={open}

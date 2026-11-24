@@ -113,7 +113,8 @@ function NameForm({
 }
 
 /** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), Monter
- *  et Descendre en mots. La dernière ligne déplacée garde le trait de gauche. */
+ *  et Descendre en mots. La dernière ligne déplacée garde son titre en demi-gras
+ *  (pas de bande latérale, comme la ligne courante du kit). */
 export function ReorderRow({
   rank,
   title,
@@ -138,7 +139,6 @@ export function ReorderRow({
     'ui-press h-11 flex-none rounded-block border-[1.5px] border-ink bg-raise px-3 text-[15px] font-semibold text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
   return (
     <li className="relative flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
-      {moved && <span aria-hidden className="absolute bottom-3 left-0 top-3 w-[3px] bg-ink" />}
       <span className="tnum w-6 flex-none text-[15px] text-faint">{rank}</span>
       <span className="min-w-0 flex-1">
         <span className={`block break-words text-[17px] leading-[1.25] text-ink ${moved ? 'font-semibold' : 'font-medium'}`}>{title}</span>
