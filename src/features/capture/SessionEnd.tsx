@@ -495,15 +495,29 @@ function SessionDone({
         <Fact label="kg soulevés" value={kg(recap.liftedKg)} />
         {typeof values.bpmAvg === 'number' && <Fact label="BPM moyen" value={`${values.bpmAvg} bpm`} />}
         {recap.records.map((r) => (
-          <Fact
-            key={`${r.exerciseId}-${r.axis}-${r.side ?? ''}`}
-            label={`${r.name}${r.side ? `, ${sideWord(r.side)}` : ''}`}
-            value={<span className="text-sig">{recordValue(r)}</span>}
-            aside={<Status v="up" word="nouveau record" />}
-          />
+          <RecordFact key={`${r.exerciseId}-${r.axis}-${r.side ?? ''}`} r={r} />
         ))}
       </dl>
     </Screen>
+  );
+}
+
+/** Un nouveau record : le nom de l'exo (et son côté) en entier, sur deux lignes
+ *  au besoin, « nouveau record » dessous, la valeur à droite en signal. */
+function RecordFact({ r }: { r: RecapRecord }) {
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+      <dt className="min-w-0">
+        <span className="block break-words text-[16px] leading-[1.3] text-ink">
+          {r.name}
+          {r.side ? `, ${sideWord(r.side)}` : ''}
+        </span>
+        <span className="mt-0.5 block text-[14px]">
+          <Status v="up" word="nouveau record" />
+        </span>
+      </dt>
+      <dd className="tnum flex-none text-right text-[16px] font-medium text-sig">{recordValue(r)}</dd>
+    </div>
   );
 }
 
