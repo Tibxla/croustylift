@@ -1444,7 +1444,15 @@ function CapturePanel({
             className={BAR_BTN}
           >
             <span className={BAR_TITLE}>Sommaire</span>
-            <span className="tnum w-full truncate text-[13px] leading-tight text-muted">{sommaireDetail(sync, settled, total)}</span>
+            {/* Une file en attente (ou un refus, un stockage plein) se voit d'un coup
+                d'œil : blanc cassé demi-gras, comme dans le prototype. */}
+            <span
+              className={`tnum w-full truncate text-[13px] leading-tight ${
+                sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
+              }`}
+            >
+              {sommaireDetail(sync, settled, total)}
+            </span>
           </button>
           {undoWhat ? (
             <button
