@@ -53,7 +53,7 @@ vi.mock('../../lib/supabase', () => {
 });
 
 import { upperA } from './fixtures';
-import { clearQueue, enqueue, flush } from './outbox';
+import { clearQueue, enqueue, enqueueAll, flush, hasUnpersistedOps, readQueue } from './outbox';
 import { correctSet, deleteSet, type SetGesture } from './set-gestures';
 import { captureReducer, initialState, type CaptureState } from './state';
 import { syncFns } from './sync';
@@ -101,7 +101,7 @@ const tab = (): CaptureState => ({
   },
 });
 const play = (state: CaptureState, gesture: SetGesture | null): CaptureState => {
-  gesture!.ops.forEach((op) => enqueue(op));
+  enqueueAll(gesture!.ops);
   return captureReducer(state, gesture!.action);
 };
 const base = () => server.rows.map((r) => `${r.id}:${r.weight_kg}kg@${r.set_order}`).sort();
@@ -155,5 +155,64 @@ describe('deux onglets : une correction et une suppression de la même séance',
     play(tab(), deleteSet(tab(), BENCH, 's1'));
     await flush(syncFns);
     expect(base()).toEqual(['s2:80kg@1']);
+  });
+});
+
+// Un geste est une UNITÉ dans la file. Enfilées une à une, ses écritures
+// pouvaient être coupées par un stockage presque plein : la suppression écrite
+// sur l'appareil, les remontées de rang en mémoire seulement. Page fermée hors
+// ligne, la suppression partait seule et la série restante gardait le rang 2.
+describe('quota atteint au milieu d’un geste', () => {
+  const persisted = () =>
+    (JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]') as { type: string; id: string; only?: string }[]).map(
+      (op) => `${op.type}:${op.id}${op.only ? `:${op.only}` : ''}`,
+    );
+  /** Le stockage n'accepte la file que jusqu'à `max` caractères. */
+  const capOutbox = (max: number) => {
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox' && v.length > max) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+  };
+
+  it('la place pour la suppression seule : RIEN du geste n’est écrit sur l’appareil, tout tient en mémoire', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const gesture = deleteSet(tab(), BENCH, 's1')!;
+    // Assez pour le seul `deleteSet`, pas pour les deux remontées qui le suivent.
+    capOutbox(JSON.stringify([gesture.ops[0]]).length + 200);
+    enqueueAll(gesture.ops);
+    expect(persisted()).toEqual([]);
+    expect(readQueue().map((op) => op.type)).toEqual(['deleteSet', 'insertSet', 'insertSet']);
+    expect(hasUnpersistedOps()).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it('le défaut, sans unité : enfilées une à une, la suppression est écrite seule', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const gesture = deleteSet(tab(), BENCH, 's1')!;
+    capOutbox(JSON.stringify([gesture.ops[0]]).length + 200);
+    gesture.ops.forEach((op) => enqueue(op));
+    expect(persisted()).toEqual(['deleteSet:s1']);
+    vi.restoreAllMocks();
+  });
+
+  it('assez de place : le geste entier est écrit d’un coup, dans l’ordre', async () => {
+    enqueueAll(deleteSet(tab(), BENCH, 's1')!.ops);
+    expect(persisted()).toEqual(['deleteSet:s1', 'insertSet:s2:rank', 'insertSet:s3:rank']);
+    await flush(syncFns);
+    expect(base()).toEqual(['s2:80kg@1', 's3:80kg@2']);
+  });
+
+  it('un geste sans écriture n’enfile rien', () => {
+    expect(enqueueAll([])).toEqual([]);
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('chaque écriture du geste a son identité d’enfilement, rendue dans l’ordre', () => {
+    const uids = enqueueAll(deleteSet(tab(), BENCH, 's1')!.ops);
+    expect(uids).toHaveLength(3);
+    expect(new Set(uids).size).toBe(3);
+    expect(readQueue().map((op) => op._uid)).toEqual(uids);
   });
 });

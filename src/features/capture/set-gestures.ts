@@ -14,7 +14,10 @@
 // L'écran enchaîne comme pour un log (`handleLog`, CaptureScreen) : lire la
 // projection synchrone de l'état, calculer le geste dessus, dispatcher l'action,
 // avancer la projection par le même réducteur, puis enfiler les ops et lancer
-// l'envoi. L'exécution doit avoir été enfilée avant (`enqueueExecutionOnce`),
+// l'envoi. Les ops d'un geste s'enfilent EN UNE FOIS, par `enqueueAll(ops)`
+// (outbox.ts), jamais une à une : le geste est une unité dans la file (tout
+// écrit sur l'appareil, ou tout en mémoire), sinon un stockage presque plein
+// peut garder la suppression sans la remontée des rangs. L'exécution doit avoir été enfilée avant (`enqueueExecutionOnce`),
 // ce qui est acquis dès qu'une série existe.
 //
 // CORRIGER UNE SÉRIE (`correctSet`). Il n'y a pas de type d'op « mise à jour » :

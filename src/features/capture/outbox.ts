@@ -1059,24 +1059,49 @@ function newUid(): string {
  * l'appelant peut la retrouver après une passe (cf. `isPending`, `isRefused`).
  */
 export function enqueueTracked(op: OutboxOp): string {
+  // Toujours une identité : `enqueueAll` en rend une par op.
+  return enqueueAll([op])[0]!;
+}
+
+/**
+ * Enfile PLUSIEURS écritures comme une seule unité : une lecture de la file, un
+ * ajout, UNE écriture sur l'appareil. C'est la forme d'enfilement d'un geste
+ * (`{ action, ops }`, cf. set-gestures.ts) : ses écritures sont toutes écrites
+ * sur l'appareil, ou toutes tenues en mémoire (repli sous stockage plein),
+ * jamais coupées en deux. Enfilées une à une, un stockage presque plein écrivait
+ * la suppression d'une série sans les remontées de rang qui la suivent ; page
+ * fermée hors ligne, la suppression partait seule au redémarrage et les séries
+ * restantes gardaient leur ancien rang en base.
+ *
+ * L'ordre de `ops` est celui de l'envoi. Rend l'identité d'enfilement (`_uid`)
+ * de chaque op, dans le même ordre ; `[]` pour une liste vide (rien n'est écrit).
+ */
+export function enqueueAll(ops: readonly OutboxOp[]): string[] {
+  if (ops.length === 0) return [];
   const queue = readQueue();
   // Compteur d'ordre, ré-amorcé sur le max déjà persisté. Il n'identifie plus
   // l'op (deux onglets peuvent donner le même numéro) : c'est le rôle de `_uid`.
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
-  seqCounter = Math.max(seqCounter, maxSeq) + 1;
+  seqCounter = Math.max(seqCounter, maxSeq);
   // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
   const owner = loadLocalAccount()?.userId;
-  const uid = newUid();
-  queue.push({
-    ...op,
-    _seq: seqCounter,
-    _uid: uid,
-    _at: Date.now(),
-    ...(owner ? { _owner: owner } : {}),
-  });
+  const at = Date.now();
+  const uids: string[] = [];
+  for (const op of ops) {
+    seqCounter += 1;
+    const uid = newUid();
+    uids.push(uid);
+    queue.push({
+      ...op,
+      _seq: seqCounter,
+      _uid: uid,
+      _at: at,
+      ...(owner ? { _owner: owner } : {}),
+    });
+  }
   writeQueue(queue);
-  supersedeRefusedSetWrites(op);
-  return uid;
+  ops.forEach(supersedeRefusedSetWrites);
+  return uids;
 }
 
 /**
