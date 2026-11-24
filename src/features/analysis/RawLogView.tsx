@@ -4,7 +4,8 @@
 // séries ; durée et BPM à droite s'ils ont été notés). Toucher une ligne ouvre
 // la séance : ses chiffres, puis ses séries telles qu'elles ont été loggées
 // (poids × reps · RIR), sans aucune dérivation, gauche et droite sur deux lignes
-// pour un exo unilatéral (ADR 0005). « Corriger cette séance » ouvre l'éditeur.
+// pour un exo unilatéral (ADR 0005). « Corriger », en tête de page comme
+// « Modifier » sur une fiche d'exo, ouvre l'éditeur sans défiler les séries.
 //
 // Pas de récap trompeur : une métrique manquante s'écrit « non notée », jamais
 // zéro. Le décompte de séries est celui de la fin de séance (`summarizeSession`).
@@ -105,6 +106,11 @@ export function SessionPage({
         title={s.sessionName ?? 'Hors séance'}
         meta={`${formatDateLong(entry.date, year)}${s.routineName ? ` · ${s.routineName}` : ''}`}
         back={{ label: 'Journal', onClick: onBack }}
+        action={
+          <SecondaryButton size="sm" onClick={onEdit} ariaLabel="Corriger cette séance">
+            Corriger
+          </SecondaryButton>
+        }
       />
       <dl className="grid grid-cols-4 gap-2 border-y border-line px-5 py-3">
         <Fact label="Durée" value={s.durationMin !== null ? formatDuration(s.durationMin) : null} />
@@ -129,11 +135,6 @@ export function SessionPage({
           </List>
         </section>
       ))}
-      <div className="px-5 pt-8">
-        <SecondaryButton onClick={onEdit} className="w-full">
-          Corriger cette séance
-        </SecondaryButton>
-      </div>
     </>
   );
 }
