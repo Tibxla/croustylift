@@ -72,4 +72,21 @@ describe('watchSeancesMeta', () => {
     expect(seen.at(-1)?.a?.lastOn).toBe('2026-11-24');
     stop();
   });
+
+  it('sélecteur monté : une file qui change (exécution acquittée) revalide la méta, sélecteur fermé non', async () => {
+    const fetcher = vi.fn(async () => META);
+    const events = new EventTarget();
+    const seen: StoredMap[] = [];
+    const stop = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher, events, revalidateOn: ['online', 'file-changee'] });
+    await settle();
+    fetcher.mockResolvedValue({ a: { ...META.a!, lastOn: '2026-11-24' } });
+    events.dispatchEvent(new Event('file-changee'));
+    await settle();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(seen.at(-1)?.a?.lastOn).toBe('2026-11-24');
+    stop();
+    events.dispatchEvent(new Event('file-changee'));
+    await settle();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });

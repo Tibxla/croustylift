@@ -669,7 +669,10 @@ function SeancePicker({
     let alive = true;
     void import('./seance-meta-load').then(
       (m) => {
-        if (alive) off = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+        // Revalidée au retour du réseau et quand la file change (une exécution
+        // acquittée la quitte : sa date vient alors de la base), tant que le
+        // sélecteur est monté.
+        if (alive) off = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored, { revalidateOn: ['online', OUTBOX_CHANGED_EVENT] });
       },
       () => {},
     );

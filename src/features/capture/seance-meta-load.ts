@@ -67,14 +67,19 @@ async function fetchSeancesMeta(seanceIds: readonly string[]): Promise<StoredMap
  *
  * Hors du rejeu global (`replay: false`) : rejouée après chaque flush, elle
  * relisait versions, prescriptions et dernière exécution de chaque séance pour
- * un sélecteur fermé, en plein exercice. Elle se revalide au retour du réseau
- * (`online` sur `events`), tant que le sélecteur est monté. `fetcher` et
- * `events` sont injectables pour les tests.
+ * un sélecteur fermé, en plein exercice. Elle se revalide sur les événements
+ * `revalidateOn` de `events` (le retour du réseau, et la file qui change : une
+ * exécution acquittée quitte la file, sa date doit venir de la base), tant que
+ * le sélecteur est monté. `fetcher` et `events` sont injectables pour les tests.
  */
 export function watchSeancesMeta(
   seanceIds: readonly string[],
   onChange: (stored: StoredMap) => void,
-  { fetcher = () => fetchSeancesMeta(seanceIds), events = typeof window === 'undefined' ? null : window }: { fetcher?: () => Promise<StoredMap>; events?: EventTarget | null } = {},
+  {
+    fetcher = () => fetchSeancesMeta(seanceIds),
+    events = typeof window === 'undefined' ? null : window,
+    revalidateOn = ['online'],
+  }: { fetcher?: () => Promise<StoredMap>; events?: EventTarget | null; revalidateOn?: readonly string[] } = {},
 ): () => void {
   let alive = true;
   const off = onReadWritten((key) => {
@@ -85,13 +90,13 @@ export function watchSeancesMeta(
     (stored) => alive && onChange(stored),
     () => {},
   );
-  // Au retour du réseau, seule la revalidation compte : elle arrive par
+  // Au retour du réseau (ou la file changée), seule la revalidation compte : elle arrive par
   // `onReadWritten` (la copie, déjà montrée, ne repasse pas après elle).
   const revalidate = () => void read().catch(() => {});
-  events?.addEventListener('online', revalidate);
+  for (const name of revalidateOn) events?.addEventListener(name, revalidate);
   return () => {
     alive = false;
     off();
-    events?.removeEventListener('online', revalidate);
+    for (const name of revalidateOn) events?.removeEventListener(name, revalidate);
   };
 }
