@@ -16,10 +16,10 @@
 // `compareBlockSeances`, `defaultComparisonPair`).
 import { useCallback, useMemo, useState } from 'react';
 import type { Block, ExerciseExecution } from '../../domain/types';
-import { blockKey } from '../../domain/block';
 import {
   compareBlockSeances,
-  defaultComparisonPair,
+  comparisonOptionKey,
+  resolveComparisonPair,
   summarizeBlockSeances,
   type BlockSeanceProgression,
 } from '../../domain/block-comparison';
@@ -128,13 +128,15 @@ export function ComparisonView({
   // la dernière option étant la plus récente.
   const options = useMemo(() => summarizeBlockSeances(executions, exerciseId, blocks), [executions, exerciseId, blocks]);
   // Pré-sélection : la plus récente face à la plus récente d'un autre bloc. Un
-  // choix de l'utilisateur la remplace, côté par côté.
-  const pair = useMemo(() => defaultComparisonPair(options), [options]);
-  const [picked, setPicked] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
+  // choix de l'utilisateur la remplace, côté par côté, retenu par l'IDENTITÉ de
+  // l'option (bloc + séance) : une revalidation qui retire ou réordonne des
+  // options ne le déplace pas (`resolveComparisonPair`).
+  const [picked, setPicked] = useState<{ a: string | null; b: string | null }>({ a: null, b: null });
   const [picking, setPicking] = useState<'a' | 'b' | null>(null);
+  const pair = useMemo(() => resolveComparisonPair(options, picked), [options, picked]);
 
-  const ia = picked.a ?? pair?.[0] ?? null;
-  const ib = picked.b ?? pair?.[1] ?? null;
+  const ia = pair?.[0] ?? null;
+  const ib = pair?.[1] ?? null;
   const a = ia === null ? undefined : options[ia];
   const b = ib === null ? undefined : options[ib];
 
@@ -201,7 +203,7 @@ export function ComparisonView({
               const taken = index === other;
               return (
                 <Row
-                  key={`${blockKey(o.block)}:${o.seanceId}`}
+                  key={comparisonOptionKey(o)}
                   title={optionName(o, options, seances)}
                   meta={`${datesOf(o, options, seances)}${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
                   value={taken ? <span className="text-[14px] font-normal text-faint">déjà en {picking === 'a' ? 'B' : 'A'}</span> : undefined}
@@ -212,7 +214,8 @@ export function ComparisonView({
                     taken
                       ? undefined
                       : () => {
-                          setPicked((p) => (picking === 'a' ? { ...p, a: index } : { ...p, b: index }));
+                          const key = comparisonOptionKey(o);
+                          setPicked((p) => (picking === 'a' ? { ...p, a: key } : { ...p, b: key }));
                           setPicking(null);
                         }
                   }

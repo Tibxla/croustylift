@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import type { ExerciseExecution, Block } from './types'
 import {
   compareBlockSeances,
+  comparisonOptionKey,
   defaultComparisonPair,
+  resolveComparisonPair,
   summarizeBlockSeances,
 } from './block-comparison'
 
@@ -550,5 +552,44 @@ describe('comparaison de blocs d’un exo saisi à 0 kg', () => {
     const options = summarizeBlockSeances(executions, EXO, [a, b])
     expect(options.map((o) => o.block.configId)).toEqual(['B'])
     expect(options[0]!.pointCount).toBe(2)
+  })
+})
+
+describe('resolveComparisonPair (le choix suit son option, pas son rang)', () => {
+  const b1 = block('b1', '2026-01-01', '2026-02-01')
+  const b2 = block('b2', '2026-02-01', '2026-03-01')
+  const b3 = block('b3', '2026-03-01', null)
+  const A = { block: b1, seanceId: 'upper-a' }
+  const B = { block: b2, seanceId: 'push' }
+  const C = { block: b3, seanceId: 'pull' }
+  const none = { a: null, b: null }
+
+  it('sans choix : la paire par défaut', () => {
+    expect(resolveComparisonPair([A, B, C], none)).toEqual(defaultComparisonPair([A, B, C]))
+  })
+
+  it('C choisie en A, puis A disparaît à la revalidation : C reste choisie, B lui fait face', () => {
+    const picked = { a: comparisonOptionKey(C), b: null }
+    const before = [A, B, C]
+    expect(resolveComparisonPair(before, picked)?.map((i) => before[i])).toEqual([C, B])
+    const after = [B, C]
+    // La paire par défaut redonne C de l'autre côté : le repli prend l'autre option.
+    expect(resolveComparisonPair(after, picked)?.map((i) => after[i])).toEqual([C, B])
+  })
+
+  it('un changement d’ordre ne substitue pas une autre option au choix', () => {
+    const picked = { a: comparisonOptionKey(A), b: comparisonOptionKey(B) }
+    const reordered = [B, A, C]
+    expect(resolveComparisonPair(reordered, picked)?.map((i) => reordered[i])).toEqual([A, B])
+  })
+
+  it('l’option choisie disparaît : une paire valide est recalculée', () => {
+    const picked = { a: comparisonOptionKey(A), b: comparisonOptionKey(C) }
+    const after = [B, C]
+    expect(resolveComparisonPair(after, picked)?.map((i) => after[i])).toEqual([B, C])
+  })
+
+  it('moins de deux options : rien à comparer', () => {
+    expect(resolveComparisonPair([C], { a: comparisonOptionKey(C), b: null })).toBeNull()
   })
 })
