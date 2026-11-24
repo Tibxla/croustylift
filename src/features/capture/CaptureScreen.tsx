@@ -1306,7 +1306,9 @@ function logLabel(side: Side | null, rank: number, plannedMax: number): string {
 /** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
  *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
 const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-3 text-left active:bg-line';
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line';
+/** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
+const BAR_TITLE = 'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink';
 
 function CapturePanel({
   exercise,
@@ -1432,7 +1434,7 @@ function CapturePanel({
       <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
         {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
             même largeur, qu'Annuler soit là ou non. */}
-        <div className="mb-1.5 grid grid-cols-[1fr_76px_1fr] gap-2">
+        <div className="mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2">
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
@@ -1441,7 +1443,7 @@ function CapturePanel({
             }`}
             className={BAR_BTN}
           >
-            <span className="text-[16px] font-medium leading-tight text-ink">Sommaire</span>
+            <span className={BAR_TITLE}>Sommaire</span>
             <span className="tnum w-full truncate text-[13px] leading-tight text-muted">{sommaireDetail(sync, settled, total)}</span>
           </button>
           {undoWhat ? (
@@ -1467,12 +1469,12 @@ function CapturePanel({
               aria-label={`Exo suivant, ${next.name}${next.resume ? `, reprise ${next.resume}` : ''}`}
               className={BAR_BTN}
             >
-              <span className="text-[16px] font-medium leading-tight text-ink">Exo suivant</span>
+              <span className={BAR_TITLE}>Exo suivant</span>
               <span className="w-full truncate text-[13px] leading-tight text-muted">{next.name}</span>
             </button>
           ) : canFinish ? (
             <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>
-              <span className="text-[16px] font-medium leading-tight text-ink">Terminer</span>
+              <span className={BAR_TITLE}>Terminer</span>
               <span className="truncate text-[13px] leading-tight text-muted">la séance</span>
             </button>
           ) : (
@@ -1485,7 +1487,7 @@ function CapturePanel({
           press={false}
           disabled={!draft}
           onClick={() => draft && logSet(draft)}
-          className="w-full"
+          className="w-full [@media(max-height:800px)]:h-12"
         >
           <span className="tnum">{values}</span>
         </PrimaryButton>
