@@ -1,6 +1,7 @@
 // Bande des séries de l'exo affiché : une case par série prévue (borne haute du
 // plan, plus la série en cours si on la dépasse). Case loggée : rang, statut
-// face à la Référence ou au record (signe + mot), valeurs, RIR. Case en cours :
+// face à la Référence ou au record (signe + mot), poids, puis « ×reps · RIR » :
+// les reps ne sont jamais coupées, même avec un poids à décimales à 360 px. Case en cours :
 // le brouillon en gris, soulignée d'un trait épais. Au-delà de 4 cases, la bande
 // défile et garde la série en cours en vue.
 //
@@ -88,12 +89,12 @@ export function SetBand({
             </span>
             <span
               aria-hidden
-              className={`tnum mt-1 block truncate text-[16px] font-medium tracking-[-0.01em] ${s ? 'text-ink' : isCurrent ? 'text-muted' : 'text-faint'}`}
+              className={`tnum mt-1 block whitespace-nowrap text-[16px] font-medium tracking-[-0.01em] ${s ? 'text-ink' : isCurrent ? 'text-muted' : 'text-faint'}`}
             >
-              {s ? `${cell(s.weightKg)}×${s.reps}` : isCurrent ? `${cell(draft.weightKg)}×${draft.reps}` : '·'}
+              {s ? cell(s.weightKg) : isCurrent ? cell(draft.weightKg) : '·'}
             </span>
-            <span aria-hidden className="tnum block text-[13px] text-faint">
-              {s ? `RIR ${s.rir}` : isCurrent ? `RIR ${draft.rir}` : ' '}
+            <span aria-hidden className={`tnum block whitespace-nowrap text-[13px] ${s ? 'text-muted' : 'text-faint'}`}>
+              {s ? `×${s.reps} · RIR ${s.rir}` : isCurrent ? `×${draft.reps} · RIR ${draft.rir}` : ' '}
             </span>
             <Underline state={isCurrent ? 'current' : s ? 'logged' : 'empty'} />
           </li>
@@ -152,7 +153,12 @@ export function UniSetBand({
             {parts.map(({ sd, letter, s, st, live }) => (
               <span key={sd} aria-hidden className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
                 <span className={`w-2.5 flex-none text-[13px] ${live ? 'font-semibold text-ink' : 'text-faint'}`}>{letter}</span>
-                <span className={`tnum truncate text-[14px] font-medium tracking-[-0.01em] ${s ? 'text-ink' : live ? 'text-muted' : 'text-faint'}`}>
+                {/* Jamais tronquée : un poids long (« 22,75×12 ») descend à 13 px. */}
+                <span
+                  className={`tnum whitespace-nowrap font-medium tracking-[-0.02em] ${s ? 'text-ink' : live ? 'text-muted' : 'text-faint'} ${
+                    (s ?? (live ? draft : null)) && `${cell((s ?? draft).weightKg)}×${(s ?? draft).reps}`.length > 7 ? 'text-[13px]' : 'text-[14px]'
+                  }`}
+                >
                   {s ? `${cell(s.weightKg)}×${s.reps}` : live ? `${cell(draft.weightKg)}×${draft.reps}` : '·'}
                 </span>
                 {st && (
