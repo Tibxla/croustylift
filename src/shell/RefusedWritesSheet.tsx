@@ -63,12 +63,16 @@ function RefusedList() {
     if (!retryRefused(entry.refusalId)) {
       // Une correction de la même série attend déjà en file : elle reconstituera
       // la série à partir de ce refus, rien à renvoyer. Sinon, le stockage.
+      // Elle n'est plus là : réglée depuis un autre onglet.
+      const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
       const queued = entry.op.type === 'insertSet' && readQueue().some((op) => op.type === 'insertSet' && op.id === entry.op.id);
       setOutcome({
         id: entry.refusalId,
-        text: queued
-          ? 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.'
-          : 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
+        text: !stillThere
+          ? 'Cette saisie a déjà été réglée, depuis un autre onglet.'
+          : queued
+            ? 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.'
+            : 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
       });
       setBusy(null);
       refresh();
@@ -92,7 +96,11 @@ function RefusedList() {
   function abandon(entry: RefusedWrite) {
     setOutcome(null);
     if (!abandonRefused(entry.refusalId)) {
-      setOutcome({ id: entry.refusalId, text: 'L’appareil n’a pas pu la retirer. Réessaie.' });
+      const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
+      setOutcome({
+        id: entry.refusalId,
+        text: stillThere ? 'L’appareil n’a pas pu la retirer. Réessaie.' : 'Cette saisie a déjà été réglée, depuis un autre onglet.',
+      });
     }
     setConfirming(null);
     refresh();
