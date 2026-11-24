@@ -1,20 +1,26 @@
 // Formulaire de saisie d'un exo perso, PARTAGÉ entre la création (sélecteur
 // d'ajout d'une séance, SeanceEditor) et la création/édition de l'onglet
-// « Exercices » (issue #49). Un seul endroit pour : nom (texte), LISTE de muscles
-// principaux (>= 1, chips cochables) et drapeau unilatéral (segment).
+// « Exercices » (issue #49), qui s'en sert aussi pour personnaliser un exo de
+// base (override, ADR 0007). Un seul endroit pour : nom (texte), LISTE de
+// muscles principaux (au moins un, cases à cocher) et mouvement (Bilatéral ou
+// Unilatéral, choix en mots).
 //
-// DESIGN.md tenu ici :
-//   - l'info n'est jamais portée par la couleur seule : un muscle sélectionné
-//     porte une coche « ✓ » EN PLUS de l'accent ; le segment unilatéral a un
-//     libellé texte explicite ("Bilatéral" / "Unilatéral") et aria-pressed ;
-//   - accent violet réservé aux états actifs (chip cochée, segment actif, action
-//     primaire) ; tap-targets >= 44px (chips à 36px : densité assumée dans une
-//     grille de 15, comme l'éditeur de séance) ;
-//   - aucun tiret long affiché.
+// Deux mises en page, une seule logique :
+//   - `frame` fourni : un écran entier (en-tête nommé, retour, action principale
+//     dans la barre collée du bas) ; l'onglet « Exercices » ;
+//   - sans `frame` : un bloc posé dans le flux d'un autre écran, l'action en
+//     bouton secondaire et « Annuler » en lien (l'écran hôte garde son bouton
+//     principal) ; l'éditeur de séance. Le bloc porte lui-même la marge d'écran
+//     (px-5) et ses filets vont bord à bord : l'hôte le pose sans marge.
+//
+// Kit E (DESIGN.md) : aucun signal ; une case cochée est un carré blanc cassé
+// plein ET un nom en demi-gras, jamais la couleur seule ; cibles de 48 px ;
+// aucun tiret long affiché. Les erreurs s'affichent sous le champ fautif après
+// un premier essai, au lieu d'un bouton éteint sans explication.
 //
 // Validation mutualisée avec la couche data via validatePersonalExercise
 // (exercise-input.ts) : une seule source de vérité pour le message.
-import { useState } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import {
   MUSCLE_GROUPS,
   toggleMuscle,
@@ -23,6 +29,19 @@ import {
 import { NoteField } from '../notes/NoteField';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { errorMessage } from '../../lib/error-message';
+import {
+  CheckBox,
+  Choice,
+  FieldError,
+  ImplicitSubmit,
+  PrimaryButton,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  TextField,
+  TextLink,
+} from '../../ui';
 
 /** Raison du blocage de rechargement tenu par un formulaire d'exo modifié et non enregistré. */
 const EXERCISE_DRAFT_BLOCK = 'brouillon-exercice';
@@ -56,6 +75,13 @@ export interface ExerciseFormProps {
   onCancel: () => void;
   /** Donne le focus au champ nom au montage (création surtout). Défaut true. */
   autoFocusName?: boolean;
+  /**
+   * Écran entier : titre, ligne sous le titre et libellé du retour (qui vaut
+   * « Annuler »). Absent : bloc dans le flux de l'écran hôte.
+   */
+  frame?: { title: string; meta?: ReactNode; backLabel: string };
+  /** Nom de départ d'une création (la recherche qui n'a rien trouvé). */
+  prefillName?: string;
 }
 
 export function ExerciseForm({
@@ -66,34 +92,42 @@ export function ExerciseForm({
   onSubmit,
   onCancel,
   autoFocusName = true,
+  frame,
+  prefillName,
 }: ExerciseFormProps) {
-  const [name, setName] = useState(initial?.name ?? '');
+  const startName = initial?.name ?? prefillName ?? '';
+  const [name, setName] = useState(startName);
   const [muscles, setMuscles] = useState<string[]>(initial?.primaryMuscles ?? []);
   const [unilateral, setUnilateral] = useState(initial?.unilateral ?? false);
   const [note, setNote] = useState(initialNote ?? '');
   const [busy, setBusy] = useState(false);
+  const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasNote = initialNote !== undefined;
 
   // Saisie en cours (création ou édition) : aucun rechargement automatique tant
   // qu'elle ne vit qu'en mémoire. Levé au démontage (le parent ferme le
   // formulaire) ; `releaseDraft` le lève tout de suite à l'enregistrement réussi
-  // et à l'annulation (cf. pwa/useReloadBlockWhile).
+  // et à l'annulation (cf. pwa/useReloadBlockWhile). Un nom pré-rempli par la
+  // recherche ne compte pas comme une saisie.
   const dirty =
-    name !== (initial?.name ?? '') ||
+    name !== startName ||
     muscles.join('\n') !== (initial?.primaryMuscles ?? []).join('\n') ||
     unilateral !== (initial?.unilateral ?? false) ||
     note !== (initialNote ?? '');
   const releaseDraft = useReloadBlockWhile(EXERCISE_DRAFT_BLOCK, dirty);
 
   const trimmed = name.trim();
-  // validatePersonalExercise renvoie null quand la saisie est valide.
-  const canSubmit =
-    !busy &&
-    validatePersonalExercise({ name: trimmed, primaryMuscles: muscles }) === null;
+  // Chaque message sous son champ, tirés de la même validation que la couche
+  // data : le nom seul (muscles supposés bons), puis les muscles seuls.
+  const nameError = tried ? validatePersonalExercise({ name: trimmed, primaryMuscles: [MUSCLE_GROUPS[0]] }) : null;
+  const muscleError = tried ? validatePersonalExercise({ name: 'x', primaryMuscles: muscles }) : null;
 
   async function submit() {
-    if (!canSubmit) return;
+    if (busy) return;
+    setTried(true);
+    // validatePersonalExercise renvoie null quand la saisie est valide.
+    if (validatePersonalExercise({ name: trimmed, primaryMuscles: muscles }) !== null) return;
     setBusy(true);
     setError(null);
     try {
@@ -109,75 +143,86 @@ export function ExerciseForm({
     }
   }
 
-  return (
-    <form
-      className="surface-card rounded-2xl p-3.5"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void submit();
-      }}
-    >
-      <input
-        type="text"
+  const cancel = () => {
+    releaseDraft();
+    onCancel();
+  };
+
+  const fields = (
+    <>
+      <TextField
+        label="Nom"
         value={name}
-        placeholder="Nom de l'exercice"
+        onChange={setName}
+        error={nameError}
         autoFocus={autoFocusName}
         enterKeyHint="done"
         maxLength={80}
-        onChange={(e) => setName(e.target.value)}
-        aria-label="Nom de l'exercice"
-        className="field h-11 w-full rounded-xl px-3 text-base text-ink"
+        className="px-5"
       />
 
-      <p className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">Type de mouvement</p>
       <div
-        className="inline-flex rounded-lg bg-bg/60 p-0.5"
-        role="group"
-        aria-label="Type de mouvement"
+        className="mt-2 flex min-h-14 flex-wrap items-center justify-between gap-x-3 border-b border-line py-1.5 pl-5 pr-2.5"
       >
-        <SegButton
-          label="Bilatéral"
-          active={!unilateral}
-          onClick={unilateral ? () => setUnilateral(false) : undefined}
-        />
-        <SegButton
-          label="Unilatéral"
-          active={unilateral}
-          onClick={unilateral ? undefined : () => setUnilateral(true)}
+        <span className="min-w-0">
+          <span className="block text-[15px] font-semibold text-ink">Mouvement</span>
+          <span className="block text-[14px] text-muted">
+            {unilateral ? 'un côté à la fois, gauche et droite saisis à part' : 'les deux côtés ensemble'}
+          </span>
+        </span>
+        <Choice
+          label="Mouvement"
+          value={unilateral ? 'uni' : 'bi'}
+          onChange={(v) => setUnilateral(v === 'uni')}
+          options={[
+            { value: 'bi', label: 'Bilatéral' },
+            { value: 'uni', label: 'Unilatéral' },
+          ]}
+          wrap={false}
+          className="-ml-2.5"
         />
       </div>
 
-      <p id="exercise-form-muscles" className="mt-3 mb-1.5 text-xs font-medium text-ink-muted">
-        Muscles principaux{' '}
-        <span className="readout tabular-nums">({muscles.length})</span>
-      </p>
-      <div
-        className="flex flex-wrap gap-1.5"
-        role="group"
-        aria-labelledby="exercise-form-muscles"
-      >
-        {MUSCLE_GROUPS.map((m) => {
-          const active = muscles.includes(m);
-          return (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
-              className={`min-h-[36px] rounded-lg border px-2.5 text-xs font-medium transition active:scale-[0.97] ${
-                active
-                  ? 'border-hair-strong bg-surface-2 text-ink'
-                  : 'border-hair bg-surface text-ink-muted active:text-ink'
-              }`}
-            >
-              {active ? `✓ ${m}` : m}
-            </button>
-          );
-        })}
+      <div>
+        <SectionTitle
+          id="exercise-form-muscles"
+          aside={muscles.length === 0 ? 'aucun' : `${muscles.length} choisi${muscles.length > 1 ? 's' : ''}`}
+        >
+          Muscles principaux
+        </SectionTitle>
+        <p className="px-5 text-[14px] leading-[1.45] text-muted">
+          Ceux que l’exo cible en priorité. Pas de muscle secondaire : il compte ou il ne compte pas.
+        </p>
+        {muscleError && (
+          <div className="px-5">
+            <FieldError>{muscleError}</FieldError>
+          </div>
+        )}
+        <div role="group" aria-labelledby="exercise-form-muscles" className="mt-2 grid grid-cols-2 border-t border-line">
+          {MUSCLE_GROUPS.map((m, i) => {
+            const on = muscles.includes(m);
+            return (
+              <button
+                key={m}
+                type="button"
+                role="checkbox"
+                aria-checked={on}
+                onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
+                className={`flex min-h-12 items-center gap-3 border-b border-line py-2 text-left active:bg-line ${
+                  i % 2 === 0 ? 'pl-5 pr-2' : 'pl-3 pr-5'
+                }`}
+              >
+                <CheckBox checked={on} />
+                <span className={`min-w-0 text-[16px] first-letter:uppercase ${on ? 'font-semibold text-ink' : 'text-muted'}`}>{m}</span>
+              </button>
+            );
+          })}
+          {MUSCLE_GROUPS.length % 2 === 1 && <span aria-hidden className="border-b border-line" />}
+        </div>
       </div>
 
       {hasNote && (
-        <div className="mt-3 border-t border-hair pt-3">
+        <div className="px-5 pt-5">
           <NoteField
             id="exercise-form-note"
             label="Note de l'exercice"
@@ -188,58 +233,54 @@ export function ExerciseForm({
           />
         </div>
       )}
-
-      <div className="mt-3 flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="btn btn-primary h-11 flex-1 rounded-xl px-4 text-sm"
-        >
-          {busy ? submitBusyLabel : submitLabel}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            releaseDraft();
-            onCancel();
-          }}
-          className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
-        >
-          Annuler
-        </button>
-      </div>
-      {error && (
-        <p className="readout mt-2 break-words text-xs text-warn" role="alert">
-          {error}
-        </p>
-      )}
-    </form>
+    </>
   );
-}
 
-/** Segment d'un groupe de bascule. Actif en accent ; tap-target >= 44px. */
-function SegButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick?: () => void;
-}) {
+  const errorLine = error && (
+    <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
+      {error}
+    </p>
+  );
+
+  const onFormSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    void submit();
+  };
+
+  if (frame) {
+    return (
+      <form className="flex flex-1 flex-col" noValidate onSubmit={onFormSubmit}>
+        <ImplicitSubmit />
+        <Screen
+          bottom={
+            <>
+              {errorLine}
+              <PrimaryButton onClick={() => void submit()} disabled={busy}>
+                {busy ? submitBusyLabel : submitLabel}
+              </PrimaryButton>
+            </>
+          }
+        >
+          <ScreenHeader title={frame.title} meta={frame.meta} back={{ label: frame.backLabel, onClick: cancel }} />
+          {fields}
+        </Screen>
+      </form>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
-        active
-          ? 'bg-surface-2 text-ink'
-          : 'text-ink-muted active:text-ink'
-      }`}
-    >
-      {label}
-    </button>
+    <form noValidate onSubmit={onFormSubmit}>
+      <ImplicitSubmit />
+      {fields}
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-5">
+        <SecondaryButton onClick={() => void submit()} disabled={busy}>
+          {busy ? submitBusyLabel : submitLabel}
+        </SecondaryButton>
+        <TextLink tone="muted" onClick={busy ? undefined : cancel}>
+          Annuler
+        </TextLink>
+      </div>
+      {error && <div className="mt-3 px-5">{errorLine}</div>}
+    </form>
   );
 }
