@@ -58,4 +58,5 @@ export { Ruler } from './ruler';
 export { Sheet } from './sheet';
 export { SheetSlotContext } from './sheet-slot';
 export { Sign, Status } from './status';
+export { SyncBanner } from './sync-banner';
 export { TONE, type Verdict } from './status-tone';

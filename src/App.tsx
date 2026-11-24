@@ -25,7 +25,9 @@ import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
 import { SurfaceNav } from './shell/SurfaceNav'
 import { SurfaceNavigationContext } from './shell/navigation'
-import { SheetSlotContext } from './ui'
+import { syncLine } from './shell/sync-line'
+import { useSyncState } from './shell/useSyncState'
+import { SheetSlotContext, SyncBanner } from './ui'
 import { errorMessage } from './lib/error-message'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
@@ -197,6 +199,8 @@ function AuthenticatedApp({
   // Emplacement des feuilles basses du kit (src/ui/sheet.tsx), dernier enfant
   // de la racine, collé au bas de la fenêtre.
   const [sheetSlot, setSheetSlot] = useState<HTMLElement | null>(null)
+  // État réel de la file d'écritures, pour la ligne de synchro sous la navigation.
+  const sync = useSyncState()
 
   useEffect(() => {
     let active = true
@@ -304,6 +308,11 @@ function AuthenticatedApp({
               navigation, l'utilisateur peut basculer pour s'en sortir. Le
               Suspense couvre le chargement paresseux de l'Analyse. */}
           <div className="flex min-h-surface flex-col">
+            {/* Ligne de synchro sous la navigation, sur toutes les surfaces sauf
+                la Salle, qui garde la sienne tant que l'écran de capture n'est
+                pas refait. Dans la colonne : sa hauteur compte dans celle de
+                l'écran, le document ne défile pas pour elle. */}
+            {surface !== 'capture' && <SyncBanner line={syncLine(sync)} />}
             <ErrorBoundary key={surface}>
               <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
                 {surface === 'capture' && <CaptureScreen />}
