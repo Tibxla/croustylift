@@ -8,8 +8,8 @@
 //
 // Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
 // arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
-// geste délibéré, visible dans le diff. Dernière révision : fin du lot 3 (taille
-// mesurée en commentaire de chaque ligne).
+// geste délibéré, visible dans le diff. Dernière révision : lot 1 de la refonte E
+// (taille mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -19,12 +19,12 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 73_500, // code de l'app (mesuré : 70 125, second tour du lot 3 : synchro, invitation, erreurs, reps effectives)
+  'index.js': 79_500, // code de l'app (mesuré : 75 495, refonte E lot 1 : kit src/ui, navigation, Réglages ; 70,7 ko avant)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
-  'index.css': 9_500, // (mesuré : 9 110, Inter et latin étendu retirés)
+  'index.css': 9_000, // (mesuré : 8 629, tokens de E, plus d'ombres ni de halos ; 9 110 avant)
   // À la demande.
-  'AnalysisScreen.js': 17_500, // code de l'Analyse (mesuré : 16 632, pente sur le bloc en cours, axe en temps réel, reps effectives)
+  'AnalysisScreen.js': 17_500, // code de l'Analyse (mesuré : 16 581, liserés spéculaires retirés)
   'recharts.js': 112_000, // recharts et ses dépendances, avec l'Analyse seulement (mesuré : 106 899)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
