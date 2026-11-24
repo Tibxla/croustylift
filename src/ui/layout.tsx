@@ -105,7 +105,8 @@ export function Row({
   lead?: ReactNode;
   onClick?: () => void;
   trailing?: ReactNode;
-  /** Ligne courante : trait blanc cassé à gauche. */
+  /** Ligne courante : titre en demi-gras et `aria-current` ; le mot qui le dit
+   *  (« courante », « actuelle ») revient à l'appelant, en méta ou en `valueMeta`. */
   current?: boolean;
   /** Ligne éteinte (passée, archivée) : titre en gris. */
   muted?: boolean;
@@ -136,7 +137,6 @@ export function Row({
   const cls = 'flex min-h-14 min-w-0 flex-1 items-start gap-3 py-3 text-left';
   return (
     <li className="relative flex items-center gap-3 border-b border-line px-5">
-      {current && <span aria-hidden className="absolute bottom-3 left-0 top-3 w-[3px] bg-ink" />}
       {onClick ? (
         <button
           type="button"

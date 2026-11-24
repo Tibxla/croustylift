@@ -16,8 +16,8 @@ export function Loading({ label }: { label: string }) {
 export function LoadError({ intro, message, onRetry }: { intro: string; message: string; onRetry?: () => void }) {
   return (
     <div className="px-5 pt-4">
-      <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-        {intro} {message}
+      <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+        <span className="font-semibold">Erreur : </span>{intro} {message}
       </p>
       {onRetry && (
         <div className="mt-4">
