@@ -170,3 +170,50 @@ describe('changer de séance quand un autre onglet a saisi dans la même exécut
     expect(base.sets.size).toBe(0);
   });
 });
+
+// Série loggée, annulée, acquittements reçus, puis la Salle est remontée hors
+// ligne : le cache rend l'id de l'exécution, zéro série, zéro note, file vide.
+// Plus rien ne dit à l'écran que l'exécution existe en base.
+describe('exécution vidée, restée ouverte en base, naissance oubliée au remontage', () => {
+  it('« changer » demande quand même sa suppression : elle est vide, elle part', async () => {
+    const base = fakeBase();
+    base.executions.set(EXEC, { closed: false });
+    const plan = leaveSession(fresh(), { executionStarted: false, pendingOps: readQueue() });
+    expect(plan.kind).toBe('change');
+    quit(plan);
+    await flush(base.fns);
+    expect(base.executions.size).toBe(0);
+  });
+
+  it('la même demande sur une exécution jamais née : sans effet', async () => {
+    const base = fakeBase();
+    quit(leaveSession(fresh(), { executionStarted: false }));
+    await flush(base.fns);
+    expect(base.executions.size).toBe(0);
+    expect(readQueue()).toEqual([]);
+  });
+
+  it('si une série y est arrivée d’ailleurs entre-temps, elle reste', async () => {
+    const base = fakeBase();
+    base.executions.set(EXEC, { closed: false });
+    base.sets.set('b1', EXEC);
+    quit(leaveSession(fresh(), { executionStarted: false }));
+    await flush(base.fns);
+    expect(base.executions.has(EXEC)).toBe(true);
+    expect([...base.sets.keys()]).toEqual(['b1']);
+  });
+
+  it('« annuler » (un exo ajouté, aucune série), confirmé : l’exécution vidée part aussi', async () => {
+    const base = fakeBase();
+    base.executions.set(EXEC, { closed: false });
+    const state = captureReducer(fresh(), {
+      type: 'edit-layout',
+      edit: { kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] },
+    });
+    const plan = leaveSession(state, { executionStarted: false });
+    expect(plan.kind).toBe('cancel');
+    quit(plan);
+    await flush(base.fns);
+    expect(base.executions.size).toBe(0);
+  });
+});

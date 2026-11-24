@@ -17,7 +17,12 @@
 // annulée, une note écrite puis vidée ont fait NAÎTRE l'exécution (en file, ou
 // déjà en base) : la quitter sans la supprimer laisserait une exécution vide,
 // ouverte, que la prochaine ouverture de cette séance adopterait. Le plan rendu
-// porte donc la suppression de l'exécution dès qu'elle a pu naître.
+// porte donc TOUJOURS la suppression de l'exécution. On ne cherche plus à
+// savoir si elle est née : après un remontage hors ligne (série loggée, annulée,
+// tout acquitté), le cache rend son id sans série, sans note et sans écriture
+// en file, et plus rien ne le dit. Les deux suppressions sont idempotentes :
+// sur une exécution jamais née, elles sont sans effet. Seul coût : hors ligne,
+// une écriture attend en file après un simple changement de séance.
 //
 // API pour l'écran : `leaveSession(état, { executionStarted, pendingOps })` rend
 //   - `kind` : 'change' ou 'cancel', pour le libellé du geste ;
@@ -29,9 +34,8 @@
 //   2. SI `plan.purge` : `purgeByExecution(executionId)` ;
 //   3. enfiler `ops` ;
 //   4. retour à l'écran de lancement.
-// `executionStarted` : ce que l'écran sait de la naissance de l'exécution (sa
-// ref `executionStartedRef`). L'état est relu en plus : s'il porte une série ou
-// une note, l'exécution est née quoi que dise le drapeau.
+// `executionStarted` : gardé pour la compatibilité de la signature, sans effet
+// depuis le constat 7 (la suppression est toujours demandée, cf. plus haut).
 // `pendingOps` (facultatif, recommandé) : la file commune, `readQueue()`.
 //
 // CHANGEMENT D'API (relecture du lot 3, constat 1), à suivre par l'écran :
@@ -40,7 +44,9 @@
 //     autre onglet venait d'enfiler dans la même exécution ;
 //   - les `ops` de « changer » portent une suppression CONDITIONNELLE
 //     (`deleteExecutionIfEmpty`, outbox.ts) au lieu de `deleteExecution` ;
-//   - `ctx.pendingOps` est nouveau et facultatif.
+//   - `ctx.pendingOps` est nouveau et facultatif ;
+//   - `ops` n'est plus jamais vide (constat 7) : la suppression est demandée
+//     même quand la naissance de l'exécution est inconnue.
 //
 // DEUX ONGLETS. Le tableau d'un onglet ne voit pas ce qu'un autre a saisi dans
 // la même exécution. Un geste SANS confirmation ne doit donc rien pouvoir
@@ -59,7 +65,7 @@
 
 import { isBlankNote } from '../../domain/notes';
 import type { OutboxOp } from './outbox';
-import { isExecutionStarted, totalLoggedSets, type CaptureState } from './state';
+import { totalLoggedSets, type CaptureState } from './state';
 
 /** Rien n'est saisi dans cette séance : la quitter ne fait rien perdre (cf. en-tête). */
 export function nothingEntered(state: CaptureState): boolean {
@@ -101,23 +107,22 @@ export interface LeaveSessionPlan {
   purge: boolean;
   /** L'exécution quittée. */
   executionId: string;
-  /** Les écritures à enfiler (la suppression de l'exécution, conditionnelle ou non, ou rien). */
+  /** Les écritures à enfiler : la suppression de l'exécution, conditionnelle pour « changer ». */
   ops: OutboxOp[];
 }
 
 export function leaveSession(
   state: CaptureState,
-  ctx: { executionStarted: boolean; pendingOps?: readonly OutboxOp[] },
+  ctx: { executionStarted?: boolean; pendingOps?: readonly OutboxOp[] } = {},
 ): LeaveSessionPlan {
   const kind =
     nothingEntered(state) && !enteredElsewhere(state, ctx.pendingOps ?? []) ? 'change' : 'cancel';
-  const born = ctx.executionStarted || isExecutionStarted(state, null, ctx.pendingOps ?? []);
   // Les exos déjà touchés : leurs copies locales seront relues à l'acquittement.
   const exerciseIds = [...new Set([...Object.keys(state.progress), ...Object.keys(state.datedNotes)])];
   const target = { id: state.executionId, exerciseIds };
-  const ops: OutboxOp[] = !born
-    ? []
-    : kind === 'cancel'
+  // Toujours demandée, même si rien ne dit que l'exécution est née (cf. en-tête).
+  const ops: OutboxOp[] =
+    kind === 'cancel'
       ? [{ type: 'deleteExecution', ...target }]
       : [{ type: 'deleteExecutionIfEmpty', ...target }];
   return {
