@@ -54,6 +54,7 @@ export { PrimaryButton, SecondaryButton, TextLink } from './buttons';
 export { Choice, Stepper, Switch } from './controls';
 export { Chevron, Icon, IconButton, StateIcon, StateMark, type ExoState, type IconName } from './icons';
 export { BottomBar, EmptyState, List, Row, Rule, Screen, ScreenHeader, SectionTitle } from './layout';
+export { NumberRow } from './number-row';
 export { Ruler } from './ruler';
 export { Sheet } from './sheet';
 export { SheetSlotContext } from './sheet-slot';
