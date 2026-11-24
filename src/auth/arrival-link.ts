@@ -122,25 +122,36 @@ export interface PasswordAuth {
 }
 
 /**
- * Définit le mot de passe du compte, puis ouvre une session AVEC lui : c'est
- * elle qui porte la preuve (`amr: password`) et lève l'obligation de l'invité.
+ * Enregistre le mot de passe du compte. Deux chemins, selon `invited` :
  *
- * Si l'ouverture échoue (réseau coupé entre les deux requêtes), le mot de passe
- * est déjà enregistré : l'écran reste, et la nouvelle tentative reçoit du
- * serveur « même mot de passe ». Ce refus-là est donc franchi, la connexion qui
- * suit prouvant que le mot de passe saisi est bien celui du compte.
+ * - RÉCUPÉRATION ordinaire (`invited` nul) : terminée dès que le serveur a
+ *   enregistré le mot de passe. Aucune connexion ensuite : un échec de celle-ci
+ *   ferait afficher un échec alors que le mot de passe a déjà changé, et
+ *   retiendrait l'écran de récupération. Tout refus du serveur remonte, « même
+ *   mot de passe » compris.
+ * - INVITÉ qui doit prouver son mot de passe (`invited` = son adresse) : une
+ *   session est ouverte AVEC lui, c'est elle qui porte la preuve (`amr:
+ *   password`) et lève l'obligation. Si cette ouverture échoue (réseau coupé
+ *   entre les deux requêtes), le mot de passe est déjà enregistré : l'écran
+ *   reste, et la nouvelle tentative reçoit du serveur « même mot de passe ». Ce
+ *   refus-là est franchi, la connexion qui suit prouvant que le mot de passe
+ *   saisi est bien celui du compte.
  */
 export async function definePassword(
   auth: PasswordAuth,
-  email: string | null | undefined,
   password: string,
+  invited: { email: string | null | undefined } | null,
 ): Promise<void> {
   const { error } = await auth.updateUser({ password });
+  if (invited === null) {
+    if (error) throw error;
+    return;
+  }
   if (error && (error as { code?: unknown }).code !== 'same_password') throw error;
-  if (!email) {
+  if (!invited.email) {
     throw new Error('Compte sans adresse e-mail : impossible de vérifier le mot de passe.');
   }
-  const signIn = await auth.signInWithPassword({ email, password });
+  const signIn = await auth.signInWithPassword({ email: invited.email, password });
   if (signIn.error) throw signIn.error;
 }
 
