@@ -335,7 +335,7 @@ export function ExerciseCapture({
           type="button"
           onClick={onBack}
           aria-label="Tous les exercices"
-          className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink"
+          className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 active:text-ink"
         >
           <svg
             viewBox="0 0 24 24"
@@ -492,7 +492,7 @@ export function ExerciseCapture({
         onKeyDownCapture={touchDraft}
         onFocusCapture={touchDraft}
         onInputCapture={touchDraft}
-        className="mt-3.5 rounded-[22px] border border-hair-strong bg-[linear-gradient(180deg,var(--color-surface),color-mix(in_oklab,var(--color-surface),#000_8%))] p-4 shadow-[inset_0_1px_0_var(--spec),0_14px_30px_-18px_rgba(0,0,0,0.7)]"
+        className="mt-3.5 rounded-[22px] border border-hair-strong bg-surface p-4"
       >
         <ClusterStepper
           label="Poids"
@@ -769,7 +769,7 @@ function ExerciseRecapSheet({
         type="button"
         aria-label="Continuer l’exercice"
         onClick={onClose}
-        className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/65"
       />
       <div className="relative mt-auto flex flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
         <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />
@@ -1172,7 +1172,7 @@ function DatedNoteSection({
 /** Pastille de repère (Objectif / Dernière fois), largeur fixe pour aligner les valeurs. */
 function RepereLabel({ children }: { children: string }) {
   return (
-    <span className="readout w-[94px] shrink-0 rounded-md border border-hair bg-surface px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-faint shadow-[inset_0_1px_0_var(--spec)]">
+    <span className="readout w-[94px] shrink-0 rounded-md border border-hair bg-surface px-2 py-1 text-center text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-faint">
       {children}
     </span>
   );

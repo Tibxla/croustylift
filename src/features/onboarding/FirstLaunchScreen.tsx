@@ -62,7 +62,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
       {/* Progression d'entrée : on amorce le parcours (routine → séance). Le 1ᵉʳ
           segment porte la « voix » accent (glow discret), le 2ᵉ reste en palier. */}
       <div className="mb-[30px] flex gap-1.5" aria-hidden="true">
-        <span className="h-1 flex-1 rounded-full bg-accent shadow-[0_0_10px_var(--color-accent-soft)]" />
+        <span className="h-1 flex-1 rounded-full bg-accent" />
         <span className="h-1 flex-1 rounded-full bg-surface-2" />
       </div>
 
@@ -222,7 +222,7 @@ function ChoiceCard({
       aria-pressed={selected}
       className={`panel flex items-center gap-3 rounded-2xl p-4 text-left transition active:scale-[0.99] ${
         selected
-          ? 'border-accent bg-[linear-gradient(160deg,var(--color-accent-soft),transparent)]'
+          ? 'border-accent bg-surface-2'
           : ''
       }`}
     >

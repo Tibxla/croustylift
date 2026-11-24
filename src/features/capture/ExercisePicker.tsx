@@ -464,7 +464,7 @@ function CatalogSheet({
         type="button"
         aria-label="Fermer"
         onClick={onClose}
-        className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/65"
       />
       <div className="relative mt-auto flex max-h-[85vh] flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
         <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />

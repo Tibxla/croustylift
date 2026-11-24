@@ -1042,7 +1042,7 @@ function RowCard({
     <div
       className={`rounded-2xl p-3.5 ${
         accent
-          ? 'panel border-accent bg-[linear-gradient(160deg,var(--color-accent-soft),transparent)]'
+          ? 'panel border-accent bg-surface-2'
           : 'surface-card'
       }`}
     >
@@ -1120,7 +1120,7 @@ function RowAction({
       title={label}
       onClick={onClick}
       disabled={busy}
-      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
+      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface transition active:scale-95 disabled:opacity-30 ${toneClass}`}
     >
       <svg
         viewBox="0 0 24 24"
@@ -1196,7 +1196,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink disabled:opacity-30"
+      className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 active:text-ink disabled:opacity-30"
     >
       <svg
         viewBox="0 0 24 24"

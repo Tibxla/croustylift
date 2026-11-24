@@ -1411,9 +1411,9 @@ export function SyncBanner({ status, pending }: { status: SyncStatus; pending: n
     unsaved,
   });
   const tones: Record<SyncTone, { dot: string; text: string }> = {
-    good: { dot: 'bg-good shadow-[0_0_8px_var(--color-good)]', text: 'text-ink-muted' },
-    info: { dot: 'bg-accent shadow-[0_0_8px_var(--color-accent)]', text: 'text-ink-muted' },
-    warn: { dot: 'bg-warn shadow-[0_0_8px_var(--color-warn)]', text: 'text-warn' },
+    good: { dot: 'bg-good', text: 'text-ink-muted' },
+    info: { dot: 'bg-accent', text: 'text-ink-muted' },
+    warn: { dot: 'bg-warn', text: 'text-warn' },
   };
   const v = { ...tones[tone], label };
 

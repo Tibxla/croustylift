@@ -128,13 +128,11 @@ export function Stepper({
   const btn = 'btn btn-secondary rounded-xl disabled:opacity-35';
 
   // Classe commune readout : tap-target ≥44px garanti par h-14 (56px). Afficheur
-  // ENCASTRÉ (inset) — il se lit comme un cadran d'instrument, pas comme un champ
-  // plat ; halo accent au focus quand on tape la valeur (cohérent avec `.field`).
+  // cerclé d'un filet ; au focus, le contour global (`:focus-visible`) est le seul
+  // indicateur.
   const readoutBase =
-    'readout flex flex-1 items-center justify-center rounded-xl bg-bg/55 ' +
-    'text-2xl font-medium tabular-nums shadow-[inset_0_1px_2px_0_rgb(0_0_0/0.45),inset_0_0_0_1px_var(--color-hairline)] ' +
-    'transition-shadow duration-200 focus:outline-none ' +
-    'focus:shadow-[inset_0_0_0_1px_var(--color-accent),0_0_0_3px_var(--accent-ring)]';
+    'readout flex flex-1 items-center justify-center rounded-xl border border-hair bg-bg/55 ' +
+    'text-2xl font-medium tabular-nums';
 
   return (
     <div className="flex flex-col gap-1.5">

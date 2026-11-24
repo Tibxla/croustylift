@@ -235,7 +235,7 @@ function SegButton({
       onClick={onClick}
       className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
         active
-          ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
+          ? 'bg-surface-2 text-ink'
           : 'text-ink-muted active:text-ink'
       }`}
     >

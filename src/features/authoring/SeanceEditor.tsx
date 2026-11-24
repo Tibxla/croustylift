@@ -992,7 +992,7 @@ function SegButton({
       onClick={onClick}
       className={`min-h-[44px] rounded-md px-3 text-xs font-semibold transition ${
         active
-          ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
+          ? 'bg-surface-2 text-ink'
           : 'text-ink-muted active:text-ink'
       }`}
     >
@@ -1211,7 +1211,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${toneClass}`}
+      className={`flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 disabled:opacity-30 ${toneClass}`}
     >
       <svg
         viewBox="0 0 24 24"

@@ -60,7 +60,7 @@ function RoundButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
-      className={`flex shrink-0 items-center justify-center rounded-full border shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-35 ${size} ${skin}`}
+      className={`flex shrink-0 items-center justify-center rounded-full border transition active:scale-95 disabled:opacity-35 ${size} ${skin}`}
     >
       <svg
         viewBox="0 0 24 24"

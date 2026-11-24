@@ -433,7 +433,7 @@ export function PastSessionEditor({
       {/* Barre d'action fixe : enregistrer les corrections. L'éditeur couvre la
           tab bar (modal z-30) donc on s'ancre tout en bas, pas sur --nav-offset,
           en réservant la safe-area iOS comme les barres de la capture. */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-bg/95 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-bg pb-[var(--safe-bottom)]">
         <div className="mx-auto w-full max-w-md px-4 py-3">
           {save.phase === 'error' && (
             <p className="readout mb-2 break-words text-xs text-warn">
@@ -505,7 +505,7 @@ function DeleteConfirmSheet({
   const busy = phase.phase === 'deleting';
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-bg/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/65"
       role="dialog"
       aria-modal="true"
       aria-labelledby="delete-exec-title"
@@ -571,7 +571,7 @@ function DiscardConfirmSheet({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-bg/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/65"
       role="dialog"
       aria-modal="true"
       aria-labelledby="discard-edits-title"
@@ -769,7 +769,7 @@ function LogicalSetEditor({
         <button
           type="button"
           onClick={() => onRemoveSet(ids)}
-          className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-warn disabled:opacity-30"
+          className="flex h-11 w-11 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 active:text-warn disabled:opacity-30"
           aria-label={`Supprimer la série ${index + 1}`}
         >
           <svg
@@ -889,7 +889,7 @@ function EditorShell({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 active:text-ink disabled:opacity-30"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 active:text-ink disabled:opacity-30"
             aria-label="Fermer sans enregistrer"
           >
             <svg

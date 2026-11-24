@@ -151,7 +151,7 @@ function AnalysisTabs({
             onClick={() => onChange(id)}
             className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
               selected
-                ? 'bg-surface-2 text-ink shadow-[inset_0_1px_0_var(--spec)]'
+                ? 'bg-surface-2 text-ink'
                 : 'text-ink-muted active:text-ink'
             }`}
           >

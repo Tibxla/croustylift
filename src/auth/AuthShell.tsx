@@ -73,25 +73,20 @@ export function AuthShell({
 }
 
 /**
- * Plaquette d'instrument du Login : squircle 62px (gradient surface-2→bg, bordure
- * hair-strong, liseré spéculaire + halo accent) contenant les 3 barres ascendantes
- * de la marque (faint / muted / accent avec glow). Reconstruite en div tokenisé
- * (pas une image bitmap) pour porter le halo accent que l'icône PWA ne rend pas. */
+ * Plaquette du Login : carré 62px (fond levé, bordure hair-strong) contenant les
+ * 3 barres ascendantes de la marque (faint / muted / blanc cassé). Plate, sans
+ * dégradé ni halo (refonte E) ; l'écran de connexion sera refait au lot dédié. */
 function PlaquetteMark() {
   return (
     <div
       aria-hidden="true"
-      className="mb-[30px] flex h-[62px] w-[62px] items-end justify-center gap-1 rounded-[18px] border border-hair-strong pb-[15px]"
-      style={{
-        background: 'linear-gradient(150deg, var(--color-surface-2), var(--color-bg))',
-        boxShadow: 'inset 0 1px 0 var(--spec), 0 16px 40px -16px var(--color-accent)',
-      }}
+      className="mb-[30px] flex h-[62px] w-[62px] items-end justify-center gap-1 rounded-[18px] border border-hair-strong bg-surface pb-[15px]"
     >
       <span className="w-1.5 rounded-[3px] bg-ink-faint" style={{ height: 11 }} />
       <span className="w-1.5 rounded-[3px] bg-ink-muted" style={{ height: 18 }} />
       <span
         className="w-1.5 rounded-[3px] bg-accent"
-        style={{ height: 26, boxShadow: '0 0 14px var(--color-accent)' }}
+        style={{ height: 26 }}
       />
     </div>
   )

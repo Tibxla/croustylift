@@ -727,7 +727,7 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted shadow-[inset_0_1px_0_var(--spec)] transition active:scale-95 disabled:opacity-30 ${
+      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-hair bg-surface text-ink-muted transition active:scale-95 disabled:opacity-30 ${
         tone === 'danger' ? 'active:text-warn' : 'active:text-ink'
       }`}
     >

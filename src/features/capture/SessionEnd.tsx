@@ -267,7 +267,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
   const muscles = orderMusclesCanonical(Object.keys(setsByMuscle));
   if (muscles.length === 0) return null;
 
-  // Barre proportionnelle au max (le muscle dominant fait 100 % + un léger glow).
+  // Barre proportionnelle au max (le muscle dominant fait 100 %).
   const max = Math.max(...muscles.map((m) => setsByMuscle[m] ?? 0), 1);
 
   return (
@@ -282,7 +282,6 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
         {muscles.map((muscle) => {
           const value = setsByMuscle[muscle] ?? 0;
           const pct = Math.round((value / max) * 100);
-          const dominant = value === max;
           return (
             <li key={muscle}>
               <div className="flex items-baseline justify-between gap-3">
@@ -293,9 +292,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2">
                 <div
-                  className={`h-full rounded-full bg-accent ${
-                    dominant ? 'shadow-[0_0_10px_var(--color-accent-soft)]' : ''
-                  }`}
+                  className="h-full rounded-full bg-accent"
                   style={{ width: `${pct}%` }}
                 />
               </div>
