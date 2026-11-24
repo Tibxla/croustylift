@@ -15,9 +15,13 @@ export interface ReorderLock {
   disabled: boolean;
   /** La phrase sous la liste, `null` quand l'ordre est revalidé. */
   note: string | null;
+  /** « Réessayer » à côté de la phrase. */
+  retry: boolean;
 }
 
-export function reorderLock({ moving, verified, online }: { moving: boolean; verified: boolean; online: boolean }): ReorderLock {
-  if (verified) return { disabled: moving, note: null };
-  return { disabled: true, note: online ? 'Ordre en cours de vérification.' : 'Ordre à vérifier avec le réseau.' };
+export function reorderLock({ moving, verified, online, late }: { moving: boolean; verified: boolean; online: boolean; late: boolean }): ReorderLock {
+  if (verified) return { disabled: moving, note: null, retry: false };
+  // En ligne, sans revalidation arrivée dans le délai (`late`, relecture en
+  // échec ou trop lente) : « Réessayer » relance la vérification sur place.
+  return { disabled: true, note: online ? 'Ordre en cours de vérification.' : 'Ordre à vérifier avec le réseau.', retry: online && late };
 }

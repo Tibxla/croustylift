@@ -585,6 +585,8 @@ function RoutineContainer({
       copyAt={showDate ? state.at : null}
       online={online}
       orderVerified={!state.copy}
+      orderLate={showDate}
+      onRetryOrder={reload}
       flash={flash}
       onBack={() => onBack()}
       onEdit={(seance) => onEdit(seance, ctxOf(seance))}
@@ -642,6 +644,8 @@ export function RoutineView({
   copyAt = null,
   online = true,
   orderVerified = true,
+  orderLate = false,
+  onRetryOrder,
   flash,
   onBack,
   onEdit,
@@ -673,6 +677,10 @@ export function RoutineView({
   online?: boolean;
   /** L'ordre affiché vient d'une lecture réseau, pas d'une copie encore à revalider (reorder-lock). */
   orderVerified?: boolean;
+  /** Copie montrée sans revalidation arrivée dans le délai (useDatedLoad `showDate`). */
+  orderLate?: boolean;
+  /** Relance la vérification de l'ordre, sans quitter la page. */
+  onRetryOrder?: () => void;
   flash: PlanFlash | null;
   onBack: () => void;
   onEdit: (seance: SeanceRow) => void;
@@ -715,7 +723,7 @@ export function RoutineView({
   const seanceItems = (s: SeanceRow) =>
     seanceMenu({ executed: executedSeanceIds.has(s.id), inCurrentRoutine: isCurrent, hasExercises: (exerciseCountOf(s.id) ?? 0) > 0 });
   const status = archivedRoutine ? 'archivée' : isCurrent ? 'routine courante' : null;
-  const lock = reorderLock({ moving, verified: orderVerified, online });
+  const lock = reorderLock({ moving, verified: orderVerified, online, late: orderLate });
   const undo = flash?.unarchive;
 
   async function run(action: () => Promise<void>) {
@@ -876,8 +884,9 @@ export function RoutineView({
             )}
           </List>
           {reorder && lock.note && (
-            <p role="status" className="px-5 pt-3 text-[14px] leading-[1.45] text-muted">
+            <p role="status" className="flex flex-wrap items-center gap-x-3 px-5 pt-3 text-[14px] leading-[1.45] text-muted">
               {lock.note}
+              {lock.retry && onRetryOrder && <TextLink onClick={onRetryOrder}>Réessayer</TextLink>}
             </p>
           )}
           {reorder && error && <FieldError className="mx-5">{error}</FieldError>}

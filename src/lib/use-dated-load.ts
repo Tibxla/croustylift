@@ -63,11 +63,13 @@ export function useDatedLoad<T>(key: string | null, fetcher: () => Promise<T>) {
   useEffect(() => (key === null ? undefined : mountView(key, () => setTick((k) => k + 1))), [key]);
 
   const copyAt = state.phase === 'ready' && state.copy ? state.at : null;
+  // Relancé à chaque relecture (`tick`) : « Réessayer » sur la même copie
+  // redonne son délai à la revalidation.
   useEffect(() => {
     if (copyAt === null) return;
     const timer = window.setTimeout(() => setLateAt(copyAt), COPY_LATE_MS);
     return () => window.clearTimeout(timer);
-  }, [copyAt]);
+  }, [copyAt, tick]);
 
   const reload = useCallback(() => {
     setState({ phase: 'loading' });
@@ -75,7 +77,10 @@ export function useDatedLoad<T>(key: string | null, fetcher: () => Promise<T>) {
     setLateAt(null);
     setTick((k) => k + 1);
   }, []);
-  const refresh = useCallback(() => setTick((k) => k + 1), []);
+  const refresh = useCallback(() => {
+    setLateAt(null);
+    setTick((k) => k + 1);
+  }, []);
   const showDate = copyAt !== null && (!online || lateAt === copyAt);
   return { state, reload, refresh, online, showDate };
 }
