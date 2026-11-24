@@ -361,10 +361,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       updatePassword: async (password) => {
-        // Enregistré, puis prouvé par une session ouverte AVEC lui : c'est elle
-        // (SIGNED_IN, `amr: password`) qui lève l'obligation de l'invité et sa
-        // copie sur l'appareil (cf. arrival-link, `definePassword`).
-        await definePassword(supabase.auth, session?.user.email, password)
+        // Invité qui doit son mot de passe : enregistré, puis prouvé par une
+        // session ouverte AVEC lui (SIGNED_IN, `amr: password`), qui lève
+        // l'obligation et sa copie sur l'appareil. Récupération ordinaire :
+        // terminée dès l'enregistrement (cf. arrival-link, `definePassword`).
+        await definePassword(
+          supabase.auth,
+          password,
+          passwordSetupOwed ? { email: session?.user.email ?? localAccount?.email } : null,
+        )
       },
       clearPasswordRecovery: () => {
         setIsPasswordRecovery(false)

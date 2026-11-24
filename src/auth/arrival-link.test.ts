@@ -244,32 +244,58 @@ describe('definePassword : enregistrer, puis prouver par une connexion', () => {
     };
   }
 
-  it('enregistre le mot de passe seul, puis ouvre une session avec lui', async () => {
+  const INVITE = { email: 'invite@example.com' };
+
+  it('invité : enregistre le mot de passe seul, puis ouvre une session avec lui', async () => {
     const a = auth();
-    await definePassword(a, 'invite@example.com', 'un-mot-de-passe');
+    await definePassword(a, 'un-mot-de-passe', INVITE);
     expect(a.calls).toEqual(['update:password', 'signIn:invite@example.com:un-mot-de-passe']);
   });
 
-  it('enregistrement refusé : pas de connexion, l’erreur remonte', async () => {
+  it('invité : enregistrement refusé, pas de connexion, l’erreur remonte', async () => {
     const refus = { code: 'weak_password', message: 'Password should be at least 10 characters.' };
     const a = auth({ update: refus });
-    await expect(definePassword(a, 'invite@example.com', 'court')).rejects.toBe(refus);
+    await expect(definePassword(a, 'court', INVITE)).rejects.toBe(refus);
     expect(a.calls).toEqual(['update:password']);
   });
 
-  it('connexion en échec après l’enregistrement : l’erreur remonte, l’obligation reste', async () => {
+  it('invité : coupure entre les deux étapes, l’erreur remonte et l’obligation reste', async () => {
     const coupure = new TypeError('Failed to fetch');
     const a = auth({ signIn: coupure });
-    await expect(definePassword(a, 'invite@example.com', 'un-mot-de-passe')).rejects.toBe(coupure);
-  });
-
-  it('nouvelle tentative après cette coupure : « même mot de passe » est franchi', async () => {
-    const a = auth({ update: MEME });
-    await definePassword(a, 'invite@example.com', 'un-mot-de-passe');
+    await expect(definePassword(a, 'un-mot-de-passe', INVITE)).rejects.toBe(coupure);
     expect(a.calls).toEqual(['update:password', 'signIn:invite@example.com:un-mot-de-passe']);
   });
 
-  it('sans adresse, rien ne peut être prouvé : erreur', async () => {
-    await expect(definePassword(auth(), null, 'un-mot-de-passe')).rejects.toThrow(/adresse/);
+  it('invité : nouvelle tentative après cette coupure, « même mot de passe » est franchi', async () => {
+    const a = auth({ update: MEME });
+    await definePassword(a, 'un-mot-de-passe', INVITE);
+    expect(a.calls).toEqual(['update:password', 'signIn:invite@example.com:un-mot-de-passe']);
+  });
+
+  it('invité sans adresse : rien ne peut être prouvé, erreur', async () => {
+    await expect(definePassword(auth(), 'un-mot-de-passe', { email: null })).rejects.toThrow(
+      /adresse/,
+    );
+  });
+
+  // Relecture du second tour : la récupération ordinaire dépendait d'une seconde
+  // connexion. Mot de passe changé, connexion en échec : l'écran affichait un
+  // échec et restait en récupération.
+  it('récupération : terminée dès l’enregistrement, aucune connexion n’est tentée', async () => {
+    // Une connexion qui échouerait : elle n'a pas lieu, l'écran sort quand même.
+    const a = auth({ signIn: new TypeError('Failed to fetch') });
+    await expect(definePassword(a, 'un-mot-de-passe', null)).resolves.toBeUndefined();
+    expect(a.calls).toEqual(['update:password']);
+  });
+
+  it('récupération : « même mot de passe » reste un refus', async () => {
+    const a = auth({ update: MEME });
+    await expect(definePassword(a, 'un-mot-de-passe', null)).rejects.toBe(MEME);
+    expect(a.calls).toEqual(['update:password']);
+  });
+
+  it('récupération : tout autre refus du serveur remonte', async () => {
+    const coupure = new TypeError('Failed to fetch');
+    await expect(definePassword(auth({ update: coupure }), 'x', null)).rejects.toBe(coupure);
   });
 });
