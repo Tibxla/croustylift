@@ -45,7 +45,7 @@ export interface UpsertExecutionOp {
   startedAt?: string;
 }
 
-/** Insère une série loggée. Idempotent via upsert par id (rejouer = no-op). */
+/** Écrit une série : upsert complet par id, ou écriture partielle (cf. `only`). Idempotent. */
 export interface InsertSetOp {
   type: 'insertSet';
   id: string;
@@ -61,6 +61,24 @@ export interface InsertSetOp {
    * Absent (`undefined`) pour un exo bilatéral -> écrit `side` null en base.
    */
   side?: Side;
+  /**
+   * Écriture PARTIELLE d'une série qui existe déjà, au lieu de l'upsert complet :
+   *   - 'values' : seuls poids, reps et RIR sont écrits (correction d'une série) ;
+   *     son rang en base n'est pas touché ;
+   *   - 'rank' : seul le rang est écrit (remontée après une suppression) ; ses
+   *     valeurs en base ne sont pas touchées.
+   * Sans cela, deux gestes faits depuis deux onglets s'écrasaient : une remontée
+   * de rang réécrivait les valeurs d'avant une correction encore en file, une
+   * correction réécrivait le rang d'avant une remontée. Une écriture partielle
+   * ne crée jamais la ligne : si la série a été supprimée entre-temps, elle est
+   * sans effet (corriger ou renuméroter une série supprimée ne la ressuscite
+   * pas). L'op porte quand même la ligne ENTIÈRE, telle que l'émetteur la
+   * voyait : un onglet resté sur un bundle antérieur l'envoie en upsert complet
+   * (l'ancien comportement), et elle sert à reconstituer la série si son
+   * insertion d'origine a été refusée (cf. `flush`, quarantaine). Absent :
+   * upsert complet (log d'une série, éditeur de séance passée).
+   */
+  only?: 'values' | 'rank';
 }
 
 /** Supprime une série par son id (« annuler »). Idempotent (delete par id). */
@@ -182,6 +200,28 @@ export interface DeleteExecutionOp {
   exerciseIds?: string[];
 }
 
+/**
+ * Supprime une exécution SEULEMENT SI elle est encore ouverte et vide (ni
+ * série, ni note datée) : le ménage de « Changer de séance », qui part sans
+ * confirmation et ne doit donc rien pouvoir effacer (cf. session-gestures.ts).
+ * La base tranche au moment de l'écriture, d'un seul tenant (RPC
+ * `delete_execution_if_empty`, migration 0025) : une série arrivée d'un autre
+ * onglet ou d'un autre appareil garde l'exécution en vie. Idempotent : sans
+ * effet sur une exécution absente, close ou non vide.
+ *
+ * Un type à part, et non un drapeau sur `deleteExecution` : rien de ce qui lit
+ * `deleteExecution` comme une suppression certaine (rejeu sur les lectures
+ * locales, exécution « retirée » par la file) ne doit s'y tromper, et un onglet
+ * resté sur un ancien bundle refuse le type inconnu au lieu de supprimer sans
+ * condition.
+ */
+export interface DeleteExecutionIfEmptyOp {
+  type: 'deleteExecutionIfEmpty';
+  id: string;
+  /** Comme `DeleteExecutionOp.exerciseIds` : copies locales à relire SI la base a supprimé. */
+  exerciseIds?: string[];
+}
+
 // `_uid` : identité interne UNIQUE d'une op en file, un UUID posé par `enqueue`.
 // Sert à retirer SANS ambiguïté l'op traitée après l'await du flush, et à
 // retrouver ses propres ops après une passe (`flushOps`) : la paire (type,id)
@@ -217,6 +257,7 @@ export type OutboxOp = (
   | UpsertExerciseNoteOp
   | DeleteExerciseNoteOp
   | DeleteExecutionOp
+  | DeleteExecutionIfEmptyOp
 ) &
   Sequenced;
 
@@ -235,6 +276,7 @@ export interface SyncFns {
   upsertExerciseNote: (op: UpsertExerciseNoteOp) => Promise<void>;
   deleteExerciseNote: (op: DeleteExerciseNoteOp) => Promise<void>;
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
+  deleteExecutionIfEmpty: (op: DeleteExecutionIfEmptyOp) => Promise<void>;
 }
 
 /**
@@ -301,6 +343,11 @@ let volatile: ({ storage: Storage } & VolatileGap) | null = null;
 /** Identité d'une op en file : son UUID d'enfilement, à défaut son contenu. */
 function opKey(op: OutboxOp): string {
   return op._uid ?? JSON.stringify(op);
+}
+
+/** L'op INSÈRE-t-elle une série (upsert complet), par opposition à une écriture partielle ? */
+export function isSetInsertion(op: OutboxOp): op is InsertSetOp & Sequenced {
+  return op.type === 'insertSet' && op.only === undefined;
 }
 
 /**
@@ -810,19 +857,105 @@ function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
  * reste en file et l'appelant arrête la passe (conserver plutôt que perdre).
  * Rend faux dans ce cas.
  */
-function moveToQuarantine(op: OutboxOp, reason: string): boolean {
+function moveToQuarantine(op: OutboxOp, reason: string, stored: OutboxOp = op): boolean {
   if (typeof localStorage === 'undefined') return false;
   // L'op a pu être retirée de la file pendant sa requête (« Annuler la séance »,
   // `purgeByExecution`) : l'utilisateur l'a abandonnée, la réponse tardive de la
   // base ne la remet pas en quarantaine. Rien à déplacer, la passe continue.
   if (!isQueued(op)) return true;
   try {
-    const entry: QuarantinedOp = { op, reason, at: new Date().toISOString() };
-    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...readQuarantine(), entry]));
+    // `stored` : ce qui a réellement été envoyé (la série entière reconstituée,
+    // cf. `effectiveOp`). Il REMPLACE alors l'ancien refus de la même série :
+    // une seule saisie reste renvoyable, la plus récente.
+    const entry: QuarantinedOp = { op: stored, reason, at: new Date().toISOString() };
+    const others =
+      stored === op
+        ? readQuarantine()
+        : readQuarantine().filter(
+            (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+          );
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...others, entry]));
   } catch {
     return false;
   }
   return removeFromQueue(op) !== 'unwritable';
+}
+
+// --- Séries refusées, puis reprises par un geste -------------------------------
+//
+// Une série dont l'INSERTION a été refusée par la base attend en quarantaine.
+// L'utilisateur peut la corriger ou la supprimer depuis la Salle : le refus
+// n'a alors plus d'objet. Trois règles, toutes appliquées DANS le flush (donc
+// sous son verrou : un autre onglet qui déplace une op en quarantaine au même
+// moment ne peut pas voir son entrée écrasée par une liste lue avant) :
+//   1. une écriture PARTIELLE (correction, remontée de rang) d'une série dont
+//      l'insertion est en quarantaine est envoyée comme la série ENTIÈRE,
+//      reconstituée du refus et de l'écriture : la ligne n'existe pas en base,
+//      un `update` ne toucherait rien ;
+//   2. le refus n'est levé qu'une fois son remplaçant ACQUITTÉ par la base
+//      (jamais à l'enfilement : stockage plein, le remplaçant ne tient qu'en
+//      mémoire, et fermer la page perdrait les deux versions) ;
+//   3. une écriture refusée que la file a DÉJÀ dépassée (une réécriture
+//      complète ou une suppression de la même série attend derrière elle)
+//      n'entre pas en quarantaine : « renvoyer » la saisie écraserait la
+//      correction, ou recréerait la série supprimée.
+
+/** L'insertion refusée (complète) de la série `setId` pour le compte de `op`, s'il y en a une. */
+function refusedInsertOf(op: OutboxOp): QuarantinedOp | null {
+  return (
+    readQuarantine().find(
+      (q) => isSetInsertion(q.op) && q.op.id === op.id && q.op._owner === op._owner,
+    ) ?? null
+  );
+}
+
+/**
+ * Ce qu'il faut réellement envoyer pour `op`. Une écriture partielle dont
+ * l'insertion d'origine est en quarantaine devient la série entière (règle 1) :
+ * les champs du refus, les valeurs ou le rang de l'écriture partielle par-dessus.
+ */
+function effectiveOp(op: OutboxOp, refused: QuarantinedOp | null): OutboxOp {
+  if (op.type !== 'insertSet' || op.only === undefined || refused === null) return op;
+  if (refused.op.type !== 'insertSet') return op;
+  const { only: _only, ...patch } = op;
+  const base = refused.op;
+  return op.only === 'values'
+    ? { ...patch, setOrder: base.setOrder, side: base.side }
+    : { ...patch, weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
+}
+
+/**
+ * La file porte-t-elle, APRÈS `op`, une écriture de la même série et du même
+ * compte qui la rend caduque : une réécriture complète, ou une suppression ?
+ * (Règle 3.) Une écriture partielle derrière ne compte pas : elle a besoin du
+ * refus pour reconstituer la série (règle 1).
+ */
+function supersededInQueue(op: OutboxOp): boolean {
+  if (op.type !== 'insertSet') return false;
+  const queue = readQueue();
+  const at = indexInQueue(queue, op);
+  return queue.slice(at + 1).some(
+    (later) =>
+      later.id === op.id &&
+      later._owner === op._owner &&
+      (later.type === 'deleteSet' || isSetInsertion(later)),
+  );
+}
+
+/** La file porte-t-elle une écriture de la série `setId` pour ce compte ? */
+function setWriteQueued(setId: string, owner: string | undefined): boolean {
+  return readQueue().some(
+    (op) => (op.type === 'insertSet' || op.type === 'deleteSet') && op.id === setId && op._owner === owner,
+  );
+}
+
+/** Lève les insertions refusées de la série `op.id` (même compte) : elle vient d'être réécrite ou supprimée en base. */
+function liftRefusedSetWrites(op: OutboxOp): void {
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter(
+    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+  );
+  if (kept.length !== quarantine.length) writeQuarantine(kept);
 }
 
 /**
@@ -888,6 +1021,11 @@ export function retryRefused(refusalId: string): boolean {
   const quarantine = readQuarantine();
   const target = quarantine.find((q) => isOwnEntry(q) && refusalIdOf(q) === refusalId);
   if (!target) return false;
+  // Une écriture de la même série attend déjà en file (une correction, qui
+  // reconstituera la série à partir de ce refus) : renvoyer l'ancienne saisie
+  // la ferait repartir APRÈS elle, et la dernière écriture gagne. La file s'en
+  // charge ; rien à renvoyer.
+  if (target.op.type === 'insertSet' && setWriteQueued(target.op.id, target.op._owner)) return false;
   const leaves = (q: QuarantinedOp): boolean =>
     q === target ||
     (target.op.type === 'upsertExecution' &&
@@ -1036,43 +1174,48 @@ function newUid(): string {
  * l'appelant peut la retrouver après une passe (cf. `isPending`, `isRefused`).
  */
 export function enqueueTracked(op: OutboxOp): string {
+  // Toujours une identité : `enqueueAll` en rend une par op.
+  return enqueueAll([op])[0]!;
+}
+
+/**
+ * Enfile PLUSIEURS écritures comme une seule unité : une lecture de la file, un
+ * ajout, UNE écriture sur l'appareil. C'est la forme d'enfilement d'un geste
+ * (`{ action, ops }`, cf. set-gestures.ts) : ses écritures sont toutes écrites
+ * sur l'appareil, ou toutes tenues en mémoire (repli sous stockage plein),
+ * jamais coupées en deux. Enfilées une à une, un stockage presque plein écrivait
+ * la suppression d'une série sans les remontées de rang qui la suivent ; page
+ * fermée hors ligne, la suppression partait seule au redémarrage et les séries
+ * restantes gardaient leur ancien rang en base.
+ *
+ * L'ordre de `ops` est celui de l'envoi. Rend l'identité d'enfilement (`_uid`)
+ * de chaque op, dans le même ordre ; `[]` pour une liste vide (rien n'est écrit).
+ */
+export function enqueueAll(ops: readonly OutboxOp[]): string[] {
+  if (ops.length === 0) return [];
   const queue = readQueue();
   // Compteur d'ordre, ré-amorcé sur le max déjà persisté. Il n'identifie plus
   // l'op (deux onglets peuvent donner le même numéro) : c'est le rôle de `_uid`.
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
-  seqCounter = Math.max(seqCounter, maxSeq) + 1;
+  seqCounter = Math.max(seqCounter, maxSeq);
   // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
   const owner = loadLocalAccount()?.userId;
-  const uid = newUid();
-  queue.push({
-    ...op,
-    _seq: seqCounter,
-    _uid: uid,
-    _at: Date.now(),
-    ...(owner ? { _owner: owner } : {}),
-  });
+  const at = Date.now();
+  const uids: string[] = [];
+  for (const op of ops) {
+    seqCounter += 1;
+    const uid = newUid();
+    uids.push(uid);
+    queue.push({
+      ...op,
+      _seq: seqCounter,
+      _uid: uid,
+      _at: at,
+      ...(owner ? { _owner: owner } : {}),
+    });
+  }
   writeQueue(queue);
-  supersedeRefusedSetWrites(op);
-  return uid;
-}
-
-/**
- * Une écriture de série refusée par la base (en quarantaine) n'a plus d'objet
- * dès qu'une nouvelle écriture de la MÊME série est enfilée : une correction la
- * remplace, une suppression la rend sans cible. On la retire donc de la
- * quarantaine. Sans cela, « renvoyer » la saisie refusée réécrirait l'ancienne
- * valeur par-dessus la correction, et la Déconnexion resterait retenue par une
- * saisie que l'utilisateur vient de reprendre. Seulement les entrées du compte
- * reconnu ; les autres écritures refusées (exécution, notes) ne sont pas
- * concernées.
- */
-function supersedeRefusedSetWrites(op: OutboxOp): void {
-  if (op.type !== 'insertSet' && op.type !== 'deleteSet') return;
-  const quarantine = readQuarantine();
-  const kept = quarantine.filter(
-    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && isOwnEntry(q)),
-  );
-  if (kept.length !== quarantine.length) writeQuarantine(kept);
+  return uids;
 }
 
 /** Enfile une op (cf. `enqueueTracked`) et renvoie la nouvelle longueur de file. */
@@ -1124,6 +1267,8 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.deleteExerciseNote(stripSeq(op));
     case 'deleteExecution':
       return fns.deleteExecution(stripSeq(op));
+    case 'deleteExecutionIfEmpty':
+      return fns.deleteExecutionIfEmpty(stripSeq(op));
     default:
       // Type inconnu (op d'une version future écrite par un autre onglet/appareil,
       // ou blob trafiqué) : aucune SyncFn ne sait la jouer. On JETTE plutôt que de
@@ -1338,8 +1483,11 @@ async function runFlushOnce(
       queue = readQueue();
       continue;
     }
+    // Écriture partielle d'une série dont l'insertion a été refusée : c'est la
+    // série entière qui part (cf. « Séries refusées, puis reprises »).
+    const sent = effectiveOp(op, op.type === 'insertSet' && op.only ? refusedInsertOf(op) : null);
     try {
-      await runOp(op, fns);
+      await runOp(sent, fns);
     } catch (err) {
       // REJET DÉFINITIF de la base (cf. `isPermanentRejection`) : rejouer l'op
       // échouerait à l'identique et bloquerait tout ce qui suit. Elle part en
@@ -1349,7 +1497,15 @@ async function runFlushOnce(
       if (isPermanentRejection(err) && (!who || (await who()) === user)) {
         const code = (err as { code: string }).code;
         const message = (err as { message?: unknown }).message;
-        if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`)) {
+        // Écriture déjà dépassée par la file (règle 3) : elle n'entre pas en
+        // quarantaine, où « renvoyer » l'aurait fait repasser par-dessus la
+        // correction ou recréer la série supprimée. Elle sort, simplement.
+        if (supersededInQueue(op)) {
+          if (removeFromQueue(op) === 'unwritable') return { flushed, drained: false };
+          queue = readQueue();
+          continue;
+        }
+        if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`, sent)) {
           console.error(
             `[outbox] « ${op.type} » (id ${op.id}) rejetée par la base, mise en quarantaine :`,
             err,
@@ -1391,6 +1547,11 @@ async function runFlushOnce(
     // encore dans la file. On arrête la passe (elle sera rejouée sans effet au
     // prochain flush) plutôt que de la relire et de la renvoyer sans fin.
     if (removal === 'unwritable') return { flushed, drained: false };
+    // La série vient d'être écrite entière, ou supprimée, en base : un ancien
+    // refus de son insertion n'a plus d'objet. Levé ICI, à l'acquittement.
+    if ((sent.type === 'insertSet' && sent.only === undefined) || sent.type === 'deleteSet') {
+      liftRefusedSetWrites(op);
+    }
     if (removal === 'removed') flushed += 1;
     queue = readQueue();
   }

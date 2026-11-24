@@ -62,7 +62,7 @@ export interface LayoutEdit {
    * Pour un remplacement : l'exo remplacé AVAIT DÉJÀ des séries au moment du
    * geste (machine prise en cours d'exo). Il reste alors dans la séance, à sa
    * place, avec ses séries, et le remplaçant s'insère juste après lui. Inscrit
-   * au moment du geste et jamais redérivé au rejeu : supprimer ensuite la série
+   * au moment du geste ou à la réception de ses séries : supprimer ensuite la série
    * de l'exo remplacé ne doit pas faire bouger la liste. Absent : le remplaçant
    * prend la place de l'exo (geste d'avant ce champ, ou exo pas commencé).
    */
@@ -134,6 +134,26 @@ export interface CaptureState {
    * (non clôturée) reste, elle, indispensable à l'offline.
    */
   closedAt: number | null;
+  /**
+   * Les séries que l'utilisateur a touchées sur CE tableau depuis son
+   * chargement : supprimées (`removed`), ou corrigées et renumérotées
+   * (`edited`), par id. Sert au rapprochement d'une réponse tardive de la base
+   * (`reconcile-progress`) : elle a pu partir avant ces gestes et arriver après
+   * leur acquittement, quand plus aucun relevé de la file ne les montre, et
+   * l'état du départ de la lecture ne connaît pas une série née entre-temps.
+   * Une série supprimée ici n'est jamais réadoptée ; une série corrigée ici
+   * garde sa valeur locale.
+   *
+   * Chaque mutation porte un numéro d'ordre (`seq`, croissant). Une lecture
+   * relève ce compteur à son départ (`mutationMark`) et le rend avec sa réponse
+   * (`departureMark`) : seules les mutations faites APRÈS son départ priment sur
+   * elle. Une correction plus ancienne, déjà en base quand la lecture est
+   * partie, laisse la base faire foi (elle a pu être recorrigée ailleurs).
+   *
+   * TRANSITOIRE : écrit avec l'état mais jamais relu (`loadPersisted` ne le
+   * restaure pas). Après un rechargement, la base relue fait de nouveau foi.
+   */
+  sinceLoad?: { seq: number; removed: Record<string, number>; edited: Record<string, number> };
 }
 
 export type CaptureAction =
@@ -179,6 +199,13 @@ export type CaptureAction =
        * acquittée et ne figure plus dans aucun relevé de la file.
        */
       departure?: Record<string, ExerciseProgress>;
+      /**
+       * Le compteur de mutations du tableau au DÉPART de la lecture
+       * (`mutationMark(état)`, relevé là où `departure` est pris). Seules les
+       * séries supprimées ou corrigées après ce relevé priment sur la réponse.
+       * Absent : la lecture est partie au chargement, tout le suivi compte.
+       */
+      departureMark?: number;
       /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
       datedNotes?: Record<string, DatedNoteDraft>;
       /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
@@ -672,14 +699,22 @@ export function applyQueuedSets(
   for (const op of ops) {
     if (op.type === 'insertSet') {
       if (op.executionId !== executionId) continue;
-      const set: PerformedSet = {
-        weightKg: op.weightKg,
-        reps: op.reps,
-        rir: op.rir,
-        order: op.setOrder,
-        ...(op.side ? { side: op.side } : {}),
-      };
       const known = rows.get(op.id);
+      // Écriture partielle (correction, remontée de rang) : seulement sur une
+      // série déjà au tableau, et seulement ses colonnes. Elle n'en crée pas.
+      if (op.only !== undefined && !known) continue;
+      const set: PerformedSet =
+        op.only === 'values' && known
+          ? { ...known.set, weightKg: op.weightKg, reps: op.reps, rir: op.rir }
+          : op.only === 'rank' && known
+            ? { ...known.set, order: op.setOrder }
+            : {
+                weightKg: op.weightKg,
+                reps: op.reps,
+                rir: op.rir,
+                order: op.setOrder,
+                ...(op.side ? { side: op.side } : {}),
+              };
       if (known && known.exerciseId === op.exerciseId && sameSet(known.set, set)) continue;
       if (known) touched.add(known.exerciseId);
       rows.set(op.id, { exerciseId: op.exerciseId, set, id: op.id });
@@ -832,6 +867,14 @@ export function reconcileProgress(
      * ailleurs.
      */
     departure?: Record<string, ExerciseProgress> | null;
+    /**
+     * Les mutations que le tableau a suivies lui-même depuis son chargement
+     * (`CaptureState.sinceLoad`). Elles couvrent ce que `departure` ne voit
+     * pas : une série NÉE pendant le trajet, puis supprimée ou corrigée, et
+     * déjà acquittée. Supprimée ici : jamais reprise de la réponse. Corrigée
+     * ici : sa valeur locale prime.
+     */
+    localMutations?: { removed: readonly string[]; edited: readonly string[] } | null;
   },
 ): Record<string, ExerciseProgress> {
   const pending = new Set(options.pendingSetIds);
@@ -853,10 +896,13 @@ export function reconcileProgress(
       if (id !== null && set) departureById.set(id, set);
     });
   }
+  const removedHere = new Set(options.localMutations?.removed ?? []);
+  const editedHere = new Set(options.localMutations?.edited ?? []);
   /** La série locale `id` a-t-elle changé de valeur depuis le départ de la lecture ? */
   const editedSinceDeparture = (id: string): PerformedSet | null => {
-    const before = departureById.get(id);
     const now = localById.get(id);
+    if (now && editedHere.has(id)) return now;
+    const before = departureById.get(id);
     return before && now && !sameSet(before, now) ? now : null;
   };
 
@@ -874,6 +920,8 @@ export function reconcileProgress(
       baseIds.add(id);
       // Annulée ici pendant le trajet de la lecture : elle ne revient pas.
       if (known?.has(id) && !localIds.has(id)) return;
+      // Supprimée ici depuis le chargement, même née pendant le trajet.
+      if (removedHere.has(id)) return;
       // Corrigée ici pendant le trajet : sa valeur locale prime.
       sets.push(editedSinceDeparture(id) ?? set);
       setIds.push(id);
@@ -929,6 +977,67 @@ function mergeExerciseProgress(
   return { ...base, setIds };
 }
 
+/** Ajoute des séries au suivi des mutations locales (cf. `CaptureState.sinceLoad`). */
+function trackLocally(
+  state: CaptureState,
+  change: { removed?: readonly (string | null)[]; edited?: readonly (string | null)[] },
+): CaptureState['sinceLoad'] {
+  const ids = (list: readonly (string | null)[] | undefined) =>
+    (list ?? []).filter((id): id is string => id !== null);
+  const seq = (state.sinceLoad?.seq ?? 0) + 1;
+  const removed = { ...(state.sinceLoad?.removed ?? {}) };
+  const edited = { ...(state.sinceLoad?.edited ?? {}) };
+  for (const id of ids(change.edited)) edited[id] = seq;
+  for (const id of ids(change.removed)) {
+    removed[id] = seq;
+    // Une série supprimée n'est plus « corrigée » : elle n'existe plus.
+    delete edited[id];
+  }
+  return { seq, removed, edited };
+}
+
+/**
+ * Le compteur de mutations locales du tableau, à relever au départ d'une
+ * lecture et à rendre avec sa réponse (`reconcile-progress.departureMark`).
+ */
+export function mutationMark(state: CaptureState): number {
+  return state.sinceLoad?.seq ?? 0;
+}
+
+/** Les séries supprimées et corrigées ici APRÈS le relevé `mark` (cf. `sinceLoad`). */
+function mutationsSince(
+  state: CaptureState,
+  mark: number,
+): { removed: string[]; edited: string[] } {
+  const after = (entries: Record<string, number> | undefined) =>
+    Object.entries(entries ?? {})
+      .filter(([, seq]) => seq > mark)
+      .map(([id]) => id);
+  return { removed: after(state.sinceLoad?.removed), edited: after(state.sinceLoad?.edited) };
+}
+
+/** Adopte le réalisé final, après rejeu de la file, et garde les exos remplacés qui ont une série. */
+export function withReconciledProgress(state: CaptureState, progress: CaptureState['progress']): CaptureState {
+  const layout = state.layout;
+  let corrected: LayoutEdit[] | undefined;
+  if (layout) {
+    // Un exo réajouté depuis son remplacement a déjà sa place. Seul son
+    // dernier retrait peut encore le masquer, même après plusieurs échanges.
+    const restored = new Set<string>();
+    for (let i = layout.length - 1; i >= 0; i--) {
+      const edit: LayoutEdit = layout[i]!;
+      const target = edit.replaces;
+      if (target && !edit.keepsReplaced && !restored.has(target) && progress[target]?.sets.length) {
+        corrected ??= layout.slice();
+        corrected[i] = { ...edit, keepsReplaced: true };
+      }
+      restored.add(edit.exerciseId);
+    }
+  }
+  if (!corrected && state.progress === progress) return state;
+  return { ...state, progress, ...(corrected && { layout: corrected }) };
+}
+
 export function captureReducer(state: CaptureState, action: CaptureAction): CaptureState {
   switch (action.type) {
     case 'open-exercise':
@@ -972,6 +1081,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       if (prev.sets.length === 0) return state;
       return {
         ...state,
+        sinceLoad: trackLocally(state, { removed: [prev.setIds[prev.setIds.length - 1] ?? null] }),
         progress: {
           ...state.progress,
           [action.exerciseId]: {
@@ -992,6 +1102,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       sets[index] = { ...current, ...action.values };
       return {
         ...state,
+        sinceLoad: trackLocally(state, { edited: [action.setId] }),
         progress: { ...state.progress, [action.exerciseId]: { ...prev, sets } },
       };
     }
@@ -1000,12 +1111,15 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       const prev = getProgress(state, action.exerciseId);
       if (!prev.sets.some((set) => set.order === action.order)) return state;
       // Les ids suivent leurs séries : on renumérote des paires (série, id).
-      const rows = ranksAfterDeletion(
-        prev.sets.map((set, i) => ({ ...set, id: prev.setIds[i] ?? null })),
-        action.order,
-      );
+      const before = prev.sets.map((set, i) => ({ ...set, id: prev.setIds[i] ?? null }));
+      const rows = ranksAfterDeletion(before, action.order);
+      const orderBefore = new Map(before.map((row) => [row.id, row.order] as const));
       return {
         ...state,
+        sinceLoad: trackLocally(state, {
+          removed: before.filter((row) => row.order === action.order).map((row) => row.id),
+          edited: rows.filter((row) => orderBefore.get(row.id) !== row.order).map((row) => row.id),
+        }),
         progress: {
           ...state.progress,
           [action.exerciseId]: {
@@ -1041,6 +1155,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
     }
 
     case 'reconcile-progress': {
+      const localMutations = mutationsSince(state, action.departureMark ?? 0);
       // La base fait foi pour les séries qu'elle porte, mais sa réponse date de
       // son départ : les écritures de séries qui chevauchent la lecture sont
       // rejouées par-dessus, sinon une correction ou une renumérotation faite
@@ -1049,6 +1164,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         pendingSetIds: action.pendingSetIds,
         knownAtDeparture: action.knownAtDeparture,
         departure: action.departure,
+        localMutations,
       });
       // Les séries que l'utilisateur a touchées ICI pendant le trajet (corrigées,
       // renumérotées, supprimées) ne sont pas rejouées depuis la file : l'état
@@ -1056,22 +1172,26 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       // acquittées depuis. Sans cela une série annulée ressuscitait, et une
       // ancienne écriture ramenait un rang d'avant la suppression.
       const touched = touchedSinceDeparture(state.progress, action.departure, action.knownAtDeparture);
+      // Et celles que le tableau a suivies lui-même, nées pendant le trajet comprises.
+      for (const id of localMutations.removed) touched.add(id);
+      for (const id of localMutations.edited) touched.add(id);
       const queued = (action.queuedOps ?? []).filter(
         (op) => !((op.type === 'insertSet' || op.type === 'deleteSet') && touched.has(op.id)),
       );
+      const progress = queued.length ? applyQueuedSets(reconciled, queued, state.executionId) : reconciled;
       return {
-        ...state,
-        progress: action.queuedOps
-          ? applyQueuedSets(reconciled, queued, state.executionId)
-          : reconciled,
+        ...withReconciledProgress(state, progress),
         datedNotes: action.datedNotes
           ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
           : state.datedNotes,
       };
     }
 
-    case 'edit-layout':
-      return { ...state, layout: [...(state.layout ?? []), action.edit] };
+    case 'edit-layout': {
+      const { edit } = action;
+      const started = edit.replaces && state.progress[edit.replaces]?.sets.length;
+      return { ...state, layout: [...(state.layout ?? []), started ? { ...edit, keepsReplaced: true } : edit] };
+    }
 
     case 'close':
       // Fige la clôture EN MÉMOIRE. Tout le reste (réalisé, ids) est conservé : le
@@ -1097,6 +1217,9 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         datedNotes: {},
         // La disposition appartient à l'exécution abandonnée.
         layout: undefined,
+        // Le suivi repart vide, le compteur continue : un relevé pris avant
+        // la séance neuve ne doit pas masquer les gestes qui la suivent.
+        sinceLoad: state.sinceLoad ? { seq: state.sinceLoad.seq, removed: {}, edited: {} } : undefined,
         closedAt: null,
       };
 

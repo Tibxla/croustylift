@@ -56,7 +56,7 @@ export interface PersonalRecord {
 }
 
 /** `b` est-elle une charge strictement supérieure à `a` (poids, puis reps) ? */
-function heavier(a: WeightReps, b: WeightReps): boolean {
+export function heavier(a: WeightReps, b: WeightReps): boolean {
   if (b.weightKg !== a.weightKg) return b.weightKg > a.weightKg
   return b.reps > a.reps
 }

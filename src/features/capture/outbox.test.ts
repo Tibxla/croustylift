@@ -90,6 +90,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
   const upsertExerciseNote = vi.fn(async (op) => void order.push(op));
   const deleteExerciseNote = vi.fn(async (op) => void order.push(op));
   const deleteExecution = vi.fn(async (op) => void order.push(op));
+  const deleteExecutionIfEmpty = vi.fn(async (op) => void order.push(op));
   return {
     upsertExecution,
     insertSet,
@@ -100,6 +101,7 @@ function okFns(): SyncFns & { calls: () => OutboxOp[] } {
     upsertExerciseNote,
     deleteExerciseNote,
     deleteExecution,
+    deleteExecutionIfEmpty,
     calls: () => order,
   };
 }

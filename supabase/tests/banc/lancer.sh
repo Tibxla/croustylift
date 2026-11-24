@@ -35,7 +35,7 @@ sql tests/banc/01_jeu_d_essai.sql
 
 # Ordre de DÉPLOIEMENT (supabase/tests/ORDRE.md), pas l'ordre des numéros : les
 # migrations qui attendent le nouveau client passent en dernier.
-ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0016 0018 0021 0022"
+ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0025 0016 0018 0021 0022"
 [ "$(echo $ORDRE | wc -w)" = "$(ls migrations | awk '$0 > "0015"' | wc -l)" ] || { echo "ORDRE ne couvre pas toutes les migrations"; exit 1; }
 
 for n in $ORDRE; do
@@ -151,4 +151,92 @@ if echo "$sortie" | grep -qi "deadlock\|ERROR" || [ "$etat" != "0" ]; then
   echo "ECHEC import croisé avec une suppression : $sortie (état : $etat)"; exit 1
 fi
 echo "OK    import croisé avec une suppression : la suppression attend l'import, les deux passent"
+
+echo "== suppression conditionnelle d'une exécution (0025)"
+# Sous le rôle de l'API, compte B. Quatre exécutions : vide, avec une série,
+# avec une note, close ; plus celle du compte A (invisible de B).
+V=b0000000-0000-0000-0000-000000000051
+S=b0000000-0000-0000-0000-000000000052
+N=b0000000-0000-0000-0000-000000000053
+C=b0000000-0000-0000-0000-000000000054
+sql /dev/stdin <<SQL
+insert into public.executions (id, owner_id, seance_version_id, performed_on, closed_at) values
+  ('$V', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-10', null),
+  ('$S', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-11', null),
+  ('$N', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-12', null),
+  ('$C', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-13', now());
+insert into public.performed_sets (id, owner_id, execution_id, exercise_id, set_order, weight_kg, reps, rir) values
+  ('b0000000-0000-0000-0000-000000000061', '$B', '$S', 'b0000000-0000-0000-0000-0000000000e1', 1, 20, 10, 1);
+insert into public.dated_notes (id, owner_id, execution_id, exercise_id, body) values
+  ('b0000000-0000-0000-0000-000000000071', '$B', '$N', 'b0000000-0000-0000-0000-0000000000e1', 'note du banc');
+SQL
+rend() { # rend <id d'exécution> : ce que la fonction répond au compte B
+  docker exec -i "$NOM" psql -U postgres -q -A -t -v ON_ERROR_STOP=1 \
+    -c "set role authenticated" -c "set request.jwt.claim.sub = '$B'" \
+    -c "select public.delete_execution_if_empty('$1')" 2>&1 | tail -1
+}
+reste() { docker exec -i "$NOM" psql -U postgres -A -t -c "select count(*) from public.executions where id = '$1'"; }
+attendu() { # attendu <libellé> <id> <réponse attendue> <lignes restantes attendues>
+  local r; r=$(rend "$2")
+  if [ "$r" = "$3" ] && [ "$(reste "$2")" = "$4" ]; then echo "OK    $1 : $r"
+  else echo "ECHEC $1 : rendu « $r », reste $(reste "$2")"; exit 1; fi
+}
+attendu "exécution ouverte et vide" "$V" deleted 0
+attendu "la même, rejouée" "$V" absent 0
+attendu "exécution avec une série" "$S" kept 1
+attendu "exécution avec une note datée" "$N" kept 1
+attendu "exécution close et vide" "$C" kept 1
+attendu "exécution d'un autre compte" a0000000-0000-0000-0000-000000000011 absent 1
+anon=$(docker exec -i "$NOM" psql -U postgres -q -A -t -c "set role anon" \
+  -c "select public.delete_execution_if_empty('$C')" 2>&1 || true)
+if echo "$anon" | grep -q "permission denied"; then echo "OK    appel sans compte : refusé"
+else echo "ECHEC appel sans compte accepté : $anon"; exit 1; fi
+
+# Course 1 : une série s'insère (transaction tenue 3 s) pendant que la
+# suppression conditionnelle arrive. Elle doit attendre, VOIR la série, garder.
+sql /dev/stdin <<SQL
+insert into public.executions (id, owner_id, seance_version_id, performed_on) values
+  ('$V', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-10');
+SQL
+sql /dev/stdin >/dev/null <<SQL &
+begin;
+insert into public.performed_sets (id, owner_id, execution_id, exercise_id, set_order, weight_kg, reps, rir) values
+  ('b0000000-0000-0000-0000-000000000062', '$B', '$V', 'b0000000-0000-0000-0000-0000000000e1', 1, 20, 10, 1);
+select pg_sleep(3);
+commit;
+SQL
+sleep 1
+r=$(rend "$V")
+wait
+series=$(docker exec -i "$NOM" psql -U postgres -A -t -c "select count(*) from public.performed_sets where execution_id = '$V'")
+if [ "$r" = kept ] && [ "$series" = 1 ]; then
+  echo "OK    série insérée pendant la suppression conditionnelle : attendue, vue, exécution gardée"
+else
+  echo "ECHEC série concurrente : rendu « $r », $series série(s) restante(s)"; exit 1
+fi
+
+# Course 2, l'inverse : la suppression d'abord (transaction tenue), la série
+# ensuite. La série attend, puis est refusée par sa clé étrangère : rien ne
+# part en cascade, et le client la montre comme une saisie refusée.
+W=b0000000-0000-0000-0000-000000000055
+sql /dev/stdin <<SQL
+insert into public.executions (id, owner_id, seance_version_id, performed_on) values
+  ('$W', '$B', 'b0000000-0000-0000-0000-0000000000d1', '2026-06-14');
+SQL
+sql /dev/stdin >/dev/null <<SQL &
+set role authenticated;
+set request.jwt.claim.sub = '$B';
+begin;
+select public.delete_execution_if_empty('$W');
+select pg_sleep(3);
+commit;
+SQL
+sleep 1
+sortie=$(api "insert into public.performed_sets (id, owner_id, execution_id, exercise_id, set_order, weight_kg, reps, rir) values ('b0000000-0000-0000-0000-000000000063', '$B', '$W', 'b0000000-0000-0000-0000-0000000000e1', 1, 20, 10, 1)")
+wait
+if echo "$sortie" | grep -q "performed_sets_execution_id_fkey\|violates foreign key" && [ "$(reste "$W")" = 0 ]; then
+  echo "OK    série arrivée pendant la suppression : attend, puis refusée par sa clé étrangère"
+else
+  echo "ECHEC série arrivée pendant la suppression : $sortie"; exit 1
+fi
 echo "== banc vert"

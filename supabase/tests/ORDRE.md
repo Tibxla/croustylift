@@ -1,4 +1,4 @@
-# Ordre de déploiement des migrations 0015 à 0024
+# Ordre de déploiement des migrations 0015 à 0025
 
 Les numéros ne donnent pas l'ordre. Quatre migrations (0016, 0018, 0021, 0022) refuseraient des écritures que le client encore déployé produit : elles attendent le nouveau client, puis le passage des anciens. Le banc local (`banc/lancer.sh`) rejoue exactement cet ordre.
 
@@ -16,6 +16,7 @@ Avant chaque migration : sa requête de contrôle préalable, en commentaire en 
 6. `0020_override_exo_de_base.sql`
 7. `0023_reorder_seances.sql`
 8. `0024_import_transactionnel.sql`
+9. `0025_delete_execution_if_empty.sql` : la suppression conditionnelle d'une exécution ouverte et vide (« Changer de séance » dans la Salle). Le client qui l'appelle (`deleteExecutionIfEmpty`, `src/features/capture/data.ts`) marche aussi sans elle, par un repli non atomique : l'appliquer avant ou juste après son déploiement, sans autre contrainte d'ordre.
 
 Effet visible sur le client en place : aucun.
 
@@ -61,3 +62,5 @@ Une PWA restée ouverte ou hors ligne garde l'ancien code et, dans sa file, des 
 ## Après coup
 
 Toutes appliquées en prod : étape 1 le 2026-11-23 au soir (0024 le 24 au matin), client déployé le 2026-11-24, étape 4 le 2026-11-24, chaque fois avec contrôle préalable vide et test de contrôle sans `ECHEC`. La table `exercise_overrides` de la prod venait d'une version antérieure de 0007 (policies `_own`, index et trigger absents) : 0015 la réaligne avant tout. L'étape 3 n'a pas attendu une confirmation appareil par appareil : 0016, 0021 et 0022 ne gênent que l'inscription et l'import de l'ancien client, 0018 ne pouvait refuser qu'une seconde note du même couple, envoyée en quarantaine et renvoyable.
+
+`0025_delete_execution_if_empty.sql` est postérieure à ce déploiement : passée au banc local, **pas encore appliquée en prod** au 2026-11-24.

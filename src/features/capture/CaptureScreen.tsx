@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -40,7 +41,6 @@ import {
 } from './data';
 import type { PreviousDatedNote } from './fixtures';
 import {
-  addExercise,
   layoutEditOf,
   replayLayout,
   templateExerciseIds,
@@ -73,6 +73,7 @@ import {
   previousDayIso,
   applyQueuedSets,
   reconcileProgress,
+  withReconciledProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
   todayIso,
@@ -81,6 +82,8 @@ import {
 } from './state';
 import {
   enqueue,
+  enqueueAll,
+  isSetInsertion,
   OUTBOX_CHANGED_EVENT,
   purgeByExecution,
   readOwnQueue,
@@ -113,7 +116,7 @@ import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
-import { leaveSession, nothingEntered } from './session-gestures';
+import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
 
 type LoadState =
   | { phase: 'loading' }
@@ -122,10 +125,9 @@ type LoadState =
   | { phase: 'empty' }
   | {
       phase: 'ready';
-      /** La séance du jour : le template de l'exécution, disposition rejouée. */
-      session: Session;
-      /** Les ids du TEMPLATE seul, référence du diff de déviations (ADR 0002). */
-      templateIds: string[];
+      template: Session;
+      /** Exos du journal de disposition, dans l'ordre des gestes. */
+      extras: (SessionExercise | null)[];
       /**
        * L'id d'exécution posé par ce chargement. Il entre dans la clé du tableau
        * de capture : un chargement qui adopte une AUTRE exécution (réponse
@@ -366,13 +368,6 @@ export function CaptureScreen() {
         ),
         previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
       });
-      // Le TEMPLATE de l'exécution, puis la séance du jour : le template sur
-      // lequel la disposition est rejouée (cf. `replayLayout`).
-      const template: Session = { ...base, exercises: withRows.map(derived) };
-      const session = replayLayout(template, layout, (_edit, index) => {
-        const extra = extras[index];
-        return extra ? derived(extra) : null;
-      });
       // On transporte l'init vers le reducer via une ref, posée AVANT le passage
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
@@ -400,8 +395,8 @@ export function CaptureScreen() {
       initRef.current = init;
       setLoad({
         phase: 'ready',
-        session,
-        templateIds: templateExerciseIds(template),
+        template: { ...base, exercises: withRows.map(derived) },
+        extras: extras.map((extra) => extra && derived(extra)),
         generation: loadGenRef.current,
         executionId: init.executionId,
         seanceVersionId,
@@ -474,7 +469,7 @@ export function CaptureScreen() {
             base: lateToday.progress,
             pendingSetIds: [
               ...lateToday.pendingSetIds,
-              ...queue.filter((op) => op.type === 'insertSet').map((op) => op.id),
+              ...queue.filter(isSetInsertion).map((op) => op.id),
             ],
             knownAtDeparture,
             // Avec ses valeurs : une série corrigée ici pendant le trajet garde
@@ -627,9 +622,9 @@ export function CaptureScreen() {
 
   return (
     <CaptureBoard
-      key={`${load.session.id}:${load.executionId}`}
-      session={load.session}
-      templateIds={load.templateIds}
+      key={`${load.template.id}:${load.executionId}`}
+      template={load.template}
+      extras={load.extras}
       lateBox={lateBox}
       boardStateRef={boardStateRef}
       generation={load.generation}
@@ -699,11 +694,20 @@ function enqueueAndFlush(...ops: Parameters<typeof enqueue>): void {
   void attemptFlush();
 }
 
+/** Enfile les ops d'UN geste comme une unité (`enqueueAll`, outbox.ts : tout sur
+ *  l'appareil ou tout en mémoire), notifie l'UI et tente un flush. */
+function enqueueGestureAndFlush(ops: readonly OutboxOp[]): void {
+  if (ops.length === 0) return;
+  enqueueAll(ops);
+  notifySync();
+  void attemptFlush();
+}
+
 // --- Le tableau de capture (séance chargée) ---------------------------------
 
 function CaptureBoard({
-  session: initialSession,
-  templateIds,
+  template: initialTemplate,
+  extras: initialExtras,
   lateBox,
   boardStateRef,
   generation,
@@ -712,9 +716,8 @@ function CaptureBoard({
   init,
   onExitToLaunch,
 }: {
-  session: Session;
-  /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
-  templateIds: string[];
+  template: Session;
+  extras: (SessionExercise | null)[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
   lateBox: LateMailbox<ReconcileAction>;
   /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
@@ -738,12 +741,9 @@ function CaptureBoard({
   // nouveau board).
   const [date] = useState(() => init.date);
 
-  // La séance courante évolue à la volée : ajout / swap d'un exo hors template
-  // (issue #36). Elle arrive ici disposition DÉJÀ rejouée (exos ajoutés ou
-  // remplacés avant ce montage, cf. `loadSeance`). Le TEMPLATE d'origine reste la
-  // référence du diff de déviations : ses ids sont passés à part (`templateIds`),
-  // il n'est JAMAIS modifié (le versionné en base non plus).
-  const [session, setSession] = useState(initialSession);
+  // Garder aussi les exos masqués : une série du Journal peut les faire
+  // revenir avec leur prescription, leur historique et leur note.
+  const [sources, setSources] = useState({ template: initialTemplate, extras: initialExtras });
 
   // RÉFÉRENCE SUIVIE EN DIRECT (ADR 0020). La séance s'ouvre sur les copies
   // locales, que leur revalidation de fond rattrape juste APRÈS : une série
@@ -761,9 +761,9 @@ function CaptureBoard({
     let subscribed = true;
     const refresh = (onlyExerciseId?: string) => {
       if (!subscribed) return;
-      setSession((current) => {
+      setSources((current) => {
         let changed = false;
-        const exercises = current.exercises.map((ex) => {
+        const refreshExercise = (ex: SessionExercise) => {
           if (onlyExerciseId !== undefined && ex.exerciseId !== onlyExerciseId) return ex;
           const history = peekExerciseHistory(
             ex.exerciseId,
@@ -774,8 +774,10 @@ function CaptureBoard({
           if (history === null || sameExerciseHistory(ex, history)) return ex;
           changed = true;
           return { ...ex, ...history };
-        });
-        return changed ? { ...current, exercises } : current;
+        };
+        const exercises = current.template.exercises.map(refreshExercise);
+        const extras = current.extras.map((ex) => ex && refreshExercise(ex));
+        return changed ? { template: { ...current.template, exercises }, extras } : current;
       });
     };
     const unsubscribe = onExerciseRowsWritten(refresh);
@@ -799,7 +801,7 @@ function CaptureBoard({
     // (lue pendant le rendu, elle valait un warning `react-hooks/refs`).
     const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } = init;
     const fromSupabase = hydratedState(
-      initialSession,
+      initialTemplate,
       progress,
       datedNotes,
       adoptedDate,
@@ -816,7 +818,7 @@ function CaptureBoard({
     const { queuedOps } = init;
     const withQueued = (built: CaptureState): CaptureState => {
       const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
-      return progress === built.progress ? built : { ...built, progress };
+      return withReconciledProgress(built, progress);
     };
     if (!restored) return withQueued(versioned);
     const merged = mergeProgress(versioned, restored);
@@ -830,6 +832,11 @@ function CaptureBoard({
       progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
     });
   });
+
+  const session = useMemo(
+    () => replayLayout(sources.template, state.layout ?? [], (_edit, i) => sources.extras[i] ?? null),
+    [sources, state.layout],
+  );
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
   // capturé par les handlers est figé entre deux renders : deux taps « Logger »
@@ -1028,7 +1035,7 @@ function CaptureBoard({
   // Même enchaînement qu'un log : le geste se calcule sur la PROJECTION, l'action
   // est dispatchée et la projection avancée du même pas, puis les écritures sont
   // enfilées une à une, dans l'ordre rendu (suppressions d'abord, puis les
-  // renumérotations). Une écriture de série (upsert) exige l'exécution en base :
+  // renumérotations), EN UNE FOIS (`enqueueAll`). Une écriture de série exige l'exécution en base :
   // elle y est dès qu'une série existe, ré-affirmée ici une fois par montage
   // (insertion seule, le lancement ne bouge pas).
   const applySetGesture = useCallback(
@@ -1037,7 +1044,7 @@ function CaptureBoard({
       dispatch(gesture.action);
       stateRef.current = captureReducer(stateRef.current, gesture.action);
       if (gesture.ops.some((op) => op.type === 'insertSet')) enqueueExecutionOnce();
-      for (const op of gesture.ops) enqueueAndFlush(op);
+      enqueueGestureAndFlush(gesture.ops);
     },
     [enqueueExecutionOnce],
   );
@@ -1093,11 +1100,11 @@ function CaptureBoard({
   // le nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
   // immédiat ; la durabilité est portée par l'outbox.
   const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
-    setSession((s) => ({
-      ...s,
-      exercises: s.exercises.map((ex) =>
-        ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
-      ),
+    const update = (ex: SessionExercise) =>
+      ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex;
+    setSources(({ template, extras }) => ({
+      template: { ...template, exercises: template.exercises.map(update) },
+      extras: extras.map((ex) => ex && update(ex)),
     }));
     enqueueAndFlush(exerciseNoteOutboxOp({ exerciseId, body }));
   }, []);
@@ -1114,7 +1121,7 @@ function CaptureBoard({
   // reconstruite du template plus ce journal (`replayLayout`). Sans cela l'exo
   // ajouté disparaissait du sélecteur et ses séries sortaient du récap.
   const handleAddExercise = useCallback((exercise: SessionExercise) => {
-    setSession((s) => addExercise(s, exercise));
+    setSources((s) => ({ ...s, extras: [...s.extras, exercise] }));
     dispatch({ type: 'edit-layout', edit: layoutEditOf(exercise) });
   }, []);
 
@@ -1127,7 +1134,11 @@ function CaptureBoard({
     (targetExerciseId: string, replacement: SessionExercise) => {
       const gesture = replaceExercise(stateRef.current, session, targetExerciseId, replacement);
       if (gesture === null) return;
-      setSession(gesture.session);
+      // La séance affichée se reconstruit du template, des exos du journal
+      // (`sources.extras`, alignés sur `layout`) et du journal lui-même : le
+      // remplaçant entre aux sources, le geste au journal (il dit s'il s'insère
+      // après l'exo commencé ou prend sa place, `keepsReplaced`).
+      setSources((s) => ({ ...s, extras: [...s.extras, replacement] }));
       dispatch(gesture.action);
       stateRef.current = captureReducer(stateRef.current, gesture.action);
       if (gesture.openExerciseId !== null) {
@@ -1157,24 +1168,36 @@ function CaptureBoard({
   const [durationMin, setDurationMin] = useState<number | null>(null);
 
   // Quitter la séance sans la ranger (`leaveSession`, session-gestures.ts) :
-  // « Changer de séance » quand rien n'est saisi, « Annuler la séance »
-  // (confirmée au Sommaire) sinon. Même ménage dans les deux cas, ADR 0011 :
+  // « Changer de séance » quand rien n'est saisi (ici ni dans la file d'un autre
+  // onglet), « Annuler la séance », confirmée, sinon. Le plan est recalculé au
+  // geste, sur la projection et la file du moment : s'il demande une
+  // confirmation que le geste n'a pas reçue (saisie arrivée d'un autre onglet
+  // entre le rendu et le toucher), rien n'est fait et l'appelant la demande
+  // (rend `false`). Sinon, ADR 0011 :
   //   1. le cache local de la séance quitte l'appareil ;
-  //   2. la file perd les écritures de CETTE exécution, et elle seule (d'autres
-  //      exécutions ou corrections hors ligne doivent survivre) ;
-  //   3. si l'exécution a pu naître (en file ou déjà en base), sa suppression
-  //      est enfilée (idempotente, cascade en base) : aucune orpheline que la
-  //      prochaine ouverture adopterait ;
+  //   2. SI le plan le dit (« annuler » seulement), la file perd les écritures
+  //      de CETTE exécution, et elle seule ;
+  //   3. la suppression de l'exécution est enfilée : sans condition pour
+  //      « annuler », conditionnelle (ouverte et vide, tranché par la base) pour
+  //      « changer », qui ne peut rien effacer d'un autre onglet ;
   //   4. retour à l'écran de lancement.
-  const handleLeaveSession = useCallback(() => {
-    const plan = leaveSession(stateRef.current, { executionStarted: executionStartedRef.current });
-    clearPersisted(session, date);
-    purgeByExecution(plan.executionId);
-    for (const op of plan.ops) enqueueAndFlush(op);
-    executionEnqueuedRef.current = false;
-    executionStartedRef.current = false;
-    onExitToLaunch();
-  }, [session, date, onExitToLaunch]);
+  const handleLeaveSession = useCallback(
+    (confirmed: boolean): boolean => {
+      const plan = leaveSession(stateRef.current, {
+        executionStarted: executionStartedRef.current,
+        pendingOps: readQueue(),
+      });
+      if (plan.needsConfirmation && !confirmed) return false;
+      clearPersisted(session, date);
+      if (plan.purge) purgeByExecution(plan.executionId);
+      enqueueGestureAndFlush(plan.ops);
+      executionEnqueuedRef.current = false;
+      executionStartedRef.current = false;
+      onExitToLaunch();
+      return true;
+    },
+    [session, date, onExitToLaunch],
+  );
 
   // Après clôture, « Nouvelle séance » : la séance close est rangée (closed_at en
   // base, ADR 0009) et son cache déjà nettoyé. On NE vide PAS la file (ses ops
@@ -1316,7 +1339,7 @@ function CaptureBoard({
           <SalleSync />
           <ExercisePicker
             session={session}
-            templateExerciseIds={templateIds}
+            templateExerciseIds={templateExerciseIds(initialTemplate)}
             state={state}
             settled={settled}
             staleSince={staleSince}
@@ -1329,7 +1352,7 @@ function CaptureBoard({
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
             onRestore={handleRestoreExercise}
-            leaveKind={nothingEntered(state) ? 'change' : 'cancel'}
+            leaveKind={nothingEntered(state) && !enteredElsewhere(state, readQueue()) ? 'change' : 'cancel'}
             onLeaveSession={handleLeaveSession}
           />
         </>

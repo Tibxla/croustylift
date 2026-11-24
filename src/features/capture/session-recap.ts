@@ -4,7 +4,7 @@
 //
 // API pour l'écran :
 //   - `buildSessionRecap(session, state)` : la séance exo par exo (état, séries
-//     faites contre le prévu, séries battues et égalées, record, kg soulevés,
+//     faites contre le prévu, séries battues et égalées, records, kg soulevés,
 //     côté resté seul en unilatéral, provenance), et les totaux : séries
 //     loggées, battues, égalées, nouveaux records, kg soulevés, exos par état ;
 //   - `exerciseStatus(exo, réalisé)` : 'fait', 'en-cours', 'passe', 'pas-fait'.
@@ -24,9 +24,31 @@
 // (`computeSetBadges`, ADR 0010), donc recalculés quand une série est corrigée
 // ou supprimée. Un seul badge par série, Record > battue > égalée : une série
 // qui bat le record n'est pas AUSSI comptée « battue ».
+//
+// Records rendus (`RecapRecord`, dans `ExerciseRecap.newRecords` et
+// `SessionRecap.records`, la liste de séance étant la concaténation des listes
+// d'exos dans l'ordre de la séance). Chaque record est typé :
+//   - `axis` : 'e1rm' (le record d'e1RM, lu en reps effectives à 0 kg) ou
+//     'charge' (le record de charge, poids puis reps) ;
+//   - `unit` et `value` : 'kg' (e1RM en kg sur l'axe e1rm, poids en kg sur
+//     l'axe charge) ou 'reps'. À 0 kg (ADR 0013, amendement du 2026-11-23),
+//     l'axe e1rm rend les REPS EFFECTIVES (reps + RIR) et l'axe charge les reps
+//     faites (c'est ce qu'il compare à poids égal) : jamais « 0 kg » ni e1RM nul ;
+//   - `side` : 'left' ou 'right' en unilatéral (chaque côté a son record, ADR
+//     0010), `null` en bilatéral ;
+//   - `set` : la série qui le porte (poids, reps, RIR), pour l'afficher ;
+//   - `e1rm` : champ historique, l'e1RM en kg d'un record d'e1RM chargé, `null`
+//     pour un record en reps ou un record de charge.
+// Au plus un record par axe et par côté : la meilleure série du jour parmi
+// celles qui portent le badge de cet axe (`comparePerformance` pour l'e1RM,
+// `heavier` pour la charge). Une série qui bat les deux records (badge 'both')
+// ne figure qu'une fois, sur l'axe e1rm : le record de charge ne s'ajoute que
+// s'il est tenu par une AUTRE série que celle du record d'e1RM du même côté.
+// Ordre : gauche puis droite, e1rm puis charge.
 
-import { estimateE1rm } from '../../domain/e1rm';
+import { comparePerformance, effectiveReps, estimateE1rm, isZeroLoad } from '../../domain/e1rm';
 import { liftedKg } from '../../domain/lifted';
+import { heavier } from '../../domain/pr';
 import {
   countLogicalSetsDone,
   countPerformedSets,
@@ -35,7 +57,7 @@ import {
   type PerformedExercise,
   type PlannedExercise,
 } from '../../domain/set-count';
-import type { Range, Side } from '../../domain/types';
+import type { PerformedSet, Range, Side } from '../../domain/types';
 import { currentSetOrder, sidesDoneAt } from '../../domain/unilateral';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import type { ExerciseOrigin, Session, SessionExercise } from './fixtures';
@@ -62,6 +84,27 @@ export function exerciseStatus(
   return done >= exercise.prescription.sets.min ? 'fait' : 'en-cours';
 }
 
+/** Un nouveau record du jour, typé par axe, unité et côté (cf. en-tête). */
+export interface RecapRecord {
+  exerciseId: string;
+  name: string;
+  /** 'e1rm' : record d'e1RM (reps effectives à 0 kg) ; 'charge' : record de charge. */
+  axis: 'e1rm' | 'charge';
+  /** Unité de `value`. */
+  unit: 'kg' | 'reps';
+  /**
+   * e1RM en kg, poids en kg, reps effectives (axe e1rm à 0 kg) ou reps faites
+   * (axe charge à 0 kg). Valeur exacte : l'arrondi revient à l'affichage.
+   */
+  value: number;
+  /** Côté du record en unilatéral, `null` en bilatéral. */
+  side: Side | null;
+  /** La série qui porte le record. */
+  set: { weightKg: number; reps: number; rir: number };
+  /** L'e1RM en kg d'un record d'e1RM chargé, `null` sinon (jamais 0 pour un record à 0 kg). */
+  e1rm: number | null;
+}
+
 /** Un exo dans le récap de fin de séance. */
 export interface ExerciseRecap {
   exerciseId: string;
@@ -77,8 +120,14 @@ export interface ExerciseRecap {
   matched: number;
   /** Séries (lignes) qui battent un record personnel, e1RM ou charge. */
   records: number;
-  /** Meilleur e1RM du jour parmi les séries qui battent le record d'e1RM, sinon `null`. */
+  /**
+   * Meilleur e1RM du jour en kg parmi les séries qui battent le record d'e1RM
+   * (les deux côtés confondus en unilatéral), sinon `null`. `null` aussi pour un
+   * record à 0 kg, qui se lit en reps : voir `newRecords`.
+   */
   recordE1rm: number | null;
+  /** Les nouveaux records du jour de cet exo, par axe et par côté (cf. en-tête). */
+  newRecords: RecapRecord[];
   /** kg soulevés sur cet exo. */
   liftedKg: number;
   /** Unilatéral : le côté fait de la série en cours restée à un seul côté, sinon `null`. */
@@ -97,10 +146,66 @@ export interface SessionRecap {
   setsLogged: number;
   beaten: number;
   matched: number;
-  /** Les nouveaux records d'e1RM du jour, un par exo. */
-  records: { exerciseId: string; name: string; e1rm: number }[];
+  /**
+   * Les nouveaux records du jour : ceux de chaque exo (`newRecords`), dans
+   * l'ordre de la séance. Records de charge et records par côté compris.
+   */
+  records: RecapRecord[];
   /** kg soulevés dans la séance. */
   liftedKg: number;
+}
+
+/**
+ * Les records du jour d'un exo, au plus un par axe et par côté (cf. en-tête).
+ * `badges` est aligné par index sur `sets`.
+ */
+function recordsOf(
+  exercise: SessionExercise,
+  sets: PerformedSet[],
+  badges: ReturnType<typeof computeSetBadges>,
+  unilateral: boolean,
+): RecapRecord[] {
+  // Même rangement que `computeRecordFlagsBySide` : une ligne unilatérale sans
+  // côté (donnée inattendue) compte à gauche.
+  const sideOf = (set: PerformedSet): Side | null => (unilateral ? (set.side === 'right' ? 'right' : 'left') : null);
+  const sides: (Side | null)[] = unilateral ? ['left', 'right'] : [null];
+  const records: RecapRecord[] = [];
+  for (const side of sides) {
+    let bestE1rm: PerformedSet | null = null;
+    let bestCharge: PerformedSet | null = null;
+    sets.forEach((set, index) => {
+      const badge = badges[index];
+      if (badge?.axis !== 'record' || sideOf(set) !== side) return;
+      if (badge.record !== 'weight-reps' && (bestE1rm === null || comparePerformance(set, bestE1rm) > 0)) {
+        bestE1rm = set;
+      }
+      if (badge.record !== 'e1rm' && (bestCharge === null || heavier(bestCharge, set))) bestCharge = set;
+    });
+    const base = { exerciseId: exercise.exerciseId, name: exercise.name, side };
+    if (bestE1rm !== null) records.push({ ...base, ...e1rmRecord(bestE1rm) });
+    if (bestCharge !== null && bestCharge !== bestE1rm) records.push({ ...base, ...chargeRecord(bestCharge) });
+  }
+  return records;
+}
+
+type RecordReading = Pick<RecapRecord, 'axis' | 'unit' | 'value' | 'set' | 'e1rm'>;
+
+const setOf = ({ weightKg, reps, rir }: PerformedSet) => ({ weightKg, reps, rir });
+
+/** Un record d'e1RM : en kg, ou en reps effectives à 0 kg (ADR 0013). */
+function e1rmRecord(set: PerformedSet): RecordReading {
+  if (isZeroLoad(set.weightKg)) {
+    return { axis: 'e1rm', unit: 'reps', value: effectiveReps(set.reps, set.rir), set: setOf(set), e1rm: null };
+  }
+  const e1rm = estimateE1rm(set.weightKg, set.reps, set.rir);
+  return { axis: 'e1rm', unit: 'kg', value: e1rm, set: setOf(set), e1rm };
+}
+
+/** Un record de charge : le poids en kg, ou les reps faites à 0 kg. */
+function chargeRecord(set: PerformedSet): RecordReading {
+  return isZeroLoad(set.weightKg)
+    ? { axis: 'charge', unit: 'reps', value: set.reps, set: setOf(set), e1rm: null }
+    : { axis: 'charge', unit: 'kg', value: set.weightKg, set: setOf(set), e1rm: null };
 }
 
 function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): ExerciseRecap {
@@ -117,13 +222,11 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
     : computeSetBadges(progress.sets, exercise.reference ?? null, exercise.personalRecord ?? null);
   const verdicts = summarizeBadges(progress.sets, badges).total;
 
+  const newRecords = recordsOf(exercise, progress.sets, badges, unilateral);
   let recordE1rm: number | null = null;
-  progress.sets.forEach((set, index) => {
-    const badge = badges[index];
-    if (badge?.axis !== 'record' || badge.record === 'weight-reps') return;
-    const e1rm = estimateE1rm(set.weightKg, set.reps, set.rir);
-    if (recordE1rm === null || e1rm > recordE1rm) recordE1rm = e1rm;
-  });
+  for (const record of newRecords) {
+    if (record.e1rm !== null && (recordE1rm === null || record.e1rm > recordE1rm)) recordE1rm = record.e1rm;
+  }
 
   // Unilatéral : la série en cours est-elle restée à un seul côté ?
   let openSide: Side | null = null;
@@ -142,6 +245,7 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
     matched: verdicts.egalise,
     records: verdicts.record,
     recordE1rm,
+    newRecords,
     liftedKg: liftedKg(progress.sets),
     openSide,
     origin: exercise.origin ?? 'template',
@@ -163,9 +267,7 @@ export function buildSessionRecap(session: Session, state: CaptureState): Sessio
     setsLogged: sum((e) => e.setsDone),
     beaten: sum((e) => e.beaten),
     matched: sum((e) => e.matched),
-    records: exercises.flatMap((e) =>
-      e.recordE1rm === null ? [] : [{ exerciseId: e.exerciseId, name: e.name, e1rm: e.recordE1rm }],
-    ),
+    records: exercises.flatMap((e) => e.newRecords),
     liftedKg: sum((e) => e.liftedKg),
   };
 }

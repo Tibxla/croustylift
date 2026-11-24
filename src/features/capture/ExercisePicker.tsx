@@ -70,8 +70,12 @@ interface ExercisePickerProps {
   onRestore: (exerciseId: string) => void;
   /** 'change' : rien n'est saisi (« Changer de séance »). 'cancel' : « Annuler la séance », confirmé. */
   leaveKind: 'change' | 'cancel';
-  /** Quitte la séance sans la ranger et revient à l'écran de lancement (ADR 0011). */
-  onLeaveSession: () => void;
+  /**
+   * Quitte la séance sans la ranger et revient à l'écran de lancement (ADR
+   * 0011). `confirmed` : l'utilisateur a confirmé l'annulation. Rend `false`
+   * sans rien faire si le geste demande une confirmation qu'il n'a pas reçue.
+   */
+  onLeaveSession: (confirmed: boolean) => boolean;
 }
 
 /** Cible de l'ouverture du catalogue : ajout libre, ou remplacement d'un exo. */
@@ -116,8 +120,9 @@ export function ExercisePicker({
   const closeCatalog = useCallback(() => setCatalog(null), [setCatalog]);
 
   const leave = () => {
-    if (leaveKind === 'change') onLeaveSession();
-    else setConfirmCancel(true);
+    // « Changer » part sans confirmation, sauf si une saisie est arrivée
+    // d'ailleurs entre-temps : le geste la demande alors.
+    if (leaveKind === 'cancel' || !onLeaveSession(false)) setConfirmCancel(true);
   };
 
   return (
@@ -266,7 +271,7 @@ export function ExercisePicker({
               ariaLabel="Confirmer l’annulation de la séance"
               onClick={() => {
                 setConfirmCancel(false);
-                onLeaveSession();
+                onLeaveSession(true);
               }}
             >
               Annuler la séance

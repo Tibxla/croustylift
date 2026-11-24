@@ -83,6 +83,7 @@ function syncFns(failing: string[] = []): SyncFns {
     upsertExerciseNote: run,
     deleteExerciseNote: run,
     deleteExecution: run,
+    deleteExecutionIfEmpty: run,
   }
 }
 

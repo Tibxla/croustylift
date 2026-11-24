@@ -14,18 +14,26 @@
 // L'écran enchaîne comme pour un log (`handleLog`, CaptureScreen) : lire la
 // projection synchrone de l'état, calculer le geste dessus, dispatcher l'action,
 // avancer la projection par le même réducteur, puis enfiler les ops et lancer
-// l'envoi. L'exécution doit avoir été enfilée avant (`enqueueExecutionOnce`),
+// l'envoi. Les ops d'un geste s'enfilent EN UNE FOIS, par `enqueueAll(ops)`
+// (outbox.ts), jamais une à une : le geste est une unité dans la file (tout
+// écrit sur l'appareil, ou tout en mémoire), sinon un stockage presque plein
+// peut garder la suppression sans la remontée des rangs. L'exécution doit avoir été enfilée avant (`enqueueExecutionOnce`),
 // ce qui est acquis dès qu'une série existe.
 //
-// CORRIGER UNE SÉRIE (`correctSet`). Il n'y a pas d'écriture « mise à jour » : la
-// base écrit une série par `upsert` sur son id (`upsertSet`, capture/data.ts), et
-// l'éditeur de séance passée corrige déjà ainsi. La correction est donc une op
-// `insertSet` de MÊME id, même rang, même côté, aux nouvelles valeurs :
+// CORRIGER UNE SÉRIE (`correctSet`). Il n'y a pas de type d'op « mise à jour » :
+// la correction est une op `insertSet` de MÊME id, marquée `only: 'values'`
+// (outbox.ts). En base, seuls poids, reps et RIR sont écrits, par un `update` :
+// le rang n'est pas touché, et une série supprimée entre-temps n'est pas
+// recréée. Deux gestes faits depuis deux onglets (corriger S2 ici, supprimer S1
+// là, donc remonter S2) ne s'écrasent ainsi dans aucun ordre. L'op porte quand
+// même la ligne entière, pour un onglet resté sur un bundle antérieur (upsert
+// complet) et pour reconstituer une série dont l'insertion a été refusée.
 //   - hors ligne, le log puis sa correction tiennent tous deux en file et
 //     partent dans l'ordre, la dernière écriture gagne ;
 //   - une série dont l'insertion a été refusée par la base (quarantaine) est
-//     relevée par sa correction : l'enfilement retire l'écriture refusée de la
-//     même série (`enqueue`, outbox.ts) ;
+//     relevée par sa correction : le flush envoie alors la série ENTIÈRE,
+//     reconstituée du refus et de la correction, et lève le refus une fois
+//     l'écriture acquittée (outbox.ts, « Séries refusées, puis reprises ») ;
 //   - la Référence fusionnée (`applyPendingSets`) et la reprise
 //     (`applyQueuedSets`) remplacent déjà une série par son id.
 // Les badges (battue, égalée, record) ne sont pas stockés : ils se recalculent
@@ -39,7 +47,8 @@
 // suivantes suivent LA règle de `ranksAfterDeletion` (set-ranks.ts : remontée
 // par défaut, ADR 0024 proposé ; une constante à changer pour laisser un trou).
 // Écritures, dans cet ordre : un `deleteSet` par ligne supprimée, PUIS un
-// `insertSet` (upsert) par ligne dont le rang a changé. Suppressions d'abord,
+// `insertSet` marqué `only: 'rank'` par ligne dont le rang a changé (seul le
+// rang est écrit, jamais les valeurs). Suppressions d'abord,
 // comme dans l'éditeur de séance passée : le flush peut s'interrompre entre
 // deux ops, et aucune série gardée ne doit partager un rang avec celle qui s'en
 // va. Aucune unicité ne porte sur le rang en base. Une ligne sans id (cache
@@ -67,12 +76,17 @@ export interface SetGesture {
 /** Les valeurs saisies d'une série (ce que la feuille de correction règle). */
 export type SetEntry = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
-/** L'op qui écrit (ou réécrit) la série `set` d'id `id` : upsert par id, rang et côté compris. */
+/**
+ * L'op qui écrit la série `set` d'id `id`. Sans `only` : upsert complet. Avec
+ * `only` : écriture partielle d'une série existante (cf. `InsertSetOp.only`,
+ * outbox.ts), les valeurs seules ou le rang seul.
+ */
 export function writeSetOp(
   state: CaptureState,
   exerciseId: string,
   id: string,
   set: PerformedSet,
+  only?: 'values' | 'rank',
 ): InsertSetOp {
   return {
     type: 'insertSet',
@@ -84,6 +98,7 @@ export function writeSetOp(
     reps: set.reps,
     rir: set.rir,
     ...(set.side ? { side: set.side } : {}),
+    ...(only ? { only } : {}),
   };
 }
 
@@ -110,7 +125,7 @@ export function correctSet(
   }
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
-    ops: [writeSetOp(state, exerciseId, setId, { ...current, ...next })],
+    ops: [writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values')],
   };
 }
 
@@ -140,7 +155,7 @@ export function deleteSet(state: CaptureState, exerciseId: string, setId: string
     row.id === null ? [] : [{ type: 'deleteSet' as const, id: row.id, exerciseIds: [exerciseId] }],
   );
   const rewrites: OutboxOp[] = after.flatMap(({ id, ...set }) =>
-    id === null || orderBefore.get(id) === set.order ? [] : [writeSetOp(state, exerciseId, id, set)],
+    id === null || orderBefore.get(id) === set.order ? [] : [writeSetOp(state, exerciseId, id, set, 'rank')],
   );
   return {
     action: { type: 'delete-set', exerciseId, order: target.order },

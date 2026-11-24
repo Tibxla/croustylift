@@ -11,7 +11,8 @@
 //      Clôture est transitoire (ADR 0009) : remontée, la page ne revient pas.
 //
 // Le signal ne sert qu'à « mieux que la dernière fois » : séries battues ▲ et
-// nouveaux records. Les barres par muscle n'ont ni signe ni couleur de statut :
+// nouveaux records, chacun dans son axe, son unité et son côté (`RecapRecord` :
+// à 0 kg, des reps effectives). Les barres par muscle n'ont ni signe ni couleur de statut :
 // un mot (sous, dans, au-dessus du prévu) et la barre contre le crochet du prévu.
 // Le chargement de la semaine ne bloque jamais « Ranger la séance » : pendant
 // qu'il court, une ligne le dit ; hors ligne, une ligne dit ce qui manque.
@@ -38,13 +39,14 @@ import {
   TextLink,
   type ExoState,
 } from '../../ui';
-import { formatCount, formatE1rm } from './format';
+import { formatCount, formatE1rm, formatWeight } from './format';
 import {
   nudgeDuration,
   weekSetsByMuscle,
   type ExerciseRecap,
   type ExerciseStatus,
   type PlanFit,
+  type RecapRecord,
   type SessionRecap,
   type WeekMuscleRow,
 } from './session-recap';
@@ -94,6 +96,15 @@ const localDate = (iso: string) => {
 };
 const fmtDay = (iso: string) => localDate(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 const weekday = (iso: string) => localDate(iso).toLocaleDateString('fr-FR', { weekday: 'short' });
+
+const sideWord = (side: 'left' | 'right') => (side === 'left' ? 'gauche' : 'droite');
+
+/** Un record dans son axe et son unité : e1RM en kg, charge en « poids × reps »,
+ *  et à 0 kg des reps (effectives sur l'axe e1RM, ADR 0013), jamais « 0 kg ». */
+function recordValue(r: RecapRecord): string {
+  if (r.unit === 'reps') return r.axis === 'e1rm' ? `${r.value} reps effectives` : `${r.value} reps`;
+  return r.axis === 'e1rm' ? `e1RM ${formatE1rm(r.value)}` : `${formatWeight(r.set.weightKg)} × ${r.set.reps}`;
+}
 
 // Un seul mot pour un exo commencé, partout : « en cours ».
 const STATUS_WORD: Record<ExerciseStatus, string> = { fait: 'fait', 'en-cours': 'en cours', passe: 'passé', 'pas-fait': 'pas fait' };
@@ -306,7 +317,9 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
             </span>
             {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
             {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
-            {e.recordE1rm !== null && <Status v="up" word={`record ${formatE1rm(e.recordE1rm)}`} />}
+            {e.newRecords.map((r) => (
+              <Status key={`${r.axis}-${r.side ?? ''}`} v="up" word={`record${r.side ? ` ${sideWord(r.side)}` : ''} ${recordValue(r)}`} />
+            ))}
             {origin && <span>· {origin}</span>}
           </span>
         ) : (
@@ -482,7 +495,12 @@ function SessionDone({
         <Fact label="kg soulevés" value={kg(recap.liftedKg)} />
         {typeof values.bpmAvg === 'number' && <Fact label="BPM moyen" value={`${values.bpmAvg} bpm`} />}
         {recap.records.map((r) => (
-          <Fact key={r.exerciseId} label={r.name} value={<span className="text-sig">{formatE1rm(r.e1rm)}</span>} aside={<Status v="up" word="nouveau record" />} />
+          <Fact
+            key={`${r.exerciseId}-${r.axis}-${r.side ?? ''}`}
+            label={`${r.name}${r.side ? `, ${sideWord(r.side)}` : ''}`}
+            value={<span className="text-sig">{recordValue(r)}</span>}
+            aside={<Status v="up" word="nouveau record" />}
+          />
         ))}
       </dl>
     </Screen>
