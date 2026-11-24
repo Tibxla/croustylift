@@ -6,11 +6,15 @@
 // (renommable) ou d'une séance vierge. Lève la confusion « je n'ai pas pu nommer
 // ma routine » (issue #3).
 //
-// Conventions DESIGN.md tenues : fond sombre, accent violet parcimonieux (un seul
-// bouton primaire), tap-targets >= 44px, aucun tiret long (—) dans le texte, pas
-// de clavier custom (les noms sont du texte libre, <input> légitime).
+// Au kit E : en-tête d'écran, champs du kit (les noms sont du texte libre, le
+// clavier y est légitime), choix du point de départ en options à rond, un seul
+// bouton principal en bas, dans la barre collée. Aucun halo, aucun dégradé, aucun
+// surtitre en majuscules (registre U2, U9, U39, U40).
 import { useState } from 'react';
 import { errorMessage } from '../../lib/error-message';
+import { formatRange } from '../capture/format';
+import { FieldError, PrimaryButton, RadioMark, Screen, ScreenHeader, SectionTitle, TextField } from '../../ui';
+import { firstNameProblem } from './template';
 import {
   createFirstRoutine,
   DEFAULT_ROUTINE_NAME,
@@ -35,19 +39,22 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
   const [withTemplate, setWithTemplate] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const routineTrimmed = routineName.trim();
-  const seanceTrimmed = seanceName.trim();
-  const canSubmit = routineTrimmed.length > 0 && seanceTrimmed.length > 0 && !busy;
+  // Les noms se vérifient au premier envoi, puis à chaque frappe : la phrase dit
+  // ce qui manque sous le champ fautif, au lieu d'un bouton éteint sans raison.
+  const [tried, setTried] = useState(false);
+  const routineProblem = tried ? firstNameProblem('routine', routineName) : null;
+  const seanceProblem = tried ? firstNameProblem('séance', seanceName) : null;
 
   async function submit() {
-    if (!canSubmit) return;
+    if (busy) return;
+    setTried(true);
+    if (firstNameProblem('routine', routineName) || firstNameProblem('séance', seanceName)) return;
     setBusy(true);
     setError(null);
     try {
       await onCreate({
-        routineName: routineTrimmed,
-        seanceName: seanceTrimmed,
+        routineName: routineName.trim(),
+        seanceName: seanceName.trim(),
         withTemplate,
       });
       // En cas de succès, App recharge et démonte cet écran : pas de reset d'état.
@@ -58,82 +65,81 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col px-[30px] pb-8 pt-12">
-      {/* Progression d'entrée : on amorce le parcours (routine → séance). Le 1ᵉʳ
-          segment porte la « voix » accent (glow discret), le 2ᵉ reste en palier. */}
-      <div className="mb-[30px] flex gap-1.5" aria-hidden="true">
-        <span className="h-1 flex-1 rounded-full bg-accent" />
-        <span className="h-1 flex-1 rounded-full bg-surface-2" />
-      </div>
-
-      <h1 className="text-[33px] font-semibold leading-[1.08] tracking-[-0.025em] text-ink">
-        Crée ta première routine.
-      </h1>
-      <p className="mt-3.5 text-[15px] leading-[1.5] text-ink-muted">
-        Une routine regroupe les séances que tu tournes. Tu pourras tout ajuster après.
-      </p>
-
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col">
       <form
-        className="mt-8 flex flex-1 flex-col"
+        noValidate
+        className="flex flex-1 flex-col"
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
         }}
       >
-        <Field
-          id="routine-name"
-          label="Nom de la routine"
-          value={routineName}
-          placeholder="Nom de la routine"
-          onChange={setRoutineName}
-        />
-
-        <div className="mt-5">
-          <Field
+        <Screen
+          bottom={
+            <>
+              {error && <FieldError className="break-words">{error}</FieldError>}
+              <PrimaryButton type="submit" disabled={busy}>
+                {busy ? 'Création…' : 'Créer ma routine'}
+              </PrimaryButton>
+            </>
+          }
+        >
+          <div aria-hidden="true" className="h-12" />
+          <ScreenHeader
+            title="Ta première routine"
+            meta="Une routine regroupe les séances que tu tournes. Tout se change ensuite dans Séances."
+          />
+          <TextField
+            id="routine-name"
+            label="Nom de la routine"
+            value={routineName}
+            onChange={setRoutineName}
+            error={routineProblem}
+            maxLength={FIRST_NAME_MAX_LENGTH}
+            enterKeyHint="next"
+            className="px-5"
+          />
+          <TextField
             id="seance-name"
             label="Première séance"
             value={seanceName}
-            placeholder="Nom de la séance"
-            autoFocus
             onChange={setSeanceName}
+            error={seanceProblem}
+            maxLength={FIRST_NAME_MAX_LENGTH}
+            enterKeyHint="done"
+            hint="C’est par ce nom que tu la choisis en arrivant à la salle."
+            className="px-5 pt-4"
           />
-        </div>
 
-        <fieldset className="mt-7">
-          <legend className="mb-3 block text-xs font-medium uppercase tracking-[0.04em] text-ink-faint">
-            Point de départ
-          </legend>
-          <div className="flex flex-col gap-2.5">
-            <ChoiceCard
+          <SectionTitle id="depart-titre">Point de départ</SectionTitle>
+          <div role="radiogroup" aria-labelledby="depart-titre" className="border-t border-line">
+            <StartOption
               selected={withTemplate}
               title="Modèle de départ"
-              subtitle={`Séance pré-remplie avec ${STARTER_TEMPLATE.exercises.length} exercices de base.`}
+              meta={`${STARTER_TEMPLATE.exercises.length} exos de base déjà prescrits, jouable dès la première séance.`}
               onSelect={() => setWithTemplate(true)}
             />
-            <ChoiceCard
+            {withTemplate && (
+              <ol aria-label="Exercices du modèle" className="border-b border-line py-1.5 pl-[62px] pr-5">
+                {STARTER_TEMPLATE.exercises.map(({ name, prescription: p }) => (
+                  <li key={name} className="flex items-baseline justify-between gap-3 py-1 text-[15px] leading-[1.3]">
+                    <span className="min-w-0 text-ink">{name}</span>
+                    <span className="flex-none whitespace-nowrap text-[14px] text-muted">
+                      {formatRange(p.sets)} × {formatRange(p.reps)} · RIR {formatRange(p.rir)}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <StartOption
               selected={!withTemplate}
               title="Séance vierge"
-              subtitle="Tu ajoutes les exercices et leurs prescriptions juste après, dans l’onglet Séances."
+              meta="Tu ajoutes les exos et leurs prescriptions dans Séances."
               onSelect={() => setWithTemplate(false)}
             />
           </div>
-        </fieldset>
-
-        {error && (
-          <p className="mt-4 break-words text-xs text-warn" role="alert">
-            {error}
-          </p>
-        )}
-
-        <div className="mt-auto pt-8">
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
-          >
-            {busy ? 'Création…' : 'Créer ma routine'}
-          </button>
-        </div>
+          <div className="h-4" />
+        </Screen>
       </form>
     </div>
   );
@@ -159,103 +165,36 @@ export function FirstLaunchScreen({
   );
 }
 
-// --- Primitives locales -----------------------------------------------------
+// --- Primitive locale ---------------------------------------------------------
 
-/**
- * Un champ texte libre (nom). Le ban du clavier OS de DESIGN.md vise les CHIFFRES
- * mesurés, pas les noms : un <input> texte est légitime ici (cf. SeancesScreen).
- */
-function Field({
-  id,
-  label,
-  value,
-  placeholder,
-  autoFocus = false,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  placeholder: string;
-  autoFocus?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label htmlFor={id} className="block">
-      <span className="mb-2 block text-xs font-medium uppercase tracking-[0.04em] text-ink-faint">
-        {label}
-      </span>
-      <input
-        id={id}
-        type="text"
-        value={value}
-        placeholder={placeholder}
-        autoFocus={autoFocus}
-        enterKeyHint="next"
-        maxLength={FIRST_NAME_MAX_LENGTH}
-        onChange={(e) => onChange(e.target.value)}
-        className="field h-[54px] w-full rounded-[14px] px-4 text-[17px] font-medium"
-      />
-    </label>
-  );
-}
-
-/**
- * Une carte de choix (modèle vs vierge). État sélectionné porté par couleur ET
- * coche, jamais par la couleur seule (DESIGN.md). Tap-target pleine carte.
- */
-function ChoiceCard({
+/** Une option du point de départ : rond d'option, titre, explication, ligne
+ *  pleine largeur. Le choix se lit à la marque ET à la graisse du titre. */
+function StartOption({
   selected,
   title,
-  subtitle,
+  meta,
   onSelect,
 }: {
   selected: boolean;
   title: string;
-  subtitle: string;
+  meta: string;
   onSelect: () => void;
 }) {
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={selected}
       onClick={onSelect}
-      aria-pressed={selected}
-      className={`panel flex items-center gap-3 rounded-2xl p-4 text-left transition active:scale-[0.99] ${
-        selected
-          ? 'border-accent bg-surface-2'
-          : ''
-      }`}
+      className="flex min-h-16 w-full items-start gap-4 border-b border-line px-5 py-3.5 text-left active:bg-line"
     >
-      <span className="min-w-0 flex-1">
-        <span className="block text-base font-semibold text-ink">{title}</span>
-        <span className="mt-1 block text-[13px] leading-[1.45] text-ink-muted">{subtitle}</span>
+      <span className="pt-0.5">
+        <RadioMark checked={selected} />
       </span>
-      <CheckMark selected={selected} />
+      <span className="min-w-0 flex-1">
+        <span className={`block text-[17px] text-ink ${selected ? 'font-semibold' : 'font-medium'}`}>{title}</span>
+        <span className="mt-0.5 block text-[14px] leading-[1.4] text-muted">{meta}</span>
+      </span>
     </button>
-  );
-}
-
-/** Indicateur de sélection : un cercle qui se remplit d'accent + coche. */
-function CheckMark({ selected }: { selected: boolean }) {
-  return (
-    <span
-      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition ${
-        selected ? 'border-accent bg-accent-strong text-on-accent' : 'border-hair-strong text-transparent'
-      }`}
-      aria-hidden="true"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="14"
-        height="14"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M5 13l4 4L19 7" />
-      </svg>
-    </span>
   );
 }
