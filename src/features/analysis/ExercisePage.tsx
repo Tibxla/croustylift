@@ -297,7 +297,15 @@ function PointSets({
   const sets = exec ? [...exec.sets].sort((a, b) => a.order - b.order || (a.side ?? '').localeCompare(b.side ?? '')) : [];
   return (
     <section aria-labelledby="exo-series-point">
-      <SectionTitle id="exo-series-point" aside={exec ? `${formatInt(liftedKg(exec.sets))}\u00a0kg soulevés` : undefined}>
+      <SectionTitle id="exo-series-point" aside={
+          exec ? (
+            // Chiffres tabulaires, comme au Journal : l'espace des milliers s'y voit (« 1 370 »).
+            <>
+              <span className="tnum">{formatInt(liftedKg(exec.sets))}</span>
+              {'\u00a0kg soulevés'}
+            </>
+          ) : undefined
+        }>
         Séries du {date}
       </SectionTitle>
       {phase === 'loading' ? (
