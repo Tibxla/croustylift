@@ -3,6 +3,9 @@ import {
   isPersonalExercise,
   toListExercise,
   filterExercises,
+  filterByMuscle,
+  musclesInUse,
+  musclesOf,
   type ListExercise,
 } from './exercises-list';
 
@@ -115,5 +118,26 @@ describe('filterExercises', () => {
     const { base, personal } = filterExercises(catalogue, 'tractions');
     expect(base).toEqual([]);
     expect(personal).toEqual([]);
+  });
+});
+
+describe('filtre par muscle', () => {
+  const order = ['pectoraux', 'dorsaux', 'biceps', 'triceps', 'mollets'];
+  const legacy: ListExercise = { ...make('l', 'Vieux', null, []), muscleGroup: 'biceps' };
+  const list = [make('a', 'A', null, ['triceps', 'pectoraux']), make('b', 'B', 'u', ['dorsaux']), legacy];
+
+  it('les muscles d’un exo replient sur le groupe legacy', () => {
+    expect(musclesOf(legacy)).toEqual(['biceps']);
+    expect(musclesOf({ ...legacy, muscleGroup: '' })).toEqual([]);
+  });
+
+  it('ne propose que les muscles servis, dans l’ordre canonique', () => {
+    expect(musclesInUse(list, order)).toEqual(['pectoraux', 'dorsaux', 'biceps', 'triceps']);
+  });
+
+  it('filtre sur un muscle principal, null ne filtre rien', () => {
+    expect(filterByMuscle(list, 'pectoraux').map((e) => e.id)).toEqual(['a']);
+    expect(filterByMuscle(list, 'biceps').map((e) => e.id)).toEqual(['l']);
+    expect(filterByMuscle(list, null)).toHaveLength(3);
   });
 });
