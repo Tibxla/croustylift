@@ -105,7 +105,8 @@ import { ExerciseCapture } from './ExerciseCapture';
 import type { IndexItem } from './ExerciseIndex';
 import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
-import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner } from '../../ui';
+import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
+import { useGoToSurface } from '../../shell/navigation';
 import { syncLine, type SyncState } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
@@ -603,12 +604,7 @@ export function CaptureScreen() {
   }
 
   if (load.phase === 'empty') {
-    return (
-      <EmptyState
-        title="Rien à logger pour l’instant."
-        body="Choisis ta routine courante dans Séances et ajoute-lui une séance."
-      />
-    );
+    return <NothingToLog />;
   }
 
   if (load.phase === 'error') {
@@ -656,6 +652,7 @@ function SeancePicker({
   seances: SeanceChoice[];
   onPick: (seance: SeanceChoice) => void;
 }) {
+  const go = useGoToSurface();
   return (
     <div className="flex flex-1 flex-col">
       <SalleSync />
@@ -665,8 +662,25 @@ function SeancePicker({
           <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
         ))}
       </List>
-      <p className="px-5 pt-4 text-[15px] leading-[1.45] text-muted">Pas la bonne routine ? Change-la dans Séances.</p>
+      <div className="flex flex-wrap items-center gap-x-1.5 px-5 pt-2 text-[16px] text-muted">
+        <span>Pas la bonne routine ?</span>
+        <TextLink tone="muted" onClick={() => go('seances')}>
+          Change-la dans Séances
+        </TextLink>
+      </div>
     </div>
+  );
+}
+
+/** Aucune séance dans la routine courante : le chemin vers Séances est donné. */
+function NothingToLog() {
+  const go = useGoToSurface();
+  return (
+    <EmptyState
+      title="Rien à logger pour l’instant."
+      body="Choisis ta routine courante dans Séances et ajoute-lui une séance."
+      action={<TextLink onClick={() => go('seances')}>Aller dans Séances</TextLink>}
+    />
   );
 }
 
