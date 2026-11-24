@@ -26,6 +26,7 @@ import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
 import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
 import { RefusedWritesContext, refusedAction } from './shell/refused-context'
+import { RefusedLoadFailed } from './shell/RefusedLoadFailed'
 import { errorMessage } from './lib/error-message'
 
 // Seule la Salle (surface par défaut, « zéro-friction ») est dans le chunk
@@ -87,11 +88,28 @@ const lazyScreens = {
   reglages: lazySurface('reglages', () => import('./features/settings/ReglagesScreen').then((m) => m.ReglagesScreen)),
 } as const
 
-// L'écran des saisies refusées est une feuille, pas une surface : un échec de
-// chargement ne recharge rien, il s'oublie pour être retenté à la prochaine
-// ouverture (la frontière d'erreur autour de la feuille rend la main).
+// L'écran des saisies refusées est une feuille, pas une surface, mais son
+// chunk suit la même reprise protégée : introuvable pendant qu'elle est ouverte
+// et rechargement permis, la page recharge une fois et rouvre l'onglet en cours ;
+// sinon l'échec s'affiche dans la feuille (RefusedLoadFailed), avec une reprise.
+// L'import échoué est toujours oublié (`React.lazy` le garderait) : réessayer
+// redemande vraiment le fichier.
 const importRefused = () => import('./shell/RefusedWritesSheet')
-const createRefusedSheet = () => lazy(() => importRefused().then((m) => ({ default: m.RefusedWritesSheet })))
+const refusedRequests = new ImportRequests()
+/** L'onglet affiché, rouvert si un rechargement de reprise a lieu (tenu par AuthenticatedApp). */
+let recoverySurface: SurfaceName = 'capture'
+const createRefusedSheet = (): LazyExoticComponent<ComponentType<{ open: boolean; onClose: () => void }>> =>
+  lazy(() => {
+    const request = refusedRequests.begin()
+    return importRefused()
+      .then((m) => ({ default: m.RefusedWritesSheet }))
+      .catch((err: unknown) => {
+        const action = recoverFromChunkFailure(recoverySurface, refusedRequests.isActive(request))
+        if (action === 'reload') return new Promise<never>(() => {})
+        RefusedWritesSheet = createRefusedSheet()
+        throw err
+      })
+  })
 let RefusedWritesSheet = createRefusedSheet()
 
 // Une mise à jour s'annonce : les chunks paresseux sont chargés en mémoire tant
@@ -206,6 +224,9 @@ function AuthenticatedApp({
   // La demande d'import d'un écran paresseux ne vaut que tant que l'onglet le
   // porte : elle est périmée au départ de l'onglet et au démontage (déconnexion).
   useEffect(() => {
+    recoverySurface = surface
+  }, [surface])
+  useEffect(() => {
     if (surface === 'capture') return
     const screen = lazyScreens[surface]
     return () => screen.requests.invalidate()
@@ -232,6 +253,13 @@ function AuthenticatedApp({
   // Écran des saisies refusées (feuille), ouvert depuis la ligne de synchro de
   // toute surface ou depuis Réglages.
   const [refusedOpen, setRefusedOpen] = useState(false)
+  // Chaque « Réessayer » remonte la frontière d'erreur de la feuille.
+  const [refusedAttempt, setRefusedAttempt] = useState(0)
+  // La demande d'import de la feuille ne vaut que tant qu'elle est ouverte.
+  useEffect(() => {
+    if (!refusedOpen) return
+    return () => refusedRequests.invalidate()
+  }, [refusedOpen])
   const openRefused = useCallback(() => setRefusedOpen(true), [])
 
   useEffect(() => {
@@ -368,11 +396,10 @@ function AuthenticatedApp({
               sans repli visible) et se retente à la prochaine ouverture. */}
           {refusedOpen && (
             <ErrorBoundary
-              fallback={null}
-              onError={() => {
-                RefusedWritesSheet = createRefusedSheet()
-                setRefusedOpen(false)
-              }}
+              key={refusedAttempt}
+              fallback={
+                <RefusedLoadFailed onRetry={() => setRefusedAttempt((n) => n + 1)} onClose={() => setRefusedOpen(false)} />
+              }
             >
               <Suspense fallback={null}>
                 <RefusedWritesSheet open onClose={() => setRefusedOpen(false)} />

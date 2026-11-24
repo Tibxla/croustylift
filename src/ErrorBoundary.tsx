@@ -9,8 +9,6 @@ interface Props {
   children: ReactNode
   /** Rendu de secours. Défaut : écran plein « Recharger l'app ». */
   fallback?: ReactNode
-  /** Appelé après une erreur interceptée (ex. retirer une feuille qui n'a pas pu se charger). */
-  onError?: (error: Error) => void
 }
 
 interface State {
@@ -35,7 +33,6 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    this.props.onError?.(error)
     // Pas de service de reporting (local-first, 0 €) : on trace en console pour le
     // diagnostic. Les logs navigateur font le reste.
     console.error('[ErrorBoundary]', error, info.componentStack)
