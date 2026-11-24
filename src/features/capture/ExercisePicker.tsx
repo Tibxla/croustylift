@@ -276,12 +276,15 @@ export function ExercisePicker({
         open={confirmCancel}
         title="Annuler la séance ?"
         onClose={closeConfirm}
-        footer={
-          <>
-            <SecondaryButton onClick={() => setConfirmCancel(false)}>Garder la séance</SecondaryButton>
+      >
+        {/* Comme la confirmation d'une série : la phrase, puis sur une rangée
+            l'option sûre en bouton et la perte en lien. */}
+        <div className="px-5 pb-2 pt-1">
+          <p className="max-w-[36ch] text-[16px] leading-[1.45] text-ink">{lossText(session, state)}</p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <SecondaryButton onClick={closeConfirm}>Garder la séance</SecondaryButton>
             <TextLink
               tone="muted"
-              className="self-center"
               ariaLabel="Confirmer l’annulation de la séance"
               onClick={() => {
                 setConfirmCancel(false);
@@ -290,10 +293,8 @@ export function ExercisePicker({
             >
               Annuler la séance
             </TextLink>
-          </>
-        }
-      >
-        <p className="max-w-[36ch] px-5 text-[16px] leading-[1.45] text-ink">{lossText(session, state)}</p>
+          </div>
+        </div>
       </Sheet>
 
       <CatalogSheet
