@@ -14,7 +14,7 @@ interface State {
 /**
  * Frontière d'erreur de RENDU — la seule chose qu'un composant React peut
  * intercepter. Sans elle, une exception levée pendant le rendu (payload Supabase
- * malformé, donnée de graphe recharts inattendue, accès à un champ undefined)
+ * malformé, donnée de graphe inattendue, accès à un champ undefined)
  * remonte jusqu'à la racine et démonte TOUT l'arbre : écran blanc, sans message
  * ni récupération — inacceptable pour une PWA censée tenir en pleine salle.
  *

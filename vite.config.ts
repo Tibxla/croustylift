@@ -14,10 +14,6 @@ function packageOf(id: string): string | null {
   return first.startsWith('@') ? `${first}/${second}` : first
 }
 
-// Vendors de l'Analyse : recharts et ce qu'il tire (d3, redux, immer...).
-const CHART_PACKAGES =
-  /^(recharts|d3-.+|internmap|victory-vendor|decimal\.js-light|eventemitter3|es-toolkit|tiny-invariant|clsx|redux|redux-thunk|@reduxjs\/toolkit|react-redux|reselect|immer|react-is|use-sync-external-store)$/
-
 export default defineConfig({
   define: {
     __APP_COMMIT__: JSON.stringify(buildCommit()),
@@ -114,15 +110,12 @@ export default defineConfig({
         // pas d'un déploiement à l'autre, le service worker ne retélécharge que le
         // code de l'app. En fonction, et par nom de paquet EXACT : la forme objet
         // (`react: ['react', 'react-dom']`) laissait `react-dom/client` dans le
-        // chunk applicatif. `recharts` a son propre chunk, chargé seulement avec
-        // l'Analyse (React.lazy) : sans lui, le chunk paresseux changeait de hash à
-        // chaque modification de l'app.
+        // chunk applicatif.
         manualChunks(id) {
           const pkg = packageOf(id)
           if (pkg === null) return undefined
           if (pkg === 'react' || pkg === 'react-dom' || pkg === 'scheduler') return 'react'
           if (pkg.startsWith('@supabase/')) return 'supabase'
-          if (CHART_PACKAGES.test(pkg)) return 'recharts'
           return undefined
         },
       },
