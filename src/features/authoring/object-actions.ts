@@ -13,6 +13,8 @@
 //     plan change et un nouveau bloc commence : on le dit avant. Depuis
 //     l'éditeur avec une saisie non enregistrée, il l'abandonne : confirmé, la
 //     perte en lien (« Archiver sans les modifications »).
+//   - Archiver une routine est confirmé : elle quitte la liste avec toutes ses
+//     séances (la confirmation le dit), même si elle se désarchive.
 //   - Définir comme routine courante ouvre un bloc : confirmé.
 //   - Supprimer ne se défait pas : toujours confirmé, l'option sûre en bouton.
 import { planRowActions } from './archive';
@@ -67,7 +69,7 @@ export function routineMenu(r: { executed: boolean; isCurrent: boolean; archived
   if (r.isCurrent) return { items, currentNote: true };
   items.push({ key: 'set-current', confirm: 'plain' });
   const life = planRowActions({ executed: r.executed, archived: false, isCurrent: false });
-  if (life.canArchive) items.push({ key: 'archive', confirm: 'none' });
+  if (life.canArchive) items.push({ key: 'archive', confirm: 'plain' });
   else if (life.canDelete) items.push({ key: 'delete', confirm: 'destructive' });
   return { items, currentNote: false };
 }

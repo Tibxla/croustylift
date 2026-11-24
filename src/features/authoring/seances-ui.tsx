@@ -335,7 +335,7 @@ export function SeanceActionsSheet({
   );
 }
 
-type RoutineStep = 'menu' | 'set-current' | 'delete' | 'rename';
+type RoutineStep = 'menu' | 'set-current' | 'archive' | 'delete' | 'rename';
 
 export function RoutineActionsSheet({
   routineName,
@@ -399,6 +399,20 @@ export function RoutineActionsSheet({
           <p className="font-medium">Définir {routineName} comme routine courante ?</p>
           <p className="mt-1 text-muted">{replaces}</p>
         </Confirm>
+      ) : step === 'archive' ? (
+        <Confirm
+          confirmLabel="Archiver la routine"
+          busy={write.busy}
+          error={write.error}
+          className="mx-5 mb-2 mt-1"
+          onCancel={back}
+          onConfirm={() => void write.run(onArchive)}
+        >
+          <p className="font-medium">Archiver {routineName} ?</p>
+          <p className="mt-1 text-muted">
+            Elle quitte ta liste. Ses séances, ses courbes et ses blocs restent dans l’analyse. Tu pourras la désarchiver.
+          </p>
+        </Confirm>
       ) : step === 'delete' ? (
         <Confirm
           destructive
@@ -425,10 +439,10 @@ export function RoutineActionsSheet({
             )}
             {has('archive') && (
               <ActionRow
-                label={write.busy ? 'Un instant…' : 'Archiver'}
+                label="Archiver"
                 disabled={write.busy}
                 meta="Déjà faite : elle s’archive, son historique reste entier. Tu pourras la désarchiver."
-                onClick={() => void write.run(onArchive)}
+                onClick={() => setStep('archive')}
               />
             )}
             {has('delete') && (

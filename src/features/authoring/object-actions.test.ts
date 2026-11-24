@@ -50,11 +50,11 @@ describe('seanceMenu', () => {
 });
 
 describe('routineMenu', () => {
-  it('autre routine déjà faite : renommer, définir courante (confirmé), archiver sans confirmation', () => {
+  it('autre routine déjà faite : renommer, définir courante et archiver, tous deux confirmés', () => {
     const menu = routineMenu({ executed: true, isCurrent: false, archived: false });
     expect(keys(menu.items)).toEqual(['rename', 'set-current', 'archive']);
     expect(confirmOf(menu.items, 'set-current')).toBe('plain');
-    expect(confirmOf(menu.items, 'archive')).toBe('none');
+    expect(confirmOf(menu.items, 'archive')).toBe('plain');
     expect(menu.currentNote).toBe(false);
   });
 
