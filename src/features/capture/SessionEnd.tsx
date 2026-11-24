@@ -358,6 +358,19 @@ function MeasureLine({ label, meta, value, action }: { label: string; meta: stri
 const FIT: Record<PlanFit, string> = { sous: 'sous le prévu', dans: 'dans le prévu', 'au-dela': 'au-dessus du prévu' };
 const fmtPlan = (r: { min: number; max: number }) => (tally(r.min) === tally(r.max) ? tally(r.min) : `${tally(r.min)}-${tally(r.max)}`);
 
+/** Les séances faites plus tôt dans la semaine, regroupées par séance et par
+ *  jour : « Upper A (lun.), Lower A (mar., 2 fois) ». */
+function seancesLine(seances: { name: string; performedOn: string }[]): string {
+  const groups: { name: string; day: string; n: number }[] = [];
+  for (const s of seances) {
+    const day = weekday(s.performedOn);
+    const last = groups[groups.length - 1];
+    if (last && last.name === s.name && last.day === day) last.n += 1;
+    else groups.push({ name: s.name, day, n: 1 });
+  }
+  return groups.map((g) => `${g.name} (${g.day}${g.n > 1 ? `, ${g.n} fois` : ''})`).join(', ');
+}
+
 function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week: WeekMusclesInput | null; dateIso: string }) {
   const [all, setAll] = useState(false);
   const rows = useMemo(
@@ -381,7 +394,7 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
           week.before === null
             ? 'Hors ligne : les séances précédentes de la semaine ne sont pas comptées.'
             : seances.length > 0
-              ? `Avant : ${seances.map((s) => `${s.name} (${weekday(s.performedOn)})`).join(', ')}.`
+              ? `Avant : ${seancesLine(seances)}.`
               : 'Première de la semaine.',
           week.planned === null
             ? 'Prévu de la routine indisponible.'
