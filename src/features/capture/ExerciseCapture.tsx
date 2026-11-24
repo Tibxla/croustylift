@@ -13,7 +13,7 @@
 // (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
 // À 0 kg, la mesure est en reps effectives (`perfReadout`, ADR 0013).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { comparePerformance, effectiveReps, isZeroLoad } from '../../domain/e1rm';
+import { effectiveReps, isZeroLoad } from '../../domain/e1rm';
 import { isRepsRecord } from '../../domain/pr';
 import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt } from '../../domain/unilateral';
 import { isBlankNote } from '../../domain/notes';
@@ -281,19 +281,6 @@ export function ExerciseCapture({
   const reachedMax = completedSets >= prescription.sets.max;
   const verdicts = summarizeBadges(progress.sets, badges).total;
 
-  // Index de la MEILLEURE série loggée (e1RM max, reps effectives à 0 kg : le
-  // juge des badges, `comparePerformance`) : sa ligne est mise en accent dans la
-  // liste, façon « série du jour à battre » (cohérent avec le repère Analyse).
-  // À égalité, la première.
-  const bestIndex = useMemo(() => {
-    let bi = -1;
-    progress.sets.forEach((s, i) => {
-      const best = progress.sets[bi];
-      if (best === undefined || comparePerformance(s, best) > 0) bi = i;
-    });
-    return bi;
-  }, [progress.sets]);
-
   // Feuille de fin d'exo (ADR « popup de fin d'exo ») : remonte AUTOMATIQUEMENT,
   // UNE fois, à l'instant où l'on FRANCHIT la BORNE HAUTE prescrite (transition
   // false→true) — pas le min, pour ne pas couper l'enchaînement —, et pas au
@@ -526,7 +513,6 @@ export function ExerciseCapture({
         badges={badges}
         completedSets={completedSets}
         setsTarget={prescription.sets}
-        bestIndex={bestIndex}
         next={next?.name ?? null}
         onNext={() => {
           setRecapOpen(false);

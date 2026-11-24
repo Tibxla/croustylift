@@ -1,13 +1,12 @@
 // Récap de fin d'exo (ADR « popup de fin d'exo ») : il monte tout seul, une
 // fois, quand la borne haute du plan est franchie, et se rouvre depuis le bilan
 // de l'exo. Constat sobre : séries faites face au plan, statuts face à la
-// Référence et au record (par côté en unilatéral), meilleure série. Non
+// Référence et au record (par côté en unilatéral). Non
 // bloquant : l'exo suivant (ou le Sommaire), ou « Continuer l'exercice » pour
 // une série de plus. Feuille du kit : bornée en hauteur, sous la barre d'état.
 import type { PerformedSet } from '../../domain/types';
 import { PrimaryButton, SecondaryButton, Sheet, Status } from '../../ui';
-import { formatRange, formatSet, formatSetCount } from './format';
-import { formatPerf } from './perf-readout';
+import { formatRange, formatSetCount } from './format';
 import { summarizeBadges, type SetBadge, type VerdictCounts } from './set-badges';
 
 /** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé. */
@@ -29,7 +28,6 @@ export function ExerciseRecapSheet({
   badges,
   completedSets,
   setsTarget,
-  bestIndex,
   next,
   onNext,
   onSommaire,
@@ -43,7 +41,6 @@ export function ExerciseRecapSheet({
   badges: SetBadge[];
   completedSets: number;
   setsTarget: { min: number; max: number };
-  bestIndex: number;
   /** Le nom de l'exo suivant, ou null s'il ne reste rien. */
   next: string | null;
   onNext: () => void;
@@ -51,7 +48,6 @@ export function ExerciseRecapSheet({
   onClose: () => void;
 }) {
   const summary = summarizeBadges(sets, badges);
-  const best = bestIndex >= 0 ? (sets[bestIndex] ?? null) : null;
   return (
     <Sheet
       open={open}
@@ -91,11 +87,6 @@ export function ExerciseRecapSheet({
             <Verdicts counts={summary.total} />
           )}
         </div>
-        {best && (
-          <p className="mt-2 text-[15px] text-muted">
-            Meilleure : <span className="tnum text-ink">{formatSet(best)}</span> · {formatPerf(best)}
-          </p>
-        )}
       </div>
     </Sheet>
   );
