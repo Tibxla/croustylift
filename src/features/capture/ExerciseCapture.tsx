@@ -14,6 +14,10 @@
 // événements, qui remontent à travers le portail, ne marquent pas le brouillon
 // comme touché.
 //
+// Les libellés « e1RM » (mesure du brouillon) et « RIR » (rangée) se touchent :
+// une feuille basse dit en une phrase ce que veut dire chaque mot
+// (src/lib/glossary-text.ts), sans ligne de plus sur l'instrument.
+//
 // Mesure du brouillon : un chiffre seul, jamais un verdict « battrait » (cf.
 // draft-e1rm.ts) : l'écart se lit sans signe ni couleur. Les statuts en signal
 // (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
@@ -25,7 +29,8 @@ import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrde
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, StateMark, Status, useCompact } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact } from '../../ui';
+import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
@@ -330,6 +335,10 @@ export function ExerciseCapture({
   const closeEdit = useCallback(() => setEditId(null), [setEditId]);
   const closeNotes = useCallback(() => setNotesOpen(false), [setNotesOpen]);
   const closeRecap = useCallback(() => setRecapOpen(false), [setRecapOpen]);
+  // RIR et e1RM expliqués au toucher de leur libellé (UX 6 de l'audit du 24/11).
+  const [wordsOpen, setWordsOpen] = useState(false);
+  const openWords = useCallback(() => setWordsOpen(true), []);
+  const closeWords = useCallback(() => setWordsOpen(false), []);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
@@ -486,7 +495,14 @@ export function ExerciseCapture({
 
         {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
         <dl className={`grid grid-cols-3 gap-3 px-5 ${compact ? 'pt-0.5' : ''}`}>
-          <Measure compact={compact} label={livePerf?.label ?? 'e1RM'} live>
+          <Measure
+            compact={compact}
+            label={livePerf?.label ?? 'e1RM'}
+            live
+            // « reps eff. » à 0 kg : ce n'est pas l'e1RM, pas sa définition.
+            onLabel={(livePerf?.label ?? 'e1RM') === 'e1RM' ? openWords : undefined}
+            labelHint="e1RM, ce que ça veut dire"
+          >
             {livePerf ? <Figure value={livePerf.value} unit={livePerf.unit} compact={compact} /> : <Missing compact={compact}>·</Missing>}
           </Measure>
           {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
@@ -531,6 +547,8 @@ export function ExerciseCapture({
             refValue={refToBeat?.rir ?? null}
             onPick={setRir}
             compact={compact}
+            onLabel={openWords}
+            labelHint="RIR, ce que ça veut dire"
           />
         </div>
       </div>
@@ -560,6 +578,7 @@ export function ExerciseCapture({
         onSaveDatedNote={onSaveDatedNote}
         onSaveInstructions={onSaveExerciseNote}
       />
+      <WordsSheet open={wordsOpen} onClose={closeWords} />
       <ExerciseRecapSheet
         open={recapOpen}
         name={exercise.name}
@@ -586,12 +605,60 @@ export function ExerciseCapture({
 
 /** Une mesure sous la règle : son nom, puis le chiffre (sur la même ligne en
  *  écran bas). */
-function Measure({ label, compact, right = false, live = false, children }: { label: string; compact: boolean; right?: boolean; live?: boolean; children: ReactNode }) {
+function Measure({
+  label,
+  compact,
+  right = false,
+  live = false,
+  onLabel,
+  labelHint,
+  children,
+}: {
+  label: string;
+  compact: boolean;
+  right?: boolean;
+  live?: boolean;
+  /** Le libellé se touche et ouvre la définition du mot (glossary-text.ts). */
+  onLabel?: () => void;
+  labelHint?: string;
+  children: ReactNode;
+}) {
   return (
     <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : ''} min-w-0`}>
-      <dt className="flex-none text-[13px] text-muted">{label}</dt>
+      <dt className="flex-none text-[13px] text-muted">
+        {onLabel ? (
+          <button
+            type="button"
+            onClick={onLabel}
+            aria-label={labelHint}
+            className="-mx-2 min-w-11 px-2 text-left underline decoration-dim decoration-1 underline-offset-[3px] active:opacity-70"
+          >
+            {label}
+          </button>
+        ) : (
+          label
+        )}
+      </dt>
       {children}
     </div>
+  );
+}
+
+/** Les deux mots de l'instrument expliqués, en une feuille basse (rien ne pousse
+ *  la rangée RIR sous la barre) : une phrase chacun, la même source que le
+ *  premier lancement et l'Analyse (glossary-text.ts). */
+function WordsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Sheet open={open} title="RIR et e1RM" onClose={onClose}>
+      <div className="flex flex-col gap-3 px-5 pb-4 text-[16px] leading-[1.45]">
+        {(['rir', 'e1rm'] as const).map((key) => (
+          <p key={key} className="max-w-[40ch] text-muted">
+            <span className="font-semibold text-ink">{GLOSSARY_TEXT[key].term}</span> : {GLOSSARY_TEXT[key].definition.charAt(0).toLowerCase()}
+            {GLOSSARY_TEXT[key].definition.slice(1)}
+          </p>
+        ))}
+      </div>
+    </Sheet>
   );
 }
 
