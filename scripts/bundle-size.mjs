@@ -8,7 +8,7 @@
 //
 // Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
 // arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
-// geste délibéré, visible dans le diff. Dernière révision : intuitivité de Séances, refonte E
+// geste délibéré, visible dans le diff. Dernière révision : nettoyage du code mort (index.css, NoteSheet.js)
 // (taille mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -22,14 +22,14 @@ const BUDGETS = {
   'index.js': 77_500, // code de l'app, tenu par le chargement à la demande (mesuré : 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
-  'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
+  'index.css': 7_500, // (mesuré : 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)
   // À la demande.
   'AnalysisScreen.js': 23_100, // code de l'Analyse (mesuré : 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
   'SeancesScreen.js': 14_000, // routines, page d'une routine, éditeur de séance (mesuré : 13 106 à l'intuitivité de Séances, ⋯ et feuilles d'actions, ligne d'état, catalogue ouvert ; 11 277 avant ; 10 783 au lot 5)
   'ReglagesScreen.js': 5_700, // (mesuré : 5 420 au lot 5)
   'ExercisesScreen.js': 5_200, // (mesuré : 4 925 au lot 5, usage local d'un exo compris)
   'RefusedWritesSheet.js': 3_300, // écran des saisies refusées (mesuré : 3 131 au lot 5, motifs et saisies retenues compris)
-  'NoteSheet.js': 2_500, // formulaire d'exo et feuille de note, partagés par Exos et l'éditeur de séance (mesuré : 2 139 ; 1 792 pour le formulaire seul, alors chunk ExerciseForm.js)
+  'NoteSheet.js': 2_100, // formulaire d'exo et feuille de note, partagés par Exos et l'éditeur de séance (mesuré : 1 998 au nettoyage du code mort, note sortie du formulaire ; 2 139 avant ; 1 792 pour le formulaire seul, alors chunk ExerciseForm.js)
   'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
   'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
