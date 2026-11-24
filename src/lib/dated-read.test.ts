@@ -110,6 +110,30 @@ describe('loadDated', () => {
   });
 });
 
+describe('stockage plein', () => {
+  it('la revalidation qui ne peut pas s’écrire est quand même livrée à l’écran', async () => {
+    let t = 1000;
+    const now = () => t;
+    // Une ancienne copie du Journal, puis le stockage se remplit.
+    await loadDated(KEY, async () => ['séance supprimée ailleurs'], { offline: false, now });
+    const storage = localStorage as unknown as MemoryStorage;
+    const full = vi.spyOn(storage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    t = 2000;
+    const seen: DatedState<string[]>[] = [];
+    const stop = watchDated<string[]>(KEY, (s) => seen.push(s));
+    const state = await loadDated(KEY, async () => ['séance récente'], { offline: false, now });
+    expect(state).toMatchObject({ copy: true, value: ['séance supprimée ailleurs'] });
+    await settle();
+    expect(seen).toEqual([{ phase: 'ready', value: ['séance récente'], at: 2000, copy: false }]);
+    // La copie, elle, n'a pas pu changer.
+    expect(peekDated(KEY)).toEqual({ at: 1000, value: ['séance supprimée ailleurs'] });
+    stop();
+    full.mockRestore();
+  });
+});
+
 describe('copies d’écran et flush de la file', () => {
   it('un flush ne relit aucune copie d’écran ; l’ouverture de l’Analyse, si (copie d’abord)', async () => {
     const analyse = vi.fn(async () => ['courbes']);

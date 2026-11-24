@@ -143,13 +143,21 @@ function writeEntry(key: string, value: unknown): void {
 /** Abonnés aux écritures de copies (cf. `onReadWritten`). */
 const writeListeners = new Set<(key: string) => void>();
 
+/** Abonnés aux réponses acceptées (cf. `onReadAccepted`). */
+const acceptListeners = new Set<(key: string, value: unknown) => void>();
+
+/** La clé sans l'étiquette du compte reconnu, `null` si elle est d'un autre compte. */
+function unscoped(storageKey: string): string | null {
+  const account = loadLocalAccount();
+  if (!account) return null;
+  const scope = fullKey(account.userId, '');
+  return storageKey.startsWith(scope) ? storageKey.slice(scope.length) : null;
+}
+
 function notifyWritten(storageKey: string): void {
   if (writeListeners.size === 0) return;
-  const account = loadLocalAccount();
-  if (!account) return;
-  const scope = fullKey(account.userId, '');
-  if (!storageKey.startsWith(scope)) return;
-  const key = storageKey.slice(scope.length);
+  const key = unscoped(storageKey);
+  if (key === null) return;
   for (const listener of [...writeListeners]) listener(key);
 }
 
@@ -166,6 +174,19 @@ export function onReadWritten(listener: (key: string) => void): () => void {
   writeListeners.add(listener);
   return () => {
     writeListeners.delete(listener);
+  };
+}
+
+/**
+ * S'abonne aux réponses réseau ACCEPTÉES par les gardes d'ordre
+ * (`guardedFetch`), avec leur valeur, que la copie ait pu s'écrire ou non : un
+ * stockage plein ne doit pas cacher à l'écran monté la lecture qui vient de
+ * réussir (il garderait sinon l'ancienne copie). Rend le désabonnement.
+ */
+export function onReadAccepted(listener: (key: string, value: unknown) => void): () => void {
+  acceptListeners.add(listener);
+  return () => {
+    acceptListeners.delete(listener);
   };
 }
 
@@ -195,8 +216,12 @@ async function guardedFetch<T>(
     !departedBeforeInvalidation(storageKey, seq) &&
     loadLocalAccount()?.userId === userId
   ) {
+    // Écrite ou non (quota plein), la réponse est la plus fraîche acceptée :
+    // elle fixe l'ordre et part aux abonnés (`onReadAccepted`).
     writeEntry(storageKey, value);
     lastWritten.set(storageKey, seq);
+    const key = acceptListeners.size > 0 ? unscoped(storageKey) : null;
+    if (key !== null) for (const listener of [...acceptListeners]) listener(key, value);
   }
   return value;
 }

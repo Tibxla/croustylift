@@ -32,7 +32,7 @@ import type { SessionMetricPoint } from './session-metrics';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { ExerciseList } from './ExerciseList';
 import { journalVerdicts } from './journal-verdicts';
-import { analysisFrame } from './analysis-frame';
+import { analysisFrame, seanceLookup } from './analysis-frame';
 import { ExercisePage } from './ExercisePage';
 import { PastSessionEditor } from './PastSessionEditor';
 import { RawLogView, SessionPage } from './RawLogView';
@@ -245,15 +245,23 @@ export function AnalysisScreen() {
       const entry = journal.state.value.find((e) => e.executionId === view.id);
       // Journal lu dans sa copie : une séance plus récente qu'elle arrive avec
       // la relecture (en ligne), ou n'y est pas encore (hors ligne). Ni l'un ni
-      // l'autre n'est une séance supprimée.
-      if (!entry && journal.state.copy && journal.online) return <Missing title="Séance" onBack={back} loading />;
-      if (!entry && journal.state.copy) {
+      // l'autre n'est une séance supprimée. L'attente est bornée (analysis-frame).
+      const lookup = seanceLookup({ found: entry !== undefined, copy: journal.state.copy, online: journal.online, late: journal.showDate });
+      if (lookup === 'waiting') return <Missing title="Séance" onBack={back} loading />;
+      if (lookup === 'late' || lookup === 'newer-offline') {
         return (
           <Page>
             <ScreenHeader title="Séance" back={{ label: 'Retour', onClick: back }} />
             <p role="status" className="px-5 py-6 text-[15px] leading-[1.45] text-muted">
-              Elle est plus récente que la copie du journal gardée sur cet appareil. Elle s’affichera avec le réseau.
+              {lookup === 'late'
+                ? 'Elle est plus récente que la copie du journal gardée sur cet appareil, et le réseau ne l’a pas encore apportée.'
+                : 'Elle est plus récente que la copie du journal gardée sur cet appareil. Elle s’affichera avec le réseau.'}
             </p>
+            {lookup === 'late' && (
+              <div className="px-5">
+                <SecondaryButton onClick={journal.reload}>Réessayer</SecondaryButton>
+              </div>
+            )}
           </Page>
         );
       }

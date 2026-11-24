@@ -67,6 +67,8 @@ export function useDatedLoad<T>(key: string | null, fetcher: () => Promise<T>) {
 
   const reload = useCallback(() => {
     setState({ phase: 'loading' });
+    // « Réessayer » redonne à la relecture son délai avant de dater la copie.
+    setLateAt(null);
     setTick((k) => k + 1);
   }, []);
   const refresh = useCallback(() => setTick((k) => k + 1), []);

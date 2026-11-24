@@ -30,7 +30,7 @@
 // couvre, et l'éviction les sacrifie en premier quand le stockage est plein
 // (capture/cache-eviction : une copie se relit, pas une saisie). La valeur doit
 // survivre à JSON : des tableaux, jamais de `Set` ni de `Map`.
-import { cachedRead, invalidateReads, onReadWritten, peekRead } from './read-cache';
+import { cachedRead, invalidateReads, onReadAccepted, peekRead } from './read-cache';
 import { errorMessage } from './error-message';
 
 /** Début de clé de toutes les copies d'écran au calme. */
@@ -91,15 +91,16 @@ export async function loadDated<T>(
 }
 
 /**
- * Suit la copie d'une vue : `listener` reçoit la valeur fraîche chaque fois
- * qu'une lecture réseau la réécrit (revalidation de fond, relecture après une
- * écriture). Rend le désabonnement.
+ * Suit une vue : `listener` reçoit la valeur fraîche chaque fois qu'une lecture
+ * réseau acceptée la remplace (revalidation de fond, relecture après une
+ * écriture), MÊME si sa copie n'a pas pu s'écrire (stockage plein) : l'écran
+ * montre ce que le réseau vient de dire, pas l'ancienne copie. Rend le
+ * désabonnement.
  */
 export function watchDated<T>(key: string, listener: (state: DatedState<T>) => void): () => void {
-  return onReadWritten((written) => {
-    if (written !== key) return;
-    const copy = peekDated<T>(key);
-    if (copy) listener({ phase: 'ready', value: copy.value, at: copy.at, copy: false });
+  return onReadAccepted((accepted, value) => {
+    if (accepted !== key || !isDated<T>(value)) return;
+    listener({ phase: 'ready', value: value.value, at: value.at, copy: false });
   });
 }
 
