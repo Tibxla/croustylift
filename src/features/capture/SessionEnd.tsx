@@ -6,8 +6,9 @@
 //
 // L'« optionnel » du BPM est matérialisé : non saisi = un bouton « Ajouter le
 // BPM moyen » ; on l'ouvre pour révéler une règle (jamais de clavier), on le
-// retire pour revenir à « non saisi ». « Clôturer sans noter » clôt sans BPM ;
-// le bouton principal enregistre puis bascule en confirmation.
+// retire pour revenir à « non saisi ». Un seul bloc, « Ranger la séance » (le
+// mot de la Clôture, cf. GLOSSARY.md) : il enregistre ce qui est saisi et clôt,
+// puis bascule en confirmation. Sans BPM, il clôt sans rien de plus.
 import { useState, type ReactNode } from 'react';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import { formatCount } from './format';
@@ -101,7 +102,6 @@ export function SessionEnd({
   // Champ omis (undefined) = colonne inchangée côté DB ; on n'envoie que le saisi.
   const handleSaveAndClose = () => void commit({ bpmAvg: bpmOn ? bpm : undefined });
 
-  const handleSkip = () => void commit({});
 
   // Une fois enregistré : confirmation « Séance terminée » dans la foulée (récap
   // immédiat, état local — la clôture est transitoire, ADR 0009, elle ne survit
@@ -120,14 +120,9 @@ export function SessionEnd({
   return (
     <Screen
       bottom={
-        <>
-          <PrimaryButton disabled={saving} onClick={handleSaveAndClose}>
-            {saving ? 'Enregistrement…' : 'Enregistrer et clôturer'}
-          </PrimaryButton>
-          <SecondaryButton disabled={saving} onClick={handleSkip}>
-            Clôturer sans noter
-          </SecondaryButton>
-        </>
+        <PrimaryButton disabled={saving} onClick={handleSaveAndClose}>
+          {saving ? 'Rangement…' : 'Ranger la séance'}
+        </PrimaryButton>
       }
     >
       <ScreenHeader title="Fin de séance" meta={summary.sessionName} back={{ label: 'Retour à la capture', onClick: onBack }} />
