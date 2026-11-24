@@ -6,12 +6,23 @@
 // Sous la courbe, la période de cette pente en clair (« Pente : bloc en cours
 // depuis le 3 nov. · 4 séances »), et ce qui manque quand il n'y en a pas. Puis
 // la légende-contrôle (une ligne par séance, toucher masque ou affiche sa
-// courbe ; retenu sur l'appareil), les séries 2+ sur le même axe, et l'accès à
-// la comparaison de deux blocs.
+// courbe ; retenu sur l'appareil), les séries 2+ sur le même axe, les séries
+// du point choisi (« point de la courbe » sur la 1ʳᵉ, e1RM par ligne, kg
+// soulevés) avec un lien vers sa séance au journal, les faits datés (Record,
+// charge la plus lourde, écart depuis la 1ʳᵉ séance), et la comparaison.
 //
-// Pur : il prend l'analyse déjà chargée.
-import { useState } from 'react';
-import { Icon, ScreenHeader, SecondaryButton, SectionTitle, Status } from '../../ui';
+// La courbe vient de l'analyse déjà chargée ; les séries d'un point, le Record
+// et les faits viennent des exécutions de l'exo, relues à l'ouverture
+// (`loadExerciseExecutions`) : `ExerciseAnalysis` n'a que des points.
+import { useEffect, useState } from 'react';
+import { List, Row, ScreenHeader, SecondaryButton, SectionTitle, Status, TextLink, Icon } from '../../ui';
+import type { ExerciseExecution } from '../../domain/types';
+import { liftedKg } from '../../domain/lifted';
+import { errorMessage } from '../../lib/error-message';
+import { formatE1rm, formatWeight } from '../capture/format';
+import { loadExerciseExecutions } from './data';
+import { formatInt } from './format';
+import { exerciseFacts, gapBreaks, pointExecutions, secondaryBreaks, setMeasure } from './point-detail';
 import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
 import type { ExerciseAnalysis, SeanceCurve } from './data';
 import { Swatch, type ChartSel } from './Chart';
@@ -27,10 +38,13 @@ export function ExercisePage({
   analysis,
   onBack,
   onCompare,
+  onOpenSession,
 }: {
   analysis: ExerciseAnalysis;
   onBack: () => void;
   onCompare: () => void;
+  /** Ouvre une séance du journal, par id d'exécution. */
+  onOpenSession: (executionId: string) => void;
 }) {
   const { exerciseId, name, seanceCurves, unit } = analysis;
   const year = new Date().getFullYear();
@@ -44,6 +58,7 @@ export function ExercisePage({
   const multi = seanceCurves.length > 1;
   const axis = cardTimeAxis(shown);
   const total = seanceCurves.reduce((n, sc) => n + sc.curve.length, 0);
+  const execs = useExecutions(exerciseId);
 
   function toggle(key: string) {
     const next = toggleHidden(hidden, key, allKeys);
@@ -60,6 +75,18 @@ export function ExercisePage({
   const isLeadLast = !!lead && selCurve === lead && selIndex === lead.curve.length - 1;
   const holes = zeroLoadHolesLabel(analysis.zeroLoadHoles);
   const note = lead?.weeklyRate != null ? rateNote(unit) : null;
+  const ready = execs.phase === 'ready' ? execs.executions : null;
+  const facts = ready ? exerciseFacts(ready, exerciseId, unit) : null;
+  // L'exécution du point lu : même construction que la courbe (point-detail).
+  const exec = ready && selCurve ? pointExecutions(ready, exerciseId, selCurve.seanceId, unit)[selIndex] : undefined;
+  const cut = shown.some((sc) => gapBreaks(sc.curve).some(Boolean));
+  const cut2 = !!lead && secondaryBreaks(lead.secondaryCurve, lead.curve).some(Boolean);
+  const fmtValue = (v: number) => (unit === 'reps' ? String(Math.round(v)) : formatE1rm(v));
+  const valueText = (s: ChartSel) => {
+    const c = shown.find((sc) => curveKey(sc.seanceId) === s.series);
+    const p = c?.curve[s.index];
+    return p && c ? `${Math.round(p.e1rm)} ${unit}, ${formatDay(p.date, year)}${multi ? `, ${c.label}` : ''}` : '';
+  };
 
   return (
     <>
@@ -87,11 +114,9 @@ export function ExercisePage({
                 {formatDay(point.date, year)}
                 {multi ? ` · ${selCurve.label}` : ''}
               </p>
-              {isLeadLast && lastBeatsPrevious(lead.curve) && (
-                <p className="mt-1 text-[14px]">
-                  <Status v="up" word="mieux que la séance d’avant" />
-                </p>
-              )}
+              <p className="mt-1 min-h-[21px] text-[14px]">
+                {isLeadLast && lastBeatsPrevious(lead.curve) && <Status v="up" word="mieux que la séance d’avant" />}
+              </p>
             </div>
             <dl className="flex-none pb-0.5 text-right">
               <dt className="text-[13px] text-muted">Pente{multi ? `, ${lead.seanceName}` : ''}</dt>
@@ -109,10 +134,13 @@ export function ExercisePage({
               series={shown.map((sc) => ({ id: curveKey(sc.seanceId), name: sc.label, curve: sc.curve }))}
               selected={{ series: curveKey(selCurve.seanceId), index: selIndex }}
               onSelect={setSel}
+              valueText={valueText}
+              record={facts?.record ? { value: facts.record.value, label: `Record ${fmtValue(facts.record.value)}` } : undefined}
             />
             <p className="mt-2 text-[14px] leading-[1.45] text-muted">{rateCaption(lead.ratePeriod, lead.weeklyRate !== null, year)}</p>
             {note && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{note}</p>}
             {holes && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{holes}.</p>}
+            {cut && <p className="mt-1 text-[13px] leading-[1.45] text-faint">Trait coupé : plus de trois semaines sans séance.</p>}
           </div>
 
           {multi && <Legend curves={seanceCurves} shown={shown} onToggle={toggle} year={year} />}
@@ -123,13 +151,25 @@ export function ExercisePage({
                 Séries 2+
               </SectionTitle>
               <div className="px-5">
-                <SecondaryChart curve={lead.secondaryCurve} unit={unit} axis={axis} cursorDate={point.date} />
+                <SecondaryChart curve={lead.secondaryCurve} primary={lead.curve} unit={unit} axis={axis} cursorDate={point.date} />
                 <p className="mt-1 text-[13px] leading-[1.45] text-faint">
                   Moyenne des séries après la première : la résistance à la fatigue, pas un record.
+                  {cut2 ? ' Trait coupé : pas de série 2+ ce jour-là, ou pas de séance.' : ''}
                 </p>
               </div>
             </section>
           )}
+
+          <PointSets
+            date={formatDay(point.date, year)}
+            exec={exec}
+            phase={execs.phase}
+            error={execs.phase === 'error' ? execs.message : null}
+            unit={unit}
+            onOpenSession={onOpenSession}
+          />
+
+          {facts && <Facts facts={facts} lead={lead} unit={unit} year={year} fmtValue={fmtValue} />}
 
           <div className="px-5 pt-8">
             <SecondaryButton onClick={onCompare} className="w-full">
@@ -201,5 +241,138 @@ function Legend({
         );
       })}
     </ul>
+  );
+}
+
+type ExecLoad = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; executions: ExerciseExecution[] };
+
+/** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`). */
+function useExecutions(exerciseId: string): ExecLoad {
+  const [state, setState] = useState<ExecLoad>({ phase: 'loading' });
+  useEffect(() => {
+    let active = true;
+    loadExerciseExecutions(exerciseId).then(
+      ({ executions }) => {
+        if (active) setState({ phase: 'ready', executions });
+      },
+      (err: unknown) => {
+        if (active) setState({ phase: 'error', message: errorMessage(err) });
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [exerciseId]);
+  return state;
+}
+
+const sideWord = (s: 'left' | 'right') => (s === 'left' ? 'gauche' : 'droite');
+
+/** Les séries du point lu, telles que loggées, et le lien vers sa séance. */
+function PointSets({
+  date,
+  exec,
+  phase,
+  error,
+  unit,
+  onOpenSession,
+}: {
+  date: string;
+  exec: ExerciseExecution | undefined;
+  phase: ExecLoad['phase'];
+  error: string | null;
+  unit: ExerciseAnalysis['unit'];
+  onOpenSession: (executionId: string) => void;
+}) {
+  const sets = exec ? [...exec.sets].sort((a, b) => a.order - b.order || (a.side ?? '').localeCompare(b.side ?? '')) : [];
+  return (
+    <section aria-labelledby="exo-series-point">
+      <SectionTitle id="exo-series-point" aside={exec ? `${formatInt(liftedKg(exec.sets))} kg soulevés` : undefined}>
+        Séries du {date}
+      </SectionTitle>
+      {phase === 'loading' ? (
+        <p role="status" className="border-t border-line px-5 py-3 text-[15px] text-muted">
+          Chargement des séries…
+        </p>
+      ) : !exec ? (
+        <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+          {error ? `Séries indisponibles : ${error}` : 'Séries introuvables pour ce point.'}
+        </p>
+      ) : (
+        <>
+          <List label={`Séries du ${date}`}>
+            {sets.map((set) => {
+              const m = setMeasure(set, unit);
+              const first = set.order === sets[0]!.order;
+              return (
+                <Row
+                  key={`${set.order}-${set.side ?? 'both'}`}
+                  lead={set.order}
+                  title={`${formatWeight(set.weightKg)} kg × ${set.reps} · RIR ${set.rir}`}
+                  meta={[set.side ? sideWord(set.side) : null, first ? 'point de la courbe' : null].filter(Boolean).join(' · ') || undefined}
+                  valueMeta={m === null ? 'à 0 kg' : unit === 'reps' ? `${Math.round(m)} reps eff.` : `e1RM ${formatE1rm(m)}`}
+                />
+              );
+            })}
+          </List>
+          {exec.id && (
+            <div className="px-5 pt-1">
+              <TextLink onClick={() => onOpenSession(exec.id!)}>Voir au journal</TextLink>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Faits datés, dérivés de l'historique : rien de saisi, tout vérifiable. */
+function Facts({
+  facts,
+  lead,
+  unit,
+  year,
+  fmtValue,
+}: {
+  facts: ReturnType<typeof exerciseFacts>;
+  lead: SeanceCurve;
+  unit: ExerciseAnalysis['unit'];
+  year: number;
+  fmtValue: (v: number) => string;
+}) {
+  const first = lead.curve[0];
+  const last = lead.curve[lead.curve.length - 1];
+  const delta = first && last ? Math.round((last.e1rm - first.e1rm) * 10) / 10 : null;
+  const unitWord = unit === 'reps' ? 'reps' : 'kg';
+  const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))} ${unitWord}`;
+  return (
+    <section aria-labelledby="exo-faits">
+      <SectionTitle id="exo-faits">Faits</SectionTitle>
+      <List label="Faits datés">
+        {facts.record && (
+          <Row
+            title={unit === 'reps' ? 'Record, reps effectives' : 'Record e1RM'}
+            meta={`${formatWeight(facts.record.set.weightKg)} kg × ${facts.record.set.reps} · RIR ${facts.record.set.rir}${
+              facts.record.date ? `, ${formatDay(facts.record.date, year)}` : ''
+            }`}
+            value={fmtValue(facts.record.value)}
+          />
+        )}
+        {facts.heaviest && unit === 'kg' && (
+          <Row
+            title="Charge la plus lourde"
+            meta={`${formatWeight(facts.heaviest.weightKg)} kg × ${facts.heaviest.reps}${facts.heaviest.date ? `, ${formatDay(facts.heaviest.date, year)}` : ''}`}
+            value={formatWeight(facts.heaviest.weightKg)}
+          />
+        )}
+        {delta !== null && first && lead.curve.length > 1 && (
+          <Row
+            title={`Depuis la 1ʳᵉ ${lead.seanceName}`}
+            meta={`${sessionsLabel(lead.curve.length)} depuis le ${formatDay(first.date, year)}`}
+            value={<Status v={delta > 0 ? 'up' : delta === 0 ? 'eq' : 'down'} size={12} word={signed(delta)} />}
+          />
+        )}
+      </List>
+    </section>
   );
 }

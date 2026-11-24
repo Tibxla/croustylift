@@ -17,6 +17,7 @@
 import type { CurveUnit, E1rmPoint } from '../../domain/types';
 import { Chart, type ChartSel, type ChartSeries } from './Chart';
 import { dayToTime, lastBeatsPrevious, timeTick, type TimeAxis } from './chart-time';
+import { gapBreaks } from './point-detail';
 import { measureLabel } from './unit-label';
 
 /** Une courbe nommée : la série d'UNE séance. */
@@ -49,6 +50,8 @@ export function E1rmChart({
   periodStart,
   selected,
   onSelect,
+  record,
+  valueText,
   height = 232,
 }: {
   /** Les courbes AFFICHÉES, celle qui porte la lecture en tête. */
@@ -60,6 +63,10 @@ export function E1rmChart({
   periodStart?: string | null;
   selected: ChartSel | null;
   onSelect: (s: ChartSel) => void;
+  /** Le Record personnel (même unité), en ligne pointillée nommée. */
+  record?: { value: number; label: string };
+  /** Le point choisi en mots, pour le curseur des lecteurs d'écran. */
+  valueText: (sel: ChartSel) => string;
   height?: number;
 }) {
   const populated = series.filter((s) => s.curve.length > 0);
@@ -74,13 +81,17 @@ export function E1rmChart({
       ? { x: startT, label: 'bloc' }
       : undefined;
 
-  const chartSeries: ChartSeries[] = populated.map((s, i) => ({
+  const chartSeries: ChartSeries[] = populated.map((s, i) => {
+    const breaks = gapBreaks(s.curve);
+    return {
     id: s.id,
     tone: i === 0 ? 'ink' : 'muted',
     dashed: i > 0,
     lastUp: i === 0 && lastBeatsPrevious(s.curve),
-    points: s.curve.map((p) => ({ x: dayToTime(p.date), y: p.e1rm })),
-  }));
+    // Une pause de plus de trois semaines coupe le trait : pas de tendance inventée.
+    points: s.curve.map((p, k) => ({ x: dayToTime(p.date), y: p.e1rm, break: breaks[k] })),
+    };
+  });
 
   return (
     <Chart
@@ -92,7 +103,11 @@ export function E1rmChart({
       xTicks={(axis?.ticks ?? []).map((t) => ({ x: t, label: timeTick(t) }))}
       yFormat={(v) => String(Math.round(v))}
       marker={marker}
+      refLine={record ? { y: record.value, label: record.label } : undefined}
+      months
       ariaLabel={describeSeries(series, unit, populated.length > 1)}
+      sliderLabel={`Point de la courbe ${measureLabel(unit)}`}
+      valueText={valueText}
     />
   );
 }

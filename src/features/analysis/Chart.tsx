@@ -11,20 +11,30 @@
 //     inventerait un creux ou une bosse), points pleins. La série qui porte la
 //     lecture est blanc cassé, les autres grises ET pointillées : jamais la seule
 //     couleur pour distinguer deux séries ;
-//   - un repère vertical pointillé (le début du bloc de la pente).
+//   - un repère vertical pointillé (le début du bloc de la pente) ;
+//   - une ligne horizontale pointillée nommée (le Record), gris, jamais le signal,
+//     comprise dans l'axe Y ;
+//   - sur un axe en temps (`months`), des graduations au 1er du mois, un mois
+//     sur 1, 2, 3, 6 ou 12 selon la largeur, l'année au passage de janvier ;
+//   - des traits coupés (`break`) : une pause ou une valeur absente n'est jamais
+//     reliée en douce.
 // Aucune aire, aucun dégradé, aucun halo, aucune ombre. Le signal ne marque
 // qu'une chose : le dernier point, s'il a battu le précédent (`lastUp`, « mieux
 // que la dernière fois »). Le curseur est un filet gris et le point choisi un
 // disque blanc cassé : le signal n'est ni un curseur ni une couleur de série.
 //
 // Parcouru au doigt : toucher ou glisser choisit le point le plus proche en X
-// (`onSelect`), la souris aussi au survol ; au clavier, les flèches passent d'un
-// point au suivant de la série choisie. Le relevé (chiffre, date) vit hors du
-// graphe, chez l'appelant, sous `aria-live`.
+// (`onSelect`), la souris aussi au survol. Pour les lecteurs d'écran et le
+// clavier, le graphe parcouru est un curseur (`role="slider"`) : sa valeur se dit
+// en mots (`valueText` : « 70 kg, 14 juin, Lower A »), ← ↓ et → ↑ passent d'un
+// point à l'autre, Début et Fin aux extrêmes ; le résumé du graphe le décrit. Un
+// graphe qui ne se parcourt pas reste une image nommée par son résumé. Le
+// relevé visible vit hors du graphe, chez l'appelant.
 //
 // Dessiné en pixels réels (largeur mesurée) et non dans un `viewBox` étiré : le
 // texte des axes garde ses 13 px à 360 px de large comme à 640.
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { monthTicks } from './chart-time';
 
 export interface ChartPoint {
   x: number;
@@ -88,8 +98,12 @@ export function Chart({
   yTarget = 4,
   yFromZero = false,
   marker,
+  refLine,
+  months = false,
   cursorX,
   ariaLabel,
+  sliderLabel,
+  valueText,
 }: {
   series: ChartSeries[];
   height?: number;
@@ -106,10 +120,20 @@ export function Chart({
   yFromZero?: boolean;
   /** Repère vertical pointillé (début du bloc), avec un mot court en tête. */
   marker?: { x: number; label?: string };
+  /** Ligne horizontale pointillée nommée (le Record), comprise dans l'axe Y. */
+  refLine?: { y: number; label: string };
+  /** Axe X en temps (ms) : graduations au 1er du mois si au moins deux tiennent. */
+  months?: boolean;
   /** Curseur à cette abscisse sans point choisi ici (graphe lié à un autre). */
   cursorX?: number;
+  /** Résumé du graphe pour les lecteurs d'écran. */
   ariaLabel: string;
+  /** Graphe parcouru : nom du curseur (« Point de la courbe »). */
+  sliderLabel?: string;
+  /** Graphe parcouru : le point choisi en mots (« 70 kg, 14 juin, Lower A »). */
+  valueText?: (sel: ChartSel) => string;
 }) {
+  const descId = useId();
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
@@ -129,6 +153,7 @@ export function Chart({
     const all = series.flatMap((s) => s.points);
     if (all.length === 0 || width === 0) return null;
     const ys = all.map((p) => p.y);
+    if (refLine) ys.push(refLine.y);
     const minY = yFromZero ? Math.min(0, ...ys) : Math.min(...ys);
     const maxY = Math.max(...ys);
     const span = Math.max(maxY - minY, Math.abs(maxY) * 0.04, 1);
@@ -155,7 +180,7 @@ export function Chart({
       x1 === x0 ? (plot.left + plot.right) / 2 : plot.left + ((v - x0) / (x1 - x0)) * (plot.right - plot.left);
     const y = (v: number) => plot.bottom - ((v - lo) / (hi - lo)) * (plot.bottom - plot.top);
     return { x, y, yTicks, labels, plot };
-  }, [series, width, height, yTarget, yFromZero, yFormat, xDomain, marker?.label]);
+  }, [series, width, height, yTarget, yFromZero, yFormat, xDomain, marker?.label, refLine]);
 
   // Étiquettes X : on écarte celles qui chevaucheraient la précédente gardée, et
   // on retient la première et la dernière dans le cadre.
@@ -163,7 +188,11 @@ export function Chart({
     if (!geo) return [];
     const kept: { px: number; label: string; anchor: 'start' | 'middle' | 'end'; tx: number }[] = [];
     let lastRight = -Infinity;
-    for (const t of [...xTicks].sort((a, b) => a.x - b.x)) {
+    // Au mois si l'axe est en temps et qu'au moins deux 1ers du mois tiennent,
+    // une étiquette tous les 56 px au plus ; sinon les dates de l'appelant.
+    const byMonth = months && xDomain ? monthTicks(xDomain, Math.floor((geo.plot.right - geo.plot.left) / 56)) : [];
+    const ticks = byMonth.length > 0 ? byMonth : xTicks;
+    for (const t of [...ticks].sort((a, b) => a.x - b.x)) {
       const px = geo.x(t.x);
       const w = t.label.length * CHAR_PX;
       let anchor: 'start' | 'middle' | 'end' = 'middle';
@@ -183,7 +212,7 @@ export function Chart({
       lastRight = left + w;
     }
     return kept;
-  }, [geo, xTicks]);
+  }, [geo, xTicks, months, xDomain]);
 
   const pick = (clientX: number) => {
     const el = box.current;
@@ -205,15 +234,27 @@ export function Chart({
     if (b && (!selected || b.series !== selected.series || b.index !== selected.index)) onSelect(b);
   };
 
-  const onKey = (e: KeyboardEvent<SVGSVGElement>) => {
-    if (!onSelect || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-    const s = series.find((c) => c.id === selected?.series) ?? series[0];
-    if (!s || s.points.length === 0) return;
+  // Le curseur au clavier : ← ↓ point précédent, → ↑ suivant, Début et Fin
+  // aux extrêmes, dans la série du point choisi.
+  const curSeries = series.find((c) => c.id === selected?.series) ?? series[0];
+  const curIndex = curSeries ? (selected && selected.series === curSeries.id ? selected.index : curSeries.points.length - 1) : 0;
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!onSelect || !curSeries || curSeries.points.length === 0) return;
+    const last = curSeries.points.length - 1;
+    const moves: Record<string, number> = {
+      ArrowLeft: curIndex - 1,
+      ArrowDown: curIndex - 1,
+      ArrowRight: curIndex + 1,
+      ArrowUp: curIndex + 1,
+      Home: 0,
+      End: last,
+    };
+    if (!(e.key in moves)) return;
     e.preventDefault();
-    const cur = selected && selected.series === s.id ? selected.index : s.points.length - 1;
-    const next = Math.min(s.points.length - 1, Math.max(0, cur + (e.key === 'ArrowRight' ? 1 : -1)));
-    if (next !== cur || !selected) onSelect({ series: s.id, index: next });
+    const next = Math.min(last, Math.max(0, moves[e.key]!));
+    if (next !== curIndex || !selected) onSelect({ series: curSeries.id, index: next });
   };
+  const interactive = !!onSelect && !!curSeries && curSeries.points.length > 0;
 
   const selSeries = selected ? series.find((s) => s.id === selected.series) : undefined;
   const selPoint = selected ? selSeries?.points[selected.index] : undefined;
@@ -222,25 +263,45 @@ export function Chart({
   const drawOrder = [...series].sort((a, b) => (a.tone === 'muted' ? 0 : 1) - (b.tone === 'muted' ? 0 : 1));
 
   return (
-    <div ref={box} style={{ height }} className={`w-full ${onSelect ? 'touch-pan-y' : ''}`}>
+    <div
+      ref={box}
+      style={{ height }}
+      className={`w-full outline-offset-4 ${onSelect ? 'touch-pan-y' : ''}`}
+      {...(interactive
+        ? {
+            role: 'slider',
+            tabIndex: 0,
+            'aria-label': sliderLabel ?? 'Point de la courbe',
+            'aria-describedby': descId,
+            'aria-valuemin': 1,
+            'aria-valuemax': curSeries!.points.length,
+            'aria-valuenow': curIndex + 1,
+            'aria-valuetext': valueText ? valueText({ series: curSeries!.id, index: curIndex }) : undefined,
+            onKeyDown: onKey,
+          }
+        : {})}
+      onPointerDown={(e) => {
+        if (!onSelect) return;
+        // Au doigt, le toucher parcourt la courbe sans donner le focus au graphe
+        // (pas de contour) ; le clavier garde son arrêt de tabulation.
+        if (e.pointerType !== 'mouse') e.preventDefault();
+        pick(e.clientX);
+      }}
+      onPointerMove={(e) => {
+        if (onSelect && (e.pointerType === 'mouse' || e.buttons)) pick(e.clientX);
+      }}
+    >
+      {interactive && (
+        <p id={descId} className="sr-only">
+          {ariaLabel}
+        </p>
+      )}
       {geo && (
         <svg
           width={width}
           height={height}
           className="block select-none overflow-visible"
-          role="img"
-          aria-label={ariaLabel}
-          tabIndex={onSelect ? 0 : undefined}
-          onKeyDown={onKey}
-          onPointerDown={(e) => {
-            // Au doigt, le toucher parcourt la courbe sans donner le focus au
-            // graphe (pas de contour) ; le clavier garde son arrêt de tabulation.
-            if (e.pointerType !== 'mouse') e.preventDefault();
-            pick(e.clientX);
-          }}
-          onPointerMove={(e) => {
-            if (e.pointerType === 'mouse' || e.buttons) pick(e.clientX);
-          }}
+          {...(interactive ? { 'aria-hidden': true } : { role: 'img', 'aria-label': ariaLabel })}
         >
           {geo.yTicks.map((v, i) => (
             <g key={v}>
@@ -276,6 +337,21 @@ export function Chart({
                   {marker.label}
                 </text>
               )}
+            </g>
+          )}
+          {refLine && (
+            <g>
+              <line
+                x1={geo.plot.left}
+                x2={geo.plot.right}
+                y1={geo.y(refLine.y)}
+                y2={geo.y(refLine.y)}
+                stroke="var(--color-muted)"
+                strokeDasharray="2 4"
+              />
+              <text x={geo.plot.left} y={geo.y(refLine.y) - 6} fontSize={FONT} fill="var(--color-faint)" style={TEXT_STYLE}>
+                {refLine.label}
+              </text>
             </g>
           )}
           {(selPoint || cursorX !== undefined) && (

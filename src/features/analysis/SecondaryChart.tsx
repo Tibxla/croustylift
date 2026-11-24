@@ -9,15 +9,19 @@
 import type { CurveUnit, E1rmPoint } from '../../domain/types';
 import { Chart } from './Chart';
 import { dayToTime, timeTick, type TimeAxis } from './chart-time';
+import { secondaryBreaks } from './point-detail';
 import { secondaryLabel } from './unit-label';
 
 export function SecondaryChart({
   curve,
+  primary,
   unit,
   axis,
   cursorDate,
 }: {
   curve: E1rmPoint[];
+  /** La courbe héros de la même séance : une séance sans série 2+ coupe le trait. */
+  primary: E1rmPoint[];
   unit: CurveUnit;
   /** L'axe temps de la carte, partagé avec la courbe héros. */
   axis: TimeAxis | null;
@@ -25,12 +29,14 @@ export function SecondaryChart({
   cursorDate?: string;
 }) {
   const values = curve.map((p) => Math.round(p.e1rm));
+  const breaks = secondaryBreaks(curve, primary);
   return (
     <Chart
-      series={[{ id: 'series-2', tone: 'muted', points: curve.map((p) => ({ x: dayToTime(p.date), y: p.e1rm })) }]}
+      series={[{ id: 'series-2', tone: 'muted', points: curve.map((p, k) => ({ x: dayToTime(p.date), y: p.e1rm, break: breaks[k] })) }]}
       height={128}
       yTarget={2}
       yFromZero
+      months
       xDomain={axis?.domain}
       xTicks={(axis?.ticks ?? []).map((t) => ({ x: t, label: timeTick(t) }))}
       yFormat={(v) => String(Math.round(v))}

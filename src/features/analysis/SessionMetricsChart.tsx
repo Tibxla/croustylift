@@ -57,6 +57,12 @@ export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }
             yFormat={(v) => String(Math.round(v))}
             yTarget={2}
             height={112}
+            months
+            sliderLabel="Durée d’une séance"
+            valueText={(sel) => {
+              const m = points[duration[sel.index]!.at]!;
+              return `${formatDuration(m.durationMin ?? 0)}, ${formatDay(m.date, year)}`;
+            }}
             ariaLabel={`Durée de ${duration.length} séances. Glisser ou flèches pour parcourir.`}
           />
         )}
@@ -74,6 +80,12 @@ export function SessionMetricsChart({ points }: { points: SessionMetricPoint[] }
             yFormat={(v) => String(Math.round(v))}
             yTarget={2}
             height={112}
+            months
+            sliderLabel="BPM moyen d’une séance"
+            valueText={(sel) => {
+              const m = points[bpm[sel.index]!.at]!;
+              return `${Math.round(m.bpmAvg ?? 0)} BPM, ${formatDay(m.date, year)}`;
+            }}
             ariaLabel={`BPM moyen de ${bpm.length} séances. Glisser ou flèches pour parcourir.`}
           />
         )}

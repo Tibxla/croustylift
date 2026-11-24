@@ -198,6 +198,11 @@ export function AnalysisScreen() {
               analysis={analysis}
               onBack={back}
               onCompare={() => push({ page: 'compare', id: analysis.exerciseId })}
+              onOpenSession={(id) => {
+                // La séance se lit dans le journal : on le charge s'il ne l'est pas.
+                setJournalWanted(true);
+                push({ page: 'seance', id });
+              }}
             />
           </Page>
         );
