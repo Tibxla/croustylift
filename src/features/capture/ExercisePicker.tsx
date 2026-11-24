@@ -2,14 +2,21 @@
 //
 // Une ligne par exo : son nom (en entier, sur deux lignes au besoin), sa marque
 // d'état avec son mot, le plan, le compte de séries ; la toucher ouvre l'exo.
-// À droite, ⋯ ouvre ce qu'on peut faire de l'exo : le REMPLACER tant qu'il n'est
-// pas commencé (issue #36), le PASSER (un trou assumé). On peut aussi AJOUTER un
-// exo hors plan. La séance courante évolue, le template versionné reste intact.
+// À droite, selon l'état de l'exo :
+//   - pas commencé : ⋯ « Remplacer » ou « Passer » (un trou assumé) ;
+//   - en cours : ⋯ « Remplacer » seul. Ses séries lui restent, le remplaçant
+//     s'insère juste après lui, marqué « remplacé » (`replaceExercise`) ;
+//   - fait : rien (remplacer un exo fini serait un ajout) ;
+//   - passé : le lien « Remettre » (`restoreSkippedExercise`).
+// On peut aussi AJOUTER un exo hors plan. La séance courante évolue, le template
+// versionné reste intact.
 //
-// En bas, « Terminer la séance » dès qu'une série est loggée. « Annuler la
-// séance » (ADR 0011) reste toujours possible, confirmé quand des séries
-// seraient perdues : l'option sûre est le bouton (« Garder la séance »), la
-// perte un lien qui la nomme.
+// En bas, « Terminer la séance » dès qu'une série est loggée. Quitter la séance
+// sans la ranger (`leaveSession`) se dit « Changer de séance » tant que rien
+// n'est saisi (sans confirmation : rien à perdre), « Annuler la séance » sinon,
+// confirmé : l'option sûre est le bouton (« Garder la séance »), la perte un
+// lien, sous une phrase qui dit ce qui part. Un exo ajouté ou remplacé compte
+// comme saisi.
 import { useEffect, useMemo, useState } from 'react';
 import type { ExerciseRow } from './data';
 import type { Session, SessionExercise } from './fixtures';
@@ -18,6 +25,7 @@ import { getProgress } from './state';
 import { deriveExerciseDeviations } from './session-edit';
 import { formatRange } from './format';
 import { foldAccents } from '../../domain/text';
+import { isBlankNote } from '../../domain/notes';
 import { errorMessage } from '../../lib/error-message';
 import {
   BottomBar,
@@ -58,8 +66,12 @@ interface ExercisePickerProps {
   onAddExercise: (exercise: SessionExercise) => void;
   /** Remplace `targetExerciseId` par l'exo choisi. */
   onSwapExercise: (targetExerciseId: string, replacement: SessionExercise) => void;
-  /** Annule la séance : abandonne l'exécution et revient à l'écran de lancement (ADR 0011). */
-  onCancelSession: () => void;
+  /** Remet un exo passé dans la séance. */
+  onRestore: (exerciseId: string) => void;
+  /** 'change' : rien n'est saisi (« Changer de séance »). 'cancel' : « Annuler la séance », confirmé. */
+  leaveKind: 'change' | 'cancel';
+  /** Quitte la séance sans la ranger et revient à l'écran de lancement (ADR 0011). */
+  onLeaveSession: () => void;
 }
 
 /** Cible de l'ouverture du catalogue : ajout libre, ou remplacement d'un exo. */
@@ -79,10 +91,11 @@ export function ExercisePicker({
   loadCatalogExercise,
   onAddExercise,
   onSwapExercise,
-  onCancelSession,
+  onRestore,
+  leaveKind,
+  onLeaveSession,
 }: ExercisePickerProps) {
   const total = session.exercises.length;
-  const loggedSets = session.exercises.reduce((n, ex) => n + getProgress(state, ex.exerciseId).sets.length, 0);
 
   // Déviations d'exo (ajout / swap) dérivées par diff : par exerciseId.
   const deviationByExercise = useMemo(() => {
@@ -92,12 +105,12 @@ export function ExercisePicker({
   }, [templateExerciseIds, session]);
 
   const [catalog, setCatalog] = useState<CatalogTarget | null>(null);
-  const [options, setOptions] = useState<{ exerciseId: string; name: string; canSwap: boolean; canSkip: boolean } | null>(null);
+  // Les options d'un exo pas fait : `done` = séries déjà faites (« Passer » disparaît).
+  const [options, setOptions] = useState<{ exerciseId: string; name: string; done: number } | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
-  const cancel = () => {
-    // Séance sans série : rien à perdre, l'annulation est immédiate.
-    if (loggedSets === 0) onCancelSession();
+  const leave = () => {
+    if (leaveKind === 'change') onLeaveSession();
     else setConfirmCancel(true);
   };
 
@@ -135,10 +148,8 @@ export function ExercisePicker({
               const st = exoState(progress, ex.prescription.sets.min);
               const count = logicalSetsDone(progress);
               const deviation = deviationByExercise.get(ex.exerciseId) ?? null;
-              // Remplacement autorisé tant que l'exo n'est pas entamé (aucune série,
-              // pas passé) : la séance courante peut encore évoluer (issue #36).
-              const canSwap = count === 0 && !progress.skipped;
-              const canSkip = !progress.skipped;
+              // Lignes loggées (un côté seul compte) : un exo entamé ne se passe plus.
+              const started = progress.sets.length;
               const plan = `${formatRange(ex.prescription.sets)} × ${formatRange(ex.prescription.reps)} · RIR ${formatRange(ex.prescription.rir)}`;
               return (
                 <Row
@@ -159,15 +170,20 @@ export function ExercisePicker({
                     </span>
                   }
                   trailing={
-                    canSwap || canSkip ? (
+                    st === 'skipped' ? (
+                      // « Remettre », pas « Reprendre » : « Reprendre » est le retour à l'instrument.
+                      <TextLink tone="muted" className="-mr-1 px-1 text-[15px]" ariaLabel={`Remettre ${ex.name} dans la séance`} onClick={() => onRestore(ex.exerciseId)}>
+                        Remettre
+                      </TextLink>
+                    ) : st === 'done' ? undefined : (
                       <IconButton
                         icon="more"
                         tone="muted"
                         className="-mr-2.5"
-                        label={`Options de ${ex.name}`}
-                        onClick={() => setOptions({ exerciseId: ex.exerciseId, name: ex.name, canSwap, canSkip })}
+                        label={started === 0 ? `Remplacer ou passer ${ex.name}` : `Remplacer ${ex.name}`}
+                        onClick={() => setOptions({ exerciseId: ex.exerciseId, name: ex.name, done: started })}
                       />
-                    ) : undefined
+                    )
                   }
                 />
               );
@@ -182,8 +198,8 @@ export function ExercisePicker({
           </SecondaryButton>
         </div>
         <div className="px-5 pt-2">
-          <TextLink tone="muted" onClick={cancel}>
-            Annuler la séance
+          <TextLink tone="muted" onClick={leave}>
+            {leaveKind === 'change' ? 'Changer de séance' : 'Annuler la séance'}
           </TextLink>
         </div>
       </div>
@@ -197,18 +213,21 @@ export function ExercisePicker({
       <Sheet open={options !== null} title={options?.name ?? ''} onClose={() => setOptions(null)}>
         {options && (
           <div className="flex flex-col gap-2 px-5 pb-2">
-            {options.canSwap && (
-              <SecondaryButton
-                ariaLabel={`Remplacer ${options.name}`}
-                onClick={() => {
-                  setCatalog({ mode: 'swap', exerciseId: options.exerciseId, name: options.name });
-                  setOptions(null);
-                }}
-              >
-                Remplacer
-              </SecondaryButton>
+            {options.done > 0 && (
+              <p className="max-w-[36ch] pb-1 text-[15px] leading-[1.45] text-muted">
+                {options.done > 1 ? `Les ${options.done} séries faites restent` : 'La série faite reste'} sur {options.name}. Le remplaçant se place juste après.
+              </p>
             )}
-            {options.canSkip && (
+            <SecondaryButton
+              ariaLabel={`Remplacer ${options.name}`}
+              onClick={() => {
+                setCatalog({ mode: 'swap', exerciseId: options.exerciseId, name: options.name });
+                setOptions(null);
+              }}
+            >
+              Remplacer
+            </SecondaryButton>
+            {options.done === 0 && (
               <SecondaryButton
                 ariaLabel={`Passer ${options.name}`}
                 onClick={() => {
@@ -219,9 +238,11 @@ export function ExercisePicker({
                 Passer
               </SecondaryButton>
             )}
-            <p className="pt-1 text-[14px] leading-[1.45] text-muted">
-              Passé, l’exo compte comme un trou assumé dans le bilan, pas comme un oubli.
-            </p>
+            {options.done === 0 && (
+              <p className="pt-1 text-[14px] leading-[1.45] text-muted">
+                Passé, l’exo compte comme un trou assumé dans le bilan, pas comme un oubli.
+              </p>
+            )}
           </div>
         )}
       </Sheet>
@@ -239,17 +260,15 @@ export function ExercisePicker({
               ariaLabel="Confirmer l’annulation de la séance"
               onClick={() => {
                 setConfirmCancel(false);
-                onCancelSession();
+                onLeaveSession();
               }}
             >
-              Annuler et perdre {loggedSets} série{loggedSets > 1 ? 's' : ''}
+              Annuler la séance
             </TextLink>
           </>
         }
       >
-        <p className="px-5 text-[16px] leading-[1.45] text-muted">
-          {loggedSets} série{loggedSets > 1 ? 's' : ''} et les notes du jour de cette séance seront effacées, ici et en base.
-        </p>
+        <p className="max-w-[36ch] px-5 text-[16px] leading-[1.45] text-ink">{lossText(session, state)}</p>
       </Sheet>
 
       <CatalogSheet
@@ -266,6 +285,27 @@ export function ExercisePicker({
       />
     </div>
   );
+}
+
+/** Ce qu'« Annuler la séance » fait perdre, en une phrase : les séries (ou les
+ *  côtés saisis sans série complète), les notes du jour, les exos ajoutés ou
+ *  remplacés. */
+function lossText(session: Session, state: CaptureState): string {
+  let sets = 0;
+  let lines = 0;
+  for (const ex of session.exercises) {
+    const progress = getProgress(state, ex.exerciseId);
+    sets += logicalSetsDone(progress);
+    lines += progress.sets.length;
+  }
+  const plural = (n: number, one: string) => `${n} ${one}${n > 1 ? 's' : ''}`;
+  const parts = [
+    sets > 0 ? plural(sets, 'série') : lines > 0 ? `${plural(lines, 'côté')} saisi${lines > 1 ? 's' : ''}` : null,
+    Object.values(state.datedNotes).some((n) => !isBlankNote(n.body)) ? 'tes notes du jour' : null,
+    (state.layout?.length ?? 0) > 0 ? 'les exos ajoutés ou remplacés' : null,
+  ].filter((p): p is string => p !== null);
+  const what = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} et ${parts[parts.length - 1]}` : (parts[0] ?? 'rien de saisi');
+  return `Ce qui part : ${what}, ici et en base. Rien n’entre au journal.`;
 }
 
 // --- Feuille de sélection dans le catalogue ---------------------------------

@@ -43,7 +43,6 @@ import {
   addExercise,
   layoutEditOf,
   replayLayout,
-  swapExercise,
   templateExerciseIds,
 } from './session-edit';
 import {
@@ -111,6 +110,8 @@ import { buildSummary, elapsedMinutesSince } from './summary';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
+import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
+import { leaveSession, nothingEntered } from './session-gestures';
 
 type LoadState =
   | { phase: 'loading' }
@@ -1115,13 +1116,35 @@ function CaptureBoard({
     dispatch({ type: 'edit-layout', edit: layoutEditOf(exercise) });
   }, []);
 
+  // Remplacer (`replaceExercise`, exercise-gestures.ts) : en place si l'exo n'a
+  // aucune série, sinon l'exo commencé garde ses séries et le remplaçant
+  // s'insère juste après lui. Le geste est journalisé (`edit-layout`) ; il
+  // n'écrit rien en base. Depuis le Sommaire, aucun exo n'est affiché dans
+  // l'instrument : `openExerciseId` y vaut toujours null, il est suivi quand même.
   const handleSwapExercise = useCallback(
     (targetExerciseId: string, replacement: SessionExercise) => {
-      setSession((s) => swapExercise(s, targetExerciseId, replacement));
-      dispatch({ type: 'edit-layout', edit: layoutEditOf(replacement, targetExerciseId) });
+      const gesture = replaceExercise(stateRef.current, session, targetExerciseId, replacement);
+      if (gesture === null) return;
+      setSession(gesture.session);
+      dispatch(gesture.action);
+      stateRef.current = captureReducer(stateRef.current, gesture.action);
+      if (gesture.openExerciseId !== null) {
+        const open = { type: 'open-exercise', exerciseId: gesture.openExerciseId } as const;
+        dispatch(open);
+        stateRef.current = captureReducer(stateRef.current, open);
+      }
     },
-    [],
+    [session],
   );
+
+  // Remettre un exo passé (`restoreSkippedExercise`) : une marque de l'appareil,
+  // rien en base.
+  const handleRestoreExercise = useCallback((exerciseId: string) => {
+    const gesture = restoreSkippedExercise(stateRef.current, exerciseId);
+    if (gesture === null) return;
+    dispatch(gesture.action);
+    stateRef.current = captureReducer(stateRef.current, gesture.action);
+  }, []);
 
   // Phase locale de fin de séance + durée chronométrée. Déclarés AVANT les callbacks
   // qui les utilisent (handleReset/handleNewSession/openFinish) : sinon `setPhase` est
@@ -1131,31 +1154,25 @@ function CaptureBoard({
   const [phase, setPhase] = useState<'capture' | 'finishing'>('capture');
   const [durationMin, setDurationMin] = useState<number | null>(null);
 
-  // « Annuler la séance » (geste unique) : ABANDONNE l'exécution courante puis
-  // REVIENT à l'écran de lancement (onExitToLaunch), ADR 0011. On ne reconstruit
-  // PAS une capture en place (l'ancien « Réinitialiser ») : on quitte la séance.
-  const handleCancelSession = useCallback(() => {
+  // Quitter la séance sans la ranger (`leaveSession`, session-gestures.ts) :
+  // « Changer de séance » quand rien n'est saisi, « Annuler la séance »
+  // (confirmée au Sommaire) sinon. Même ménage dans les deux cas, ADR 0011 :
+  //   1. le cache local de la séance quitte l'appareil ;
+  //   2. la file perd les écritures de CETTE exécution, et elle seule (d'autres
+  //      exécutions ou corrections hors ligne doivent survivre) ;
+  //   3. si l'exécution a pu naître (en file ou déjà en base), sa suppression
+  //      est enfilée (idempotente, cascade en base) : aucune orpheline que la
+  //      prochaine ouverture adopterait ;
+  //   4. retour à l'écran de lancement.
+  const handleLeaveSession = useCallback(() => {
+    const plan = leaveSession(stateRef.current, { executionStarted: executionStartedRef.current });
     clearPersisted(session, date);
-    // Purge de la file UNIQUEMENT les ops de l'exécution abandonnée (pas toute la
-    // file : d'autres exécutions/corrections offline doivent survivre). Les
-    // deleteSet/deleteDatedNote restent (idempotents par id, inoffensifs).
-    purgeByExecution(state.executionId);
-    // L'exécution a pu être PARTIELLEMENT synchronisée (upsert + séries déjà
-    // flushés) : purgeByExecution ne défait rien en base. On enfile un
-    // deleteExecution (idempotent, cascade DB) pour ne pas laisser d'orpheline que
-    // loadTodayExecution réhydraterait. La séance « annulée » ne revient jamais.
-    enqueueAndFlush({
-      type: 'deleteExecution',
-      id: state.executionId,
-      // Les exos déjà saisis : leurs copies locales seront relues à l'acquittement.
-      exerciseIds: Object.keys(stateRef.current.progress),
-    });
+    purgeByExecution(plan.executionId);
+    for (const op of plan.ops) enqueueAndFlush(op);
     executionEnqueuedRef.current = false;
     executionStartedRef.current = false;
-    // Retour à l'écran de lancement : le cache vient d'être nettoyé et l'exécution
-    // supprimée, donc rien de reprenable → on retombe sur le choix/« Démarrer ».
     onExitToLaunch();
-  }, [session, date, state.executionId, onExitToLaunch]);
+  }, [session, date, onExitToLaunch]);
 
   // Après clôture, « Nouvelle séance » : la séance close est rangée (closed_at en
   // base, ADR 0009) et son cache déjà nettoyé. On NE vide PAS la file (ses ops
@@ -1295,7 +1312,9 @@ function CaptureBoard({
             loadCatalogExercise={(row) => loadCatalogExercise(row, historyCtx)}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
-            onCancelSession={handleCancelSession}
+            onRestore={handleRestoreExercise}
+            leaveKind={nothingEntered(state) ? 'change' : 'cancel'}
+            onLeaveSession={handleLeaveSession}
           />
         </>
       )}
