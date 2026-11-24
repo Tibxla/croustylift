@@ -352,7 +352,7 @@ function Facts({
   const last = lead.curve[lead.curve.length - 1];
   const delta = first && last ? Math.round((last.e1rm - first.e1rm) * 10) / 10 : null;
   const unitWord = unit === 'reps' ? 'reps' : 'kg';
-  const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))} ${unitWord}`;
+  const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))}\u00a0${unitWord}`;
   /** Un nombre et son unité, comme dans la liste de l'Analyse (« 217 kg »). */
   const withUnit = (value: string, word: string) => (
     <>
@@ -382,7 +382,9 @@ function Facts({
         )}
         {delta !== null && first && lead.curve.length > 1 && (
           <Row
-            title={`Depuis la 1ʳᵉ ${lead.seanceName}`}
+            // La mesure se nomme : « +163,5 kg » seul se lisait comme des kilos de
+            // plus sur la barre.
+            title={`${unit === 'reps' ? 'Reps effectives' : 'e1RM'} depuis la 1ʳᵉ ${lead.seanceName}`}
             meta={`${sessionsLabel(lead.curve.length)} depuis le ${formatDay(first.date, year)}`}
             // Un écart depuis le départ n'est ni une série battue, ni un record, ni
             // une pente : blanc cassé, avec son signe et son chiffre.
