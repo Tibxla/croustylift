@@ -5,9 +5,9 @@
 // avec sa date ; la revalidation prévient l'écran ; une écriture faite d'ici
 // fait relire le réseau au lieu de resservir la copie d'avant.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearReadCache } from './read-cache';
+import { cachedRead, clearReadCache, revalidateReadCache } from './read-cache';
 import { saveLocalAccount } from './local-account';
-import { invalidateViews, loadDated, peekDated, VIEW_PREFIX, watchDated, type DatedState } from './dated-read';
+import { invalidateViews, loadDated, peekDated, ROUTINES_VIEW, SEANCES_VIEWS, VIEW_PREFIX, watchDated, type DatedState } from './dated-read';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -32,7 +32,8 @@ class MemoryStorage {
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-const KEY = `${VIEW_PREFIX}routines`;
+const KEY = ROUTINES_VIEW;
+const ANALYSE = `${VIEW_PREFIX}analyse`;
 
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage = new MemoryStorage() as unknown as Storage;
@@ -77,21 +78,21 @@ describe('loadDated', () => {
 
   it('après une écriture faite d’ici, la lecture suivante passe par le réseau, pas par la copie d’avant', async () => {
     await loadDated(KEY, async () => ['Upper A'], { offline: false, now: () => 1000 });
-    invalidateViews();
+    invalidateViews(SEANCES_VIEWS);
     const state = await loadDated(KEY, async () => ['Upper A renommée'], { offline: false, now: () => 2000 });
     expect(state).toEqual({ phase: 'ready', value: ['Upper A renommée'], at: 2000, copy: false });
   });
 
   it('copie périmée et réseau en échec : la copie sert de secours', async () => {
     await loadDated(KEY, async () => ['Upper A'], { offline: false, now: () => 1000 });
-    invalidateViews();
+    invalidateViews(SEANCES_VIEWS);
     const state = await loadDated(KEY, () => Promise.reject(new Error('Connexion impossible.')), { offline: false, now: () => 2000 });
     expect(state).toEqual({ phase: 'ready', value: ['Upper A'], at: 1000, copy: true });
   });
 
   it('hors ligne, même une copie périmée se montre (avec sa date)', async () => {
     await loadDated(KEY, async () => ['Upper A'], { offline: false, now: () => 1000 });
-    invalidateViews();
+    invalidateViews(SEANCES_VIEWS);
     await expect(loadDated(KEY, async () => ['x'], { offline: true })).resolves.toMatchObject({ phase: 'ready', copy: true, at: 1000 });
   });
 
@@ -106,5 +107,37 @@ describe('loadDated', () => {
     await loadDated(`${VIEW_PREFIX}journal`, async () => [1], { offline: false });
     expect(seen).toEqual([]);
     stop();
+  });
+});
+
+describe('copies d’écran et flush de la file', () => {
+  it('un flush ne relit aucune copie d’écran ; l’ouverture de l’Analyse, si (copie d’abord)', async () => {
+    const analyse = vi.fn(async () => ['courbes']);
+    const capture = vi.fn(async () => 'routine courante');
+    await loadDated(ANALYSE, analyse, { offline: false });
+    await cachedRead('capture-source', capture);
+    expect(analyse).toHaveBeenCalledTimes(1);
+
+    // Ce que fait l'app après chaque flush réussi (App.tsx).
+    revalidateReadCache();
+    await settle();
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(analyse).toHaveBeenCalledTimes(1);
+
+    // Ouverture de l'Analyse : la copie s'affiche aussitôt, puis une relecture.
+    const state = await loadDated(ANALYSE, analyse, { offline: false });
+    expect(state).toMatchObject({ phase: 'ready', copy: true, value: ['courbes'] });
+    await settle();
+    expect(analyse).toHaveBeenCalledTimes(2);
+  });
+
+  it('une écriture du plan ne périme que les copies de Séances, pas celles de l’Analyse', async () => {
+    await loadDated(ANALYSE, async () => ['avant'], { offline: false, now: () => 1000 });
+    await loadDated(`${VIEW_PREFIX}routine:r1`, async () => ['avant'], { offline: false, now: () => 1000 });
+    invalidateViews(SEANCES_VIEWS);
+    const analyse = await loadDated(ANALYSE, async () => ['après'], { offline: false, now: () => 2000 });
+    expect(analyse).toMatchObject({ value: ['avant'], copy: true });
+    const routine = await loadDated(`${VIEW_PREFIX}routine:r1`, async () => ['après'], { offline: false, now: () => 2000 });
+    expect(routine).toMatchObject({ value: ['après'], copy: false });
   });
 });

@@ -227,7 +227,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * pendant qu'une revalidation silencieuse met la copie à jour pour la
  * prochaine lecture. Sans copie : on attend le réseau et on sème le cache.
  */
-export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+export async function cachedRead<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  { replay = true }: { replay?: boolean } = {},
+): Promise<T> {
   const account = loadLocalAccount();
   if (!account) return fetcher();
 
@@ -235,7 +239,10 @@ export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Pro
   const refresh = async () => {
     await guardedFetch(account.userId, storageKey, fetcher);
   };
-  revalidators.set(storageKey, refresh);
+  // `replay: false` : la copie n'est jamais rejouée par `revalidateReadCache`
+  // (après chaque flush). Pour les lectures lourdes des écrans au calme, relues
+  // seulement à l'ouverture de leur écran (lib/dated-read).
+  if (replay) revalidators.set(storageKey, refresh);
 
   const cached = readEntry<T>(storageKey);
   if (cached !== null && !cached.stale) {
@@ -411,7 +418,8 @@ export async function networkFirstRead<T>(
 }
 
 /**
- * Rejoue toutes les revalidations connues de la session (no-op hors-ligne).
+ * Rejoue toutes les revalidations connues de la session (no-op hors-ligne),
+ * sauf celles des lectures marquées `replay: false` (cf. `cachedRead`).
  * Appelée après un flush d'outbox réussi (App). L'historique des exos touchés
  * par le flush est en plus relu par `flushOutbox` lui-même, sous seuil (sync.ts).
  */

@@ -28,7 +28,7 @@
 // Aucune confirmation par `window.confirm` : dans la feuille (`Confirm`), le
 // texte dit ce qui sera perdu.
 import { useCallback, useMemo, useState } from 'react';
-import { VIEW_PREFIX } from '../../lib/dated-read';
+import { ROUTINE_VIEW_PREFIX, ROUTINES_VIEW } from '../../lib/dated-read';
 import { useDatedLoad } from '../../lib/use-dated-load';
 import type { Database } from '../../lib/database.types';
 import {
@@ -193,8 +193,6 @@ interface RoutinesData {
   catalog: SeanceCatalogEntry[];
   executedRoutineIds: string[];
 }
-
-const ROUTINES_VIEW = `${VIEW_PREFIX}seances`;
 
 async function loadRoutinesData(): Promise<RoutinesData> {
   // Lectures indépendantes, en parallèle. Le catalogue des séances donne le
@@ -518,7 +516,7 @@ function RoutineContainer({
   }, [routineId]);
   // Un rafraîchissement après une écriture garde le contenu monté : pas de
   // saut en haut de page, pas de chargement affiché.
-  const { state, reload: retry, refresh: reload, online, showDate } = useDatedLoad(`${VIEW_PREFIX}routine:${routineId}`, fetchRoutine);
+  const { state, reload: retry, refresh: reload, online, showDate } = useDatedLoad(`${ROUTINE_VIEW_PREFIX}${routineId}`, fetchRoutine);
   const executedSeanceIds = useMemo(() => new Set(state.phase === 'ready' ? state.value.executedSeanceIds : []), [state]);
 
   const back = { label: 'Séances', onClick: () => onBack() };

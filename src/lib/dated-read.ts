@@ -14,9 +14,17 @@
 //     Salle marche sans. »), jamais « Erreur » ;
 //   - en ligne, `cachedRead` : la copie tout de suite, puis la revalidation de
 //     fond la remplace ; `watchDated` prévient l'écran quand elle arrive ;
-//   - une écriture faite d'ici rend ces copies périmées (`invalidateViews`, posé
-//     par l'enveloppe des écritures du plan et par la correction d'une séance) :
-//     la lecture suivante repasse par le réseau, la copie ne sert qu'en secours.
+//   - JAMAIS de relecture en tâche de fond pendant la séance : ces lectures
+//     couvrent tout l'historique (le Journal pèse vite 100 k caractères), et le
+//     flush qui suit chaque série loggée les aurait relues sur le réseau de la
+//     salle. Elles ne sont pas rejouées par `revalidateReadCache`
+//     (`replay: false`) : une copie se relit à l'ouverture de son écran, montrée
+//     d'abord. On ne la marque pas non plus périmée après un flush : périmée,
+//     elle ne se montrerait plus d'abord (réseau d'abord, jusqu'à 3 s) ;
+//   - une écriture faite d'ici rend périmées les copies qu'elle fausse
+//     (`invalidateViews`) : celles de Séances après une écriture du plan
+//     (`SEANCES_VIEWS`), celles de l'Analyse après la correction d'une séance.
+//     La lecture suivante repasse par le réseau, la copie ne sert qu'en secours.
 //
 // Les clés commencent toutes par `VIEW_PREFIX` : une seule invalidation les
 // couvre, et l'éviction les sacrifie en premier quand le stockage est plein
@@ -27,6 +35,13 @@ import { errorMessage } from './error-message';
 
 /** Début de clé de toutes les copies d'écran au calme. */
 export const VIEW_PREFIX = 'vue:';
+
+/** La liste des routines de Séances. */
+export const ROUTINES_VIEW = `${VIEW_PREFIX}seances`;
+/** Une routine de Séances : `vue:routine:<id>`. */
+export const ROUTINE_VIEW_PREFIX = `${VIEW_PREFIX}routine:`;
+/** Les copies qu'une écriture du plan fausse : celles de Séances seulement. */
+export const SEANCES_VIEWS = [ROUTINES_VIEW, ROUTINE_VIEW_PREFIX] as const;
 
 /** Une valeur et l'heure (ms) de la lecture réseau qui l'a produite. */
 export interface Dated<T> {
@@ -68,7 +83,7 @@ export async function loadDated<T>(
   }
   const start = now();
   try {
-    const read = await cachedRead<Dated<T>>(key, async () => ({ at: now(), value: await fetcher() }));
+    const read = await cachedRead<Dated<T>>(key, async () => ({ at: now(), value: await fetcher() }), { replay: false });
     return { phase: 'ready', value: read.value, at: read.at, copy: read.at < start };
   } catch (err) {
     return { phase: 'error', message: errorMessage(err) };
@@ -88,7 +103,7 @@ export function watchDated<T>(key: string, listener: (state: DatedState<T>) => v
   });
 }
 
-/** Une écriture faite d'ici : les copies d'écran au calme sont périmées. */
-export function invalidateViews(prefixes: readonly string[] = [VIEW_PREFIX]): void {
+/** Une écriture faite d'ici : les copies d'écran au calme qu'elle fausse sont périmées. */
+export function invalidateViews(prefixes: readonly string[]): void {
   invalidateReads(prefixes);
 }
