@@ -461,7 +461,8 @@ function CompteSection({
 function Line({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
-      <span className="text-[16px] text-muted">{label}</span>
+      {/* Le libellé ne se coupe jamais (« E- / mail ») : c'est la valeur qui cède. */}
+      <span className="flex-none whitespace-nowrap text-[16px] text-muted">{label}</span>
       <span className="min-w-0 truncate text-right text-[16px] text-ink">{value}</span>
     </div>
   );
