@@ -18,8 +18,11 @@ export function formatRate(rate: number): string {
   return digits
 }
 
-/** Une durée de séance : « 58 min » sous l'heure, « 1 h 05 » au-delà. */
+/** Une durée de séance : « 58 min » sous l'heure, « 1 h 05 » au-delà. Une
+ *  durée notée à 0 (moins de 30 s) se dit « moins d'1 min », comme en fin de
+ *  séance ; une durée absente ne passe pas ici (« non notée » chez l'appelant). */
 export function formatDuration(min: number): string {
+  if (min === 0) return 'moins d’1 min'
   if (min < 60) return `${min} min`
   return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`
 }
