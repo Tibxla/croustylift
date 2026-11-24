@@ -35,7 +35,7 @@ sql tests/banc/01_jeu_d_essai.sql
 
 # Ordre de DÉPLOIEMENT (supabase/tests/ORDRE.md), pas l'ordre des numéros : les
 # migrations qui attendent le nouveau client passent en dernier.
-ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0025 0016 0018 0021 0022"
+ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0025 0026 0016 0018 0021 0022"
 [ "$(echo $ORDRE | wc -w)" = "$(ls migrations | awk '$0 > "0015"' | wc -l)" ] || { echo "ORDRE ne couvre pas toutes les migrations"; exit 1; }
 
 for n in $ORDRE; do
@@ -239,4 +239,50 @@ if echo "$sortie" | grep -q "performed_sets_execution_id_fkey\|violates foreign 
 else
   echo "ECHEC série arrivée pendant la suppression : $sortie"; exit 1
 fi
+echo "== réordonnancement sous révision (0026)"
+# Routine PPL du compte A : Push, Pull, Legs. Le client envoie l'ordre qu'il
+# AFFICHE et le nouvel ordre ; la base refuse si l'ordre a changé entre-temps.
+A=aaaaaaaa-0000-0000-0000-000000000001
+R=a0000000-0000-0000-0000-0000000000a1
+PUSH=a0000000-0000-0000-0000-0000000000b1
+PULL=a0000000-0000-0000-0000-0000000000b2
+LEGS=a0000000-0000-0000-0000-0000000000b3
+sql /dev/stdin <<SQL
+update public.seances set position = case id when '$PUSH' then 0 when '$PULL' then 1 when '$LEGS' then 2 end
+  where routine_id = '$R';
+SQL
+ordre() { docker exec -i "$NOM" psql -U postgres -A -t -c "select string_agg(name, ',' order by position) from public.seances where routine_id = '$R' and archived_at is null"; }
+reordonne() { # reordonne <compte> <ordre attendu> <nouvel ordre> : réponse de la base (vide si succès)
+  docker exec -i "$NOM" psql -U postgres -q -A -t -v ON_ERROR_STOP=1 \
+    -c "set role authenticated" -c "set request.jwt.claim.sub = '$1'" \
+    -c "select public.reorder_seances_revision('$R', array[$2]::uuid[], array[$3]::uuid[])" 2>&1 || true
+}
+r=$(reordonne "$A" "'$PUSH','$PULL','$LEGS'" "'$PULL','$PUSH','$LEGS'")
+if [ "$(ordre)" = "Pull,Push,Legs" ] && ! echo "$r" | grep -q ERROR; then echo "OK    ordre affiché à jour : réordonné"
+else echo "ECHEC réordonnancement à jour : $r (ordre : $(ordre))"; exit 1; fi
+r=$(reordonne "$A" "'$PUSH','$PULL','$LEGS'" "'$PUSH','$LEGS','$PULL'")
+if echo "$r" | grep -q "l'ordre a changé" && [ "$(ordre)" = "Pull,Push,Legs" ]; then echo "OK    ordre affiché dépassé : refusé (PT409), rien n'a bougé"
+else echo "ECHEC ordre dépassé accepté : $r (ordre : $(ordre))"; exit 1; fi
+r=$(docker exec -i "$NOM" psql -U postgres -q -A -t -c "set role anon" \
+  -c "select public.reorder_seances_revision('$R', array['$PULL','$PUSH','$LEGS']::uuid[], array['$LEGS','$PULL','$PUSH']::uuid[])" 2>&1 || true)
+if echo "$r" | grep -q "permission denied" && [ "$(ordre)" = "Pull,Push,Legs" ]; then echo "OK    appel sans compte : refusé"
+else echo "ECHEC appel sans compte : $r (ordre : $(ordre))"; exit 1; fi
+r=$(reordonne "$B" "'$PULL','$PUSH','$LEGS'" "'$LEGS','$PULL','$PUSH'")
+if echo "$r" | grep -q ERROR && [ "$(ordre)" = "Pull,Push,Legs" ]; then echo "OK    autre compte : refusé, rien n'a bougé"
+else echo "ECHEC autre compte accepté : $r (ordre : $(ordre))"; exit 1; fi
+# Course : un appareil réordonne (transaction tenue 3 s) ; l'autre, parti du
+# même ordre, attend le verrou puis est refusé : son ordre est dépassé.
+sql /dev/stdin >/dev/null <<SQL &
+set role authenticated;
+set request.jwt.claim.sub = '$A';
+begin;
+select public.reorder_seances_revision('$R', array['$PULL','$PUSH','$LEGS']::uuid[], array['$LEGS','$PULL','$PUSH']::uuid[]);
+select pg_sleep(3);
+commit;
+SQL
+sleep 1
+r=$(reordonne "$A" "'$PULL','$PUSH','$LEGS'" "'$PUSH','$PULL','$LEGS'")
+wait
+if echo "$r" | grep -q "l'ordre a changé" && [ "$(ordre)" = "Legs,Pull,Push" ]; then echo "OK    deux appareils en même temps : le second attend, puis est refusé"
+else echo "ECHEC course de réordonnancement : $r (ordre : $(ordre))"; exit 1; fi
 echo "== banc vert"

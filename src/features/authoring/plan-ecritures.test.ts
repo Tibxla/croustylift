@@ -9,6 +9,8 @@ const server = vi.hoisted(() => ({
   activations: [] as Record<string, unknown>[],
   rpcCalls: [] as { fn: string; args: unknown }[],
   rpcError: null as unknown,
+  /** Erreur propre à une fonction (prime sur `rpcError`). */
+  rpcErrors: {} as Record<string, unknown>,
   deleteError: null as unknown,
   /** Appelé au moment où la requête de suppression part. */
   onDelete: null as (() => void) | null,
@@ -49,7 +51,7 @@ vi.mock('../../lib/supabase', () => {
   };
   const rpc = (fn: string, args: unknown) => {
     server.rpcCalls.push({ fn, args });
-    return Promise.resolve({ error: server.rpcError });
+    return Promise.resolve({ error: server.rpcErrors[fn] ?? server.rpcError });
   };
   return { supabase: { from, rpc } };
 });
@@ -60,6 +62,7 @@ import {
   deleteRoutine,
   deleteSeance,
   getCurrentRoutineId,
+  REORDER_CONFLICT_MESSAGE,
   reorderSeances,
 } from './data';
 
@@ -67,6 +70,7 @@ beforeEach(() => {
   server.activations = [];
   server.rpcCalls = [];
   server.rpcError = null;
+  server.rpcErrors = {};
   server.deleteError = null;
   server.onDelete = null;
 });
@@ -107,22 +111,43 @@ describe('getCurrentRoutineId', () => {
 });
 
 describe('reorderSeances', () => {
-  it('appelle reorder_seances avec la routine et les ids dans l’ordre, en une requête', async () => {
-    const pending = reorderSeances('routine-1', ['s2', 's1', 's3']);
+  it('envoie l’ordre affiché ET le nouvel ordre à reorder_seances_revision, en une requête', async () => {
+    const pending = reorderSeances('routine-1', ['s2', 's1', 's3'], ['s1', 's2', 's3']);
     // Écriture du plan : le rechargement est bloqué le temps de la RPC.
     expect(activeBlockers()).toEqual([PLAN_WRITE_BLOCK]);
     await pending;
 
     expect(server.rpcCalls).toEqual([
-      { fn: 'reorder_seances', args: { p_routine_id: 'routine-1', p_seance_ids: ['s2', 's1', 's3'] } },
+      {
+        fn: 'reorder_seances_revision',
+        args: { p_routine_id: 'routine-1', p_expected_ids: ['s1', 's2', 's3'], p_seance_ids: ['s2', 's1', 's3'] },
+      },
     ]);
     expect(activeBlockers()).toEqual([]);
+  });
+
+  it('ordre changé ailleurs (refus PT409) : une erreur en clair, rien n’est retenté', async () => {
+    server.rpcErrors.reorder_seances_revision = { code: 'PT409', message: 'reorder_seances_revision : l’ordre a changé depuis sa lecture.' };
+
+    await expect(reorderSeances('routine-1', ['s2', 's1'], ['s1', 's2'])).rejects.toThrow(REORDER_CONFLICT_MESSAGE);
+    expect(REORDER_CONFLICT_MESSAGE).toBe('L’ordre a changé sur un autre appareil : vérifie-le puis recommence.');
+    expect(server.rpcCalls.map((c) => c.fn)).toEqual(['reorder_seances_revision']);
+  });
+
+  it('fonction absente de la base (migration 0026 pas encore passée) : repli sur reorder_seances', async () => {
+    server.rpcErrors.reorder_seances_revision = { code: 'PGRST202', message: 'Could not find the function' };
+
+    await reorderSeances('routine-1', ['s2', 's1'], ['s1', 's2']);
+    expect(server.rpcCalls).toEqual([
+      { fn: 'reorder_seances_revision', args: { p_routine_id: 'routine-1', p_expected_ids: ['s1', 's2'], p_seance_ids: ['s2', 's1'] } },
+      { fn: 'reorder_seances', args: { p_routine_id: 'routine-1', p_seance_ids: ['s2', 's1'] } },
+    ]);
   });
 
   it('relance l’erreur de la base (id en double ou hors de la routine)', async () => {
     server.rpcError = { code: '22023', message: 'id hors de la routine' };
 
-    await expect(reorderSeances('routine-1', ['s1', 's1'])).rejects.toMatchObject({
+    await expect(reorderSeances('routine-1', ['s1', 's1'], ['s1', 's2'])).rejects.toMatchObject({
       code: '22023',
     });
     expect(activeBlockers()).toEqual([]);

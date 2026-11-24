@@ -595,9 +595,13 @@ function RoutineContainer({
         // Une séance neuve s'ouvre aussitôt dans l'éditeur : on y ajoute ses exos.
         onEdit(created, { routine, isCurrentRoutine: isCurrent, executed: false, takenNames: [...takenNames, created.name] });
       }}
-      onReorder={async (orderedIds) => {
-        await reorderSeances(routine.id, orderedIds);
-        reload();
+      onReorder={async (orderedIds, expectedIds) => {
+        try {
+          await reorderSeances(routine.id, orderedIds, expectedIds);
+        } finally {
+          // Réussi ou refusé (ordre changé ailleurs) : l'ordre se relit.
+          reload();
+        }
       }}
       onRenameSeance={async (s, name) => {
         const renamed = await renameSeance(s.id, name);
@@ -686,7 +690,8 @@ export function RoutineView({
   onEdit: (seance: SeanceRow) => void;
   /** Crée une séance vierge (`sourceId` absent) ou la copie d'une existante. */
   onCreateSeance: (name: string, sourceId: string | null) => Promise<void>;
-  onReorder: (orderedIds: string[]) => Promise<void>;
+  /** `expectedIds` : l'ordre affiché d'où part le geste (contrôle de révision, migration 0026). */
+  onReorder: (orderedIds: string[], expectedIds: string[]) => Promise<void>;
   onRenameSeance: (seance: SeanceRow, name: string) => Promise<void>;
   onDuplicateSeance: (seance: SeanceRow, name: string) => Promise<void>;
   onArchiveSeance: (seance: SeanceRow) => Promise<void>;
@@ -740,7 +745,8 @@ export function RoutineView({
 
   async function move(index: number, dir: -1 | 1) {
     const target = index + dir;
-    const ids = seances.map((s) => s.id);
+    const expected = seances.map((s) => s.id);
+    const ids = [...expected];
     const a = ids[index];
     const b = ids[target];
     if (a === undefined || b === undefined) return;
@@ -749,7 +755,7 @@ export function RoutineView({
     setMoving(true);
     setError(null);
     try {
-      await onReorder(ids);
+      await onReorder(ids, expected);
       setMoved(a);
     } catch (err) {
       setError(errorMessage(err));

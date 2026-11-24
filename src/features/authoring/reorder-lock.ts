@@ -6,9 +6,10 @@
 // appareil : un geste l'aurait écrasé. Tant que la revalidation n'est pas
 // arrivée, les deux boutons attendent, et l'écran dit pourquoi. Pur, testé.
 //
-// LIMITE : ce verrou réduit la fenêtre sans la fermer (un autre appareil peut
-// réordonner entre la revalidation et le geste). La fermer demande une révision
-// côté base, que la RPC vérifierait.
+// Ce verrou réduit la fenêtre sans la fermer (un autre appareil peut
+// réordonner entre la revalidation et le geste) : la base la ferme, en
+// vérifiant l'ordre affiché dans la transaction qui écrit
+// (`reorder_seances_revision`, migration 0026, cf. authoring/data.ts).
 
 export interface ReorderLock {
   /** Les deux boutons de chaque ligne sont inactifs. */

@@ -647,25 +647,62 @@ export async function unarchiveSeance(id: string): Promise<void> {
   });
 }
 
+/** Le refus d'un réordonnancement fait sur un ordre que la base a vu changer. */
+export const REORDER_CONFLICT_MESSAGE = 'L’ordre a changé sur un autre appareil : vérifie-le puis recommence.';
+
+/** La base a refusé : l'ordre affiché n'est plus le sien (PT409, migration 0026). */
+function isReorderConflict(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null;
+  return e?.code === 'PT409' || (typeof e?.message === 'string' && e.message.includes('ordre a changé'));
+}
+
+/** PostgREST (PGRST202) ou Postgres (42883) ne trouvent pas la fonction. */
+function isMissingFunction(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'PGRST202' || code === '42883';
+}
+
 /**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
  * (index 0 = première). `orderedIds` doit lister les séances de la routine ;
- * les positions sont réassignées 0..n-1.
+ * les positions sont réassignées 0..n-1. `expectedIds` : l'ordre AFFICHÉ, d'où
+ * part le geste.
  *
- * En UNE transaction côté serveur, par la RPC `reorder_seances` (migration
- * 0023) : `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`,
- * qui refuse (22023) un id en double ou hors de la routine.
+ * En UNE transaction côté serveur, par la RPC `reorder_seances_revision`
+ * (migration 0026) : elle verrouille les séances de la routine, vérifie que
+ * l'ordre courant est encore `expectedIds`, puis écrit. Un ordre changé
+ * ailleurs entre-temps (autre appareil) est refusé : l'erreur porte
+ * `REORDER_CONFLICT_MESSAGE`, et l'appelant relit l'ordre. Sans ce contrôle,
+ * le geste réécrivait toutes les positions depuis un ordre dépassé et annulait
+ * en silence le déplacement fait ailleurs.
+ *
+ * Tant que la fonction n'est pas en base : repli sur `reorder_seances` (0023),
+ * sans contrôle de révision, comme le client d'avant. Les deux refusent
+ * (22023) un id en double ou hors de la routine.
  */
 export async function reorderSeances(
   routineId: string,
   orderedIds: string[],
+  expectedIds: string[],
 ): Promise<void> {
   return planWrite(async () => {
-    const { error } = await supabase.rpc('reorder_seances', {
+    const rpc = supabase.rpc.bind(supabase) as unknown as (
+      fn: 'reorder_seances_revision',
+      args: { p_routine_id: string; p_expected_ids: string[]; p_seance_ids: string[] },
+    ) => PromiseLike<{ error: unknown }>;
+    const { error } = await rpc('reorder_seances_revision', {
+      p_routine_id: routineId,
+      p_expected_ids: expectedIds,
+      p_seance_ids: orderedIds,
+    });
+    if (!error) return;
+    if (isReorderConflict(error)) throw new Error(REORDER_CONFLICT_MESSAGE, { cause: error });
+    if (!isMissingFunction(error)) throw error;
+    const { error: legacy } = await supabase.rpc('reorder_seances', {
       p_routine_id: routineId,
       p_seance_ids: orderedIds,
     });
-    if (error) throw error;
+    if (legacy) throw legacy;
   });
 }
 
