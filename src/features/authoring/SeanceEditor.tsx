@@ -706,6 +706,12 @@ export function SeanceEditorView({
     </>
   ) : undefined;
 
+  const startReorder = () => {
+    setReorder(true);
+    setMoved(null);
+    setOpen(null);
+  };
+
   return (
     <Screen bottom={bottom}>
       <ScreenHeader
@@ -725,16 +731,10 @@ export function SeanceEditorView({
             </SecondaryButton>
           ) : (
             <>
+              {/* Sous 350 px, « Réordonner » passe dans le ⋯ : à côté de lui, le
+                  nom de la routine du retour se coupait (« ‹ Test Cl… »). */}
               {rows.length > 1 && (
-                <SecondaryButton
-                  size="sm"
-                  ariaLabel="Réordonner les exos"
-                  onClick={() => {
-                    setReorder(true);
-                    setMoved(null);
-                    setOpen(null);
-                  }}
-                >
+                <SecondaryButton size="sm" ariaLabel="Réordonner les exos" onClick={startReorder} className="max-[349px]:hidden">
                   Réordonner
                 </SecondaryButton>
               )}
@@ -850,6 +850,14 @@ export function SeanceEditorView({
           inCurrentRoutine={actions.isCurrentRoutine}
           unsaved={unsaved}
           onClose={() => setMenuOpen(false)}
+          onReorder={
+            rows.length > 1
+              ? () => {
+                  setMenuOpen(false);
+                  startReorder();
+                }
+              : undefined
+          }
           onRename={async (name) => {
             await actions.onRename(name);
             setMenuOpen(false);
