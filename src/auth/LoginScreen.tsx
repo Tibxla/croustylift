@@ -18,10 +18,10 @@ type Mode = 'signin' | 'forgot'
 function frenchError(message: string): string {
   const m = message.toLowerCase()
   if (m.includes('invalid login credentials')) {
-    return 'Email ou mot de passe incorrect.'
+    return 'E-mail ou mot de passe incorrect.'
   }
   if (m.includes('email not confirmed')) {
-    return 'Email non confirmé. Vérifie ta boîte de réception.'
+    return 'E-mail non confirmé. Vérifie ta boîte de réception.'
   }
   if (m.includes('unable to validate email') || m.includes('invalid email')) {
     return 'Adresse email invalide.'
