@@ -118,7 +118,10 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
             }}
             onBlur={(e) => close(e.currentTarget.value)}
             className={`focus-own tnum min-w-[0.6em] border-b-2 border-ink bg-transparent p-0 text-center text-ink outline-none ${FACE}`}
-            style={{ fontSize: fit.size, width: fit.width || undefined }}
+            // Hauteur = taille du texte, bordure comprise : sans elle le champ
+            // dépassait la boîte (89 px pour 72, `overflow-hidden`) et son
+            // soulignement, le seul signe « je tape ici », était rogné.
+            style={{ fontSize: fit.size, height: fit.size, width: fit.width || undefined }}
           />
           <Kg />
         </span>
