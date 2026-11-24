@@ -295,8 +295,8 @@ function Page({ children }: { children: ReactNode }) {
 function LoadError({ what, message, onRetry }: { what: string; message: string; onRetry: () => void }) {
   return (
     <div className="px-5 pt-4">
-      <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-        Impossible de charger {what} : {message}
+      <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+        <span className="font-semibold">Erreur : </span>Impossible de charger {what} : {message}
       </p>
       <div className="mt-4">
         <SecondaryButton onClick={onRetry}>Réessayer</SecondaryButton>

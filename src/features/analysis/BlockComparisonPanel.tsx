@@ -25,7 +25,7 @@ import {
 import { EmptyState, List, Row, Sheet, Status } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
-import { blockLabel, seanceRoutineLabel } from './block-label';
+import { seanceRoutineLabel } from './block-label';
 import { shortDay } from './chart-time';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
@@ -68,8 +68,8 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
   }
   if (load.phase === 'error') {
     return (
-      <p role="alert" className="mx-5 mt-4 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-        Impossible de charger les blocs : {load.message}
+      <p role="alert" className="mx-5 mt-4 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+        <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {load.message}
       </p>
     );
   }
@@ -97,6 +97,15 @@ function optionName(
 ): string {
   const name = seanceOf(o, seances);
   return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${periodOf(o.block)}` : name;
+}
+
+/** La période en méta d'une option, sauf si son nom la porte déjà (« du 28/03 au 23/11 · »). */
+function datesOf(
+  o: BlockSeanceProgression,
+  options: readonly BlockSeanceProgression[],
+  seances: ReadonlyMap<string, SeanceInfo>,
+): string {
+  return optionName(o, options, seances) === seanceOf(o, seances) ? `${periodOf(o.block)} · ` : '';
 }
 
 /** La pente d'une option en signe + mot, ou ce qui lui manque. */
@@ -157,11 +166,12 @@ export function ComparisonView({
           <Row
             key={side}
             lead={side.toUpperCase()}
-            title={seanceOf(o, seances)}
+            title={optionName(o, options, seances)}
             meta={
               <>
                 <span className="block">
-                  {blockLabel(o.block)} · {sessionsLabel(o.pointCount)}
+                  {datesOf(o, options, seances)}
+                  {sessionsLabel(o.pointCount)}
                 </span>
                 <span className="mt-0.5 block">
                   <OptionRate rate={o.weeklyRate} points={o.pointCount} />
@@ -169,7 +179,7 @@ export function ComparisonView({
               </>
             }
             onClick={() => setPicking(side)}
-            ariaLabel={`Option ${side.toUpperCase()} : ${seanceOf(o, seances)}, ${blockLabel(o.block)}. Changer`}
+            ariaLabel={`Option ${side.toUpperCase()} : ${optionName(o, options, seances)}, ${periodOf(o.block)}. Changer`}
           />
         ))}
       </List>
@@ -196,8 +206,9 @@ export function ComparisonView({
                 <Row
                   key={`${blockKey(o.block)}:${o.seanceId}`}
                   title={optionName(o, options, seances)}
-                  meta={`${blockLabel(o.block)} · ${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
+                  meta={`${datesOf(o, options, seances)}${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
                   value={taken ? <span className="text-[14px] font-normal text-faint">déjà en {picking === 'a' ? 'B' : 'A'}</span> : undefined}
+                  valueMeta={index === mine ? 'actuelle' : undefined}
                   current={index === mine}
                   muted={taken}
                   onClick={

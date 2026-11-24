@@ -110,7 +110,7 @@ export function SessionPage({
         <Fact label="Durée" value={s.durationMin !== null ? formatDuration(s.durationMin) : null} />
         <Fact label="BPM" value={s.bpmAvg !== null ? String(s.bpmAvg) : null} />
         <Fact label="Séries" value={formatCount(s.setCount)} />
-        <Fact label="kg soulevés" value={formatInt(s.totalLiftedKg)} />
+        <Fact label="Soulevés" value={`${formatInt(s.totalLiftedKg)} kg`} />
       </dl>
       {entry.exercises.map((x) => (
         <section key={x.exerciseId} aria-label={x.name}>

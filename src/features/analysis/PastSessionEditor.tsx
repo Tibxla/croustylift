@@ -342,8 +342,8 @@ export function PastSessionEditor({
       bottom={
         <>
           {save.phase === 'error' && (
-            <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-              Corrections gardées sur l’appareil, pas encore en base : {save.message}
+            <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+              <span className="font-semibold">Erreur : </span>Corrections gardées sur l’appareil, pas encore en base : {save.message}
             </p>
           )}
           <PrimaryButton onClick={handleSave} disabled={save.phase === 'saving' || (!dirty && save.phase !== 'error')}>
@@ -448,8 +448,8 @@ export function PastSessionEditor({
         footer={
           <>
             {del.phase === 'error' && (
-              <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-                Suppression gardée sur l’appareil, pas encore en base : {del.message}
+              <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+                <span className="font-semibold">Erreur : </span>Suppression gardée sur l’appareil, pas encore en base : {del.message}
               </p>
             )}
             <TextLink tone="muted" className="self-start" onClick={() => void handleDelete()}>
@@ -515,8 +515,8 @@ function EditorFrame({ children, bottom }: { children: React.ReactNode; bottom?:
 
 function Alert({ children }: { children: React.ReactNode }) {
   return (
-    <p role="alert" className="mx-5 mt-2 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
-      {children}
+    <p role="alert" className="mx-5 mt-2 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+      <span className="font-semibold">Erreur : </span>{children}
     </p>
   );
 }
