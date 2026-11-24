@@ -1932,6 +1932,60 @@ describe('écritures partielles (patchSet)', () => {
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['s9']);
   });
 
+  /** Les `insertSet` portant `only` encore écrites telles quelles sur l'appareil. */
+  function rawLegacyPartials(): string[] {
+    const queue = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as { type: string; id: string; only?: string }[];
+    const quarantine = JSON.parse(localStorage.getItem(QUARANTINE_KEY) ?? '[]') as { op: { type: string; id: string; only?: string } }[];
+    return [...queue, ...quarantine.map((q) => q.op)]
+      .filter((op) => op.type === 'insertSet' && op.only !== undefined)
+      .map((op) => op.id);
+  }
+
+  // Lue convertie, l'ancienne forme restait BRUTE dans le stockage tant que rien
+  // ne réécrivait la file : un onglet de main sur la même origine la rejouait
+  // alors en upsert complet (90 kg remis à 80). Le démarrage la réécrit.
+  it('au démarrage, la forme héritée est réécrite sur l’appareil, file et quarantaine', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([{ ...execOp(), _uid: 'u-exec' }, legacyPartial('s2', 'values', { weightKg: 90 })]),
+    );
+    localStorage.setItem(
+      QUARANTINE_KEY,
+      JSON.stringify([{ op: legacyPartial('s9', 'rank'), reason: '23514 : rejet', at: '2026-11-24T10:00:00.000Z' }]),
+    );
+    expect(rawLegacyPartials()).toEqual(['s2', 's9']);
+
+    adoptLegacyOps();
+
+    expect(rawLegacyPartials()).toEqual([]);
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as OutboxOp[];
+    expect(raw.map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
+    expect(raw[1]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
+    expect(readQuarantine()[0]).toMatchObject({ op: { type: 'patchSet', id: 's9' }, reason: '23514 : rejet' });
+  });
+
+  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([{ ...execOp(), _uid: 'u-exec', _owner: 'user-1' }]));
+    const setItem = vi.spyOn(localStorage, 'setItem');
+    adoptLegacyOps();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('une forme héritée apparue après le démarrage (onglet d’une préversion) est réécrite au début du flush', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'values', { weightKg: 90 })]));
+    const fns = okFns();
+    (fns.patchSet as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      // Pendant l'envoi : la file sur l'appareil porte déjà la forme nouvelle.
+      expect(rawLegacyPartials()).toEqual([]);
+      throw new TypeError('Failed to fetch');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await flush(fns);
+    expect(fns.patchSet).toHaveBeenCalledTimes(1);
+    expect(rawLegacyPartials()).toEqual([]);
+    expect(readQueue().map((op) => op.type)).toEqual(['patchSet']);
+  });
+
   it('une écriture partielle suit son exécution : purgée avec elle, retenue si sa création est refusée', async () => {
     enqueue(execOp('exec-1'));
     enqueue(patchOp('s2', 'values'));

@@ -670,6 +670,51 @@ export function adoptLegacyOps(): void {
     next = next.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op));
   }
   if (next !== queue) writeQueue(next);
+  persistLegacyUpgrades();
+}
+
+/** Une entrée brute du stockage est-elle une écriture partielle de la forme d'avant `patchSet` ? */
+function isRawLegacyPartial(op: unknown): boolean {
+  const { type, only } = (op ?? {}) as { type?: unknown; only?: unknown };
+  return type === 'insertSet' && (only === 'values' || only === 'rank');
+}
+
+/** Le blob brut d'une clé, en tableau ; vide s'il est absent ou illisible. */
+function rawArray(key: string): unknown[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * RÉÉCRIT sur l'appareil les écritures partielles de la forme d'avant
+ * `patchSet` (une `insertSet` marquée `only`), dans la file et la quarantaine.
+ *
+ * Pourquoi : la conversion à la lecture (`upgradeLegacyOp`) ne protège que ce
+ * client. Tant que rien ne réécrivait la file, l'ancienne forme restait brute
+ * dans le stockage, et un onglet resté sur main, sur la même origine, la
+ * rejouait en upsert complet : 90 kg remis à 80. Réécrite en `patchSet`, elle
+ * l'arrête (op de type inconnu). Même chose pour la quarantaine, d'où main
+ * peut « renvoyer » une saisie dans la file.
+ *
+ * Appelée au démarrage (`adoptLegacyOps`) et au début de chaque passe de flush,
+ * sous son verrou : un onglet d'une préversion peut encore en enfiler après le
+ * démarrage. Synchrone et sans attendre le verrou au démarrage, à dessein :
+ * la passe de main relit la file avant CHAQUE op, la réécriture l'atteint donc
+ * dès l'op suivante, alors qu'attendre le verrou laisserait sa passe en cours
+ * consommer toutes les ops héritées. Seule l'op que main a déjà en main pendant
+ * la réécriture peut encore partir, verrou ou non. Rien n'est écrit s'il n'y a
+ * rien d'hérité.
+ */
+export function persistLegacyUpgrades(): void {
+  if (typeof localStorage === 'undefined') return;
+  if (rawArray(STORAGE_KEY).some(isRawLegacyPartial)) writeQueue(readQueue());
+  if (rawArray(QUARANTINE_KEY).some((entry) => isRawLegacyPartial((entry as { op?: unknown } | null)?.op))) {
+    writeQuarantine(readQuarantine());
+  }
 }
 
 /**
@@ -1459,6 +1504,9 @@ export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
 }
 
 async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
+  // Sous le verrou : les écritures partielles d'une préversion, enfilées depuis
+  // le démarrage, ne restent pas brutes sur l'appareil (cf. `persistLegacyUpgrades`).
+  persistLegacyUpgrades();
   // RÉ-ARMEMENT (issue F12) : une op enfilée DANS la fenêtre étroite entre la fin
   // d'une passe et le `finally` qui remet `inFlight` à null n'est pas traitée par
   // cette passe ; un `flush` concurrent reçoit alors ce résultat périmé
