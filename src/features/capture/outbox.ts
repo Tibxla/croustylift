@@ -608,7 +608,8 @@ export function hasUnpersistedOps(): boolean {
   if (gap === null || gap.outdated) return false;
   const added = new Set(gap.log.flatMap((t) => (t.t === 'add' ? [t.entry.uid] : [])));
   if (added.size === 0) return false;
-  const persisted = new Set(readPersisted().record.entries.map((e) => e.uid));
+  // Écrites sur l'appareil : au registre, ou encore dans une clé de l'ancien format.
+  const persisted = new Set([...readPersisted().record.entries, ...readLegacy()].map((e) => e.uid));
   return view().entries.some((e) => e.fate !== 'acked' && added.has(e.uid) && !persisted.has(e.uid));
 }
 

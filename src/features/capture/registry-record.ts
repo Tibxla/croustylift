@@ -647,6 +647,21 @@ export function completeLegacyNoteDeletes(draft: Draft): void {
   }
 }
 
+function isEntry(value: unknown): value is Entry {
+  if (typeof value !== 'object' || value === null) return false;
+  const { n, uid, op, fate, parents, replaces } = value as Partial<Entry>;
+  return (
+    typeof n === 'number' &&
+    typeof uid === 'string' &&
+    typeof op === 'object' &&
+    op !== null &&
+    typeof op.type === 'string' &&
+    (fate === 'pending' || fate === 'refused' || fate === 'acked') &&
+    (parents === undefined || Array.isArray(parents)) &&
+    (replaces === undefined || Array.isArray(replaces))
+  );
+}
+
 /** Lit un enregistrement stocké. `'outdated'` : écrit par une version plus récente. */
 export function parseRecord(raw: string): RegistryRecord | 'outdated' | 'corrupt' {
   let parsed: unknown;
@@ -660,5 +675,8 @@ export function parseRecord(raw: string): RegistryRecord | 'outdated' | 'corrupt
   if (typeof v !== 'number') return 'corrupt';
   if (v > REGISTRY_VERSION) return 'outdated';
   if (v !== REGISTRY_VERSION || typeof seq !== 'number' || !Array.isArray(entries)) return 'corrupt';
+  // Une écriture mal formée ferait tomber chaque lecture du registre : dans le
+  // doute, l'enregistrement entier est tenu pour illisible (et mis de côté).
+  if (!entries.every(isEntry)) return 'corrupt';
   return { v: REGISTRY_VERSION, seq, entries: entries as Entry[] };
 }
