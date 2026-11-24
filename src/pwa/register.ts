@@ -18,6 +18,7 @@ import {
   type ReloadTrigger,
   type SurfaceName,
 } from './update'
+import { manualReloadVerdict, type ManualReloadVerdict } from './manual-reload'
 
 /** Onglet à rouvrir après un rechargement décidé par l'app (durée de l'onglet). */
 const SURFACE_KEY = 'croustylift:surface-apres-rechargement'
@@ -115,6 +116,17 @@ export function requestReload(trigger: ReloadTrigger, targetSurface?: SurfaceNam
   if (surface) sessionSet(SURFACE_KEY, surface)
   window.location.reload()
   return true
+}
+
+/**
+ * « Recharger l'app » demandé à la main (écran d'erreur) : recharge seulement si
+ * rien ne serait perdu (cf. manual-reload.ts). Les gardes sont relues ici, au
+ * moment du geste. Rend le verdict ; `reload` : la page recharge.
+ */
+export function manualReload(): ManualReloadVerdict {
+  const verdict = manualReloadVerdict(currentBlockers())
+  if (verdict === 'reload') window.location.reload()
+  return verdict
 }
 
 /** Onglet mémorisé avant un rechargement, consommé à la lecture. */
