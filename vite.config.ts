@@ -60,7 +60,7 @@ export default defineConfig({
       manifest: {
         name: 'Croustylift',
         short_name: 'Croustylift',
-        description: 'Tracker de musculation, capture zero-friction en salle.',
+        description: 'Tracker de musculation, capture sans friction en salle.',
         lang: 'fr',
         // display standalone : se comporte comme une app native (pas de barre
         // de navigation navigateur), essentiel pour "Ajouter a l'ecran d'accueil".
@@ -72,6 +72,8 @@ export default defineConfig({
         // et écran de lancement se fondent dans le premier écran.
         theme_color: '#100e0c',
         background_color: '#100e0c',
+        // Icônes E (public/) : règle graduée blanc cassé, aiguille au signal, sur
+        // le fond noir chaud, opaques et pleines (l'OS pose son propre masque).
         icons: [
           {
             src: '/icon-192.png',
