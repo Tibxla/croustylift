@@ -552,6 +552,8 @@ export async function listSeances(routineId: string): Promise<SeanceRow[]> {
  * l'unicité du nom. L'id de la séance est tiré ici : une demande dont la
  * réponse s'est perdue (erreur réseau, sans code de la base) est rejouée une
  * fois avec le MÊME id, et la base rend la séance déjà créée sans doublon.
+ * Après deux échecs, l'id reste attaché au geste (`sourceId` : la séance copiée)
+ * : un nouvel essai le rejoue encore.
  * La position n'est pas envoyée : la base la place en fin de routine, sous le
  * verrou de la routine (trigger `seances_en_fin`, migration 0026).
  *
@@ -559,18 +561,34 @@ export async function listSeances(routineId: string): Promise<SeanceRow[]> {
  * (séance à max + 1, version, puis version des prescriptions d'une copie),
  * comme le client d'avant.
  */
+/** Les deux essais d'une création sont restés sans réponse : réessayer ne crée pas de doublon. */
+export const LOST_CREATION_MESSAGE =
+  'Pas de réponse du serveur. Réessaie : la séance ne sera pas créée deux fois.';
+
+/**
+ * Création restée SANS RÉPONSE (deux échecs réseau) : son id, par geste (routine,
+ * nom, séance copiée). Un nouvel essai du même geste rejoue cet id : si la
+ * première demande était passée, la base rend la séance déjà créée, au lieu de
+ * « nom déjà pris » ou d'une seconde copie. Oublié au premier succès ou refus de
+ * la base ; propre à la session (un rechargement clôt le geste).
+ */
+const unansweredCreations = new Map<string, string>();
+
 export async function createSeance(
   routineId: string,
   input: { name: string },
   prescriptions: PrescriptionInput[] = [],
+  sourceId: string | null = null,
 ): Promise<SeanceRow> {
   return planWrite(async () => {
+    const gesture = JSON.stringify([routineId, input.name, sourceId]);
+    const seanceId = unansweredCreations.get(gesture) ?? crypto.randomUUID();
     const rpc = supabase.rpc.bind(supabase) as unknown as (
       fn: 'create_seance',
       args: { p_seance_id: string; p_routine_id: string; p_name: string; p_prescriptions: unknown[] },
     ) => PromiseLike<{ data: unknown; error: unknown }>;
     const args = {
-      p_seance_id: crypto.randomUUID(),
+      p_seance_id: seanceId,
       p_routine_id: routineId,
       p_name: input.name,
       // Les colonnes de `prescriptions`, sans la version (posée par la base).
@@ -585,8 +603,14 @@ export async function createSeance(
         rir_max: p.rir.max,
       })),
     };
+    const lost = (e: unknown) => e !== null && !(e as { code?: unknown }).code;
     let { data, error } = await rpc('create_seance', args);
-    if (error && !(error as { code?: unknown }).code) ({ data, error } = await rpc('create_seance', args));
+    if (lost(error)) ({ data, error } = await rpc('create_seance', args));
+    if (lost(error)) {
+      unansweredCreations.set(gesture, seanceId);
+      throw new Error(LOST_CREATION_MESSAGE, { cause: error });
+    }
+    unansweredCreations.delete(gesture);
     if (!error) return data as SeanceRow;
     if (!isMissingFunction(error)) throw nameConflictError(error, 'seance', input.name);
     return createSeanceInSteps(routineId, input.name, prescriptions);
@@ -958,6 +982,6 @@ export async function duplicateSeance(
   return planWrite(async () => {
     const source = await loadSeanceEditor(sourceSeanceId);
     // La copie et ses prescriptions en une transaction (`create_seance`).
-    return createSeance(routineId, { name }, toDuplicatedPrescriptions(source));
+    return createSeance(routineId, { name }, toDuplicatedPrescriptions(source), sourceSeanceId);
   });
 }

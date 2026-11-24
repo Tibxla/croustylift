@@ -84,6 +84,7 @@ import {
   deleteSeance,
   getCurrentRoutineId,
   REORDER_CONFLICT_MESSAGE,
+  LOST_CREATION_MESSAGE,
   createSeance,
   reorderSeances,
 } from './data';
@@ -170,6 +171,29 @@ describe('createSeance', () => {
     expect(server.rpcCalls[0]!.args).toMatchObject({
       p_prescriptions: [{ exercise_id: 'e1', position: 0, sets_min: 2, sets_max: 3, reps_min: 8, reps_max: 12, rir_min: 1, rir_max: 2 }],
     });
+  });
+
+  it('deux échecs réseau, puis un nouvel essai du même geste : le MÊME id est rejoué (ni doublon, ni « nom déjà pris »)', async () => {
+    const lost = { error: { message: 'TypeError: Failed to fetch', code: '' } };
+    server.rpcReplies.create_seance = [lost, lost];
+    await expect(createSeance('routine-1', { name: 'Push 2' }, [], 'source-1')).rejects.toThrow(LOST_CREATION_MESSAGE);
+    server.rpcReplies.create_seance = [{ data: created }];
+    await createSeance('routine-1', { name: 'Push 2' }, [], 'source-1');
+    const ids = server.rpcCalls.map((c) => (c.args as { p_seance_id: string }).p_seance_id);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    // Créée : le geste suivant, même identique, tire un nouvel id.
+    server.rpcReplies.create_seance = [{ data: created }];
+    await createSeance('routine-1', { name: 'Push 2' }, [], 'source-1');
+    expect((server.rpcCalls[3]!.args as { p_seance_id: string }).p_seance_id).not.toBe(ids[0]);
+  });
+
+  it('un refus de la base (nom déjà pris) clôt le geste : l’essai suivant tire un nouvel id', async () => {
+    server.rpcReplies.create_seance = [{ error: { code: '23505', message: 'duplicate key' } }, { data: created }];
+    await expect(createSeance('routine-1', { name: 'Legs' })).rejects.toThrow();
+    await createSeance('routine-1', { name: 'Legs' });
+    const ids = server.rpcCalls.map((c) => (c.args as { p_seance_id: string }).p_seance_id);
+    expect(ids[1]).not.toBe(ids[0]);
   });
 
   it('fonction absente de la base (0027 pas encore passée) : repli sur la séance puis sa version', async () => {
