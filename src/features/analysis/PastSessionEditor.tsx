@@ -445,33 +445,41 @@ export function PastSessionEditor({
         onClose={() => {
           if (del.phase !== 'deleting') setDel({ phase: 'idle' });
         }}
-        footer={
-          <>
-            {del.phase === 'error' && (
-              <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
-                <span className="font-semibold">Erreur : </span>Suppression gardée sur l’appareil, pas encore en base : {del.message}
-              </p>
-            )}
-            <TextLink tone="muted" className="self-start" onClick={() => void handleDelete()}>
+      >
+        {/* Même forme que « Annuler la séance » en salle : la phrase qui dit ce
+            qui part, puis sur une rangée l'option sûre en bouton et la perte
+            en lien. */}
+        <div className="px-5 pb-2 pt-1">
+          <p className="max-w-[36ch] text-[16px] leading-[1.45] text-ink">
+            Séance du {formatDateLong(load.date, year)}, {exerciseCount} exo{exerciseCount > 1 ? 's' : ''} et {setCount} série
+            {setCount > 1 ? 's' : ''}.
+          </p>
+          <p className="mt-1 max-w-[36ch] text-[15px] leading-[1.45] text-muted">
+            Elles quittent le journal, les courbes et les records. La suppression ne se défait pas.
+          </p>
+          {del.phase === 'error' && (
+            <p role="alert" className="mt-3 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+              <span className="font-semibold">Erreur : </span>Suppression gardée sur l’appareil, pas encore en base : {del.message}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <SecondaryButton onClick={() => setDel({ phase: 'idle' })} disabled={del.phase === 'deleting'}>
+              Garder la séance
+            </SecondaryButton>
+            <TextLink
+              tone="muted"
+              onClick={() => {
+                if (del.phase !== 'deleting') void handleDelete();
+              }}
+            >
               {del.phase === 'deleting'
                 ? 'Suppression…'
                 : setCount === 1
                   ? 'Supprimer la séance et sa série'
                   : `Supprimer la séance et ses ${setCount} séries`}
             </TextLink>
-            <PrimaryButton onClick={() => setDel({ phase: 'idle' })} disabled={del.phase === 'deleting'}>
-              Garder la séance
-            </PrimaryButton>
-          </>
-        }
-      >
-        <p className="px-5 pb-2 text-[16px] leading-[1.5] text-ink">
-          Séance du {formatDateLong(load.date, year)}, {exerciseCount} exo{exerciseCount > 1 ? 's' : ''} et {setCount} série
-          {setCount > 1 ? 's' : ''}.
-        </p>
-        <p className="px-5 pb-2 text-[15px] leading-[1.5] text-muted">
-          Elles quittent le journal, les courbes et les records. La suppression ne se défait pas.
-        </p>
+          </div>
+        </div>
       </Sheet>
 
       <Sheet
