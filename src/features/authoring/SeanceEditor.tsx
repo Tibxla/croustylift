@@ -23,7 +23,7 @@
 // Doublons d'exos : AUTORISÉS (lourd en début, léger en finition) ; chaque ligne
 // a sa propre identité (rowId). Retirer un exo se défait par « Annuler les
 // modifications » tant que rien n'est enregistré (registre U31).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { listExercises } from '../capture/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
 import { isBlankNote } from '../../domain/notes';
@@ -67,6 +67,7 @@ import { errorMessage } from '../../lib/error-message';
 import { planRowActions } from './archive';
 import { fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
 import { NameSheet, ReorderRow } from './seances-ui';
+import { createSaveFlight, type SaveFlight } from './save-flight';
 import {
   ActionRow,
   Alert,
@@ -446,11 +447,28 @@ export function SeanceEditorView({
     setScrollTo(rowId);
   }
 
+  // Une seule sauvegarde du plan en vol, partagée par « Enregistrer » et
+  // « Enregistrer et quitter » (save-flight.ts) : une seule version par envoi.
+  // Les refs donnent la dernière fonction d'écriture et le dernier brouillon à
+  // une suite qui reprend après l'attente.
+  const onSaveRef = useRef(onSave);
+  const rowsRef = useRef(rows);
+  useLayoutEffect(() => {
+    onSaveRef.current = onSave;
+    rowsRef.current = rows;
+  });
+  const flightRef = useRef<SaveFlight<EditorRow[]> | null>(null);
+  /** La file de sauvegarde, créée au premier geste (jamais lue pendant le rendu). */
+  function saveFlight(): SaveFlight<EditorRow[]> {
+    flightRef.current ??= createSaveFlight<EditorRow[]>((snapshot) => onSaveRef.current(snapshot));
+    return flightRef.current;
+  }
+
   async function handleSave() {
     setSave(SAVE_BUSY);
     try {
-      await onSave(rows);
-      setSavedRows(rows);
+      const saved = await saveFlight().run(rows);
+      setSavedRows(saved);
       setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
       setSave(SAVE_DONE);
       // Laisse la confirmation visible un instant, puis retour. Par la garde de
@@ -474,13 +492,16 @@ export function SeanceEditorView({
     if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
     setLeaving(true);
     try {
-      if (dirty) {
+      if (dirty || saveFlight().busy) {
         setSave(SAVE_BUSY);
-        await onSave(rows);
-        setSavedRows(rows);
+        // Rejoint la sauvegarde déjà en vol s'il y en a une, sinon la lance.
+        let saved = await saveFlight().run(rowsRef.current);
+        // Retouché pendant l'envoi : ces changements-là sont une nouvelle version.
+        if (hasPrescriptionChanges(saved, rowsRef.current)) saved = await saveFlight().run(rowsRef.current);
+        setSavedRows(saved);
         setSave(SAVE_DONE);
       }
-      for (const id of noteDraftExerciseIds(notes, noteDrafts, rows.map((r) => r.exerciseId))) {
+      for (const id of noteDraftExerciseIds(notes, noteDrafts, rowsRef.current.map((r) => r.exerciseId))) {
         await saveNote(id, noteDrafts[id] ?? '');
       }
       setPendingLeave(null);
