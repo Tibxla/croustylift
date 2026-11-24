@@ -1,7 +1,9 @@
 // Gestes sur les EXOS de la séance en cours. Ici : remettre un exo passé.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { upperA } from './fixtures';
-import { restoreSkippedExercise } from './exercise-gestures';
+import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
+import { deriveExerciseDeviations, replayLayout, templateExerciseIds } from './session-edit';
+import type { SessionExercise } from './fixtures';
 import {
   applyQueuedSets,
   captureReducer,
@@ -115,5 +117,104 @@ describe('restoreSkippedExercise (« Remettre » un exo passé)', () => {
     });
     expect(getProgress(state, BENCH).skipped).toBe(false);
     expect(restoreSkippedExercise(state, BENCH)).toBeNull();
+  });
+});
+
+// Machine prise en cours d'exo : on remplace un exo DÉJÀ commencé. Avant, le
+// remplaçant prenait sa place et ses séries disparaissaient de l'écran (elles
+// restaient en base, invisibles) ; le geste n'était d'ailleurs proposé que sur
+// un exo sans série.
+describe('replaceExercise', () => {
+  const ids = (session: { exercises: SessionExercise[] }) => session.exercises.map((e) => e.exerciseId);
+  const first = upperA.exercises[0]!;
+  const second = upperA.exercises[1]!;
+  const machine: SessionExercise = { ...first, exerciseId: 'chest-machine', name: 'Développé machine' };
+  const logged = (): CaptureState =>
+    captureReducer(fresh(), { type: 'log-set', exerciseId: first.exerciseId, setId: 's1', set: { weightKg: 80, reps: 8, rir: 2 } });
+
+  it('exo pas commencé : le remplaçant prend sa place, comme avant', () => {
+    const gesture = replaceExercise(fresh(), upperA, first.exerciseId, machine)!;
+    expect(ids(gesture.session)).toEqual(['chest-machine', ...ids(upperA).slice(1)]);
+    expect(gesture.session.exercises[0]).toMatchObject({ origin: 'swapped', swappedFrom: first.exerciseId });
+    expect(gesture.action).toEqual({
+      type: 'edit-layout',
+      edit: expect.objectContaining({ kind: 'swapped', exerciseId: 'chest-machine', replaces: first.exerciseId }),
+    });
+    expect(gesture.action).not.toHaveProperty('edit.keepsReplaced');
+    expect(gesture.ops).toEqual([]);
+  });
+
+  it('exo commencé : il reste à sa place avec ses séries, le remplaçant s’insère juste après, marqué « remplacé »', () => {
+    const state = logged();
+    const gesture = replaceExercise(state, upperA, first.exerciseId, machine)!;
+    expect(ids(gesture.session)).toEqual([first.exerciseId, 'chest-machine', ...ids(upperA).slice(1)]);
+    expect(gesture.session.exercises[0]).toBe(first);
+    expect(gesture.session.exercises[1]).toMatchObject({ origin: 'swapped', swappedFrom: first.exerciseId });
+    // Ses séries ne bougent pas : aucune écriture, il reste « en cours ».
+    const next = captureReducer(state, gesture.action);
+    expect(getProgress(next, first.exerciseId).sets).toHaveLength(1);
+    expect(gesture.ops).toEqual([]);
+    expect(buildSummary(gesture.session, next)).toMatchObject({ exercisesTotal: upperA.exercises.length + 1, exercisesDone: 0 });
+  });
+
+  it('l’exo affiché était celui qu’on remplace : l’instrument passe au remplaçant', () => {
+    const shown = captureReducer(logged(), { type: 'open-exercise', exerciseId: first.exerciseId });
+    expect(replaceExercise(shown, upperA, first.exerciseId, machine)!.openExerciseId).toBe('chest-machine');
+    const elsewhere = captureReducer(logged(), { type: 'open-exercise', exerciseId: second.exerciseId });
+    expect(replaceExercise(elsewhere, upperA, first.exerciseId, machine)!.openExerciseId).toBeNull();
+  });
+
+  it('rien à faire : cible absente de la séance, ou remplaçant déjà dans la séance', () => {
+    expect(replaceExercise(fresh(), upperA, 'inconnu', machine)).toBeNull();
+    expect(replaceExercise(fresh(), upperA, first.exerciseId, second)).toBeNull();
+  });
+
+  it('la décision « il avait commencé » est inscrite dans le geste : le rejeu ne la redérive pas', () => {
+    const state = logged();
+    const gesture = replaceExercise(state, upperA, first.exerciseId, machine)!;
+    const next = captureReducer(state, gesture.action);
+    expect(next.layout).toEqual([expect.objectContaining({ replaces: first.exerciseId, keepsReplaced: true })]);
+    // Rechargement : la disposition persiste et se rejoue à l'identique.
+    persist(next);
+    const reloaded = loadPersisted(upperA, DATE)!;
+    expect(reloaded.layout).toEqual(next.layout);
+    const replayed = replayLayout(upperA, reloaded.layout!, () => machine);
+    expect(ids(replayed)).toEqual(ids(gesture.session));
+    // Même si la série de l'exo remplacé a été supprimée depuis, la liste ne
+    // change pas sous les doigts : l'exo d'origine reste, vide.
+    const emptied = captureReducer(reloaded, { type: 'undo-last-set', exerciseId: first.exerciseId });
+    expect(ids(replayLayout(upperA, emptied.layout!, () => machine))).toEqual(ids(gesture.session));
+  });
+
+  it('une disposition enregistrée avant ce changement garde le remplacement en place', () => {
+    const old = [{ kind: 'swapped' as const, exerciseId: 'chest-machine', name: 'Développé machine', unilateral: false, primaryMuscles: [], replaces: first.exerciseId }];
+    expect(ids(replayLayout(upperA, old, () => machine))).toEqual(['chest-machine', ...ids(upperA).slice(1)]);
+  });
+
+  it('plan retouché depuis : la cible n’est plus dans la séance, le remplaçant est ajouté à la fin', () => {
+    const state = logged();
+    const next = captureReducer(state, replaceExercise(state, upperA, first.exerciseId, machine)!.action);
+    const without = { ...upperA, exercises: upperA.exercises.slice(1) };
+    expect(ids(replayLayout(without, next.layout!, () => machine))).toEqual([...ids(without), 'chest-machine']);
+  });
+
+  it('déviations : le remplaçant est un exo « remplacé », l’exo d’origine resté dans la séance n’en est pas une', () => {
+    const gesture = replaceExercise(logged(), upperA, first.exerciseId, machine)!;
+    expect(deriveExerciseDeviations(templateExerciseIds(upperA), gesture.session)).toEqual([
+      { kind: 'swapped', exerciseId: 'chest-machine', name: 'Développé machine', replacedExerciseId: first.exerciseId },
+    ]);
+  });
+
+  it('remplacer à son tour le remplaçant commencé : il reste, le suivant s’insère après lui', () => {
+    let state = logged();
+    const one = replaceExercise(state, upperA, first.exerciseId, machine)!;
+    state = captureReducer(state, one.action);
+    state = captureReducer(state, { type: 'log-set', exerciseId: 'chest-machine', setId: 'm1', set: { weightKg: 60, reps: 10, rir: 2 } });
+    const dips: SessionExercise = { ...first, exerciseId: 'dips', name: 'Dips' };
+    const two = replaceExercise(state, one.session, 'chest-machine', dips)!;
+    expect(ids(two.session).slice(0, 3)).toEqual([first.exerciseId, 'chest-machine', 'dips']);
+    state = captureReducer(state, two.action);
+    const resolve = (edit: { exerciseId: string }) => (edit.exerciseId === 'dips' ? dips : machine);
+    expect(ids(replayLayout(upperA, state.layout!, resolve))).toEqual(ids(two.session));
   });
 });

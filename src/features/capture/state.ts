@@ -57,6 +57,15 @@ export interface LayoutEdit {
   primaryMuscles: string[];
   /** Pour un remplacement : l'exo du plan dont celui-ci prend la place. */
   replaces?: string;
+  /**
+   * Pour un remplacement : l'exo remplacé AVAIT DÉJÀ des séries au moment du
+   * geste (machine prise en cours d'exo). Il reste alors dans la séance, à sa
+   * place, avec ses séries, et le remplaçant s'insère juste après lui. Inscrit
+   * au moment du geste et jamais redérivé au rejeu : supprimer ensuite la série
+   * de l'exo remplacé ne doit pas faire bouger la liste. Absent : le remplaçant
+   * prend la place de l'exo (geste d'avant ce champ, ou exo pas commencé).
+   */
+  keepsReplaced?: true;
 }
 
 export interface CaptureState {
@@ -1100,6 +1109,7 @@ function normalizeLayout(raw: unknown): { layout?: LayoutEdit[] } {
         ? e.primaryMuscles.filter((m): m is string => typeof m === 'string')
         : [],
       ...(e.kind === 'swapped' ? { replaces: e.replaces } : {}),
+      ...(e.kind === 'swapped' && e.keepsReplaced === true ? { keepsReplaced: true as const } : {}),
     });
   }
   return layout.length > 0 ? { layout } : {};
