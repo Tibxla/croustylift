@@ -1,560 +1,301 @@
-// La surface « Analyse au calme » : pour chaque exo entraîné, sa progression
-// %/semaine sur le BLOC EN COURS et la courbe e1RM de la 1ʳᵉ série (reps
-// effectives pour un exo jamais chargé), plus la tendance des séries 2+ en
-// dessous (subordonnée). Distincte de la capture (salle).
+// La surface « Analyse au calme » (refonte E, prototype e/analyse.tsx) : est-ce
+// que je progresse, honnêtement ?
 //
-// Périmètre : la courbe primaire (héros) + la pente, et sous elle un graphe
-// secondaire (séries 2+) clairement subordonné quand il y a de quoi le tracer.
-// Plus, repliée par exo, la comparaison de deux blocs (cf. issue #6) : quelle
-// configuration fait le plus progresser. Elle reste secondaire (un dépliant discret
-// sous la carte), la courbe primaire restant le héros.
+// Racine en deux onglets de mots sous le titre (pas de nouvelle entrée de nav) :
+//   Exos     une phrase de synthèse sur la routine courante, puis une ligne par
+//            exo (pente du bloc en cours, dernière mesure) ; toucher ouvre la
+//            page de l'exo (courbe parcourue au doigt, séries 2+, comparaison
+//            de deux blocs) ;
+//   Journal  durée et BPM dans le temps, puis l'historique brut séance par
+//            séance ; une séance s'ouvre, puis se corrige.
+// Les sous-pages s'empilent dans l'écran (pile locale) : « ‹ Analyse » revient
+// d'un cran, à la position de défilement quittée. Changer de surface les vide.
 //
-// L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `CurvesTab`
-// est un composant pur qui prend des `ExerciseAnalysis[]` — il se monte tel quel
-// dans le harness de screenshot, sans réseau ni user de test.
-import { useEffect, useState, type CSSProperties } from 'react';
-import {
-  loadAnalyses,
-  loadRawLog,
-  loadSessionMetrics,
-  type ExerciseAnalysis,
-} from './data';
-import type { SessionMetricPoint } from './session-metrics';
-import type { RawLogEntry } from './raw-log';
-import { E1rmChart } from './E1rmChart';
-import { SecondaryChart } from './SecondaryChart';
-import { SessionMetricsChart } from './SessionMetricsChart';
-import { RawLogView } from './RawLogView';
-import { PastSessionEditor } from './PastSessionEditor';
-import { ProgressionBadge } from './ProgressionBadge';
-import { BlockComparisonPanel } from './BlockComparisonPanel';
-import { curveKey, toggleHidden, visibleCurves } from './curve-visibility';
-import { loadHiddenCurves, saveHiddenCurves } from '../../lib/local-prefs';
+// L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `ExerciseList`,
+// `ExercisePage`, `RawLogView`, `SessionPage` sont purs, montables sans réseau.
+// Après une correction, tout est relu sans repasser par l'écran de chargement :
+// les données affichées restent jusqu'à l'arrivée des nouvelles.
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Choice, EmptyState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
+import { useGoToSurface } from '../../shell/navigation';
 import { errorMessage } from '../../lib/error-message';
-import {
-  heroLabel,
-  measureLabel,
-  rateNote,
-  secondaryLabel,
-  zeroLoadHolesLabel,
-} from './unit-label';
-import { periodLabel, rateCaption } from './rate-period';
-import { cardTimeAxis } from './chart-time';
+import { loadAnalyses, loadPlanExerciseOrder, loadRawLog, loadSessionMetrics, type ExerciseAnalysis } from './data';
+import type { SessionMetricPoint } from './session-metrics';
+import { BlockComparisonPanel } from './BlockComparisonPanel';
+import { ExerciseList } from './ExerciseList';
+import { ExercisePage } from './ExercisePage';
+import { PastSessionEditor } from './PastSessionEditor';
+import { RawLogView, SessionPage } from './RawLogView';
+import { periodLabel } from './rate-period';
 
-/** Les deux vues de l'analyse, sans nouvelle entrée de nav (cf. issues #27/#28). */
-type AnalysisTab = 'curves' | 'journal';
+type Tab = 'exos' | 'journal';
+const TABS: { value: Tab; label: string }[] = [
+  { value: 'exos', label: 'Exos' },
+  { value: 'journal', label: 'Journal' },
+];
 
-type LoadState =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; analyses: ExerciseAnalysis[]; metrics: SessionMetricPoint[] };
+/** Une page de la pile : l'index (onglets), un exo, sa comparaison, une séance, sa correction. */
+type View =
+  | { page: 'index' }
+  | { page: 'exo'; id: string }
+  | { page: 'compare'; id: string }
+  | { page: 'seance'; id: string }
+  | { page: 'edit'; id: string };
 
-export function AnalysisScreen() {
-  const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
-  const [reloadKey, setReloadKey] = useState(0);
-  const [tab, setTab] = useState<AnalysisTab>('curves');
+type Load<T> = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; value: T };
 
-  useEffect(() => {
-    let active = true;
-    setLoad({ phase: 'loading' });
-
-    void (async () => {
-      try {
-        // Les courbes (e1RM par exo) et les métriques de séance (BPM/durée) sont
-        // toutes deux des vues globales de l'onglet « Courbes » : on les charge
-        // ensemble, en parallèle.
-        const [analyses, metrics] = await Promise.all([
-          loadAnalyses(),
-          loadSessionMetrics(),
-        ]);
-        if (!active) return;
-        setLoad({ phase: 'ready', analyses, metrics });
-      } catch (err) {
-        if (!active) return;
-        setLoad({
-          phase: 'error',
-          message: errorMessage(err),
-        });
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [reloadKey]);
-
-  if (load.phase === 'loading') {
-    return <AnalysisSkeleton />;
-  }
-
-  if (load.phase === 'error') {
-    return (
-      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-sm text-ink-muted">Impossible de charger ton analyse.</p>
-        <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
-      <h1 className="mb-4 text-3xl font-semibold tracking-[-0.025em] text-ink">Analyse</h1>
-      <AnalysisTabs active={tab} onChange={setTab} />
-      {tab === 'curves' ? (
-        <CurvesTab analyses={load.analyses} metrics={load.metrics} />
-      ) : (
-        // `onMutated` : une édition/suppression dans le journal doit aussi
-        // invalider les métriques de séance (BPM/durée) portées par le state
-        // racine, sinon le graphe « Cardio · séance » garde un point périmé
-        // (bug : durée encore visible après suppression d'une séance).
-        <JournalTab onMutated={() => setReloadKey((k) => k + 1)} />
-      )}
-    </div>
-  );
-}
-
-// Onglets « Courbes » / « Journal » : un segmenté discret qui REMPLACE l'unique
-// titre « Progression » sans ajouter d'entrée de nav (cf. périmètre des issues).
-// L'onglet actif porte le seul accent (One Voice Rule : la sélection courante).
-function AnalysisTabs({
-  active,
-  onChange,
-}: {
-  active: AnalysisTab;
-  onChange: (tab: AnalysisTab) => void;
-}) {
-  const tabs: { id: AnalysisTab; label: string }[] = [
-    { id: 'curves', label: 'Courbes' },
-    { id: 'journal', label: 'Journal' },
-  ];
-  return (
-    <div
-      role="tablist"
-      aria-label="Vue de l'analyse"
-      className="panel mb-4 grid grid-cols-2 gap-1.5 rounded-xl p-1"
-    >
-      {tabs.map(({ id, label }) => {
-        const selected = id === active;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            onClick={() => onChange(id)}
-            className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
-              selected
-                ? 'bg-surface-2 text-ink'
-                : 'text-ink-muted active:text-ink'
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// --- Onglet « Courbes » (pur, montable sans réseau) -------------------------
-
-/**
- * L'onglet courbes : la liste des exos (e1RM par exo) plus, en tête quand il y a
- * de quoi, le graphe BPM moyen + durée de séance (cf. issue #28). Pur : il prend
- * des `ExerciseAnalysis[]` et des `SessionMetricPoint[]`, donc montable tel quel
- * dans le harness de screenshot, sans réseau ni user de test.
- */
-export function CurvesTab({
-  analyses,
-  metrics,
-}: {
+interface Overview {
   analyses: ExerciseAnalysis[];
   metrics: SessionMetricPoint[];
-}) {
-  if (analyses.length === 0 && metrics.length === 0) {
-    return <EmptyState />;
-  }
-
-  return (
-    <>
-      {metrics.length > 0 && (
-        <section className="surface-card mb-3 rounded-2xl p-4">
-          <h3 className="mb-3 text-base font-medium leading-tight">Cardio · séance</h3>
-          <SessionMetricsChart points={metrics} />
-          <div className="mt-2 flex items-center gap-4 text-xs text-ink-muted">
-            <span className="flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-2 rounded-full bg-accent"
-                aria-hidden="true"
-              />
-              BPM moyen
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span
-                className="inline-block h-2 w-2 rounded-full bg-ink-muted"
-                aria-hidden="true"
-              />
-              Durée (min)
-            </span>
-          </div>
-        </section>
-      )}
-
-      {analyses.length > 0 && (
-        <ul className="flex flex-col gap-3">
-          {analyses.map((analysis, i) => (
-            <li
-              key={analysis.exerciseId}
-              className="reveal"
-              style={{ '--reveal-i': i } as CSSProperties}
-            >
-              <ExerciseAnalysisCard analysis={analysis} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
+  /** Exos du plan de la routine courante (la synthèse ne lit qu'eux). */
+  plan: string[];
 }
 
-// --- Onglet « Journal » : log brut des lifts (cf. issue #27) -----------------
+// Les courbes, les mesures de séance et le plan courant, lus ensemble. Le plan
+// est relu à part (`loadPlanExerciseOrder`, que `loadAnalyses` lit aussi pour
+// ordonner) : la couche de données ne dit pas quels exos sont au plan.
+const loadOverview = async (): Promise<Overview> => {
+  const [analyses, metrics, plan] = await Promise.all([loadAnalyses(), loadSessionMetrics(), loadPlanExerciseOrder()]);
+  return { analyses, metrics, plan };
+};
 
-// Le log brut peut être lourd (tout l'historique de séries) ; on ne le charge
-// qu'à l'ouverture de l'onglet, pas avec le reste de l'écran. Composant à part
-// pour porter son propre cycle de chargement, le rendu restant pur (RawLogView).
-function JournalTab({ onMutated }: { onMutated: () => void }) {
-  const [load, setLoad] = useState<
-    | { phase: 'loading' }
-    | { phase: 'error'; message: string }
-    | { phase: 'ready'; entries: RawLogEntry[] }
-  >({ phase: 'loading' });
-  const [reloadKey, setReloadKey] = useState(0);
-  // Édition d'une séance passée (issue #38) : l'exécution ouverte, ou null en
-  // consultation. L'éditeur se monte par-dessus le journal (modal plein écran).
-  const [editingExecutionId, setEditingExecutionId] = useState<string | null>(null);
-
+/**
+ * Une lecture et son état. `reload` repasse par « chargement » (bouton
+ * Réessayer) ; `refresh` relit en gardant l'affichage (après une correction).
+ * `enabled` à false : rien n'est lu (le journal attend son onglet).
+ */
+function useLoad<T>(fetch: () => Promise<T>, enabled = true) {
+  const [key, setKey] = useState(0);
+  const [state, setState] = useState<Load<T>>({ phase: 'loading' });
   useEffect(() => {
+    if (!enabled) return;
     let active = true;
-    setLoad({ phase: 'loading' });
-
-    void (async () => {
-      try {
-        const entries = await loadRawLog();
-        if (!active) return;
-        setLoad({ phase: 'ready', entries });
-      } catch (err) {
-        if (!active) return;
-        setLoad({
-          phase: 'error',
-          message: errorMessage(err),
-        });
-      }
-    })();
-
+    fetch().then(
+      (value) => {
+        if (active) setState({ phase: 'ready', value });
+      },
+      (err: unknown) => {
+        if (active) setState({ phase: 'error', message: errorMessage(err) });
+      },
+    );
     return () => {
       active = false;
     };
-  }, [reloadKey]);
+  }, [fetch, key, enabled]);
+  const reload = useCallback(() => {
+    setState({ phase: 'loading' });
+    setKey((k) => k + 1);
+  }, []);
+  const refresh = useCallback(() => setKey((k) => k + 1), []);
+  return { state, reload, refresh };
+}
 
-  if (load.phase === 'loading') {
-    return <JournalSkeleton />;
-  }
+export function AnalysisScreen() {
+  const [tab, setTab] = useState<Tab>('exos');
+  const [stack, setStack] = useState<View[]>([{ page: 'index' }]);
+  const view = stack[stack.length - 1]!;
+  // Le journal ne se lit qu'à l'ouverture de son onglet (il peut être lourd).
+  const [journalWanted, setJournalWanted] = useState(false);
+  const overview = useLoad(loadOverview);
+  const journal = useLoad(loadRawLog, journalWanted);
 
-  if (load.phase === 'error') {
+  // Défilement : une page poussée s'ouvre en haut, un retour retrouve la
+  // position quittée.
+  const scrolls = useRef<number[]>([]);
+  const pendingScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingScroll.current === null) return;
+    window.scrollTo(0, pendingScroll.current);
+    pendingScroll.current = null;
+  }, [stack]);
+
+  const push = (next: View) => {
+    scrolls.current.push(window.scrollY);
+    pendingScroll.current = 0;
+    setStack((s) => [...s, next]);
+  };
+  const back = () => {
+    pendingScroll.current = scrolls.current.pop() ?? 0;
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  };
+  const popTo = (page: View['page']) => {
+    let at = -1;
+    for (let i = stack.length - 1; i >= 0 && at < 0; i -= 1) if (stack[i]!.page === page) at = i;
+    if (at < 0) return;
+    pendingScroll.current = scrolls.current[at] ?? 0;
+    scrolls.current = scrolls.current.slice(0, at);
+    setStack(stack.slice(0, at + 1));
+  };
+  const chooseTab = (t: Tab) => {
+    setTab(t);
+    if (t === 'journal') setJournalWanted(true);
+  };
+  // Une correction ou une suppression change le journal ET les courbes, les
+  // mesures de séance comprises (un point de durée périmé restait affiché).
+  const afterMutation = () => {
+    overview.refresh();
+    journal.refresh();
+  };
+
+  if (overview.state.phase === 'loading') {
     return (
-      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-sm text-ink-muted">Impossible de charger ton journal.</p>
-        <p className="readout max-w-full break-words text-xs text-warn">{load.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
-      </div>
+      <Page>
+        <ScreenHeader title="Analyse" />
+        <p role="status" className="px-5 py-6 text-[15px] text-muted">
+          Chargement de l’analyse…
+        </p>
+      </Page>
+    );
+  }
+  if (overview.state.phase === 'error') {
+    return (
+      <Page>
+        <ScreenHeader title="Analyse" />
+        <LoadError what="ton analyse" message={overview.state.message} onRetry={overview.reload} />
+      </Page>
     );
   }
 
-  return (
-    <>
-      <RawLogView entries={load.entries} onEdit={setEditingExecutionId} />
-      {editingExecutionId && (
+  const { analyses, metrics, plan } = overview.state.value;
+
+  switch (view.page) {
+    case 'exo':
+    case 'compare': {
+      const analysis = analyses.find((a) => a.exerciseId === view.id);
+      if (!analysis) return <Missing title="Exo introuvable" onBack={back} />;
+      if (view.page === 'exo') {
+        return (
+          <Page>
+            <ExercisePage
+              key={analysis.exerciseId}
+              analysis={analysis}
+              onBack={back}
+              onCompare={() => push({ page: 'compare', id: analysis.exerciseId })}
+            />
+          </Page>
+        );
+      }
+      return (
+        <Page>
+          <ScreenHeader title={analysis.name} meta="Comparer deux blocs" back={{ label: analysis.name, onClick: back }} />
+          <BlockComparisonPanel key={analysis.exerciseId} exerciseId={analysis.exerciseId} />
+        </Page>
+      );
+    }
+    case 'seance': {
+      if (journal.state.phase !== 'ready') return <Missing title="Séance" onBack={back} loading={journal.state.phase === 'loading'} />;
+      const entry = journal.state.value.find((e) => e.executionId === view.id);
+      if (!entry) return <Missing title="Séance introuvable" body="Elle n’est plus au journal : supprimée, ou toutes ses séries retirées." onBack={back} />;
+      return (
+        <Page>
+          <SessionPage entry={entry} onBack={back} onEdit={() => push({ page: 'edit', id: entry.executionId })} />
+        </Page>
+      );
+    }
+    case 'edit':
+      return (
         <PastSessionEditor
-          executionId={editingExecutionId}
-          onClose={() => setEditingExecutionId(null)}
+          key={view.id}
+          executionId={view.id}
+          onClose={back}
           onSaved={() => {
-            // Corrections synchronisées : on ferme et on recharge le journal
-            // pour refléter le réalisé corrigé (l'analyse e1RM se recalcule à sa
-            // prochaine ouverture, dérivée des mêmes séries). `onMutated` rafraîchit
-            // aussi les métriques de séance du parent (une correction de BPM/durée
-            // d'une séance passée doit apparaître dans le graphe Cardio).
-            setEditingExecutionId(null);
-            setReloadKey((k) => k + 1);
-            onMutated();
+            afterMutation();
+            back();
           }}
           onDeleted={() => {
-            // Exécution supprimée (ADR 0008). On ferme et on recharge le journal
-            // pour que la séance disparaisse, ET on invalide les métriques de
-            // séance du parent via `onMutated` : sans ça le point durée/BPM de la
-            // séance supprimée reste affiché dans le graphe Cardio (state racine
-            // jamais rechargé). Les courbes e1RM se recalculent à la lecture.
-            setEditingExecutionId(null);
-            setReloadKey((k) => k + 1);
-            onMutated();
+            afterMutation();
+            popTo('index');
           }}
         />
-      )}
-    </>
-  );
-}
-
-function JournalSkeleton() {
-  return (
-    <ul className="flex flex-col gap-3" role="status" aria-label="Chargement du journal">
-      {[0, 1, 2].map((i) => (
-        <li key={i} className="surface-card rounded-2xl p-4">
-          <div className="mb-3 h-4 w-40 animate-pulse rounded bg-surface-2" />
-          <div className="h-3 w-28 animate-pulse rounded bg-surface-2" />
-          <div className="mt-2 h-3 w-48 animate-pulse rounded bg-surface-2" />
-          <div className="mt-1.5 h-3 w-44 animate-pulse rounded bg-surface-2" />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function ExerciseAnalysisCard({ analysis }: { analysis: ExerciseAnalysis }) {
-  const { name, seanceCurves, exerciseId, unit } = analysis;
-  const holes = zeroLoadHolesLabel(analysis.zeroLoadHoles);
-  // Courbes masquées depuis la légende, retenues sur l'appareil pour cet exo
-  // (liste des MASQUÉES : une séance neuve apparaît d'elle-même).
-  const [hidden, setHidden] = useState<Set<string>>(
-    () => new Set(loadHiddenCurves(exerciseId)),
-  );
-  const allKeys = seanceCurves.map((sc) => curveKey(sc.seanceId));
-  const shown = visibleCurves(seanceCurves, hidden);
-  // La séance ACCENT (issue #67) : la plus récemment exécutée PARMI LES COURBES
-  // AFFICHÉES (1ʳᵉ entrée, cf. analyzeExecutions). Elle porte le readout héros,
-  // la pente et le graphe secondaire : ce qui est chiffré est ce qu'on voit. Les
-  // autres courbes affichées se superposent en subordonné (E1rmChart).
-  const primary = shown[0] ?? null;
-  // Plusieurs courbes sur la carte (même masquées) : on nomme la séance accent.
-  const multi = seanceCurves.length > 1;
-
-  function toggleCurve(key: string) {
-    const next = toggleHidden(hidden, key, allKeys);
-    setHidden(next);
-    saveHiddenCurves(
-      exerciseId,
-      [...next].filter((k) => allKeys.includes(k)),
-    );
+      );
+    case 'index':
+      break;
   }
-  // La pente porte sur le BLOC EN COURS de la séance accent (ADR 0016,
-  // amendement du 2026-11-23) : on écrit sa période sous le graphe, et quand elle
-  // manque on dit ce qui manque dans ce bloc, sans retomber sur tout l'historique.
+
+  const empty = analyses.length === 0 && metrics.length === 0;
+  const period = analyses.flatMap((a) => a.seanceCurves)[0]?.ratePeriod ?? null;
   const year = new Date().getFullYear();
-  const caption = primary
-    ? rateCaption(primary.ratePeriod, primary.weeklyRate !== null, year)
-    : null;
-  // Même axe temps pour la courbe et les séries 2+ en dessous.
-  const axis = cardTimeAxis(shown);
-  // Pas de graphe secondaire sans série 2+ (le domaine renvoie alors []). En
-  // multi-séances il suit la séance ACCENT seule : superposer aussi les
-  // subordonnées en h-24 gris sur gris serait illisible.
-  const hasSecondary = (primary?.secondaryCurve.length ?? 0) > 0;
-  // Mesure la plus récente de la séance accent (e1RM, ou reps effectives pour un
-  // exo jamais chargé) : métrique « héros » d'un coup d'œil.
-  const latest =
-    primary && primary.curve.length > 0
-      ? Math.round(primary.curve[primary.curve.length - 1]!.e1rm)
-      : null;
+  const meta =
+    tab === 'exos'
+      ? period
+        ? `Pentes sur ${period.since === null ? '' : 'le '}${periodLabel(period, year)}`
+        : undefined
+      : journal.state.phase === 'ready'
+        ? `${journal.state.value.length} séance${journal.state.value.length > 1 ? 's' : ''} au journal`
+        : undefined;
 
   return (
-    <section className="panel rounded-2xl p-4">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <h3 className="text-base font-semibold leading-tight">{name}</h3>
-        <ProgressionBadge
-          weeklyRate={primary?.weeklyRate ?? null}
-          period={primary ? periodLabel(primary.ratePeriod, year) : undefined}
-        />
-      </div>
-
-      {latest != null && (
-        <div className="mb-2">
-          <div className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-            {heroLabel(unit)}
-            {/* Multi-séances : le chiffre héros est celui de la séance accent —
-                on le dit, sinon il contredirait la courbe grise du dessus. */}
-            {multi && primary && (
-              <span className="normal-case tracking-normal text-ink-muted"> · {primary.label}</span>
-            )}
+    <Page>
+      <ScreenHeader title="Analyse" meta={empty ? undefined : meta} />
+      {empty ? (
+        <NoData />
+      ) : (
+        <>
+          <div className="border-b border-line px-3">
+            <Choice label="Vue de l’analyse" options={TABS} value={tab} onChange={chooseTab} wrap={false} />
           </div>
-          <div className="mt-0.5 flex items-baseline gap-1.5">
-            <span className="readout text-[52px] font-medium leading-none tracking-[-0.03em] text-ink">
-              {latest}
-            </span>
-            <span className="text-xl text-ink-muted">{unit}</span>
-          </div>
-        </div>
+          {tab === 'exos' ? (
+            <ExerciseList analyses={analyses} plan={plan} onOpen={(id) => push({ page: 'exo', id })} />
+          ) : journal.state.phase === 'loading' ? (
+            <p role="status" className="px-5 py-6 text-[15px] text-muted">
+              Chargement du journal…
+            </p>
+          ) : journal.state.phase === 'error' ? (
+            <LoadError what="ton journal" message={journal.state.message} onRetry={journal.reload} />
+          ) : (
+            <RawLogView entries={journal.state.value} metrics={metrics} onOpen={(id) => push({ page: 'seance', id })} />
+          )}
+        </>
       )}
-
-      <E1rmChart
-        unit={unit}
-        axis={axis}
-        periodStart={primary?.ratePeriod.since}
-        series={shown.map((sc) => ({
-          id: curveKey(sc.seanceId),
-          name: sc.label,
-          curve: sc.curve,
-        }))}
-        legend={{
-          entries: seanceCurves.map((sc) => ({
-            id: curveKey(sc.seanceId),
-            name: sc.label,
-            hidden: !shown.includes(sc),
-          })),
-          onToggle: toggleCurve,
-        }}
-      />
-
-      <div className="mt-2">
-        <span className="readout text-[11px] text-ink-faint">
-          {measureLabel(unit)} · 1ʳᵉ série
-        </span>
-      </div>
-      {caption && <p className="mt-1 text-xs text-ink-muted">{caption}</p>}
-      {/* Exo en reps : le pourcentage du badge n'est pas celui de la courbe. */}
-      {primary?.weeklyRate != null && rateNote(unit) && (
-        <p className="mt-1 text-[11px] text-ink-faint">{rateNote(unit)}</p>
-      )}
-
-      {/* Courbe en kilos d'un exo aussi saisi à 0 kg : ces séances-là sont des
-          trous, on le dit. */}
-      {holes && <p className="mt-1 text-[11px] text-ink-faint">{holes}.</p>}
-
-      {hasSecondary && primary && (
-        // Subordonné à la primaire : séparé par un filet tonal, libellé discret,
-        // graphe plus petit et en ink-muted (jamais l'accent). Le héros reste
-        // au-dessus ; ceci n'est qu'un repère « résistance à la fatigue »,
-        // scopé à la séance accent (nommée quand plusieurs séances cohabitent).
-        <div className="mt-3 border-t border-hair pt-3">
-          <span className="text-[11px] text-ink-muted">
-            Séries 2+ · {secondaryLabel(unit)}
-            {multi ? ` · ${primary.label}` : ''}
-          </span>
-          <SecondaryChart curve={primary.secondaryCurve} unit={unit} axis={axis} />
-        </div>
-      )}
-
-      <CompareBlocksDisclosure exerciseId={exerciseId} />
-    </section>
+    </Page>
   );
 }
 
-// Dépliant « Comparer deux blocs » : replié par défaut (feature secondaire qui
-// demande des mois de données et un réseau), il ne charge la comparaison qu'à
-// l'ouverture. La carte reste légère tant qu'on ne le déplie pas. Chaque option
-// du panneau choisit sa séance (ADR 0016) : la séance accent ne décide plus de
-// la comparaison.
-function CompareBlocksDisclosure({ exerciseId }: { exerciseId: string }) {
-  const [open, setOpen] = useState(false);
-
+/** Une page de l'Analyse : écran du kit, contenu centré (lisible sur PC aussi). */
+function Page({ children }: { children: ReactNode }) {
   return (
-    <div className="mt-3 border-t border-hair pt-3">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex min-h-[44px] w-full items-center justify-between text-[11px] text-ink-muted transition active:scale-[0.99]"
-      >
-        <span>Comparer deux blocs</span>
-        <svg
-          viewBox="0 0 20 20"
-          width="14"
-          height="14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          className={`transition-transform ${open ? 'rotate-180' : ''}`}
-        >
-          <path d="M5 8l5 5 5-5" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="mt-3">
-          <BlockComparisonPanel exerciseId={exerciseId} />
-        </div>
-      )}
-    </div>
+    <Screen>
+      <div className="mx-auto w-full max-w-2xl pb-16">{children}</div>
+    </Screen>
   );
 }
 
-// Squelette de chargement : on dessine la forme des cartes à venir (titre,
-// badge, zone de graphe) plutôt qu'un spinner nu, pour que l'écran ne « saute »
-// pas quand les données arrivent. Lignes en surface-2 qui pulsent.
-function AnalysisSkeleton() {
+function LoadError({ what, message, onRetry }: { what: string; message: string; onRetry: () => void }) {
   return (
-    <div
-      className="mx-auto w-full max-w-md px-4 pb-8 pt-5"
-      role="status"
-      aria-label="Chargement de l'analyse"
-    >
-      <div className="mb-4 h-6 w-32 animate-pulse rounded bg-surface-2" />
-      <ul className="flex flex-col gap-3">
-        {[0, 1, 2].map((i) => (
-          <li
-            key={i}
-            className="surface-card rounded-2xl p-4"
-          >
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="h-5 w-40 animate-pulse rounded bg-surface-2" />
-              <div className="h-6 w-20 animate-pulse rounded-md bg-surface-2" />
-            </div>
-            <div className="h-40 w-full animate-pulse rounded-lg bg-surface-2" />
-            <div className="mt-2 h-3 w-24 animate-pulse rounded bg-surface-2" />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-3 px-8 text-center">
-      <div
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2"
-        aria-hidden="true"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="22"
-          height="22"
-          fill="none"
-          stroke="var(--color-ink-muted)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M3 3v18h18" />
-          <path d="M7 14l4-4 3 3 5-6" />
-        </svg>
-      </div>
-      <p className="text-sm text-ink-muted">
-        Pas encore de données. Fais ta première séance pour voir ta progression.
+    <div className="px-5 pt-4">
+      <p role="alert" className="break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
+        Impossible de charger {what} : {message}
       </p>
+      <div className="mt-4">
+        <SecondaryButton onClick={onRetry}>Réessayer</SecondaryButton>
+      </div>
     </div>
+  );
+}
+
+/** Une sous-page dont la donnée manque (supprimée entre-temps, ou encore en lecture). */
+function Missing({ title, body, onBack, loading = false }: { title: string; body?: string; onBack: () => void; loading?: boolean }) {
+  return (
+    <Page>
+      <ScreenHeader title={title} back={{ label: 'Retour', onClick: onBack }} />
+      {loading ? (
+        <p role="status" className="px-5 py-6 text-[15px] text-muted">
+          Chargement…
+        </p>
+      ) : (
+        <EmptyState title="Plus rien à afficher ici" body={body} />
+      )}
+    </Page>
+  );
+}
+
+function NoData() {
+  const go = useGoToSurface();
+  return (
+    <EmptyState
+      title="Aucune séance au journal"
+      body="Les courbes partent de la première série loggée en salle."
+      action={<SecondaryButton onClick={() => go('capture')}>Aller en salle</SecondaryButton>}
+    />
   );
 }

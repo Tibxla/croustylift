@@ -1,185 +1,52 @@
-// Graphe de superposition de DEUX blocs (cf. issue #6).
+// Superposition de DEUX options comparées (cf. issue #6, ADR 0016) : chaque
+// courbe e1RM (ou reps effectives) ramenée à « semaine 0 = son premier point »
+// (`toWeeklySeries`), pour que leurs PENTES se lisent l'une sur l'autre malgré
+// des mois d'écart.
 //
-// On superpose les deux courbes e1RM ramenées au même origine X (semaines depuis
-// le début de chaque bloc, cf. `toWeeklySeries`) : leurs PENTES se lisent alors
-// l'une sur l'autre. DESIGN.md « un seul accent » : le bloc GAGNANT porte
-// l'accent violet, le perdant reste en ink-muted (subordonné). Sans verdict
-// (égalité ou données manquantes), les deux lignes restent neutres, aucune ne
-// revendique l'accent. Axes en mono (Readout Rule), X = semaines, Y = e1RM (kg).
-//
-// Une LÉGENDE inline (deux puces colorées + libellé de bloc) et un Tooltip
-// nomment chaque courbe : sans eux, en cas d'égalité les deux lignes sont en
-// ink-muted et rien ne dit quelle courbe = quel bloc.
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  type TooltipContentProps,
-} from 'recharts';
-import type { Side } from '../../domain/block-comparison';
+// Pas de couleur de gagnant : le verdict s'écrit en mots sous le graphe, et le
+// signal ne sert qu'à « mieux que la dernière fois ». A est gris pointillé, B
+// blanc cassé plein, chacun nommé au bout de son trait (« A », « B ») et dans
+// les lignes d'option au-dessus : jamais la couleur seule.
 import type { CurveUnit } from '../../domain/types';
-import { ACCENT, HAIR, INK_MUTED, LINE, READOUT_TICK } from './chart-style';
-import { measureLabel } from './unit-label';
+import { Chart } from './Chart';
 import { weekLabel, type WeeklyPoint } from './comparison-series';
+import { measureLabel } from './unit-label';
 
-
-
-export interface ComparisonChartProps {
-  first: WeeklyPoint[];
-  second: WeeklyPoint[];
-  /** Le côté gagnant (porte l'accent), ou `null`/`'tie'` : aucune ligne accentuée. */
-  winner: Side | 'tie' | null;
-  /** Libellés humains des deux blocs (légende + tooltip). */
-  firstLabel: string;
-  secondLabel: string;
-  /** L'unité des deux courbes : 'reps' pour un exo jamais chargé (cf. CurveUnit). */
-  unit: CurveUnit;
-}
-
-/** Couleur d'un côté : accent s'il gagne, ink-muted sinon (jamais deux accents). */
-function colorFor(side: Side, winner: ComparisonChartProps['winner']): string {
-  return winner === side ? ACCENT : INK_MUTED;
-}
-
-// Tooltip de comparaison : composant STABLE au niveau module (pas une fabrique
-// appelée au render, qui recréerait un composant à chaque rendu — static-components).
-// Recharts injecte active/payload à l'exécution (typage partiel) ; les labels sont
-// passés en props par la render-function de <Tooltip content={…}>. Avec deux séries
-// empilées, `payload` peut contenir l'un ou l'autre bloc (ou les deux).
-type ComparisonTooltipProps = Partial<TooltipContentProps<number, string>> & {
-  firstLabel: string;
-  secondLabel: string;
-  unit: CurveUnit;
-};
-
-function ComparisonTooltip({
-  active,
-  payload,
-  firstLabel,
-  secondLabel,
-  unit,
-}: ComparisonTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  const first = payload[0];
-  if (!first) return null;
-  const point = first.payload as WeeklyPoint;
-  return (
-    <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{weekLabel(point.week)}</p>
-      {payload.map((entry) => {
-        const p = entry.payload as WeeklyPoint;
-        const label = entry.name === 'first' ? firstLabel : secondLabel;
-        return (
-          <p key={entry.name} className="readout text-sm font-medium text-ink">
-            <span className="text-xs font-normal text-ink-muted">{label} </span>
-            {Math.round(p.e1rm)}
-            <span className="ml-1 text-xs font-normal text-ink-muted">{unit}</span>
-          </p>
-        );
-      })}
-    </div>
-  );
+/** Graduations de semaines à pas réguliers : toutes jusqu'à 8, puis une sur 2, 4 ou 8. */
+function weekTicks(maxWeek: number): { x: number; label: string }[] {
+  const last = Math.max(0, Math.floor(maxWeek));
+  const step = last <= 8 ? 1 : last <= 16 ? 2 : last <= 32 ? 4 : 8;
+  const ticks: { x: number; label: string }[] = [];
+  for (let w = 0; w <= last; w += step) ticks.push({ x: w, label: weekLabel(w) });
+  return ticks;
 }
 
 export function ComparisonChart({
   first,
   second,
-  winner,
   firstLabel,
   secondLabel,
   unit,
-}: ComparisonChartProps) {
-  const firstColor = colorFor('first', winner);
-  const secondColor = colorFor('second', winner);
-
+}: {
+  first: WeeklyPoint[];
+  second: WeeklyPoint[];
+  /** Libellés humains des deux options (lecteurs d'écran). */
+  firstLabel: string;
+  secondLabel: string;
+  unit: CurveUnit;
+}) {
+  const maxWeek = Math.max(0, ...first.map((p) => p.week), ...second.map((p) => p.week));
   return (
-    <div>
-      <div
-        className="h-40 w-full"
-        role="img"
-        aria-label={`Comparaison des pentes ${measureLabel(unit)} des blocs ${firstLabel} et ${secondLabel}, par semaine de bloc.`}
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
-            <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
-            <XAxis
-              type="number"
-              dataKey="week"
-              tick={READOUT_TICK}
-              tickLine={false}
-              axisLine={{ stroke: LINE }}
-              tickFormatter={weekLabel}
-              domain={[0, 'dataMax']}
-              allowDecimals={false}
-            />
-            <YAxis
-              tick={READOUT_TICK}
-              tickLine={false}
-              axisLine={false}
-              width={36}
-              domain={['dataMin - 3', 'dataMax + 3']}
-              tickFormatter={(v: number) => `${Math.round(v)}`}
-              allowDecimals={false}
-            />
-            <Tooltip
-              content={(props) => (
-                <ComparisonTooltip
-                  {...(props as Partial<TooltipContentProps<number, string>>)}
-                  firstLabel={firstLabel}
-                  secondLabel={secondLabel}
-                  unit={unit}
-                />
-              )}
-              cursor={{ stroke: LINE, strokeWidth: 1 }}
-            />
-            {/* Le perdant d'abord, sous l'accent : le gagnant reste lisible au-dessus. */}
-            <Line
-              name="second"
-              data={second}
-              type="monotone"
-              dataKey="e1rm"
-              stroke={secondColor}
-              strokeWidth={winner === 'second' ? 2.5 : 1.75}
-              dot={{ r: 2, fill: secondColor, strokeWidth: 0 }}
-              isAnimationActive={false}
-            />
-            <Line
-              name="first"
-              data={first}
-              type="monotone"
-              dataKey="e1rm"
-              stroke={firstColor}
-              strokeWidth={winner === 'first' ? 2.5 : 1.75}
-              dot={{ r: 2, fill: firstColor, strokeWidth: 0 }}
-              isAnimationActive={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Légende inline : la puce porte la couleur de la courbe, le libellé est
-          en mono (Readout Rule). Le gagnant garde l'accent, l'autre ink-muted. */}
-      <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <LegendItem color={firstColor} label={firstLabel} />
-        <LegendItem color={secondColor} label={secondLabel} />
-      </ul>
-    </div>
-  );
-}
-
-function LegendItem({ color, label }: { color: string; label: string }) {
-  return (
-    <li className="flex items-center gap-1.5">
-      <span
-        className="inline-block h-2 w-2 shrink-0 rounded-full"
-        style={{ backgroundColor: color }}
-        aria-hidden="true"
-      />
-      <span className="readout text-[11px] text-ink-muted">{label}</span>
-    </li>
+    <Chart
+      series={[
+        { id: 'a', tone: 'muted', dashed: true, endLabel: 'A', points: first.map((p) => ({ x: p.week, y: p.e1rm })) },
+        { id: 'b', tone: 'ink', endLabel: 'B', points: second.map((p) => ({ x: p.week, y: p.e1rm })) },
+      ]}
+      height={200}
+      xDomain={[0, Math.max(maxWeek, 1)]}
+      xTicks={weekTicks(maxWeek)}
+      yFormat={(v) => String(Math.round(v))}
+      ariaLabel={`${measureLabel(unit)} de la 1ʳᵉ série, semaine par semaine depuis le début de chaque option. A : ${firstLabel}, ${first.length} séances. B : ${secondLabel}, ${second.length} séances.`}
+    />
   );
 }

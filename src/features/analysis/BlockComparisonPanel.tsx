@@ -1,74 +1,58 @@
-// Panneau de comparaison de deux blocs d'un exercice (cf. issue #6, ADR 0016).
+// Comparer deux options d'un exo (cf. issue #6, ADR 0016) : laquelle a fait
+// progresser le plus vite ? Une option est un couple BLOC + SÉANCE : chaque
+// pente lit une seule séance pendant un seul bloc, ce qui compare deux routines
+// (Upper A pendant Upper/Lower contre Push pendant PPL) ou deux séances d'un
+// même bloc sans mêler deux contextes de fatigue. Une option sans assez de
+// points n'a pas de pente : pas de verdict, on le dit en clair.
 //
-// L'utilisateur choisit deux options ; on superpose leurs pentes de progression
-// e1RM (%/semaine) et on désigne la plus rapide. Une option est un couple BLOC +
-// SÉANCE : chaque pente lit une seule séance pendant un seul bloc, ce qui permet
-// de comparer deux routines (Upper A pendant Upper/Lower contre Push pendant PPL)
-// ou deux séances d'un même bloc sans mêler deux contextes de fatigue dans une
-// même pente. Une option sans assez de points n'a pas de pente : pas de verdict
-// trompeur, on le dit en clair.
+// Écran E (prototype e/analyse-blocs.tsx) : les deux options en lignes A et B,
+// qu'on touche pour en choisir une autre dans une feuille ; les deux courbes
+// superposées, semaine par semaine ; le verdict en phrase, puis sa limite.
 //
-// Séparation CHARGEMENT / PRÉSENTATION comme `AnalysisScreen` : `ComparisonView`
-// est pur (prend exécutions + blocs + séances déjà chargés), montable sans réseau
-// dans le harness de screenshot ; le wrapper `BlockComparisonPanel` fait la
-// lecture Supabase. Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
+// Séparation CHARGEMENT / PRÉSENTATION : `ComparisonView` est pur (exécutions +
+// blocs + séances déjà chargés), `BlockComparisonPanel` fait la lecture
+// Supabase. Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
 // `compareBlockSeances`, `defaultComparisonPair`).
 import { useEffect, useMemo, useState } from 'react';
-import type { ExerciseExecution, Block } from '../../domain/types';
+import type { Block, ExerciseExecution } from '../../domain/types';
 import { blockKey } from '../../domain/block';
 import {
   compareBlockSeances,
   defaultComparisonPair,
   summarizeBlockSeances,
   type BlockSeanceProgression,
-  type Side,
 } from '../../domain/block-comparison';
+import { EmptyState, List, Row, Sheet, Status } from '../../ui';
+import { errorMessage } from '../../lib/error-message';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
 import { blockLabel, seanceRoutineLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
-import { TrendArrow } from './TrendArrow';
-import { trendColor, trendOf, winnerVerdict } from './trend';
 import { formatRate } from './format';
-import { errorMessage } from '../../lib/error-message';
-import { rateNote } from './unit-label';
-
-/** Sous ce nombre de points, une option n'a pas de pente fiable (cf. weeklyProgressionRate). */
-const MIN_POINTS = 3;
-
-// --- Wrapper (chargement Supabase) -------------------------------------------
+import { sessionsLabel } from './rate-period';
+import { rateVerdict, SLOPE_WORD } from './slope-words';
+import { winnerVerdict } from './trend';
+import { measureLabel, rateNote } from './unit-label';
 
 type LoadState =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | {
-      phase: 'ready';
-      executions: ExerciseExecution[];
-      blocks: Block[];
-      seances: Map<string, SeanceInfo>;
-    };
+  | { phase: 'ready'; executions: ExerciseExecution[]; blocks: Block[]; seances: Map<string, SeanceInfo> };
 
+/** Lecture puis présentation. À monter avec `key={exerciseId}` : un exo, un chargement. */
 export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
   const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
 
   useEffect(() => {
     let active = true;
-    setLoad({ phase: 'loading' });
-
     void (async () => {
       try {
         const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
-        if (!active) return;
-        setLoad({ phase: 'ready', executions, blocks, seances });
+        if (active) setLoad({ phase: 'ready', executions, blocks, seances });
       } catch (err) {
-        if (!active) return;
-        setLoad({
-          phase: 'error',
-          message: errorMessage(err),
-        });
+        if (active) setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
-
     return () => {
       active = false;
     };
@@ -76,52 +60,33 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
 
   if (load.phase === 'loading') {
     return (
-      <div className="flex h-24 items-center justify-center">
-        <div
-          className="h-5 w-5 animate-spin rounded-full border-2 border-line border-t-accent"
-          role="status"
-          aria-label="Chargement de la comparaison"
-        />
-      </div>
+      <p role="status" className="px-5 py-6 text-[15px] text-muted">
+        Chargement des blocs…
+      </p>
     );
   }
-
   if (load.phase === 'error') {
     return (
-      <p className="readout px-1 py-3 text-xs text-warn">{load.message}</p>
+      <p role="alert" className="mx-5 mt-4 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
+        Impossible de charger les blocs : {load.message}
+      </p>
     );
   }
-
-  return (
-    <ComparisonView
-      exerciseId={exerciseId}
-      executions={load.executions}
-      blocks={load.blocks}
-      seances={load.seances}
-    />
-  );
+  return <ComparisonView exerciseId={exerciseId} executions={load.executions} blocks={load.blocks} seances={load.seances} />;
 }
 
 // --- Présentation (pure, montable sans réseau) -------------------------------
 
-/** Les deux lignes d'un libellé d'option : « Push · PPL » puis « 15/10 · en cours ». */
-interface OptionLabel {
-  seance: string;
-  dates: string;
-}
+/** « Push · PPL » : la séance d'une option, toujours avec sa routine. */
+const seanceOf = (o: BlockSeanceProgression, seances: ReadonlyMap<string, SeanceInfo>) =>
+  seanceRoutineLabel(seances.get(o.seanceId));
 
-function optionLabel(
-  option: BlockSeanceProgression,
-  seances: ReadonlyMap<string, SeanceInfo>,
-): OptionLabel {
-  return {
-    seance: seanceRoutineLabel(seances.get(option.seanceId)),
-    dates: blockLabel(option.block),
-  };
-}
-
-function oneLine(label: OptionLabel): string {
-  return `${label.seance} · ${label.dates}`;
+/** La pente d'une option en signe + mot, ou ce qui lui manque. */
+function OptionRate({ rate, points }: { rate: number | null; points: number }) {
+  // Le nombre de séances est écrit juste au-dessus : sans pente, on ne le répète pas.
+  if (rate === null) return <span className="text-muted">{points === 0 ? 'aucune séance' : 'pas de pente'}</span>;
+  const v = rateVerdict(rate);
+  return <Status v={v} word={`${SLOPE_WORD[v]} · ${formatRate(rate)} %/sem`} />;
 }
 
 export function ComparisonView({
@@ -137,270 +102,198 @@ export function ComparisonView({
 }) {
   // Un couple (bloc, séance) par séance où l'exo a été travaillé dans le bloc,
   // la dernière option étant la plus récente.
-  const options = useMemo(
-    () => summarizeBlockSeances(executions, exerciseId, blocks),
-    [executions, exerciseId, blocks],
-  );
+  const options = useMemo(() => summarizeBlockSeances(executions, exerciseId, blocks), [executions, exerciseId, blocks]);
+  // Pré-sélection : la plus récente face à la plus récente d'un autre bloc. Un
+  // choix de l'utilisateur la remplace, côté par côté.
+  const pair = useMemo(() => defaultComparisonPair(options), [options]);
+  const [picked, setPicked] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
+  const [picking, setPicking] = useState<'a' | 'b' | null>(null);
 
-  const [firstIdx, setFirstIdx] = useState<number | null>(null);
-  const [secondIdx, setSecondIdx] = useState<number | null>(null);
+  const ia = picked.a ?? pair?.[0] ?? null;
+  const ib = picked.b ?? pair?.[1] ?? null;
+  const a = ia === null ? undefined : options[ia];
+  const b = ib === null ? undefined : options[ib];
 
-  // Pré-sélection dès qu'il y a de quoi comparer : la plus récente, face à la
-  // plus récente d'un autre bloc (cf. defaultComparisonPair).
-  useEffect(() => {
-    if (firstIdx !== null || secondIdx !== null) return;
-    const pair = defaultComparisonPair(options);
-    if (pair) {
-      setFirstIdx(pair[0]);
-      setSecondIdx(pair[1]);
-    }
-  }, [options, firstIdx, secondIdx]);
-
-  if (options.length < 2) {
+  if (options.length < 2 || !a || !b) {
     return (
-      <p className="px-1 py-2 text-xs text-ink-muted">
-        Il faut au moins deux périodes où cet exo a été travaillé pour comparer.
-      </p>
+      <EmptyState
+        title="Rien à comparer"
+        body={
+          options.length === 0
+            ? 'Cet exo n’a encore aucune séance.'
+            : 'Cet exo n’a été fait que dans une seule séance d’un seul bloc. Il en faut deux pour comparer.'
+        }
+      />
     );
   }
 
-  const first = firstIdx === null ? undefined : options[firstIdx];
-  const second = secondIdx === null ? undefined : options[secondIdx];
+  const sides = [
+    ['a', a],
+    ['b', b],
+  ] as const;
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Empilés : « séance · routine · dates » ne tient pas dans deux menus côte à
-          côte à 400 px. */}
-      <div className="flex flex-col gap-2">
-        <OptionSelect
-          label="Premier"
-          options={options}
-          seances={seances}
-          value={firstIdx}
-          exclude={secondIdx}
-          onChange={setFirstIdx}
-        />
-        <OptionSelect
-          label="Second"
-          options={options}
-          seances={seances}
-          value={secondIdx}
-          exclude={firstIdx}
-          onChange={setSecondIdx}
-        />
-      </div>
-
-      {first && second && (
-        <ComparisonResult
-          executions={executions}
-          exerciseId={exerciseId}
-          first={first}
-          second={second}
-          firstLabel={optionLabel(first, seances)}
-          secondLabel={optionLabel(second, seances)}
-        />
-      )}
-    </div>
-  );
-}
-
-function OptionSelect({
-  label,
-  options,
-  seances,
-  value,
-  exclude,
-  onChange,
-}: {
-  label: string;
-  options: BlockSeanceProgression[];
-  seances: ReadonlyMap<string, SeanceInfo>;
-  value: number | null;
-  exclude: number | null;
-  onChange: (index: number) => void;
-}) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="readout text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
-        {label}
-      </span>
-      <select
-        // 16 px au moins : en dessous, iOS zoome la page au focus d'un champ.
-        className="field h-11 rounded-xl px-2.5 text-base text-ink"
-        value={value ?? ''}
-        onChange={(e) => onChange(Number(e.target.value))}
-      >
-        {options.map((o, index) => (
-          <option key={`${blockKey(o.block)}:${o.seanceId}`} value={index} disabled={index === exclude}>
-            {oneLine(optionLabel(o, seances))}
-            {o.pointCount < MIN_POINTS ? ' · trop peu de points' : ''}
-          </option>
+    <>
+      <List label="Options comparées">
+        {sides.map(([side, o]) => (
+          <Row
+            key={side}
+            lead={side.toUpperCase()}
+            title={seanceOf(o, seances)}
+            meta={
+              <>
+                <span className="block">
+                  {blockLabel(o.block)} · {sessionsLabel(o.pointCount)}
+                </span>
+                <span className="mt-0.5 block">
+                  <OptionRate rate={o.weeklyRate} points={o.pointCount} />
+                </span>
+              </>
+            }
+            onClick={() => setPicking(side)}
+            ariaLabel={`Option ${side.toUpperCase()} : ${seanceOf(o, seances)}, ${blockLabel(o.block)}. Changer`}
+          />
         ))}
-      </select>
-    </label>
+      </List>
+
+      <ComparisonResult
+        executions={executions}
+        exerciseId={exerciseId}
+        a={a}
+        b={b}
+        aLabel={seanceOf(a, seances)}
+        bLabel={seanceOf(b, seances)}
+      />
+
+      <Sheet open={picking !== null} title={picking === 'a' ? 'Option A' : 'Option B'} onClose={() => setPicking(null)}>
+        <List label="Options">
+          {options
+            .map((o, index) => ({ o, index }))
+            .reverse()
+            .map(({ o, index }) => {
+              const other = picking === 'a' ? ib : ia;
+              const mine = picking === 'a' ? ia : ib;
+              const taken = index === other;
+              return (
+                <Row
+                  key={`${blockKey(o.block)}:${o.seanceId}`}
+                  title={seanceOf(o, seances)}
+                  meta={`${blockLabel(o.block)} · ${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
+                  value={taken ? <span className="text-[14px] font-normal text-faint">déjà en {picking === 'a' ? 'B' : 'A'}</span> : undefined}
+                  current={index === mine}
+                  muted={taken}
+                  onClick={
+                    taken
+                      ? undefined
+                      : () => {
+                          setPicked((p) => (picking === 'a' ? { ...p, a: index } : { ...p, b: index }));
+                          setPicking(null);
+                        }
+                  }
+                />
+              );
+            })}
+        </List>
+      </Sheet>
+    </>
   );
 }
 
 function ComparisonResult({
   executions,
   exerciseId,
-  first,
-  second,
-  firstLabel,
-  secondLabel,
+  a,
+  b,
+  aLabel,
+  bLabel,
 }: {
   executions: ExerciseExecution[];
   exerciseId: string;
-  first: BlockSeanceProgression;
-  second: BlockSeanceProgression;
-  firstLabel: OptionLabel;
-  secondLabel: OptionLabel;
+  a: BlockSeanceProgression;
+  b: BlockSeanceProgression;
+  aLabel: string;
+  bLabel: string;
 }) {
   const result = useMemo(
     () =>
       compareBlockSeances(
         executions,
         exerciseId,
-        { block: first.block, seanceId: first.seanceId },
-        { block: second.block, seanceId: second.seanceId },
+        { block: a.block, seanceId: a.seanceId },
+        { block: b.block, seanceId: b.seanceId },
       ),
-    [executions, exerciseId, first, second],
+    [executions, exerciseId, a, b],
   );
-
-  const firstSeries = useMemo(
-    () => toWeeklySeries(result.first.curve),
-    [result.first.curve],
-  );
-  const secondSeries = useMemo(
-    () => toWeeklySeries(result.second.curve),
-    [result.second.curve],
-  );
+  const first = useMemo(() => toWeeklySeries(result.first.curve), [result.first.curve]);
+  const second = useMemo(() => toWeeklySeries(result.second.curve), [result.second.curve]);
+  const note = rateNote(result.unit);
 
   return (
-    <div className="flex flex-col gap-3">
-      <ComparisonChart
-        first={firstSeries}
-        second={secondSeries}
-        winner={result.winner}
-        firstLabel={oneLine(firstLabel)}
-        secondLabel={oneLine(secondLabel)}
-        // Un exo jamais chargé se compare en reps effectives (cf. CurveUnit).
-        unit={result.unit}
-      />
-
-      <div className="grid grid-cols-2 gap-2">
-        <BlockRateCard
-          label={firstLabel}
-          rate={result.first.weeklyRate}
-          pointCount={result.first.pointCount}
-          isWinner={result.winner === 'first'}
-        />
-        <BlockRateCard
-          label={secondLabel}
-          rate={result.second.weeklyRate}
-          pointCount={result.second.pointCount}
-          isWinner={result.winner === 'second'}
-        />
+    <>
+      <div className="px-5 pt-5">
+        <ComparisonChart first={first} second={second} firstLabel={aLabel} secondLabel={bLabel} unit={result.unit} />
+        <p className="mt-1 text-[13px] text-faint">
+          {measureLabel(result.unit)} de la 1ʳᵉ série, semaine par semaine depuis le début de chaque option.
+        </p>
       </div>
 
-      {rateNote(result.unit) && (
-        <p className="text-[11px] text-ink-faint">{rateNote(result.unit)}</p>
-      )}
-
-      <Verdict
-        winner={result.winner}
-        firstLabel={oneLine(firstLabel)}
-        secondLabel={oneLine(secondLabel)}
-        firstSide={result.first}
-        secondSide={result.second}
-      />
-    </div>
-  );
-}
-
-function BlockRateCard({
-  label,
-  rate,
-  pointCount,
-  isWinner,
-}: {
-  label: OptionLabel;
-  rate: number | null;
-  pointCount: number;
-  isWinner: boolean;
-}) {
-  // Comme ProgressionBadge : flèche (forme) + couleur + signe, jamais la couleur
-  // seule (DESIGN.md ; +2,3 vs −3,0 et stagnation vs baisse sinon ambigus).
-  const trend = rate === null ? null : trendOf(rate);
-
-  return (
-    <div
-      className={`panel rounded-xl px-3 py-2 ${isWinner ? 'border-accent' : ''}`}
-    >
-      <p className="text-xs font-medium leading-tight text-ink">{label.seance}</p>
-      <p className="readout mt-0.5 text-[10px] text-ink-faint">{label.dates}</p>
-      {rate === null || trend === null ? (
-        <p className="mt-1 text-xs text-ink-muted">
-          {pointCount < MIN_POINTS
-            ? `pas assez de points (${pointCount})`
-            : 'pente indispo'}
-        </p>
-      ) : (
-        <p className={`mt-1 flex items-center gap-1 ${trendColor(trend)}`}>
-          <TrendArrow trend={trend} />
-          <span className="readout text-sm font-medium">
-            {formatRate(rate)}
-            <span className="ml-0.5 text-xs font-normal opacity-80"> %/sem</span>
-          </span>
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Verdict({
-  winner,
-  firstLabel,
-  secondLabel,
-  firstSide,
-  secondSide,
-}: {
-  winner: Side | 'tie' | null;
-  firstLabel: string;
-  secondLabel: string;
-  firstSide: { weeklyRate: number | null; pointCount: number };
-  secondSide: { weeklyRate: number | null; pointCount: number };
-}) {
-  // Pas de verdict si une pente manque : on explique pourquoi, sans trancher.
-  if (winner === null) {
-    const thin: string[] = [];
-    if (firstSide.weeklyRate === null) thin.push(firstLabel);
-    if (secondSide.weeklyRate === null) thin.push(secondLabel);
-    return (
-      <p className="text-xs text-ink-muted">
-        Pas assez de points pour comparer
-        {thin.length > 0 ? ` (${thin.join(' et ')})` : ''}. Continue cet exo
-        sur ces périodes pour un verdict.
+      <section aria-label="Verdict" className="px-5 pt-5">
+        <Verdict
+          winner={result.winner}
+          a={{ name: `A (${aLabel})`, rate: result.first.weeklyRate, points: result.first.pointCount }}
+          b={{ name: `B (${bLabel})`, rate: result.second.weeklyRate, points: result.second.pointCount }}
+        />
+      </section>
+      {note && <p className="px-5 pt-3 text-[14px] leading-[1.45] text-faint">{note}</p>}
+      <p className="px-5 pt-3 text-[14px] leading-[1.45] text-faint">
+        Une lecture de pentes, pas une preuve : séances, ordre, fréquence et période de l’année changent ensemble.
       </p>
+    </>
+  );
+}
+
+interface VerdictSide {
+  name: string;
+  rate: number | null;
+  points: number;
+}
+
+function Verdict({ winner, a, b }: { winner: 'first' | 'second' | 'tie' | null; a: VerdictSide; b: VerdictSide }) {
+  const big = 'text-[18px] font-medium leading-[1.4] tracking-[-0.01em] text-ink';
+  const small = 'mt-1.5 text-[15px] leading-[1.45] text-muted';
+  const rates = `${a.rate === null ? '' : `${formatRate(a.rate)} %/sem en A`}${a.rate !== null && b.rate !== null ? ', ' : ''}${
+    b.rate === null ? '' : `${formatRate(b.rate)} %/sem en B`
+  }.`;
+
+  // Pas de verdict si une pente manque : on dit laquelle et pourquoi.
+  if (winner === null) {
+    const thin = [a, b].filter((s) => s.rate === null);
+    return (
+      <>
+        <p className={big}>Pas de verdict.</p>
+        <p className={small}>
+          {thin.map((s) => s.name).join(' et ')} : pas de pente, il faut des séances sur trois jours différents au moins.
+        </p>
+      </>
     );
   }
-
   if (winner === 'tie') {
     return (
-      <p className="text-xs text-ink-muted">
-        Pentes équivalentes des deux côtés.
-      </p>
+      <>
+        <p className={big}>Même vitesse des deux côtés.</p>
+        <p className={small}>{rates}</p>
+      </>
     );
   }
-
-  const winnerLabel = winner === 'first' ? firstLabel : secondLabel;
-  const winnerRate = (winner === 'first' ? firstSide : secondSide).weeklyRate;
+  const w = winner === 'first' ? a : b;
   // La meilleure pente ne « progresse » que si elle monte : entre deux baisses,
   // elle recule le moins (cf. `winnerVerdict`). Un gagnant a toujours une pente.
   return (
-    <p className="text-xs text-ink">
-      <span className="text-accent-ink">{winnerLabel}</span>{' '}
-      {winnerVerdict(winnerRate ?? 0)}.
-    </p>
+    <>
+      <p className={big}>
+        {w.name} {winnerVerdict(w.rate ?? 0)}.
+      </p>
+      <p className={small}>{rates}</p>
+    </>
   );
 }
