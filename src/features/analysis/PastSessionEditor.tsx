@@ -510,7 +510,7 @@ function DeleteConfirmSheet({
       aria-modal="true"
       aria-labelledby="delete-exec-title"
     >
-      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
+      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+var(--safe-bottom))]">
         <h2 id="delete-exec-title" className="text-lg font-bold leading-tight text-ink">
           Supprimer cette séance ?
         </h2>
@@ -576,7 +576,7 @@ function DiscardConfirmSheet({
       aria-modal="true"
       aria-labelledby="discard-edits-title"
     >
-      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]">
+      <div className="surface-raised w-full max-w-md rounded-t-2xl p-5 pb-[calc(1.25rem+var(--safe-bottom))]">
         <h2 id="discard-edits-title" className="text-lg font-bold leading-tight text-ink">
           Abandonner les corrections ?
         </h2>
@@ -873,8 +873,10 @@ function EditorShell({
   date?: string;
 }) {
   return (
+    // Plein écran : le haut réserve l'encoche (barre d'état iOS), sans quoi le
+    // titre passerait sous l'heure et le scrim opaque qui la couvre.
     <div className="fixed inset-0 z-40 overflow-y-auto bg-bg">
-      <div className="mx-auto w-full max-w-md px-4 pb-8 pt-5">
+      <div className="mx-auto w-full max-w-md px-4 pb-8 pt-[calc(1.25rem+var(--safe-top))]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-2xl font-semibold leading-tight tracking-[-0.02em] text-ink">

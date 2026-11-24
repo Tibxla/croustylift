@@ -771,7 +771,7 @@ function ExerciseRecapSheet({
         onClick={onClose}
         className="absolute inset-0 bg-black/65"
       />
-      <div className="relative mt-auto flex flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
+      <div className="relative mt-auto flex max-h-[calc(100dvh-var(--safe-top)-1rem)] flex-col overflow-y-auto rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(var(--safe-bottom)+1rem)] shadow-2xl">
         <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />
         <div className="mx-auto flex w-full max-w-md flex-col px-5 pt-4">
           {/* En-tête : nom + coche « terminé ». */}

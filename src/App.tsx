@@ -293,11 +293,6 @@ function AuthenticatedApp({
 
   return (
     <main className="min-h-screen bg-bg text-ink">
-      {/* Scrim de status bar : en standalone iOS la webview passe SOUS l'heure
-          (viewport-fit=cover + status bar translucide, index.html). Sans cette
-          bande opaque, le contenu défilerait derrière l'heure et la batterie. */}
-      <div className="safe-top-scrim" aria-hidden="true" />
-
       <SurfaceNav current={surface} onSelect={goTo} />
 
       <SurfaceNavigationContext.Provider value={goTo}>

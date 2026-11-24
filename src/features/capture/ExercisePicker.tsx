@@ -466,7 +466,7 @@ function CatalogSheet({
         onClick={onClose}
         className="absolute inset-0 bg-black/65"
       />
-      <div className="relative mt-auto flex max-h-[85vh] flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(env(safe-area-inset-bottom,0)+1rem)] shadow-2xl">
+      <div className="relative mt-auto flex max-h-[85vh] flex-col rounded-t-[26px] border-t border-hair-strong bg-bg pb-[calc(var(--safe-bottom)+1rem)] shadow-2xl">
         <div className="mx-auto mt-3 h-[5px] w-[42px] rounded-[3px] bg-surface-2" aria-hidden="true" />
         <div className="mx-auto flex w-full max-w-md flex-col px-4 pt-4">
           <div className="mb-3 flex items-center justify-between gap-3">
