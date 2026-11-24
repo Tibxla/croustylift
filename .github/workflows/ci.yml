@@ -1,8 +1,7 @@
-# CI : garde le code vert sur chaque push / PR (lint + tests + build, qui inclut
-# le typecheck, + budget de taille du bundle). Sur `main`, le déploiement en
-# production part d'ici, APRÈS ce contrôle : le déploiement automatique de Vercel
-# est coupé pour `main` (`git.deploymentEnabled` dans vercel.json), une CI rouge
-# ne déploie donc rien.
+# CI : garde le code vert sur chaque push / PR. Le projet est déployé sur Vercel,
+# qui exécute `tsc -b && vite build` au déploiement (un typecheck cassé bloque le
+# déploiement) mais NE LANCE PAS les tests, d'où ce workflow : lint + tests +
+# build (qui inclut le typecheck) + budget de taille du bundle.
 name: CI
 
 on:
@@ -39,29 +38,3 @@ jobs:
       - run: npm run build
       # Budget gzip par chunk (scripts/bundle-size.mjs).
       - run: npm run size
-
-  deploy:
-    # Production seulement depuis main, et seulement si `check` est vert.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: check
-    runs-on: ubuntu-latest
-    # Deux pushes rapprochés : le second attend, aucun déploiement en parallèle.
-    concurrency:
-      group: deploiement-production
-      cancel-in-progress: false
-    # Jeton Vercel limité au projet croustylift (un an, créé le 2026-11-24) ;
-    # la vraie config Supabase (variables publiques) est tirée de Vercel.
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx --yes vercel@66.6.0 pull --yes --environment=production --token="$VERCEL_TOKEN"
-      - run: npx --yes vercel@66.6.0 build --prod --token="$VERCEL_TOKEN"
-      - run: npx --yes vercel@66.6.0 deploy --prebuilt --prod --token="$VERCEL_TOKEN"
