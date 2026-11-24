@@ -32,6 +32,7 @@ export function NumberRow({
   refValue,
   onPick,
   compact = false,
+  rangeWord = 'plan',
 }: {
   label: string;
   min: number;
@@ -42,6 +43,9 @@ export function NumberRow({
   onPick: (n: number) => void;
   /** Écran bas : cases de 44 px au lieu de 48. */
   compact?: boolean;
+  /** Le mot devant la fourchette soulignée : « plan » en salle, « loggé » quand
+   *  on corrige une série passée (la fourchette est alors la valeur d'origine). */
+  rangeWord?: string;
 }) {
   const row = useRef<HTMLDivElement>(null);
   const values = range0(min, max);
@@ -98,7 +102,7 @@ export function NumberRow({
       <div className="flex items-baseline justify-between px-5">
         <span className="text-[15px] font-semibold text-ink">{label}</span>
         <span className="text-[14px] text-muted">
-          plan {presc[0] === presc[1] ? presc[0] : `${presc[0]}-${presc[1]}`}
+          {rangeWord} {presc[0] === presc[1] ? presc[0] : `${presc[0]}-${presc[1]}`}
           {refValue !== null && <span> · réf. {refValue}</span>}
         </span>
       </div>
