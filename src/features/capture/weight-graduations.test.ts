@@ -40,11 +40,18 @@ describe('weightGraduations', () => {
     expect(majors(3.5)).toEqual([7, 14, 21]);
   });
 
-  it('rien de rond à portée : chaque cran est une grande graduation', () => {
-    expect(weightGraduations(3)).toEqual({ majorEvery: 1, midEvery: 0 });
-    expect(weightGraduations(4)).toEqual({ majorEvery: 1, midEvery: 0 });
-    expect(weightGraduations(4.25)).toEqual({ majorEvery: 1, midEvery: 0 });
+  it('rien de rond à portée, pas sous 5 kg : une étiquette tous les deux crans, jamais à chaque cran', () => {
+    expect(majors(3)).toEqual([6, 12, 18]);
+    expect(majors(4)).toEqual([8, 16, 24]);
+    expect(majors(4.25)).toEqual([8.5, 17, 25.5]);
+    expect(majors(3.25)).toEqual([6.5, 13, 19.5]);
+    expect(weightGraduations(3)).toEqual({ majorEvery: 2, midEvery: 1 });
+  });
+
+  it('rien de rond à portée, pas de 5 kg ou plus : chaque cran est une grande graduation', () => {
     expect(weightGraduations(7.5)).toEqual({ majorEvery: 1, midEvery: 0 });
+    expect(weightGraduations(6)).toEqual({ majorEvery: 1, midEvery: 0 });
+    expect(weightGraduations(10)).toEqual({ majorEvery: 1, midEvery: 0 });
   });
 
   it('tous les pas de Réglages : un nombre entier de crans, au plus 10 kg entre deux étiquettes', () => {
@@ -54,6 +61,8 @@ describe('weightGraduations', () => {
       expect(Number.isInteger(majorEvery) && majorEvery >= 1).toBe(true);
       const majorKg = majorEvery * stepKg;
       expect(majorKg <= 10 || majorEvery === 1).toBe(true);
+      // Sous 5 kg de pas, jamais une étiquette à chaque cran.
+      if (stepKg < 5) expect(majorEvery).toBeGreaterThanOrEqual(2);
       // Écart à l'écran (même densité que la règle : 8 px par cran au moins, 11,2 px par kg).
       expect(majorEvery * Math.max(8, 11.2 * stepKg)).toBeLessThanOrEqual(170);
       if (midEvery > 0) expect(majorEvery % midEvery).toBe(0);
@@ -62,8 +71,8 @@ describe('weightGraduations', () => {
 
   it('pas libres hors de la grille de Réglages : toujours au moins un cran', () => {
     expect(weightGraduations(0.1).majorEvery).toBeGreaterThanOrEqual(1);
-    // 1,3 : aucun multiple rond sous 10 kg (13 kg est le premier) ; chaque cran.
-    expect(weightGraduations(1.3)).toEqual({ majorEvery: 1, midEvery: 0 });
+    // 1,3 : aucun multiple rond sous 10 kg (13 kg est le premier) ; deux crans.
+    expect(weightGraduations(1.3)).toEqual({ majorEvery: 2, midEvery: 1 });
     expect(weightGraduations(0).majorEvery).toBe(1);
   });
 });
