@@ -662,8 +662,10 @@ function SeancePicker({
           <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
         ))}
       </List>
-      <div className="flex flex-wrap items-center gap-x-1.5 px-5 pt-2 text-[16px] text-muted">
-        <span>Pas la bonne routine ?</span>
+      {/* La question, puis le chemin sur sa propre ligne : la même mise en
+          page à 360 et à 390 px, cible de 44 px. */}
+      <div className="px-5 pt-4">
+        <p className="text-[15px] leading-[1.45] text-muted">Pas la bonne routine ?</p>
         <TextLink tone="muted" onClick={() => go('seances')}>
           Change-la dans Séances
         </TextLink>
