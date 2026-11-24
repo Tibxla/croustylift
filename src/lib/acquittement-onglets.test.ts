@@ -86,3 +86,20 @@ describe('acquittement entre onglets', () => {
     expect(b.peekDated(b.JOURNAL_VIEW)).toEqual({ at: 3000, value: ['exec-gardee'] });
   });
 });
+
+describe('isolation entre fichiers de test (src/test/broadcast-isolation.ts)', () => {
+  it('un canal resté ouvert par un fichier PRÉCÉDENT (nom brut) ne reçoit pas les acquittements de ce fichier', async () => {
+    const globals = globalThis as unknown as { __nativeBroadcastChannel?: typeof BroadcastChannel };
+    const Native = globals.__nativeBroadcastChannel ?? BroadcastChannel;
+    const a = await openTab();
+    tabs = [a];
+    const leftover = new Native(a.ACK_CHANNEL);
+    const received = vi.fn();
+    leftover.onmessage = received;
+    a.mountView(a.JOURNAL_VIEW, () => {})();
+    a.viewsAcknowledged(a.REALISED_VIEWS);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(received).not.toHaveBeenCalled();
+    leftover.close();
+  });
+});

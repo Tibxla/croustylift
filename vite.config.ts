@@ -133,6 +133,9 @@ export default defineConfig({
     // Un `navigator.locks` par fil : celui de Node est partagé entre les threads
     // du processus, et `--pool=threads` faisait se bloquer deux fichiers de test
     // sur le même verrou de flush (cf. src/test/thread-locks.ts).
-    setupFiles: ['./src/test/thread-locks.ts'],
+    // Un `BroadcastChannel` par fichier aussi : le canal des acquittements d'un
+    // fichier précédent ne reçoit pas les messages du suivant
+    // (src/test/broadcast-isolation.ts).
+    setupFiles: ['./src/test/thread-locks.ts', './src/test/broadcast-isolation.ts'],
   },
 })
