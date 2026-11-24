@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { errorMessage } from '../../lib/error-message';
 import { formatRange } from '../capture/format';
-import { GLOSSARY_TEXT } from '../../lib/glossary-text';
+import { glossaryLine } from '../../lib/glossary-text';
 import { FieldError, PrimaryButton, RadioMark, Screen, ScreenHeader, SectionTitle, TextField } from '../../ui';
 import { firstNameProblem } from './template';
 import {
@@ -133,7 +133,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
                   ))}
                 </ol>
                 {/* Première apparition du RIR : une phrase, sans plus. */}
-                <p className="pb-2.5 pl-[62px] pr-5 text-[14px] leading-[1.4] text-muted">{GLOSSARY_TEXT.rir}</p>
+                <p className="pb-2.5 pl-[62px] pr-5 text-[14px] leading-[1.4] text-muted">{glossaryLine('rir')}</p>
               </div>
             )}
             <StartOption

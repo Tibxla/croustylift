@@ -6,11 +6,8 @@
 import { useId, useState } from 'react';
 import { GLOSSARY_TEXT, type GlossaryTerm } from '../../lib/glossary-text';
 
-/** « e1RM : la charge… » -> le mot et sa phrase. */
-function split(text: string): [string, string] {
-  const at = text.indexOf(' : ');
-  return at < 0 ? ['', text] : [text.slice(0, at), text.slice(at + 3)];
-}
+/** Le mot en tête de sa ligne : « bloc » s'y écrit « Bloc », « e1RM » ne bouge pas. */
+const headWord = (term: string) => (term === term.toLowerCase() ? term.charAt(0).toUpperCase() + term.slice(1) : term);
 
 export function WordsHelp({ terms, className = '' }: { terms: readonly GlossaryTerm[]; className?: string }) {
   const [open, setOpen] = useState(false);
@@ -28,11 +25,11 @@ export function WordsHelp({ terms, className = '' }: { terms: readonly GlossaryT
       </button>
       <dl id={id} hidden={!open} className="pb-2 text-[15px] leading-[1.45]">
         {terms.map((term) => {
-          const [word, sentence] = split(GLOSSARY_TEXT[term]);
+          const { term: word, definition } = GLOSSARY_TEXT[term];
           return (
             <div key={term} className="mt-1.5 first:mt-0">
-              <dt className="inline font-medium text-ink">{word}</dt>
-              <dd className="inline text-muted"> : {sentence}</dd>
+              <dt className="inline font-medium text-ink">{headWord(word)}</dt>
+              <dd className="inline text-muted"> : {definition}</dd>
             </div>
           );
         })}
