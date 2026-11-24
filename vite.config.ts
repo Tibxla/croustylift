@@ -72,9 +72,10 @@ export default defineConfig({
         orientation: 'portrait',
         start_url: '/',
         scope: '/',
-        // Couleurs coherentes avec DESIGN.md : Noir d'instrument + violet electrique.
-        theme_color: '#7c3aed',
-        background_color: '#0d0d12',
+        // Le fond de l'app (--color-bg, DESIGN.md) pour les deux : barre du système
+        // et écran de lancement se fondent dans le premier écran.
+        theme_color: '#100e0c',
+        background_color: '#100e0c',
         icons: [
           {
             src: '/icon-192.png',

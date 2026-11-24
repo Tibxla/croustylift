@@ -1,0 +1,8 @@
+[
+  { "name": "Jaune", "hex": "#f6d236" },
+  { "name": "Rouge", "hex": "#ff5d5d" },
+  { "name": "Rose", "hex": "#f27ad6" },
+  { "name": "Violet", "hex": "#b59cff" },
+  { "name": "Ciel", "hex": "#6cc0ff" },
+  { "name": "Vert", "hex": "#5ed68f" }
+]

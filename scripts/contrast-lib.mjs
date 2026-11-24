@@ -1,6 +1,6 @@
-// Calcul de contraste WCAG 2 pour des couleurs OKLCH : fonctions pures, testées
-// (contrast-lib.test.mjs). Le script `contrast.mjs` les applique aux tokens de
-// src/index.css.
+// Calcul de contraste WCAG 2 pour des couleurs hexadécimales ou OKLCH : fonctions
+// pures, testées (contrast-lib.test.mjs). Le script `contrast.mjs` les applique
+// aux tokens de src/index.css (en hexadécimal depuis la refonte E).
 
 /** OKLCH (L 0..1, C, H en degrés) vers sRGB LINÉAIRE, composantes bornées à 0..1. */
 export function oklchToLinearSrgb(l, c, hDeg) {
@@ -49,4 +49,32 @@ export function parseOklchTokens(css) {
 /** Contraste entre deux tokens OKLCH `[L, C, H]`. */
 export function tokenContrast(fg, bg) {
   return contrastRatio(luminance(oklchToLinearSrgb(...fg)), luminance(oklchToLinearSrgb(...bg)))
+}
+
+/** `#rrggbb` vers sRGB LINÉAIRE. */
+export function hexToLinearSrgb(hex) {
+  return [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  })
+}
+
+/**
+ * Extrait d'une feuille CSS les tokens `--color-nom: #rrggbb`. Rend
+ * `{ nom: '#rrggbb' }` en minuscules. Les autres écritures (`var()`, `rgba()`,
+ * forme courte `#rgb`) sont ignorées. Un nom déclaré deux fois garde sa première
+ * valeur : le bloc `@theme` de E vient avant tout alias.
+ */
+export function parseHexTokens(css) {
+  const tokens = {}
+  const pattern = /--color-([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\b/g
+  for (const [, name, hex] of css.matchAll(pattern)) {
+    if (!(name in tokens)) tokens[name] = hex.toLowerCase()
+  }
+  return tokens
+}
+
+/** Contraste entre deux couleurs `#rrggbb`. */
+export function hexContrast(fg, bg) {
+  return contrastRatio(luminance(hexToLinearSrgb(fg)), luminance(hexToLinearSrgb(bg)))
 }
