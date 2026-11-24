@@ -251,11 +251,12 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Section repliée** (`Disclosure`) : titre, compte après un point médian, « Afficher » ou « Masquer » souligné.
 - **Action d'objet** (`ActionRow`) : bouton secondaire pleine largeur, l'explication dessous ; `ActionNote` dit pourquoi une action manque.
 - **Chargement** (`Loading`) : une phrase grise, pas de toupie. **Échec** (`LoadError`) : « Erreur : » puis la phrase, entre deux filets, puis « Réessayer ».
+- **Hors ligne sans copie** (`OfflineState`) : une phrase grise, jamais « Erreur » (« Séances se consulte avec le réseau. La Salle marche sans. ») ; rien n'est lu, le retour du réseau relit. **Copie datée** (`CopyNote`) : sous l'en-tête, « Copie du 24 nov., 17 h 12 » hors ligne, « Pas de réponse du réseau · copie du … » quand le réseau tarde plus de 3 s.
 
 ### Contrôles sans clavier
 
 - **Interrupteur** (`Switch`) : une ligne, le libellé à gauche, « Oui » ou « Non » écrit, puis la case. Activé : case blanc cassé pleine (jamais le signal).
-- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce.
+- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce. Sous 350 px, le libellé prend sa ligne et les boutons passent dessous, à droite : le libellé ne se coupe jamais mot à mot.
 - **Choix exclusif** (`Choice`) : des mots, le choisi en demi-gras souligné de 2 px. Pas de pilules.
 - **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Flèches au clavier.
 
@@ -270,7 +271,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Feuille basse
 
-- **Saisies refusées** : quand le serveur refuse des saisies, la ligne de synchro porte à son bout « N refusées », souligné ; toute la ligne ouvre la feuille des saisies refusées (aussi depuis Réglages, Données). Chaque saisie dit quoi, quand et pourquoi, avec « Renvoyer » et « Abandonner » (confirmé).
+- **Saisies refusées** : quand le serveur refuse des saisies, la ligne de synchro le dit en titre (« 2 saisies refusées ») et porte à son bout « Voir », souligné (« N refusées » quand la ligne dit autre chose d'abord, hors ligne ou envoi en cours) ; toute la ligne ouvre la feuille des saisies refusées (aussi depuis Réglages, Données). Chaque saisie dit quoi, quand et pourquoi, avec « Renvoyer » et « Abandonner » (confirmé).
 - **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête (le titre passe à la ligne, jamais coupé ; sa première ligne au niveau de « Fermer »), défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.
 
 ### Mouvement

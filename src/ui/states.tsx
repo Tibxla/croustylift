@@ -52,3 +52,37 @@ export function LoadError({ intro, message, onRetry }: { intro: string; message:
     </div>
   );
 }
+
+/** « 24 nov., 17 h 12 » : quand date une copie locale. */
+function copyStamp(at: number): string {
+  const d = new Date(at);
+  const day = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return `${day}, ${d.getHours()}\u00a0h\u00a0${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Hors ligne sans copie sur l'appareil : une phrase, pas une erreur (la salle
+ *  sans réseau est le cas normal). Rien n'a été lu ; le retour du réseau relit. */
+export function OfflineState({ surface }: { surface: string }) {
+  return (
+    <p role="status" className="px-5 py-6 text-[15px] leading-[1.45] text-muted">
+      {surface} se consulte avec le réseau. La Salle marche sans.
+    </p>
+  );
+}
+
+/** La valeur montrée est une copie locale : de quand elle date. Hors ligne, la
+ *  ligne de synchro du shell le dit déjà ; en ligne, c'est le réseau qui ne
+ *  répond pas, et on le dit. */
+export function CopyNote({ at, online }: { at: number; online: boolean }) {
+  return (
+    <p role="status" className="px-5 pb-3 text-[14px] leading-[1.45] text-muted">
+      {online ? (
+        <>
+          <span className="font-medium text-ink">Pas de réponse du réseau</span> · copie du {copyStamp(at)}
+        </>
+      ) : (
+        `Copie du ${copyStamp(at)}`
+      )}
+    </p>
+  );
+}

@@ -104,7 +104,9 @@ function SignalSection() {
 
       {/* On choisit au nom et à l'aperçu, sans chiffre. */}
       <div role="radiogroup" aria-label="Couleur de signal">
-        <div className="mt-5 grid grid-cols-6 gap-x-2 px-5">
+        {/* Sous 350 px, trois par ligne : six colonnes y laissaient 40 px par
+            pastille et coupaient les noms (« Jau… »). */}
+        <div className="mt-5 grid grid-cols-6 gap-x-2 px-5 max-[349px]:grid-cols-3 max-[349px]:gap-x-4 max-[349px]:gap-y-3">
           {SIG_PRESETS.map((p) => (
             <Swatch
               key={p.name}
@@ -209,9 +211,12 @@ function SignalPreview() {
   const ticks = Array.from({ length: 23 }, (_, i) => i - 11);
   const pts = [96, 95.6, 97.1, 98.0, 97.4, 99.3, 100.2, 101.5, 102.1];
   const x = (i: number) => 4 + (i / (pts.length - 1)) * 132;
-  const y = (v: number) => 46 - ((v - 95) / 8) * 40;
+  const y = (v: number) => 36 - ((v - 95) / 8) * 32;
+  // Règle et courbe ont la même hauteur (40 px) : leurs statuts tombent sur la
+  // même ligne. Sous 380 px, la courbe passe sous la règle, sans quoi « égalée »
+  // chevauchait la pente.
   return (
-    <div aria-hidden className="mx-5 mt-4 grid grid-cols-[1fr_auto] gap-x-5 border-y border-line py-4">
+    <div aria-hidden className="mx-5 mt-4 grid grid-cols-[1fr_auto] gap-x-5 gap-y-4 border-y border-line py-4 max-[379px]:grid-cols-1">
       <div className="min-w-0">
         <div className="relative h-[40px] overflow-hidden">
           {ticks.map((k) => (
@@ -223,7 +228,7 @@ function SignalPreview() {
           ))}
           <span className="absolute left-1/2 top-0 h-[30px] w-[3px] -translate-x-1/2 bg-sig" />
         </div>
-        <div className="mt-2 flex items-center gap-3 text-[14px]">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px]">
           <span className="tnum font-medium text-ink">82,5×8</span>
           <Status v="up" word="battue" />
           <span className="flex items-center gap-1 text-ink">
@@ -232,8 +237,8 @@ function SignalPreview() {
         </div>
       </div>
       <div className="w-[140px]">
-        <svg viewBox="0 0 140 50" className="block h-[50px] w-[140px]">
-          <line x1="0" x2="140" y1="49.5" y2="49.5" stroke="var(--color-line)" />
+        <svg viewBox="0 0 140 40" className="block h-[40px] w-[140px]">
+          <line x1="0" x2="140" y1="39.5" y2="39.5" stroke="var(--color-line)" />
           <path
             d={pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}
             fill="none"
@@ -243,8 +248,8 @@ function SignalPreview() {
           />
           <circle cx={x(pts.length - 1)} cy={y(pts[pts.length - 1]!)} r="3.5" fill="var(--color-ink)" />
         </svg>
-        <div className="mt-1.5 text-[14px]">
-          <Status v="up" word="+1,4 %/sem" />
+        <div className="mt-2 text-[14px]">
+          <Status v="up" word="+1,4 %/sem" className="whitespace-nowrap" />
         </div>
       </div>
     </div>
@@ -458,11 +463,14 @@ function CompteSection({
   );
 }
 
-function Line({ label, value }: { label: string; value: ReactNode }) {
+/** Une ligne libellé · valeur. `whole` : la valeur ne se coupe jamais ; faute de
+ *  place, elle passe sous le libellé (la version, à 320 px). */
+function Line({ label, value, whole = false }: { label: string; value: ReactNode; whole?: boolean }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
-      <span className="text-[16px] text-muted">{label}</span>
-      <span className="min-w-0 truncate text-right text-[16px] text-ink">{value}</span>
+    <div className={`flex min-h-12 items-center justify-between gap-x-4 border-b border-line px-5 py-2.5 ${whole ? 'flex-wrap gap-y-0.5' : ''}`}>
+      {/* Le libellé ne se coupe jamais (« E- / mail ») : c'est la valeur qui cède. */}
+      <span className="flex-none whitespace-nowrap text-[16px] text-muted">{label}</span>
+      <span className={`text-right text-[16px] text-ink ${whole ? 'whitespace-nowrap' : 'min-w-0 truncate'}`}>{value}</span>
     </div>
   );
 }
@@ -478,7 +486,7 @@ function AboutSection() {
     <section>
       <SectionTitle>À propos</SectionTitle>
       <div className="border-t border-line">
-        <Line label="Version" value={<span className="tnum">{APP_VERSION_LABEL}</span>} />
+        <Line label="Version" whole value={<span className="tnum">{APP_VERSION_LABEL}</span>} />
         {updateReady && (
           <div className="flex min-h-14 items-center justify-between gap-4 border-b border-line px-5 py-2">
             <span className="text-[16px] text-ink">{inSession ? 'Mise à jour prête, installée après ta séance' : 'Mise à jour prête'}</span>

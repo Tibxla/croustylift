@@ -202,6 +202,7 @@ export function SeanceActionsSheet({
   inCurrentRoutine,
   unsaved = false,
   onClose,
+  onReorder,
   onRename,
   onDuplicate,
   onArchive,
@@ -217,6 +218,11 @@ export function SeanceActionsSheet({
   /** Depuis l'éditeur : une saisie n'est pas enregistrée (la copie ne l'a pas). */
   unsaved?: boolean;
   onClose: () => void;
+  /**
+   * Depuis l'éditeur, sous 350 px seulement : « Réordonner » quitte l'en-tête,
+   * où il coupait le nom de la routine (« ‹ Test Cl… »), et passe ici.
+   */
+  onReorder?: () => void;
   /** Résolus = faits : le parent ferme la feuille (ou navigue). */
   onRename: (name: string) => Promise<void>;
   onDuplicate: (name: string) => Promise<void>;
@@ -302,6 +308,9 @@ export function SeanceActionsSheet({
       ) : (
         <>
           <ul aria-label={`Actions de ${seanceName}`}>
+            {onReorder && (
+              <ActionRow label="Réordonner les exos" disabled={write.busy} onClick={onReorder} className="min-[350px]:hidden" />
+            )}
             <ActionRow label="Renommer" disabled={write.busy} onClick={() => setStep('rename')} />
             {has('duplicate') && (
               <ActionRow

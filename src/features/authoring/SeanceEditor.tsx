@@ -75,6 +75,7 @@ import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from '
 import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
+import { useOnline } from '../../lib/use-dated-load';
 import {
   Alert,
   Choice,
@@ -84,6 +85,7 @@ import {
   List,
   LoadError,
   Loading,
+  OfflineState,
   PrimaryButton,
   Row,
   Screen,
@@ -154,9 +156,20 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
   // Dernière séance réellement chargée : on n'affiche le chargement que pour un
   // NOUVEAU contexte. Un rafraîchissement de la MÊME séance garde le contenu monté.
   const loadedSeanceRef = useRef<string | null>(null);
+  // Hors ligne, rien n'est lancé (on attendait 7 s pour une erreur) : la phrase
+  // le dit, et le retour du réseau relance la lecture. Seulement elle : une
+  // lecture déjà faite (même séance, même essai) ne se refait pas parce que le
+  // wifi a clignoté.
+  const online = useOnline();
+  const ranFor = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!online) return;
+    const run = `${seanceId}:${reloadKey}`;
+    if (ranFor.current === run) return;
+    ranFor.current = run;
     let active = true;
+    let settled = false;
     if (loadedSeanceRef.current !== seanceId) setLoad({ phase: 'loading' });
 
     void (async () => {
@@ -181,23 +194,30 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
         if (!active) return;
         const notes = Object.fromEntries(noteEntries);
         loadedSeanceRef.current = seanceId;
+        settled = true;
         setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
+        settled = true;
         setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
     return () => {
       active = false;
+      // Lecture abandonnée en route (démontage, double montage du mode strict) :
+      // la suivante doit pouvoir repartir.
+      if (!settled) ranFor.current = null;
     };
-  }, [seanceId, reloadKey]);
+  }, [seanceId, reloadKey, online]);
 
   if (load.phase === 'loading' || load.phase === 'error') {
     return (
       <Screen>
         <ScreenHeader title={seanceName} back={{ label: actions.routineName, onClick: onBack }} />
-        {load.phase === 'loading' ? (
+        {!online ? (
+          <OfflineState surface="Une séance" />
+        ) : load.phase === 'loading' ? (
           <Loading label="Chargement de la séance…" />
         ) : (
           <LoadError
@@ -706,6 +726,12 @@ export function SeanceEditorView({
     </>
   ) : undefined;
 
+  const startReorder = () => {
+    setReorder(true);
+    setMoved(null);
+    setOpen(null);
+  };
+
   return (
     <Screen bottom={bottom}>
       <ScreenHeader
@@ -725,16 +751,10 @@ export function SeanceEditorView({
             </SecondaryButton>
           ) : (
             <>
+              {/* Sous 350 px, « Réordonner » passe dans le ⋯ : à côté de lui, le
+                  nom de la routine du retour se coupait (« ‹ Test Cl… »). */}
               {rows.length > 1 && (
-                <SecondaryButton
-                  size="sm"
-                  ariaLabel="Réordonner les exos"
-                  onClick={() => {
-                    setReorder(true);
-                    setMoved(null);
-                    setOpen(null);
-                  }}
-                >
+                <SecondaryButton size="sm" ariaLabel="Réordonner les exos" onClick={startReorder} className="max-[349px]:hidden">
                   Réordonner
                 </SecondaryButton>
               )}
@@ -850,6 +870,14 @@ export function SeanceEditorView({
           inCurrentRoutine={actions.isCurrentRoutine}
           unsaved={unsaved}
           onClose={() => setMenuOpen(false)}
+          onReorder={
+            rows.length > 1
+              ? () => {
+                  setMenuOpen(false);
+                  startReorder();
+                }
+              : undefined
+          }
           onRename={async (name) => {
             await actions.onRename(name);
             setMenuOpen(false);
@@ -1014,8 +1042,8 @@ function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows
             return (
               <div key={m} className={`border-b border-line py-2.5 ${i % 2 === 0 ? 'border-r pl-5 pr-3' : 'pl-4 pr-5'}`}>
                 <dt className="text-[14px] text-muted">{muscleLabel(m)}</dt>
-                <dd className="mt-0.5 flex items-baseline gap-2">
-                  <span className={`text-[20px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
+                <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
+                  <span className={`text-[22px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
                   {changed && <span className="text-[13px] text-faint">avant {b}</span>}
                 </dd>
               </div>

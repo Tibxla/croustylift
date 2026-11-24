@@ -147,7 +147,7 @@ export function ExercisesScreen() {
   if (load.phase === 'loading') {
     return (
       <Page>
-        <ScreenHeader title="Exercices" />
+        <ScreenHeader title="Exos" />
         <Loading label="Chargement des exercices…" />
       </Page>
     );
@@ -156,7 +156,7 @@ export function ExercisesScreen() {
   if (load.phase === 'error') {
     return (
       <Page>
-        <ScreenHeader title="Exercices" />
+        <ScreenHeader title="Exos" />
         <LoadError intro="Impossible de charger tes exercices." message={load.message} onRetry={reload} />
       </Page>
     );
@@ -293,7 +293,7 @@ export function ExercisesView({
   if (page.kind === 'new') {
     return (
       <ExerciseForm
-        frame={{ title: 'Nouvel exo perso', meta: 'Visible de toi seul.', backLabel: 'Exercices' }}
+        frame={{ title: 'Nouvel exo perso', meta: 'Visible de toi seul.', backLabel: 'Exos' }}
         prefillName={page.prefill}
         submitLabel="Créer l’exo"
         submitBusyLabel="Création…"
@@ -438,7 +438,7 @@ function Catalogue({
         <PrimaryButton onClick={() => onCreate(typed && shown === 0 ? typed : undefined)}>Créer un exo perso</PrimaryButton>
       }
     >
-      <ScreenHeader title="Exercices" meta={`${exos(exercises.length)} · ${nPersonal} perso`} />
+      <ScreenHeader title="Exos" meta={`${exos(exercises.length)} · ${nPersonal} perso`} />
 
       {flash && <Flash>{flash}</Flash>}
 
@@ -601,7 +601,7 @@ function Fiche({
       <ScreenHeader
         title={exo.name}
         meta={origin}
-        back={{ label: 'Exercices', onClick: onBack }}
+        back={{ label: 'Exos', onClick: onBack }}
         action={
           <SecondaryButton size="sm" onClick={onEdit}>
             {base ? (overridden ? 'Modifier ta version' : 'Personnaliser') : 'Modifier'}
@@ -773,7 +773,7 @@ function Flash({ children }: { children: ReactNode }) {
 function Missing({ onBack }: { onBack: () => void }) {
   return (
     <Page>
-      <ScreenHeader title="Exercice introuvable" back={{ label: 'Exercices', onClick: onBack }} />
+      <ScreenHeader title="Exercice introuvable" back={{ label: 'Exos', onClick: onBack }} />
       <EmptyState title="Cet exercice n’existe plus." body="Il a peut-être été supprimé depuis un autre appareil." />
     </Page>
   );

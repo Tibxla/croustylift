@@ -11,9 +11,10 @@
 //
 // Séparation CHARGEMENT / PRÉSENTATION : `ComparisonView` est pur (exécutions +
 // blocs + séances déjà chargés), `BlockComparisonPanel` fait la lecture
-// Supabase. Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
+// Supabase, en copie datée comme le reste de l'Analyse (hors ligne : la copie,
+// ou une phrase). Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
 // `compareBlockSeances`, `defaultComparisonPair`).
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { Block, ExerciseExecution } from '../../domain/types';
 import { blockKey } from '../../domain/block';
 import {
@@ -22,8 +23,9 @@ import {
   summarizeBlockSeances,
   type BlockSeanceProgression,
 } from '../../domain/block-comparison';
-import { EmptyState, List, Row, Sheet, Status } from '../../ui';
-import { errorMessage } from '../../lib/error-message';
+import { CopyNote, EmptyState, List, OfflineState, Row, Sheet, Status } from '../../ui';
+import { VIEW_PREFIX } from '../../lib/dated-read';
+import { useDatedLoad } from '../../lib/use-dated-load';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
 import { blockPeriodLabel, seanceRoutineLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
@@ -34,45 +36,45 @@ import { rateVerdict, SLOPE_WORD } from './slope-words';
 import { winnerVerdict } from './trend';
 import { measureLabel, rateNote } from './unit-label';
 
-type LoadState =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; executions: ExerciseExecution[]; blocks: Block[]; seances: Map<string, SeanceInfo> };
+/** La lecture d'un exo, en copie datée (lib/dated-read) : la `Map` des séances
+ *  passe en paires, la copie passe par JSON. */
+interface ComparisonCopy {
+  executions: ExerciseExecution[];
+  blocks: Block[];
+  seances: [string, SeanceInfo][];
+}
 
-/** Lecture puis présentation. À monter avec `key={exerciseId}` : un exo, un chargement. */
+/** Lecture puis présentation. À monter avec `key={exerciseId}` : un exo, un chargement.
+ *  Hors ligne : la dernière copie, datée ; sans copie, une phrase, jamais « Erreur ». */
 export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
-  const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
-        if (active) setLoad({ phase: 'ready', executions, blocks, seances });
-      } catch (err) {
-        if (active) setLoad({ phase: 'error', message: errorMessage(err) });
-      }
-    })();
-    return () => {
-      active = false;
-    };
+  const fetchComparison = useCallback(async (): Promise<ComparisonCopy> => {
+    const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
+    return { executions, blocks, seances: [...seances] };
   }, [exerciseId]);
+  const { state, online, showDate } = useDatedLoad(`${VIEW_PREFIX}blocs:${exerciseId}`, fetchComparison);
+  const seances = useMemo(() => new Map(state.phase === 'ready' ? state.value.seances : []), [state]);
 
-  if (load.phase === 'loading') {
+  if (state.phase === 'loading') {
     return (
       <p role="status" className="px-5 py-6 text-[15px] text-muted">
         Chargement des blocs…
       </p>
     );
   }
-  if (load.phase === 'error') {
+  if (state.phase === 'offline') return <OfflineState surface="La comparaison des blocs" />;
+  if (state.phase === 'error') {
     return (
       <p role="alert" className="mx-5 mt-4 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
-        <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {load.message}
+        <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {state.message}
       </p>
     );
   }
-  return <ComparisonView exerciseId={exerciseId} executions={load.executions} blocks={load.blocks} seances={load.seances} />;
+  return (
+    <>
+      {showDate && <CopyNote at={state.at} online={online} />}
+      <ComparisonView exerciseId={exerciseId} executions={state.value.executions} blocks={state.value.blocks} seances={seances} />
+    </>
+  );
 }
 
 // --- Présentation (pure, montable sans réseau) -------------------------------

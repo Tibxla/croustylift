@@ -18,7 +18,8 @@ describe('syncLine', () => {
   });
 
   it('des saisies refusées se disent, seules ou avec la file', () => {
-    expect(syncLine({ ...base, refused: 2 })).toEqual({ title: 'Refusé par le serveur', detail: '2 saisies non envoyées' });
+    expect(syncLine({ ...base, refused: 2 })).toEqual({ title: '2 saisies refusées', detail: '' });
+    expect(syncLine({ ...base, refused: 1 })).toEqual({ title: '1 saisie refusée', detail: '' });
     expect(syncLine({ ...base, pending: 3, refused: 1 })?.detail).toBe('3 saisies en attente · 1 saisie refusée');
   });
 

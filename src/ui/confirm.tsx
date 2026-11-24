@@ -102,14 +102,16 @@ export function ActionRow({
   meta,
   onClick,
   disabled,
+  className = '',
 }: {
   label: string;
   meta?: ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  className?: string;
 }) {
   return (
-    <li className="px-5 py-2">
+    <li className={`px-5 py-2 ${className}`}>
       <SecondaryButton onClick={onClick} disabled={disabled} className="w-full">
         {label}
       </SecondaryButton>

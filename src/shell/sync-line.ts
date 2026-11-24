@@ -35,6 +35,8 @@ export function syncLine({ pending, refused, offline, unsaved }: SyncState): Syn
     };
   }
   if (pending > 0) return { title: 'Envoi en cours', detail: `${saisies(pending)} en attente${refusedTail}` };
-  if (refused > 0) return { title: 'Refusé par le serveur', detail: `${saisies(refused)} non envoyée${refused > 1 ? 's' : ''}` };
+  // Seules, les saisies refusées se disent en un titre, sans détail : la ligne
+  // ne se coupe plus, et son bout dit seulement « Voir » (SyncBanner).
+  if (refused > 0) return { title: `${saisies(refused)} refusée${refused > 1 ? 's' : ''}`, detail: '' };
   return null;
 }

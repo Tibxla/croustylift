@@ -39,6 +39,7 @@ import {
 } from '../exercises/deletion-guard';
 import { loadExerciseOverrides } from '../exercises/overrides';
 import { invalidatePlanCopies } from '../capture/plan-copies';
+import { invalidateViews, SEANCES_VIEWS } from '../../lib/dated-read';
 import { withReloadBlocked } from '../../pwa/blockers';
 import { translateConstraintError } from '../../lib/db-errors';
 import {
@@ -59,7 +60,8 @@ export const PLAN_WRITE_BLOCK = 'ecriture-plan';
 /**
  * Enveloppe de TOUTE écriture du plan (routines, séances, versions, exos perso) :
  * une fois l'écriture finie, les copies du plan servies à la Capture sont
- * marquées périmées (cf. capture/plan-copies). Même en échec : une écriture en
+ * marquées périmées (cf. capture/plan-copies), comme celles de Séances
+ * (lib/dated-read). Même en échec : une écriture en
  * plusieurs temps peut avoir commencé, et une invalidation de trop ne coûte
  * qu'une lecture réseau.
  *
@@ -81,6 +83,10 @@ function planWrite<T>(write: () => Promise<T>): Promise<T> {
       throw translateConstraintError(err);
     } finally {
       invalidatePlanCopies();
+      // Les copies de Séances aussi : la relecture qui suit l'écriture doit voir
+      // ce qu'elle vient d'écrire (lib/dated-read). Celles de l'Analyse non :
+      // elles se relisent à l'ouverture de leur écran, copie montrée d'abord.
+      invalidateViews(SEANCES_VIEWS);
     }
   });
 }

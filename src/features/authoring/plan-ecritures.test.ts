@@ -189,3 +189,31 @@ describe('écriture du plan et rechargement automatique', () => {
     expect(activeBlockers()).toEqual([]);
   });
 });
+
+describe('écriture du plan et copies des écrans au calme', () => {
+  it('une écriture du plan fait relire la liste des routines au lieu de resservir sa copie', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+    });
+    const { saveLocalAccount } = await import('../../lib/local-account');
+    const { clearReadCache } = await import('../../lib/read-cache');
+    const { loadDated, VIEW_PREFIX } = await import('../../lib/dated-read');
+    clearReadCache();
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    const key = `${VIEW_PREFIX}seances`;
+    await loadDated(key, async () => ['avant'], { offline: false });
+
+    await deleteRoutine('r1');
+
+    const after = await loadDated(key, async () => ['après'], { offline: false });
+    expect(after).toMatchObject({ phase: 'ready', value: ['après'], copy: false });
+    vi.unstubAllGlobals();
+  });
+});
