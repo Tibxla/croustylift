@@ -176,6 +176,17 @@ temps, un import simultané, ou un mode de test inhabituel.
   avec un stockage instrumenté. Piste : un verrou commun aux onglets
   (`navigator.locks`) autour du changement de génération, du marquage des copies, et du
   couple vérification puis écriture.
+- **Deux onglets : vider la mémoire des exécutions acquittées peut emporter un
+  acquittement de l'autre onglet** (importante, à deux onglets seulement). La ligne de
+  « Quelle séance ? » garde les exécutions acquittées (`capture/seance-meta.ts`) jusqu'à
+  une lecture de la méta acceptée. Scénario : l'onglet A mémorise une suppression
+  acquittée (`sync.ts`, `ackedInMeta`) mais n'a pas encore changé la génération
+  d'acquittement ; l'onglet B, dont la lecture est partie avant, relève la génération
+  inchangée, écrit sa copie, puis vide la mémoire partagée ; A change ensuite la
+  génération, trop tard. La date de l'exécution supprimée reparaît jusqu'à la
+  relecture suivante. Changer la génération AVANT de mémoriser ne suffit pas seul.
+  Piste : la même que pour le Journal, un verrou commun aux onglets
+  (`navigator.locks`) autour du couple vérification puis écriture, et du vidage.
 - **Un désarchivage peut s'interbloquer avec un import simultané** (mineure, sans
   perte). Le trigger `seances_en_fin` (migration 0026) prend le verrou de la routine
   alors que l'UPDATE du désarchivage tient déjà la ligne de la séance archivée. Un
@@ -195,3 +206,9 @@ temps, un import simultané, ou un mode de test inhabituel.
   par fichier, `src/test/broadcast-isolation.ts`). Piste, si ce mode devient utile :
   réinitialiser l'état des modules entre fichiers (`vi.resetModules` et mocks à
   restaurer), ou le refuser dans la configuration.
+
+À contrôler au premier appel réel après l'application de 0027 : PostgREST doit rendre
+un OBJET JSON pour `create_seance`, qui renvoie un composite sans SETOF, et non un
+tableau à un élément. `createSeance` (`authoring/data.ts`) le suppose ; le test unitaire
+simule un objet et le banc passe par psql. Une création depuis l'app, une fois 0027 en
+base, le tranche : si c'était un tableau, l'éditeur s'ouvrirait sur une séance sans id.
