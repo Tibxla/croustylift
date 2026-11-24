@@ -178,8 +178,11 @@ body {
   outline-offset: 2px;
 }
 /* Un titre qui reçoit le focus par programme (ouverture d'une feuille) ne se
-   cercle pas : il n'est pas un contrôle. */
-[tabindex="-1"]:focus-visible {
+   cercle pas : il n'est pas un contrôle. Un champ qui porte son propre trait de
+   focus (`.focus-own`, la saisie du poids en salle) non plus : un seul
+   indicateur. */
+[tabindex="-1"]:focus-visible,
+.focus-own:focus-visible {
   outline: none;
 }
 html {

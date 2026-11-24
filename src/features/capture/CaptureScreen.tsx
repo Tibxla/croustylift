@@ -11,8 +11,6 @@ import {
   useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
-  type CSSProperties,
   type Dispatch,
 } from 'react';
 import {
@@ -56,7 +54,6 @@ import {
 import { datedNoteId } from '../notes/dated-note-id';
 import {
   adoptedVersionId,
-  capturePersistFailing,
   captureReducer,
   clearPersisted,
   getDatedNote,
@@ -86,12 +83,9 @@ import {
 import {
   enqueue,
   OUTBOX_CHANGED_EVENT,
-  pendingCount,
-  quarantineCount,
   purgeByExecution,
   readOwnQueue,
   readQueue,
-  storageFailing,
   unionOfQueueReads,
   type OutboxOp,
 } from './outbox';
@@ -100,13 +94,18 @@ import {
 // `side` unilatéral, ADR 0005) ne diverge jamais entre les deux surfaces. On
 // passe par `flushOutbox`, qui relit aussi les copies d'historique acquittées.
 import { flushOutbox } from './sync';
-import { syncBannerLabel, type SyncTone } from './sync-label';
 import { boundSetValues } from './stepper-utils';
 import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import type { IndexItem } from './ExerciseIndex';
+import { exoState, logicalSetsDone, nextExerciseId, resumeWord, settledCount } from './salle-progress';
+import { formatWeight } from './format';
+import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner } from '../../ui';
+import { syncLine, type SyncState } from '../../shell/sync-line';
+import { useSyncState } from '../../shell/useSyncState';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { buildSummary, elapsedMinutesSince } from './summary';
 import { formatRelativeDay } from './format';
@@ -592,43 +591,30 @@ export function CaptureScreen() {
   }
 
   if (load.phase === 'loading') {
+    // Une ligne, sans animation : le chargement est court et revient souvent.
     return (
-      <div className="flex min-h-surface items-center justify-center">
-        <div
-          className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-          role="status"
-          aria-label="Chargement de la séance"
-        />
-      </div>
+      <p role="status" className="px-5 pt-6 text-[16px] text-muted">
+        Chargement de la séance…
+      </p>
     );
   }
 
   if (load.phase === 'empty') {
     return (
-      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-ink-muted">
-          Rien à logger pour l'instant. Va dans l'onglet Séances pour choisir ta
-          routine courante et lui ajouter une séance.
-        </p>
-      </div>
+      <EmptyState
+        title="Rien à logger pour l’instant."
+        body="Choisis ta routine courante dans Séances et ajoute-lui une séance."
+      />
     );
   }
 
   if (load.phase === 'error') {
     return (
-      <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-        <p className="text-sm text-ink-muted">
-          Impossible de charger ta séance.
-        </p>
-        <p className="max-w-full break-words text-xs text-warn">{load.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
-      </div>
+      <EmptyState
+        title="Impossible de charger ta séance."
+        body={<span className="break-words">{load.message}</span>}
+        action={<SecondaryButton onClick={() => setReloadKey((k) => k + 1)}>Réessayer</SecondaryButton>}
+      />
     );
   }
 
@@ -655,11 +641,10 @@ export function CaptureScreen() {
 // --- Choix de la séance (routine courante) ----------------------------------
 
 /**
- * Sélecteur de séance à l'arrivée en Capture : « quelle séance de ta routine
- * courante tu attaques ? ». N'apparaît que si la routine courante a au moins
- * deux séances (une seule est chargée direct ; aucune affiche l'état vide).
- * Calqué sur ExercisePicker pour l'unité visuelle (même conteneur, surfaces,
- * chevron). Pas d'accent décoratif : le violet reste pour l'action et l'état.
+ * « Quelle séance ? » à l'arrivée en Salle, parmi les séances de la routine
+ * courante. N'apparaît que si la routine en a au moins deux (une seule est
+ * chargée direct ; aucune affiche l'état vide). Une ligne par séance, dans
+ * l'ordre de la routine ; le nom suffit, rien d'inventé autour.
  */
 function SeancePicker({
   seances,
@@ -668,89 +653,27 @@ function SeancePicker({
   seances: SeanceChoice[];
   onPick: (seance: SeanceChoice) => void;
 }) {
-  // La bannière de sync est aussi pertinente ici (on revient en salle) : on réutilise
-  // le même hook que CaptureBoard, sans état nouveau.
-  const { status, pending } = useSyncStatus();
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-2">
-      <SyncBanner status={status} pending={pending} />
-
-      <header className="mb-6 mt-5 px-1">
-        <p className="readout mb-2 text-[12px] font-semibold uppercase tracking-[0.1em] text-accent-ink">
-          Routine courante
-        </p>
-        <h2 className="text-[32px] font-semibold leading-[1.05] tracking-[-0.025em] text-ink">
-          Ta séance
-        </h2>
-        <p className="mt-2 text-[15px] text-ink-muted">Quelle séance tu attaques&#8239;?</p>
-      </header>
-
-      <ul className="flex flex-col gap-[13px]">
-        {seances.map((seance, i) => (
-          <li key={seance.id} className="reveal" style={{ '--reveal-i': i } as CSSProperties}>
-            <button
-              type="button"
-              onClick={() => onPick(seance)}
-              className="surface-interactive flex w-full items-center gap-4 rounded-[20px] px-[18px] py-5 text-left"
-            >
-              {/* Badge lettre (position dans la routine), readout mono — signature instrument. */}
-              <span className="readout flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] border border-hair bg-surface-2 text-[17px] font-semibold text-ink-muted">
-                {String.fromCharCode(65 + (i % 26))}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-lg font-semibold text-ink">
-                {seance.name}
-              </span>
-              <svg
-                viewBox="0 0 24 24"
-                width="20"
-                height="20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="shrink-0 text-ink-muted"
-                aria-hidden="true"
-              >
-                <path d="M9 6l6 6-6 6" />
-              </svg>
-            </button>
-          </li>
+    <div className="flex flex-1 flex-col">
+      <SalleSync />
+      <ScreenHeader title="Quelle séance ?" meta="Parmi celles de ta routine courante." />
+      <List label="Séances de la routine courante">
+        {seances.map((seance) => (
+          <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
         ))}
-      </ul>
-
-      <p className="mt-6 rounded-2xl border border-dashed border-hair-strong px-4 py-4 text-center text-[13px] text-ink-faint">
-        Pas la bonne routine&#8239;? Change-la dans Séances.
-      </p>
+      </List>
+      <p className="px-5 pt-4 text-[15px] leading-[1.45] text-muted">Pas la bonne routine ? Change-la dans Séances.</p>
     </div>
   );
 }
 
-// --- Indicateur de sync réactif --------------------------------------------
-// La bannière est pilotée par la LONGUEUR de l'outbox + l'état réseau. On
-// expose la longueur via un petit store maison rafraîchi à chaque mutation /
-// flush / changement de connectivité, lu par useSyncExternalStore.
+// --- Fraîcheur de la ligne de synchro ---------------------------------------
 
-const syncListeners = new Set<() => void>();
-
-/** À appeler après tout changement de file (enqueue / flush) pour rafraîchir l'UI. */
+/** À appeler après tout changement de file (enqueue / flush) : la ligne de
+ *  synchro et le bouton Sommaire (src/shell/useSyncState.ts) relisent la file
+ *  tout de suite au lieu d'attendre leur relecture périodique. */
 function notifySync() {
-  for (const l of syncListeners) l();
-}
-
-function subscribeSync(cb: () => void): () => void {
-  syncListeners.add(cb);
-  const onOnlineOffline = () => cb();
-  window.addEventListener('online', onOnlineOffline);
-  window.addEventListener('offline', onOnlineOffline);
-  // La file a bougé sans geste de cet écran (essai reprogrammé par l'outbox).
-  window.addEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
-  return () => {
-    syncListeners.delete(cb);
-    window.removeEventListener('online', onOnlineOffline);
-    window.removeEventListener('offline', onOnlineOffline);
-    window.removeEventListener(OUTBOX_CHANGED_EVENT, onOnlineOffline);
-  };
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
 }
 
 /** Tente un flush puis notifie l'UI (longueur de file potentiellement changée). */
@@ -767,26 +690,6 @@ function enqueueAndFlush(...ops: Parameters<typeof enqueue>): void {
   for (const op of ops) enqueue(op);
   notifySync();
   void attemptFlush();
-}
-
-export type SyncStatus = 'synced' | 'pending' | 'offline';
-
-/** Statut de synchro dérivé : file vide = synchronisé ; sinon hors-ligne / en attente. */
-function useSyncStatus(): { status: SyncStatus; pending: number } {
-  const pending = useSyncExternalStore(
-    subscribeSync,
-    () => pendingCount(),
-    () => 0,
-  );
-  const online =
-    useSyncExternalStore(
-      subscribeSync,
-      () => (typeof navigator === 'undefined' ? true : navigator.onLine),
-      () => true,
-    ) ?? true;
-
-  if (pending === 0) return { status: 'synced', pending };
-  return { status: online ? 'pending' : 'offline', pending };
 }
 
 // --- Le tableau de capture (séance chargée) ---------------------------------
@@ -982,7 +885,6 @@ function CaptureBoard({
   }, [state, session, date]);
 
   // --- Synchro via outbox ---------------------------------------------------
-  const { status, pending } = useSyncStatus();
 
   // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
   // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
@@ -1287,10 +1189,24 @@ function CaptureBoard({
     [state.executionId, durationMin],
   );
 
+  // L'index du haut et le bouton Sommaire : l'état de chaque exo de la séance.
+  const indexItems: IndexItem[] = session.exercises.map((ex) => {
+    const p = getProgress(state, ex.exerciseId);
+    return {
+      exerciseId: ex.exerciseId,
+      name: ex.name,
+      state: exoState(p, ex.prescription.sets.min),
+      fill: Math.min(1, logicalSetsDone(p) / Math.max(1, ex.prescription.sets.min)),
+    };
+  });
+  const settled = settledCount(session, state);
+  const nextId = nextExerciseId(session, state, state.activeExerciseId);
+  const nextEx = nextId ? (session.exercises.find((e) => e.exerciseId === nextId) ?? null) : null;
+
   if (phase === 'finishing') {
     return (
       <div className="flex min-h-surface flex-col">
-        <SyncBanner status={status} pending={pending} />
+        <SalleSync />
         <SessionEnd
           summary={summary}
           durationMin={durationMin}
@@ -1306,125 +1222,50 @@ function CaptureBoard({
   // transitoire (ADR 0009). Le récap juste après clôture reste assuré par la phase
   // locale 'finishing' (état `saved` de SessionEnd) ; au remontage le cache est
   // nettoyé et l'état restauré est forcément « en cours » (closedAt null), donc on
-  // retombe directement sur le picker / la capture vierge ci-dessous.
+  // retombe directement sur le Sommaire ou l'instrument ci-dessous.
 
   return (
     <div className="flex min-h-surface flex-col">
-      <SyncBanner status={status} pending={pending} />
       {activeExercise ? (
         <CapturePanel
           key={activeExercise.exerciseId}
           exercise={activeExercise}
-          position={
-            session.exercises.findIndex(
-              (e) => e.exerciseId === activeExercise.exerciseId,
-            ) + 1
-          }
-          total={session.exercises.length}
           progress={getProgress(state, activeExercise.exerciseId)}
+          index={indexItems}
+          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
+          settled={settled}
+          total={session.exercises.length}
+          canFinish={loggedAny}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
           historyEpoch={realityEpoch}
           dispatch={dispatch}
           onLog={(set) => handleLog(activeExercise.exerciseId, set)}
           onUndo={() => handleUndo(activeExercise.exerciseId)}
+          onFinish={openFinish}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
-          onSaveExerciseNote={(body) =>
-            handleSaveExerciseNote(activeExercise.exerciseId, body)
-          }
+          onSaveExerciseNote={(body) => handleSaveExerciseNote(activeExercise.exerciseId, body)}
         />
       ) : (
         <>
-          {/* Séance d'un jour passé restée ouverte : on le dit, avec ses deux
-              sorties. Sans cela l'app s'ouvrait dans la séance d'hier sans un mot,
-              même quand on venait en faire une autre. */}
-          {staleSince && (
-            <div className="mx-auto mt-3 w-full max-w-md px-4">
-              <div className="surface-card rounded-2xl px-4 py-3.5" role="status">
-                <p className="text-sm text-ink">
-                  Cette séance date d’{staleSince} et n’a pas été terminée.
-                </p>
-                <p className="mt-1 text-[13px] text-ink-muted">
-                  {loggedAny
-                    ? 'Termine-la pour la ranger (sa durée ne sera pas comptée si elle n’est plus mesurable), ou annule-la.'
-                    : 'Annule-la pour en démarrer une autre.'}
-                </p>
-                {loggedAny && (
-                  <button
-                    type="button"
-                    onClick={openFinish}
-                    className="btn btn-secondary mt-3 h-11 rounded-xl px-4 text-sm"
-                  >
-                    Terminer cette séance
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+          <SalleSync />
           <ExercisePicker
             session={session}
             templateExerciseIds={templateIds}
             state={state}
+            settled={settled}
+            staleSince={staleSince}
+            canFinish={loggedAny}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
+            onSkip={(id) => dispatch({ type: 'skip-exercise', exerciseId: id })}
+            onFinish={openFinish}
             loadCatalog={listExercisesForCapture}
             loadCatalogExercise={(row) => loadCatalogExercise(row, historyCtx)}
             onAddExercise={handleAddExercise}
             onSwapExercise={handleSwapExercise}
             onCancelSession={handleCancelSession}
           />
-          <FinishBar canFinish={loggedAny} onFinish={openFinish} />
         </>
       )}
-    </div>
-  );
-}
-
-/**
- * Indicateur de synchronisation, piloté par la LONGUEUR de l'outbox :
- *   - vide      → « Synchronisé » (vert, discret) ;
- *   - en ligne  → « N en attente » (info, sync en cours) ;
- *   - hors ligne→ « Hors ligne » (warn).
- * Par le STOCKAGE : s'il refuse les écritures (plein), la bannière passe à
- * l'ambre et le dit, la file ne tenant plus qu'en mémoire.
- * Et par la QUARANTAINE (ops rejetées par la base) : tant qu'elle n'est pas vide,
- * jamais « Synchronisé », une ligne ambre le dit (cf. `syncBannerLabel`). Elle
- * est lue ici, pas par les appelants : la bannière la signale partout où elle
- * s'affiche.
- * Couleur ET texte portent toujours l'info (jamais la couleur seule). « Synchronisé »
- * reste rendu pour stabiliser la mise en page et confirmer la reprise après coup.
- */
-export function SyncBanner({ status, pending }: { status: SyncStatus; pending: number }) {
-  const quarantined = useSyncExternalStore(
-    subscribeSync,
-    () => quarantineCount(),
-    () => 0,
-  );
-  // Stockage plein : la file ou la séance en cours ne tiennent qu'en mémoire.
-  const unsaved = useSyncExternalStore(
-    subscribeSync,
-    () => storageFailing() || capturePersistFailing(),
-    () => false,
-  );
-  const { tone, label } = syncBannerLabel({
-    pending,
-    quarantined,
-    online: status !== 'offline',
-    unsaved,
-  });
-  const tones: Record<SyncTone, { dot: string; text: string }> = {
-    good: { dot: 'bg-good', text: 'text-ink-muted' },
-    info: { dot: 'bg-accent', text: 'text-ink-muted' },
-    warn: { dot: 'bg-warn', text: 'text-warn' },
-  };
-  const v = { ...tones[tone], label };
-
-  return (
-    <div
-      className={`mx-auto flex w-full max-w-md items-center gap-2.5 px-4 pt-3 text-[12.5px] ${v.text}`}
-      role="status"
-      aria-live="polite"
-    >
-      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${v.dot}`} aria-hidden="true" />
-      {v.label}
     </div>
   );
 }
@@ -1437,35 +1278,63 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 /** L'action de réconciliation qu'une réponse tardive de la base remet au tableau. */
 type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
-/**
- * Libellé du bouton de log (issue #46) : explicite le côté pour un exo
- * unilatéral (« Logger le côté gauche/droite »), reste « Logger la série » pour
- * un bilatéral. L'info tient au TEXTE, jamais à la couleur seule (DESIGN.md).
- */
-function logButtonLabel(side: Side | null, reachedMax: boolean): string {
-  if (side === 'left') return 'Logger le côté gauche';
-  if (side === 'right') return 'Logger le côté droit';
-  return reachedMax ? 'Logger une série de plus' : 'Logger la série';
+/** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
+ *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, l'état
+ *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
+ *  sous la barre du pouce. */
+function SalleSync() {
+  return <SyncBanner line={syncLine(useSyncState())} />;
 }
+
+/** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
+ *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
+function sommaireDetail(sync: SyncState, settled: number, total: number): string {
+  if (sync.unsaved) return 'stockage plein';
+  if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
+  if (sync.pending > 0) return `envoi · ${sync.pending}`;
+  if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
+  return `${settled} sur ${total} faits`;
+}
+
+/** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
+ *  au-delà du plan. L'info tient au TEXTE, jamais à la couleur seule. */
+function logLabel(side: Side | null, rank: number, plannedMax: number): string {
+  if (side) return `Logger ${side === 'left' ? 'gauche' : 'droite'} · série ${rank}`;
+  return rank > plannedMax ? 'Logger une de plus' : `Logger la série ${rank}`;
+}
+
+/** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
+ *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
+const BAR_BTN =
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-3 text-left active:bg-line';
 
 function CapturePanel({
   exercise,
-  position,
-  total,
   progress,
+  index,
+  next,
+  settled,
+  total,
+  canFinish,
   datedNote,
   historyEpoch,
   dispatch,
   onLog,
   onUndo,
+  onFinish,
   onSaveDatedNote,
   onSaveExerciseNote,
 }: {
   exercise: SessionExercise;
-  /** Position de l'exo dans la séance (1-indexé) + total, pour le repère « EXO N / M ». */
-  position?: number;
-  total?: number;
   progress: ExerciseProgress;
+  index: IndexItem[];
+  /** L'exo que propose « Exo suivant » et où il reprend, ou null. */
+  next: { exerciseId: string; name: string; resume: string | null } | null;
+  /** Exos faits ou passés, et leur total (bouton Sommaire). */
+  settled: number;
+  total: number;
+  /** Au moins une série loggée dans la séance : Terminer est possible. */
+  canFinish: boolean;
   /** Corps de la note datée du jour pour cet exo (issue #26), '' si aucune. */
   datedNote: string;
   /** Incrémenté quand le réalisé change sans geste de l'utilisateur (réponse tardive). */
@@ -1473,41 +1342,39 @@ function CapturePanel({
   dispatch: Dispatch<CaptureAction>;
   onLog: (set: { weightKg: number; reps: number; rir: number; side?: Side }) => void;
   onUndo: () => void;
+  onFinish: () => void;
   /** Enregistre la note datée du jour (corps vidé = note effacée). */
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
 }) {
-  // Brouillon de la série courante remonté ici pour que la barre fixe puisse
-  // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI au sélecteur
-  // (issue #63) : c'est ce côté que la barre commit, jamais un côté dérivé.
+  // Brouillon de la série courante remonté ici pour que la barre du bas puisse
+  // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI (issue #63) :
+  // c'est ce côté que la barre écrit, jamais un côté dérivé.
   const [draft, setDraft] = useState<{
     weightKg: number;
     reps: number;
     rir: number;
     side?: Side;
   } | null>(null);
+  const sync = useSyncState();
 
   const unilateral = exercise.unilateral ?? false;
-  // Côté que la barre va logger : pour un exo unilatéral, le côté CHOISI remonté
-  // dans le brouillon (issue #63). Tant que le brouillon n'a pas encore remonté
-  // de côté (1er rendu), on retombe sur le côté manquant de la série en cours
-  // (`pendingSide`/`defaultSide`). Null = bilatéral.
+  // Côté que la barre va logger : le côté CHOISI remonté dans le brouillon ; tant
+  // qu'il n'a pas remonté (1er rendu), le côté manquant de la série en cours.
   const currentSide: Side | null = unilateral
     ? draft?.side ?? pendingSide(progress) ?? 'left'
     : null;
-  // Nombre de SÉRIES complètes : pour l'unilatéral, une série = gauche + droite,
-  // donc on compte les ORDERS dont les DEUX côtés sont présents (blind F4 : compter
-  // les saisies droites restait à 0 si l'utilisateur loggeait deux fois le même
-  // côté). Bilatéral = une saisie/série. Sert au numéro annoncé en aria-live.
+  // SÉRIES complètes : en unilatéral, une série = gauche + droite au même order
+  // (blind F4) ; bilatéral = une saisie par série.
   const completedSets = unilateral
     ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
     : progress.sets.length;
-  const reachedMax = completedSets >= exercise.prescription.sets.max;
+  const rank = completedSets + 1;
+  const lastSet = progress.sets[progress.sets.length - 1] ?? null;
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
-
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
   const logSet = useCallback(
@@ -1521,21 +1388,27 @@ function CapturePanel({
     [onLog, completedSets, currentSide],
   );
 
+  const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
+  const values = draft ? `${formatWeight(draft.weightKg)} × ${draft.reps} · RIR ${draft.rir}` : '';
+  // Annuler retire la DERNIÈRE ligne loggée : un côté en unilatéral (décision 2b).
+  const undoWhat = lastSet
+    ? lastSet.side
+      ? { aria: `Annuler le côté ${sideLabel(lastSet.side)} de la série ${lastSet.order}`, sub: sideLabel(lastSet.side) }
+      : { aria: `Annuler la série ${lastSet.order}`, sub: `série ${lastSet.order}` }
+    : null;
+
   return (
     <>
       <ExerciseCapture
         exercise={exercise}
-        position={position}
-        total={total}
         progress={progress}
+        index={index}
+        next={next}
         datedNote={datedNote}
         historyEpoch={historyEpoch}
-        onUndoLast={() => {
-          onUndo();
-          setAnnounce('Dernière série annulée.');
-        }}
-        onSkip={() => dispatch({ type: 'skip-exercise', exerciseId: exercise.exerciseId })}
-        onBack={() => dispatch({ type: 'back-to-picker' })}
+        onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
+        onNext={() => next && dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
+        onSommaire={() => dispatch({ type: 'back-to-picker' })}
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
         onSaveExerciseNote={onSaveExerciseNote}
@@ -1545,58 +1418,72 @@ function CapturePanel({
         {announce}
       </p>
 
-      {/* Barre d'action primaire collée en bas (zone du pouce, 1 tap) : `sticky`,
-          fond plein, encoche basse comprise. Jamais `position: fixed` : une barre
-          fixe se décroche sur iPhone quand WebKit se trompe de fenêtre. */}
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
-        <div className="mx-auto w-full max-w-md">
+      {/* Zone du pouce, collée en bas (`sticky`, fond plein, encoche comprise ;
+          jamais `position: fixed`). Rangée du haut : Sommaire, Annuler, Exo
+          suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
+          geste répété, toujours au même endroit, sans enfoncement. Rien ne change
+          de place quand le minimum du plan est atteint (décision du 23/11). */}
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1.5">
+        {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
+            même largeur, qu'Annuler soit là ou non. */}
+        <div className="mb-1.5 grid grid-cols-[1fr_76px_1fr] gap-2">
           <button
             type="button"
-            disabled={!draft}
-            onClick={() => draft && logSet(draft)}
-            className="btn btn-primary h-[58px] w-full rounded-[18px] text-lg"
+            onClick={() => dispatch({ type: 'back-to-picker' })}
+            aria-label={`Sommaire de la séance, ${settled} exos faits sur ${total}${
+              sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
+            }`}
+            className={BAR_BTN}
           >
-            <svg
-              viewBox="0 0 24 24"
-              width="22"
-              height="22"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            {logButtonLabel(currentSide, reachedMax)}
+            <span className="text-[16px] font-medium leading-tight text-ink">Sommaire</span>
+            <span className="tnum truncate text-[13px] leading-tight text-muted">{sommaireDetail(sync, settled, total)}</span>
           </button>
+          {undoWhat ? (
+            <button
+              type="button"
+              onClick={() => {
+                onUndo();
+                setAnnounce(`${undoWhat.aria.replace('Annuler', 'Annulé :')}.`);
+              }}
+              aria-label={undoWhat.aria}
+              className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
+            >
+              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4">Annuler</span>
+              <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
+            </button>
+          ) : (
+            <span aria-hidden />
+          )}
+          {next ? (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
+              aria-label={`Exo suivant, ${next.name}${next.resume ? `, reprise ${next.resume}` : ''}`}
+              className={BAR_BTN}
+            >
+              <span className="text-[16px] font-medium leading-tight text-ink">Exo suivant</span>
+              <span className="truncate text-[13px] leading-tight text-muted">{next.name}</span>
+            </button>
+          ) : canFinish ? (
+            <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>
+              <span className="text-[16px] font-medium leading-tight text-ink">Terminer</span>
+              <span className="truncate text-[13px] leading-tight text-muted">la séance</span>
+            </button>
+          ) : (
+            <span aria-hidden />
+          )}
         </div>
+        <PrimaryButton
+          over={label}
+          ariaLabel={`${label}, ${values}`}
+          press={false}
+          disabled={!draft}
+          onClick={() => draft && logSet(draft)}
+          className="w-full"
+        >
+          <span className="tnum">{values}</span>
+        </PrimaryButton>
       </div>
     </>
-  );
-}
-
-/**
- * Barre d'action fixe du bas du sélecteur : UNIQUEMENT « Terminer la séance », dès
- * qu'au moins une série est loggée (`canFinish`). L'annulation a quitté cette barre
- * pour l'en-tête du sélecteur (« Annuler la séance », toujours visible, même séance
- * vide). Collée en bas en `sticky`, encoche basse comprise. Cachée tant qu'aucune
- * série n'est loggée (rien à terminer).
- */
-function FinishBar({ canFinish, onFinish }: { canFinish: boolean; onFinish: () => void }) {
-  if (!canFinish) return null;
-  return (
-    <div className="sticky bottom-0 z-10 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
-      <div className="mx-auto w-full max-w-md">
-        <button
-          type="button"
-          onClick={onFinish}
-          className="btn btn-primary h-12 w-full rounded-2xl text-base"
-        >
-          Terminer la séance
-        </button>
-      </div>
-    </div>
   );
 }
