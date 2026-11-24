@@ -16,27 +16,51 @@ export interface StoredWrite {
 
 type KeyValue = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void };
 
-/** Les écritures de l'enregistrement persisté (vide s'il n'est pas sur l'appareil). */
-export function storedWrites(storage: KeyValue = localStorage): StoredWrite[] {
+type Enumerable = KeyValue & { length?: number; key?: (i: number) => string | null };
+
+/**
+ * Les écritures que l'appareil porte : celles de l'enregistrement, et celles
+ * que des gestes ont posées dans la boîte d'entrée (`croustylift:registre:in:*`)
+ * sans qu'une passe les ait encore fait entrer. Dans l'ordre d'envoi.
+ */
+export function storedWrites(storage: Enumerable = localStorage): StoredWrite[] {
   const raw = storage.getItem(REGISTRY_KEY);
-  return raw ? (JSON.parse(raw) as { entries: StoredWrite[] }).entries : [];
+  const writes = raw ? (JSON.parse(raw) as { entries: StoredWrite[] }).entries : [];
+  for (let i = 0; i < (storage.length ?? 0); i += 1) {
+    const key = storage.key?.(i);
+    if (!key || !key.startsWith(`${REGISTRY_KEY}:in:`)) continue;
+    writes.push(...(JSON.parse(storage.getItem(key)!) as { entries: StoredWrite[] }).entries);
+  }
+  return writes.sort((a, b) => a.n - b.n);
 }
 
 /** Les ids des écritures EN ATTENTE de l'enregistrement persisté, dans l'ordre d'envoi. */
-export function storedPendingIds(storage: KeyValue = localStorage): string[] {
+export function storedPendingIds(storage: Enumerable = localStorage): string[] {
   return storedWrites(storage)
     .filter((write) => write.fate === 'pending')
     .map((write) => write.op.id);
 }
 
+/** Tout ce que l'appareil porte, réuni dans l'enregistrement (la boîte d'entrée y entre). */
+function gather(storage: Enumerable): { v: number; seq: number; entries: (StoredWrite & { ack?: number; parents?: string[] })[] } {
+  const raw = storage.getItem(REGISTRY_KEY);
+  const record = raw ? (JSON.parse(raw) as { v: number; seq: number }) : { v: 1, seq: 0 };
+  const entries = storedWrites(storage);
+  const boxes: string[] = [];
+  for (let i = 0; i < (storage.length ?? 0); i += 1) {
+    const key = storage.key?.(i);
+    if (key && key.startsWith(`${REGISTRY_KEY}:in:`)) boxes.push(key);
+  }
+  for (const key of boxes) (storage as unknown as { removeItem: (k: string) => void }).removeItem(key);
+  return { v: record.v, seq: Math.max(record.seq, ...entries.map((e) => e.n), 0), entries };
+}
+
 /** Un AUTRE onglet réécrit l'enregistrement pendant qu'on a le dos tourné. */
 export function otherTabRewrites(
   change: (writes: StoredWrite[]) => StoredWrite[],
-  storage: KeyValue = localStorage,
+  storage: Enumerable = localStorage,
 ): void {
-  const record = JSON.parse(storage.getItem(REGISTRY_KEY) ?? '{"v":1,"seq":0,"entries":[]}') as {
-    entries: StoredWrite[];
-  };
+  const record = gather(storage);
   storage.setItem(REGISTRY_KEY, JSON.stringify({ ...record, entries: change(record.entries) }));
 }
 
@@ -45,10 +69,8 @@ export function otherTabRewrites(
  * restent à l'enregistrement, acquittées, avec un numéro plus récent que tout.
  * Pour jouer un acquittement au milieu d'une lecture (callback synchrone).
  */
-export function otherTabAcknowledgesAll(storage: KeyValue = localStorage): void {
-  const raw = storage.getItem(REGISTRY_KEY);
-  if (!raw) return;
-  const record = JSON.parse(raw) as { v: number; seq: number; entries: (StoredWrite & { ack?: number; parents?: string[] })[] };
+export function otherTabAcknowledgesAll(storage: Enumerable = localStorage): void {
+  const record = gather(storage);
   let seq = Math.max(record.seq, Date.now());
   const entries = record.entries.map((entry) => {
     if (entry.fate !== 'pending') return entry;
@@ -67,4 +89,10 @@ export function legacyQueueWrites(storage: KeyValue = localStorage): unknown[] {
   const raw = storage.getItem('croustylift:outbox');
   const queue = raw ? (JSON.parse(raw) as { _uid?: string }[]) : [];
   return queue.filter((op) => op._uid !== 'registre-actif');
+}
+
+/** Laisse passer le tour de boucle où le registre écrit, sous le verrou, ce qu'un geste a tenu en mémoire. */
+export async function registrySettled(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }

@@ -24,15 +24,19 @@
 // l'insertion qu'elle corrige) est posée à l'enfilement et vit à un seul
 // endroit : registry-record.ts.
 //
-// STOCKAGE : UN enregistrement (`croustylift:registre`), écrit d'un coup.
-// Chaque transition est une lecture-modification-écriture synchrone de cet
-// enregistrement : il n'existe aucun état intermédiaire où une écriture serait
-// à deux endroits, ou nulle part. La passe d'envoi, le renvoi, l'abandon et la
-// reprise d'une ancienne file se font sous le verrou du navigateur
-// (`navigator.locks`) : un seul onglet à la fois. L'enfilement, lui, n'attend
-// jamais le verrou (une passe le tient le temps de ses requêtes, et une série
-// doit être durable dès le geste) ; la passe relit l'enregistrement avant
-// chacune de ses écritures, jamais depuis un instantané d'avant une requête.
+// STOCKAGE : UN enregistrement (`croustylift:registre`), écrit d'un coup, et
+// SEULEMENT sous le verrou du navigateur (`navigator.locks`) : la passe d'envoi,
+// le renvoi, l'abandon et la reprise d'une ancienne file sont les seules
+// lectures-modifications-écritures de l'enregistrement, un onglet à la fois. Il
+// n'existe aucun état intermédiaire où une écriture serait à deux endroits, ou
+// nulle part. L'enfilement, lui, n'attend jamais le verrou (une passe le tient
+// le temps de ses requêtes, et une série doit être durable dès le geste) : il
+// écrit les écritures de son geste dans une clé à elles, la BOÎTE D'ENTRÉE,
+// que le registre fait entrer sous le verrou. Les gestes synchrones qui
+// retirent des écritures (« Annuler la séance », Déconnexion) valent tout de
+// suite pour la page et s'écrivent sous le verrou juste après. La passe relit
+// l'enregistrement avant chacune de ses écritures, jamais depuis un instantané
+// d'avant une requête.
 //
 // VERSION : l'enregistrement porte la sienne. Une version plus récente (un
 // autre onglet a été mis à jour) arrête tout envoi sans rien modifier, et la
@@ -65,7 +69,6 @@ import {
   isExpired,
   legacyIdentity,
   parseRecord,
-  prune,
   refuse,
   replay,
   retry,
@@ -383,9 +386,20 @@ export interface FlushResult {
   settled: SettledWrite[];
 }
 
-// --- Stockage : un seul enregistrement ----------------------------------------
+// --- Stockage : un seul enregistrement, écrit sous le verrou -------------------
 
 const REGISTRY_KEY = 'croustylift:registre';
+
+// BOÎTE D'ENTRÉE. `localStorage` n'a pas de verrou entre onglets, et
+// l'enfilement ne peut pas attendre celui du navigateur (une passe le tient le
+// temps de ses requêtes). Tant que l'enfilement réécrivait l'enregistrement, un
+// acquittement fait au même instant dans un autre onglet pouvait l'écraser avec
+// un brouillon d'avant la saisie. Chaque geste écrit donc SES écritures dans
+// une clé à lui, que personne d'autre ne réécrit : une seule écriture, jamais
+// une lecture-modification-écriture. Le registre les fait entrer SOUS LE
+// VERROU (début de chaque passe, renvoi, abandon), puis efface la clé. D'ici là
+// toute lecture les voit déjà (`open`), avec le numéro pris à l'enfilement.
+const INBOX_PREFIX = `${REGISTRY_KEY}:in:`;
 
 // Blob ILLISIBLE mis de côté (JSON cassé, forme invalide) avant que le registre
 // ne reparte vide : sans cela la prochaine écriture l'écraserait et ses
@@ -395,10 +409,11 @@ const CORRUPT_KEY = 'croustylift:outbox:corrupt';
 
 // ANCIEN FORMAT (avant le registre) : une file et une quarantaine, deux clés.
 // Converties à la première ouverture, puis REPRISES EN CONTINU : un onglet resté
-// sur la version d'avant écrit encore dans ces clés (cf. `absorbLegacy`).
+// sur la version d'avant écrit encore dans ces clés (cf. `absorb`).
 // À RETIRER après le 2026-12-31 (plus aucun onglet de l'ancienne version) :
-// ces deux clés, `absorbLegacy`, `readLegacy`, `adoptLegacyOps` côté ancien
-// format, et `fromLegacy` / `completeLegacyNoteDeletes` (registry-record.ts).
+// ces deux clés, le verrou de l'ancienne file, `readLegacy`, `trimLegacy`,
+// `adoptLegacyOps` côté ancien format, et `fromLegacy` /
+// `completeLegacyNoteDeletes` (registry-record.ts).
 const LEGACY_QUEUE_KEY = 'croustylift:outbox';
 const LEGACY_QUARANTINE_KEY = 'croustylift:outbox:quarantine';
 
@@ -409,54 +424,85 @@ const LEGACY_QUARANTINE_KEY = 'croustylift:outbox:quarantine';
 // l'ancienne file commence donc par une écriture d'un type que l'ancienne
 // version ne sait pas jouer : sa passe S'ARRÊTE dessus (règle « type d'op
 // inconnu », qu'elle applique déjà) et n'envoie plus rien. Ce qu'elle enfile
-// derrière est repris ici (`absorbLegacy`), à sa place dans l'ordre d'envoi.
-// Elle porte le compte reconnu : sous une session, l'ancienne version ne
-// regarde que les écritures de son compte. À retirer avec la reprise.
+// derrière est repris ici (`absorb`), à sa place dans l'ordre d'envoi.
+// Sous une session, l'ancienne version ne regarde que les écritures de son
+// compte : le verrou est posé pour CHAQUE compte que l'appareil a reconnu
+// (complété à chaque passe, donc dès la passe qui suit une connexion), plus un
+// sans compte tant qu'aucun n'est connu.
 const LEGACY_STOP_UID = 'registre-actif';
-function legacyStop(): string {
-  const owner = loadLocalAccount()?.userId;
-  return JSON.stringify([
-    { type: 'registreActif', id: 'registre', _uid: LEGACY_STOP_UID, _at: 0, ...(owner ? { _owner: owner } : {}) },
-  ]);
+const isLegacyStop = (op: unknown): boolean => (op as { _uid?: unknown } | null)?._uid === LEGACY_STOP_UID;
+
+/** Les verrous que l'ancienne file doit porter : ceux qu'elle a déjà, plus celui du compte reconnu. */
+function legacyStops(queue: readonly unknown[]): unknown[] {
+  const owners = new Set<string>();
+  for (const op of queue) {
+    const owner = (op as { _owner?: unknown } | null)?._owner;
+    if (isLegacyStop(op) && typeof owner === 'string') owners.add(owner);
+  }
+  const current = loadLocalAccount()?.userId;
+  if (current) owners.add(current);
+  const stop = { type: 'registreActif', id: 'registre', _uid: LEGACY_STOP_UID, _at: 0 };
+  return owners.size === 0 ? [stop] : [...owners].map((owner) => ({ ...stop, _owner: owner }));
 }
 
-/** L'ancienne file est-elle réduite à son verrou, sans rien à reprendre ? */
-function legacySealed(): boolean {
-  return localStorage.getItem(LEGACY_QUEUE_KEY) === legacyStop() && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null;
-}
-
-/** Réduit l'ancienne file à son verrou et efface l'ancienne quarantaine. */
-function sealLegacy(): void {
+/**
+ * Tient l'ancienne file sous son verrou. `keepWrites` faux : elle est réduite à
+ * ses verrous et l'ancienne quarantaine effacée (tout est au registre, écrit
+ * sur l'appareil). `keepWrites` vrai (stockage plein : ces clés restent la
+ * seule trace durable de ce qu'elles portent) : les verrous sont posés EN
+ * TÊTE, sans rien retirer. Rien n'est écrit si rien ne change.
+ */
+function guardLegacy(keepWrites: boolean): void {
   try {
-    localStorage.removeItem(LEGACY_QUARANTINE_KEY);
-    localStorage.setItem(LEGACY_QUEUE_KEY, legacyStop());
+    const raw = localStorage.getItem(LEGACY_QUEUE_KEY);
+    const queue = legacyArray(LEGACY_QUEUE_KEY);
+    const wanted = JSON.stringify([...legacyStops(queue), ...(keepWrites ? queue.filter((op) => !isLegacyStop(op)) : [])]);
+    if (!keepWrites && localStorage.getItem(LEGACY_QUARANTINE_KEY) !== null) localStorage.removeItem(LEGACY_QUARANTINE_KEY);
+    if (raw !== wanted) localStorage.setItem(LEGACY_QUEUE_KEY, wanted);
   } catch {
-    try {
-      localStorage.removeItem(LEGACY_QUEUE_KEY);
-    } catch {
-      /* no-op */
-    }
+    // Verrou impossible à écrire (appareil plein) : l'ancienne file reste telle
+    // quelle, et ses écritures repartiront au pire en double, sans effet.
   }
 }
 
-// REPLI MÉMOIRE, engagé quand l'appareil refuse d'écrire l'enregistrement
-// (quota plein, mode privé), ou qu'une version plus récente l'a écrit. Il ne
-// tient PAS une copie du registre : le registre est commun aux onglets, et le
-// réécrire depuis une copie effacerait ce qu'un autre onglet y a écrit
-// entre-temps. Il tient les TRANSITIONS non écrites (`log`), rejouées sur
-// l'enregistrement relu à chaque lecture. Chaque écriture retente le stockage ;
-// dès qu'une passe, tout est écrit et le repli rendu.
-//
-// Ce que le repli ne sauve pas : la page fermée avant le retour du stockage.
+// TRANSITIONS EN MÉMOIRE, rejouées sur l'enregistrement relu à chaque lecture
+// (jamais une copie du registre : il est commun aux onglets, et le réécrire
+// depuis une copie effacerait ce qu'un autre onglet y a écrit entre-temps).
+// Deux raisons de tenir une transition en mémoire :
+//   - `deferred` : faite HORS du verrou par un geste synchrone (« Annuler la
+//     séance », Déconnexion, conversion de démarrage). Elle vaut tout de suite
+//     pour cette page, et s'écrit à la prochaine transition sous verrou, qui est
+//     demandée aussitôt (`persistSoon`) ;
+//   - `volatile` : l'appareil a REFUSÉ l'écriture (quota plein, mode privé), ou
+//     une version plus récente a écrit le registre. Chaque écriture retente ;
+//     dès qu'une passe, tout est écrit et le repli rendu. `storageFailing` le
+//     dit à la ligne de synchro.
+// Ce que la mémoire ne sauve pas : la page fermée avant l'écriture.
 // L'enregistrement persisté est alors en retard d'un seul tenant (jamais une
 // écriture à deux endroits) : ce qui y attend encore repartira, sans effet
-// (idempotence par id). `storageFailing` le dit à la ligne de synchro. Lié à
-// l'objet `localStorage` qui a refusé (il ne survit pas à son remplacement).
+// (idempotence par id). Liées à l'objet `localStorage` qui les a vues naître.
 let volatile: { storage: Storage; log: Transition[]; outdated: boolean } | null = null;
+let deferred: { storage: Storage; log: Transition[] } | null = null;
 
 function activeVolatile(): { log: Transition[]; outdated: boolean } | null {
   if (volatile === null || typeof localStorage === 'undefined') return null;
   return volatile.storage === localStorage ? volatile : null;
+}
+
+function activeDeferred(): Transition[] {
+  if (deferred === null || typeof localStorage === 'undefined') return [];
+  return deferred.storage === localStorage ? deferred.log : [];
+}
+
+/** Tient en mémoire des transitions que l'appareil n'a pas pu écrire. */
+function holdInMemory(log: Transition[], outdated: boolean): void {
+  if (activeVolatile() === null && !outdated) {
+    console.warn(
+      '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
+        'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
+    );
+  }
+  volatile = { storage: localStorage, log: [...(activeVolatile()?.log ?? []), ...log], outdated };
 }
 
 // Le plus grand numéro que cette page a vu au registre. Une estampille relevée
@@ -466,11 +512,14 @@ function activeVolatile(): { log: Transition[]; outdated: boolean } | null {
 // D'une page à l'autre, c'est l'horloge qui borne (cf. `Draft.next`).
 let highestSeq = 0;
 
-/** Met le blob fautif de côté et prévient. */
-function setAside(raw: string, key: string, reason: string): void {
+/** Le numéro donné par cette page à une écriture de l'ancien format sans instant (cf. `open`). */
+let legacyNumbers: { storage: Storage | null; seen: Map<string, number> } = { storage: null, seen: new Map() };
+
+/** Met un blob illisible de côté (une fois) et prévient. Ne touche pas à sa clé d'origine. */
+function setAside(raw: string, reason: string): void {
   try {
+    if (localStorage.getItem(CORRUPT_KEY) === raw) return;
     localStorage.setItem(CORRUPT_KEY, raw);
-    localStorage.removeItem(key);
   } catch {
     // Même cette écriture peut échouer (quota, mode privé) : on prévient quand même.
   }
@@ -488,22 +537,45 @@ function readPersisted(): { record: RegistryRecord; outdated: boolean } {
   const parsed = parseRecord(raw);
   if (parsed === 'outdated') return { record: emptyRecord(), outdated: true };
   if (parsed === 'corrupt') {
-    setAside(raw, REGISTRY_KEY, 'registre');
+    // Mis de côté ; la prochaine écriture sous verrou le remplacera.
+    setAside(raw, 'registre');
     return { record: emptyRecord(), outdated: false };
   }
   return { record: parsed, outdated: false };
 }
 
-/** Le contenu brut d'une clé de l'ancien format, en tableau ; vide s'il est absent. */
+/** Les clés de l'appareil qui commencent par `prefix`. */
+function keysWith(prefix: string): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key !== null && key.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+}
+
+/** Ce que porte la boîte d'entrée : ses clés, et leurs écritures. */
+function readInbox(): { key: string; entries: Entry[] }[] {
+  if (typeof localStorage === 'undefined') return [];
+  const out: { key: string; entries: Entry[] }[] = [];
+  for (const key of keysWith(INBOX_PREFIX)) {
+    // Écrite d'un coup par un seul geste : lisible, ou pas de cette version.
+    const parsed = parseRecord(localStorage.getItem(key) ?? '');
+    if (typeof parsed === 'object') out.push({ key, entries: parsed.entries });
+  }
+  return out;
+}
+
+/** Le contenu brut d'une clé de l'ancien format, en tableau ; vide s'il est absent ou illisible. */
 function legacyArray(key: string): unknown[] {
   const raw = localStorage.getItem(key);
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed;
-    setAside(raw, key, 'ancienne file, forme invalide');
+    setAside(raw, 'ancienne file, forme invalide');
   } catch {
-    setAside(raw, key, 'ancienne file, JSON illisible');
+    setAside(raw, 'ancienne file, JSON illisible');
   }
   return [];
 }
@@ -514,30 +586,50 @@ function readLegacy(): LegacyEntry[] {
   if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) {
     return [];
   }
-  const queue = legacyArray(LEGACY_QUEUE_KEY).filter(
-    (op) => (op as { _uid?: unknown } | null)?._uid !== LEGACY_STOP_UID,
-  );
+  const queue = legacyArray(LEGACY_QUEUE_KEY).filter((op) => !isLegacyStop(op));
   return fromLegacy(queue, legacyArray(LEGACY_QUARANTINE_KEY));
+}
+
+interface Opened {
+  draft: Draft;
+  outdated: boolean;
+  /** Les clés de la boîte d'entrée lues : à effacer une fois leur contenu écrit au registre. */
+  inboxKeys: string[];
 }
 
 /**
  * Le registre tel que cette page doit le voir, prêt à être modifié :
- * l'enregistrement persisté, RELU à l'instant, sur lequel sont rejouées les
- * transitions tenues en mémoire, puis les écritures qu'un onglet de l'ancienne
- * version a laissées dans ses clés. Les transitions de la reprise sont dans le
- * journal du brouillon : la première écriture les persiste.
+ * l'enregistrement persisté, RELU à l'instant ; ce que la boîte d'entrée et les
+ * clés de l'ancien format portent encore ; puis les transitions tenues en
+ * mémoire. Ne modifie rien sur l'appareil : c'est aussi la lecture de tous les
+ * états rendus à l'UI. Les entrées de la boîte et de l'ancien format sont dans
+ * le journal du brouillon : la première écriture sous verrou les persiste.
  */
-function open(): { draft: Draft; outdated: boolean; legacy: number } {
+function open(): Opened {
   const { record, outdated } = readPersisted();
-  const gap = activeVolatile();
-  if (gap) replay(record, gap.log);
   // Le compteur ne recule jamais sous les yeux de cette page, même si
   // l'enregistrement a été purgé ou mis de côté entre-temps (cf. `highestSeq`).
   record.seq = Math.max(record.seq, highestSeq);
   const draft = new Draft(record, Date.now);
-  for (const entry of readLegacy()) admitLegacy(draft, entry);
+  const inbox = readInbox();
+  const incoming = inbox.flatMap((box) => box.entries).sort((x, y) => x.n - y.n);
+  for (const entry of incoming) admit(draft, entry);
+  for (const entry of readLegacy()) {
+    // Sans instant d'enfilement : le numéro pris la première fois que cette
+    // page l'a vue, pour qu'elle garde sa place d'une lecture à l'autre.
+    if (legacyNumbers.storage !== localStorage) legacyNumbers = { storage: localStorage, seen: new Map() };
+    let n = entry.n ?? legacyNumbers.seen.get(entry.uid);
+    if (n === undefined) {
+      n = draft.next();
+      legacyNumbers.seen.set(entry.uid, n);
+    }
+    admitLegacy(draft, { ...entry, n });
+  }
+  // La mémoire en dernier : elle peut retirer ou modifier ce qui vient d'entrer.
+  replay(record, activeVolatile()?.log ?? []);
+  replay(record, activeDeferred());
   highestSeq = Math.max(highestSeq, record.seq);
-  return { draft, outdated, legacy: draft.log.length };
+  return { draft, outdated, inboxKeys: inbox.map((box) => box.key) };
 }
 
 /** Lecture seule du registre (cf. `open`). */
@@ -547,16 +639,15 @@ function view(): RegistryRecord {
 
 /**
  * Sous stockage plein, les clés de l'ancien format restent la seule trace
- * durable de ce qu'elles portent (cf. `absorbLegacy`). Elles ne gardent alors
- * que ce que le registre retient encore : une écriture acquittée, abandonnée
- * ou purgée ici en est retirée, sinon elle rentrerait de nouveau à la lecture
- * suivante. Les réduire libère de la place : l'écriture passe.
+ * durable de ce qu'elles portent (cf. `absorb`). Elles ne gardent alors que ce
+ * que le registre retient encore : une écriture acquittée, abandonnée ou purgée
+ * ici en est retirée, sinon elle rentrerait de nouveau à la lecture suivante.
+ * Les réduire libère de la place : l'écriture passe.
  */
 function trimLegacy(record: RegistryRecord): void {
   if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) return;
   const kept = new Set(record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
-  const stays = (op: unknown) =>
-    (op as { _uid?: unknown } | null)?._uid === LEGACY_STOP_UID || kept.has(legacyIdentity(op));
+  const stays = (op: unknown) => isLegacyStop(op) || kept.has(legacyIdentity(op));
   try {
     const queue = legacyArray(LEGACY_QUEUE_KEY);
     const trimmedQueue = queue.filter(stays);
@@ -571,10 +662,10 @@ function trimLegacy(record: RegistryRecord): void {
   }
 }
 
-/** Retire l'enregistrement de l'appareil. Faux si même cela est refusé. */
-function removeRegistry(): boolean {
+/** Retire des clés de l'appareil, sans jamais jeter. */
+function removeKeys(keys: readonly string[]): boolean {
   try {
-    localStorage.removeItem(REGISTRY_KEY);
+    for (const key of keys) localStorage.removeItem(key);
     return true;
   } catch {
     return false;
@@ -593,22 +684,26 @@ function persist(record: RegistryRecord): boolean {
 }
 
 /**
- * Écrit ce que le brouillon a changé. Si l'appareil refuse : les écritures
- * ACQUITTÉES cèdent d'abord la place (elles ne servent qu'aux lectures en vol),
- * puis les copies de lecture non essentielles (cf. cache-eviction : jamais
- * celles du chemin d'ouverture de la Capture). Si rien n'y fait, les
- * transitions sont tenues en mémoire (cf. `volatile`) et le refus est signalé.
- * Sous une version plus récente, RIEN n'est écrit : tout reste en mémoire.
+ * Écrit le brouillon. SOUS LE VERROU seulement : c'est la seule
+ * lecture-modification-écriture de l'enregistrement. Si l'appareil refuse : les
+ * écritures ACQUITTÉES cèdent d'abord la place (elles ne servent qu'aux
+ * lectures en vol), puis les copies de lecture non essentielles (cf.
+ * cache-eviction : jamais celles du chemin d'ouverture de la Capture). Si rien
+ * n'y fait, les transitions sont tenues en mémoire (cf. `volatile`) et le refus
+ * est signalé. Sous une version plus récente, RIEN n'est écrit.
  */
-function commit(draft: Draft, outdated: boolean): boolean {
+function commit(opened: Opened): boolean {
   if (typeof localStorage === 'undefined') return false;
-  const held = activeVolatile()?.log ?? [];
+  const { draft, outdated, inboxKeys } = opened;
+  const pending = [...activeDeferred(), ...draft.log];
+  deferred = null;
   if (!outdated) {
     let written = persist(draft.record);
     if (!written) {
       const acked = draft.record.entries.filter((e) => e.fate === 'acked').map((e) => e.uid);
       if (acked.length > 0) {
         draft.drop(acked);
+        pending.push({ t: 'drop', uids: acked });
         written = persist(draft.record);
       }
     }
@@ -618,33 +713,97 @@ function commit(draft: Draft, outdated: boolean): boolean {
     if (!written) trimLegacy(draft.record);
     // Plus rien à retenir (tout est acquitté) : retirer l'enregistrement passe
     // même sur un appareil plein, et rien n'est alors en retard sur l'appareil.
-    if (!written && draft.record.entries.length === 0) written = removeRegistry();
+    if (!written && draft.record.entries.length === 0) written = removeKeys([REGISTRY_KEY]);
     if (written) {
       volatile = null;
+      // Le contenu de ces clés est au registre : elles ont fini de servir. Une
+      // clé apparue depuis la lecture (un geste dans un autre onglet) n'est pas
+      // dans cette liste, et reste.
+      removeKeys(inboxKeys);
       return true;
     }
-    if (activeVolatile() === null) {
-      console.warn(
-        '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
-          'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
-      );
-    }
+    // Pas écrit : une clé de la boîte dont tout le contenu est réglé ne doit
+    // pas rentrer de nouveau à la lecture suivante.
+    const retained = new Set(draft.record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
+    removeKeys(
+      readInbox()
+        .filter((box) => inboxKeys.includes(box.key) && box.entries.every((e) => !retained.has(e.uid)))
+        .map((box) => box.key),
+    );
   }
-  volatile = { storage: localStorage, log: [...held, ...draft.log], outdated };
+  holdInMemory(pending, outdated);
   return false;
 }
 
 /**
- * UNE transition du registre : lecture, modification, écriture, sans rendre la
- * main entre les trois. `change` rend ce qu'il veut ; rien n'est écrit s'il n'a
- * rien modifié (sauf `force`, pour persister une reprise ou retenter le stockage).
+ * UNE transition du registre, SOUS LE VERROU : lecture, modification, écriture,
+ * sans rendre la main entre les trois. Ce que la boîte d'entrée et la mémoire
+ * portaient est écrit du même coup. `change` rend ce qu'il veut ; rien n'est
+ * écrit s'il n'y a rien à écrire (sauf `force`, pour retenter le stockage).
  */
 function transact<T>(change: (draft: Draft) => T, force = false): T {
-  const { draft, outdated, legacy } = open();
-  const result = change(draft);
-  highestSeq = Math.max(highestSeq, draft.record.seq);
-  if (draft.log.length > legacy || force) commit(draft, outdated);
+  const opened = open();
+  const result = change(opened.draft);
+  highestSeq = Math.max(highestSeq, opened.draft.record.seq);
+  if (opened.draft.log.length > 0 || activeDeferred().length > 0 || force) commit(opened);
   return result;
+}
+
+/**
+ * Fait entrer au registre ce qui attend ailleurs, SOUS LE VERROU : la boîte
+ * d'entrée, les transitions tenues en mémoire, et ce que portent les clés de
+ * l'ancien format. Pour ces dernières : le registre d'abord, les anciennes clés
+ * ensuite. Si l'app s'arrête entre les deux, le registre fait foi à l'ouverture
+ * suivante (une écriture déjà connue n'entre pas deux fois, cf. `admit`).
+ *
+ * EN CONTINU : au début de chaque passe d'envoi, parce qu'un onglet resté sur
+ * la version d'avant écrit encore dans ses clés. Les anciennes clés ne sont
+ * vidées que si TOUT le registre est écrit sur l'appareil : tant qu'une partie
+ * ne tient qu'en mémoire (stockage plein), elles restent la seule trace durable
+ * de ce qu'elles portent, et ne reçoivent que leur verrou (`guardLegacy`).
+ */
+function absorb(): void {
+  if (typeof localStorage === 'undefined') return;
+  const opened = open();
+  // Sous une version plus récente, rien n'est écrit ni effacé.
+  if (opened.outdated) return;
+  if (opened.draft.log.length > 0 || activeDeferred().length > 0 || activeVolatile() !== null) commit(opened);
+  guardLegacy(activeVolatile() !== null);
+}
+
+/**
+ * Demande l'écriture, sous le verrou, de ce qui n'est pas encore au registre
+ * (mémoire, boîte d'entrée, ancien format). Au tour suivant de la boucle
+ * d'événements, pas tout de suite : le geste qui vient de tenir une transition
+ * en mémoire lance le plus souvent une passe d'envoi dans la foulée (« Annuler
+ * la séance » puis sa suppression), qui l'écrit elle-même en prenant le verrou.
+ * S'il ne reste alors rien à écrire, le verrou n'est pas demandé. Sans l'API de
+ * verrou (vieux navigateur), l'écriture est faite sur-le-champ.
+ */
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+function persistSoon(always = false): void {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks || typeof locks.request !== 'function') {
+    absorb();
+    return;
+  }
+  if (persistTimer !== null) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    if (typeof localStorage === 'undefined') return;
+    const waiting =
+      activeDeferred().length > 0 || activeVolatile() !== null || readInbox().length > 0 || readLegacy().length > 0;
+    // `always` : le démarrage, qui pose aussi le verrou de l'ancienne file.
+    if (!waiting && !always) return;
+    void Promise.resolve(locks.request(FLUSH_LOCK, () => absorb())).catch(() => {});
+  }, 0);
+}
+
+/** Applique tout de suite, pour cette page, des transitions faites hors du verrou, et demande leur écriture. */
+function defer(log: Transition[]): void {
+  if (log.length === 0 || typeof localStorage === 'undefined') return;
+  deferred = { storage: localStorage, log: [...activeDeferred(), ...log] };
+  persistSoon();
 }
 
 /**
@@ -659,13 +818,25 @@ export function registryOutdated(): boolean {
 }
 
 /**
- * Vrai tant qu'une partie du registre ne tient qu'en mémoire : le stockage de
- * l'appareil a refusé sa dernière écriture. Les saisies en attente ne
- * survivraient pas à la fermeture de l'app.
+ * Vrai tant qu'une partie du registre ne tient qu'en mémoire parce que le
+ * stockage de l'appareil a refusé sa dernière écriture. Les saisies en attente
+ * ne survivraient pas à la fermeture de l'app.
  */
 export function storageFailing(): boolean {
   const gap = activeVolatile();
   return gap !== null && !gap.outdated;
+}
+
+/** Les écritures enfilées que l'appareil n'a écrites nulle part : ni registre, ni boîte, ni ancien format. */
+function unpersistedAdds(): Entry[] {
+  const gap = activeVolatile();
+  if (gap === null || gap.outdated) return [];
+  const added = new Set(gap.log.flatMap((t) => (t.t === 'add' ? [t.entry.uid] : [])));
+  if (added.size === 0) return [];
+  const persisted = new Set(
+    [...readPersisted().record.entries, ...readInbox().flatMap((box) => box.entries), ...readLegacy()].map((e) => e.uid),
+  );
+  return view().entries.filter((e) => e.fate !== 'acked' && added.has(e.uid) && !persisted.has(e.uid));
 }
 
 /**
@@ -677,13 +848,7 @@ export function storageFailing(): boolean {
  * recharger y est justement la seule issue, et la ligne de synchro a prévenu.
  */
 export function hasUnpersistedOps(): boolean {
-  const gap = activeVolatile();
-  if (gap === null || gap.outdated) return false;
-  const added = new Set(gap.log.flatMap((t) => (t.t === 'add' ? [t.entry.uid] : [])));
-  if (added.size === 0) return false;
-  // Écrites sur l'appareil : au registre, ou encore dans une clé de l'ancien format.
-  const persisted = new Set([...readPersisted().record.entries, ...readLegacy()].map((e) => e.uid));
-  return view().entries.some((e) => e.fate !== 'acked' && added.has(e.uid) && !persisted.has(e.uid));
+  return unpersistedAdds().length > 0;
 }
 
 /** Prévient l'écran que le registre a bougé sans geste de sa part. */
@@ -693,19 +858,42 @@ function notifyChanged(): void {
   }
 }
 
+/** Écrit les écritures d'UN geste dans sa clé de la boîte d'entrée. Faux si l'appareil refuse. */
+function writeInbox(entries: readonly Entry[]): boolean {
+  const key = `${INBOX_PREFIX}${newUid()}`;
+  const value = JSON.stringify({ v: 1, seq: 0, entries: [...entries] } satisfies RegistryRecord);
+  return writeMakingRoom(() => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Retente d'écrire sur l'appareil ce que le registre ne tient qu'en mémoire
- * (place libérée depuis le refus). Rend vrai si tout est persisté en sortie.
+ * (place libérée depuis le refus). Synchrone pour ce qui compte au
+ * rechargement : les saisies enfilées, écrites dans la boîte d'entrée. Le reste
+ * (acquittements, refus) est demandé sous le verrou. Rend vrai si plus rien ne
+ * tient en mémoire en sortie.
  */
 export function retryPersistQueue(): boolean {
   const gap = activeVolatile();
   if (gap === null) return true;
   if (gap.outdated) return false;
-  transact(() => undefined, true);
-  const persisted = activeVolatile() === null;
-  // La ligne « stockage plein » se relit sur cet événement.
-  if (persisted) notifyChanged();
-  return persisted;
+  const adds = unpersistedAdds();
+  if (adds.length > 0 && !writeInbox(adds)) return false;
+  if (gap.log.every((t) => t.t === 'add')) {
+    // Tout ce que la mémoire tenait est maintenant sur l'appareil.
+    volatile = null;
+    // La ligne « stockage plein » se relit sur cet événement.
+    notifyChanged();
+    return true;
+  }
+  persistSoon();
+  return activeVolatile() === null;
 }
 
 // --- Lectures ------------------------------------------------------------------
@@ -827,16 +1015,23 @@ export function heldCounts(): { own: number; ownRefused: number; foreign: number
 }
 
 // --- Purges ----------------------------------------------------------------------
+// Gestes synchrones, hors du verrou : ils ne réécrivent jamais l'enregistrement.
+// Ils retirent pour cette page (`defer`), effacent les clés de la boîte d'entrée
+// qu'ils vident entièrement, et l'écriture suit sous le verrou.
 
-/** Retire les clés de l'ancien format et le blob mis de côté. */
-function removeLegacyKeys(alsoCorrupt: boolean): void {
-  try {
-    localStorage.removeItem(LEGACY_QUEUE_KEY);
-    localStorage.removeItem(LEGACY_QUARANTINE_KEY);
-    if (alsoCorrupt) localStorage.removeItem(CORRUPT_KEY);
-  } catch {
-    /* no-op */
-  }
+/** Retire des écritures, par identité : tout de suite pour cette page, sous verrou pour l'appareil. */
+function dropNow(doomed: (entry: Entry) => boolean): void {
+  if (typeof localStorage === 'undefined') return;
+  const uids = new Set(view().entries.filter(doomed).map((e) => e.uid));
+  if (uids.size === 0) return;
+  // Une clé de la boîte dont toutes les écritures partent peut être effacée
+  // tout de suite : ce n'est pas une réécriture.
+  removeKeys(
+    readInbox()
+      .filter((box) => box.entries.every((e) => uids.has(e.uid)))
+      .map((box) => box.key),
+  );
+  defer([{ t: 'drop', uids: [...uids] }]);
 }
 
 /**
@@ -848,30 +1043,25 @@ function removeLegacyKeys(alsoCorrupt: boolean): void {
  */
 export function clearOwnQueue(): void {
   if (typeof localStorage === 'undefined') return;
-  transact((draft) => draft.drop(draft.record.entries.filter(isOwn).map((e) => e.uid)), true);
-  // Tout ce que portaient les anciennes clés est maintenant au registre.
-  if (activeVolatile() === null) removeLegacyKeys(true);
-  else {
-    try {
-      localStorage.removeItem(CORRUPT_KEY);
-    } catch {
-      /* no-op */
-    }
-  }
+  dropNow(isOwn);
+  removeKeys([CORRUPT_KEY]);
 }
 
 /**
  * Vide entièrement le registre, tous comptes confondus (forçage de purge,
  * tests), avec le blob mis de côté : sur un appareil partagé, il contient du
- * réalisé en clair. Le compteur, lui, ne recule pas.
+ * réalisé en clair. Rien n'est relu pour être gardé : ce n'est pas une
+ * lecture-modification-écriture. Le compteur, lui, ne recule pas.
  */
 export function clearQueue(): void {
   const { record, outdated } = readPersisted();
   volatile = null;
+  deferred = null;
   if (typeof localStorage === 'undefined') return;
-  removeLegacyKeys(true);
+  removeKeys([LEGACY_QUEUE_KEY, LEGACY_QUARANTINE_KEY, CORRUPT_KEY, ...keysWith(INBOX_PREFIX)]);
   if (outdated) return;
-  if (record.seq === 0 || !persist({ ...record, entries: [] })) removeRegistry();
+  const seq = Math.max(record.seq, highestSeq);
+  if (seq === 0 || !persist({ ...emptyRecord(), seq })) removeKeys([REGISTRY_KEY]);
 }
 
 /**
@@ -891,67 +1081,39 @@ export function clearQueue(): void {
  * pas remise au registre par la réponse de la base.
  */
 export function purgeByExecution(executionId: string): void {
-  transact((draft) =>
-    draft.drop(
-      draft.record.entries
-        .filter(
-          (e) =>
-            e.fate !== 'acked' &&
-            belongsToExecution(e.op, executionId) &&
-            (e.fate === 'pending' || isOwn(e)),
-        )
-        .map((e) => e.uid),
-    ),
+  dropNow(
+    (e) => e.fate !== 'acked' && belongsToExecution(e.op, executionId) && (e.fate === 'pending' || isOwn(e)),
   );
 }
 
 // --- Reprise de l'ancien format -----------------------------------------------
 
 /**
- * Fait entrer au registre ce que portent les clés de l'ancien format, puis les
- * vide (l'ancienne file ne garde que son verrou, cf. `LEGACY_STOP_UID`) : le
- * registre d'abord, les anciennes clés ensuite. Si l'app s'arrête
- * entre les deux, le registre fait foi à l'ouverture suivante (une écriture déjà
- * connue n'entre pas deux fois, cf. `admit`).
- *
- * EN CONTINU : appelée au démarrage et au début de chaque passe d'envoi, sous
- * son verrou, parce qu'un onglet resté sur la version d'avant écrit encore dans
- * ces clés. Ses envois en double sont sans effet (idempotence par id).
- * À RETIRER après le 2026-12-31 (cf. `LEGACY_QUEUE_KEY`).
- */
-function absorbLegacy(adopt?: (draft: Draft) => void): void {
-  if (typeof localStorage === 'undefined') return;
-  const { draft, outdated } = open();
-  adopt?.(draft);
-  // Sous une version plus récente, rien n'est écrit ni effacé.
-  if (outdated) return;
-  if (draft.log.length > 0) commit(draft, false);
-  // Les anciennes clés ne sont vidées que si TOUT le registre est écrit sur
-  // l'appareil : tant qu'une partie ne tient qu'en mémoire (stockage plein, à
-  // cette reprise ou à une précédente), elles restent la seule trace durable de
-  // ce qu'elles portent.
-  if (activeVolatile() !== null) return;
-  if (!legacySealed()) sealLegacy();
-}
-
-/**
  * Conversion de démarrage : fait entrer au registre l'ancienne file et l'ancienne
- * quarantaine (cf. `absorbLegacy`), complète les effacements de note datée
- * hérités, et attribue au compte local reconnu les écritures sans compte. À
- * appeler AU DÉMARRAGE, avant tout envoi et avant que la couche d'auth ne
- * réécrive le marqueur : faite pendant une passe, elle donnerait les écritures
- * de A au compte B arrivé entre-temps. Sans marqueur, rien n'est attribué : ces
- * écritures restent au registre et ne partent sous aucun compte.
+ * quarantaine (cf. `absorb`), complète les effacements de note datée hérités, et
+ * attribue au compte local reconnu les écritures sans compte. À appeler AU
+ * DÉMARRAGE, avant tout envoi et avant que la couche d'auth ne réécrive le
+ * marqueur : le compte est relevé ICI, pas au moment de l'écriture (faite
+ * pendant une passe, l'attribution donnerait les écritures de A au compte B
+ * arrivé entre-temps). Sans marqueur, rien n'est attribué : ces écritures
+ * restent au registre et ne partent sous aucun compte.
+ *
+ * Synchrone pour cette page ; l'écriture sur l'appareil suit, sous le verrou.
  */
 export function adoptLegacyOps(): void {
-  absorbLegacy((draft) => {
-    completeLegacyNoteDeletes(draft);
-    const owner = loadLocalAccount()?.userId;
-    if (!owner) return;
+  if (typeof localStorage === 'undefined') return;
+  const { draft } = open();
+  const before = draft.log.length;
+  completeLegacyNoteDeletes(draft);
+  const owner = loadLocalAccount()?.userId;
+  if (owner) {
     for (const e of draft.record.entries) {
       if (e.fate !== 'acked' && e.owner === undefined) draft.patch(e.uid, { owner });
     }
-  });
+  }
+  const adopted = draft.log.slice(before);
+  if (adopted.length > 0) deferred = { storage: localStorage, log: [...activeDeferred(), ...adopted] };
+  persistSoon(true);
 }
 
 // --- Enfilement ---------------------------------------------------------------
@@ -971,35 +1133,42 @@ function stripQueueFields(op: OutboxOp): OutboxOp {
 }
 
 /**
- * ENFILE les écritures d'UN geste comme une seule unité : une lecture du
- * registre, un ajout, UNE écriture sur l'appareil. Elles sont toutes écrites,
- * ou toutes tenues en mémoire (repli sous stockage plein), jamais coupées en
- * deux : enfilées une à une, un stockage presque plein écrivait la suppression
- * d'une série sans les remontées de rang qui la suivent.
+ * ENFILE les écritures d'UN geste comme une seule unité : UNE écriture sur
+ * l'appareil, dans une clé à elles (cf. `INBOX_PREFIX`), que personne d'autre
+ * ne réécrit. Elles sont toutes écrites, ou toutes tenues en mémoire (repli
+ * sous stockage plein), jamais coupées en deux : enfilées une à une, un
+ * stockage presque plein écrivait la suppression d'une série sans les remontées
+ * de rang qui la suivent.
  *
- * Synchrone, et durable dès le retour : même si l'app meurt avant l'envoi, elles
- * remonteront au prochain démarrage. L'ordre de `ops` est celui de l'envoi.
- * Chaque écriture reçoit son numéro, le compte reconnu à cet instant, et sa
- * parenté (registry-record.ts). Rend l'identité de chacune, dans le même ordre ;
- * `[]` pour une liste vide (rien n'est écrit).
+ * Synchrone, sans attendre aucun verrou, et durable dès le retour : même si
+ * l'app meurt avant l'envoi, elles remonteront au prochain démarrage. L'ordre
+ * de `ops` est celui de l'envoi. Chaque écriture reçoit son numéro et le compte
+ * reconnu à cet instant ; sa parenté est posée à son entrée au registre
+ * (registry-record.ts), que toute lecture fait déjà. Rend l'identité de
+ * chacune, dans le même ordre ; `[]` pour une liste vide (rien n'est écrit).
  */
 export function enqueueAll(ops: readonly OutboxOp[]): string[] {
-  if (ops.length === 0) return [];
-  return transact((draft) => {
-    const owner = loadLocalAccount()?.userId;
-    prune(draft);
-    return ops.map((op) => {
-      const uid = newUid();
-      admit(draft, {
-        n: draft.next(),
-        uid,
-        ...(owner ? { owner } : {}),
-        op: stripQueueFields(op),
-        fate: 'pending',
-      });
-      return uid;
-    });
-  });
+  if (ops.length === 0 || typeof localStorage === 'undefined') return [];
+  // Chaque enfilement retente d'abord ce que l'appareil avait refusé.
+  if (storageFailing()) retryPersistQueue();
+  const { draft, outdated } = open();
+  const owner = loadLocalAccount()?.userId;
+  const entries: Entry[] = ops.map((op) => ({
+    n: draft.next(),
+    uid: newUid(),
+    ...(owner ? { owner } : {}),
+    op: stripQueueFields(op),
+    fate: 'pending',
+  }));
+  highestSeq = Math.max(highestSeq, draft.record.seq);
+  // Sous une version plus récente, rien n'est écrit : la saisie tient en mémoire.
+  if (outdated || !writeInbox(entries)) {
+    holdInMemory(
+      entries.map((entry) => ({ t: 'add' as const, entry })),
+      outdated,
+    );
+  }
+  return entries.map((entry) => entry.uid);
 }
 
 /** Enfile UNE écriture (cf. `enqueueAll`) et rend le nombre d'écritures en attente. */
@@ -1308,9 +1477,10 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
   let flushed = 0;
   const done = (): FlushResult => ({ remaining: pendingCount(), flushed, settled });
 
-  // Sous le verrou : ce qu'un onglet de l'ancienne version a laissé dans ses
-  // clés entre au registre avant tout envoi (cf. `absorbLegacy`).
-  absorbLegacy();
+  // Sous le verrou : la boîte d'entrée, la mémoire, et ce qu'un onglet de
+  // l'ancienne version a laissé dans ses clés entrent au registre avant tout
+  // envoi (cf. `absorb`).
+  absorb();
 
   // Garde-fou de convergence : chaque tour règle une écriture ou arrête la passe.
   let budget = view().entries.length * 2 + ACKED_MAX;
@@ -1398,4 +1568,23 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
     }
   }
   return done();
+}
+
+// RÉVEIL par un autre onglet. Un onglet resté sur l'ancienne version, arrêté
+// par le verrou de l'ancienne file, n'envoie plus ce qu'il enfile : c'est ici
+// que ça part. Son écriture dans l'ancienne clé (ou un geste d'un autre onglet
+// dans la boîte d'entrée) relance donc la passe de l'app, sans attendre une
+// saisie, un remontage ou le retour du réseau. L'événement `storage` ne vient
+// que des AUTRES onglets.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', (event) => {
+    const key = (event as StorageEvent).key;
+    if (key === null) return;
+    const legacy = key === LEGACY_QUEUE_KEY || key === LEGACY_QUARANTINE_KEY;
+    if (!legacy && !key.startsWith(INBOX_PREFIX)) return;
+    if (lockRetryRunner === null || pendingCount() === 0) return;
+    void lockRetryRunner()
+      .catch(() => {})
+      .finally(notifyChanged);
+  });
 }

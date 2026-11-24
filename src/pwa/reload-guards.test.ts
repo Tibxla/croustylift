@@ -25,6 +25,12 @@ import { REGISTRY_KEY, storedPendingIds } from '../test/registry'
 
 class MemoryStorage {
   private store = new Map<string, string>()
+  get length(): number {
+    return this.store.size
+  }
+  key(i: number): string | null {
+    return [...this.store.keys()][i] ?? null
+  }
   getItem(k: string): string | null {
     return this.store.get(k) ?? null
   }
@@ -45,7 +51,7 @@ function quota(): { full: boolean } {
   const store = globalThis.localStorage
   const setItem = store.setItem.bind(store)
   store.setItem = (k: string, v: string) => {
-    if (state.full && k === REGISTRY_KEY) throw new Error('QuotaExceededError')
+    if (state.full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError')
     setItem(k, v)
   }
   return state

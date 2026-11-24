@@ -28,7 +28,7 @@ import {
   type PatchSetOp,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
-import { legacyQueueWrites } from '../../test/registry';
+import { legacyQueueWrites, otherTabRewrites, REGISTRY_KEY, registrySettled, storedWrites } from '../../test/registry';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
@@ -45,22 +45,7 @@ const quarantineCount = () => listRefused().length;
 const pendingAmong = (uids: readonly string[]) => fatesOf(uids).filter((f) => f === 'pending').length;
 const refusedAmong = (uids: readonly string[]) => fatesOf(uids).filter((f) => f === 'refused').length;
 
-const REGISTRY_KEY = 'croustylift:registre';
-interface StoredEntry {
-  n: number;
-  uid: string;
-  owner?: string;
-  op: OutboxOp;
-  fate: string;
-}
-/** L'enregistrement tel qu'il est écrit sur l'appareil (vide s'il n'y est pas). */
-const persisted = (): StoredEntry[] =>
-  (JSON.parse(localStorage.getItem(REGISTRY_KEY) ?? '{"entries":[]}') as { entries: StoredEntry[] }).entries;
-/** Un AUTRE onglet réécrit l'enregistrement pendant qu'on a le dos tourné. */
-function otherTabRewrites(change: (entries: StoredEntry[]) => StoredEntry[]): void {
-  const record = JSON.parse(localStorage.getItem(REGISTRY_KEY)!) as { entries: StoredEntry[] };
-  localStorage.setItem(REGISTRY_KEY, JSON.stringify({ ...record, entries: change(record.entries) }));
-}
+const persisted = () => storedWrites();
 /** Retire la première écriture en attente (un autre onglet l'a envoyée, ou purgée). */
 const dropFirstPending = () =>
   otherTabRewrites((entries) => {
@@ -74,6 +59,12 @@ const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, _at, ...op }) =>
 
 class MemoryStorage {
   private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(i: number): string | null {
+    return [...this.store.keys()][i] ?? null;
+  }
   getItem(k: string): string | null {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
@@ -1426,7 +1417,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
     store.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1445,7 +1436,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
     store.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1473,7 +1464,7 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
     store.setItem = (k: string, v: string) => {
-      if (state.full && k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (state.full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     return state;
@@ -1871,9 +1862,10 @@ describe('écritures partielles (patchSet)', () => {
     expect('only' in readQueue()[0]!).toBe(false);
   });
 
-  it('file héritée : la forme héritée entre convertie au registre dès la prochaine écriture', () => {
+  it('file héritée : la forme héritée entre convertie au registre à la prochaine écriture sous verrou', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'values')]));
     enqueue(execOp());
+    await registrySettled();
     expect(persisted().map((e) => e.op.type)).toEqual(['patchSet', 'upsertExecution']);
   });
 
@@ -1936,7 +1928,7 @@ describe('écritures partielles (patchSet)', () => {
   // Lue convertie, l'ancienne forme restait BRUTE dans le stockage tant que rien
   // ne réécrivait la file : un onglet de main sur la même origine la rejouait
   // alors en upsert complet (90 kg remis à 80). Le démarrage la réécrit.
-  it('au démarrage, l’ancienne file et l’ancienne quarantaine entrent au registre et quittent l’appareil', () => {
+  it('au démarrage, l’ancienne file et l’ancienne quarantaine entrent au registre et quittent l’appareil', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify([{ ...execOp(), _uid: 'u-exec' }, legacyPartial('s2', 'values', { weightKg: 90 })]),
@@ -1948,6 +1940,9 @@ describe('écritures partielles (patchSet)', () => {
     expect(rawLegacyPartials()).toEqual(['s2', 's9']);
 
     adoptLegacyOps();
+    // Converties tout de suite pour la page ; l'écriture suit, sous le verrou.
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
+    await registrySettled();
 
     // Les anciennes clés sont effacées : un onglet resté sur l'ancienne version
     // n'y trouve plus rien à rejouer.
@@ -1958,12 +1953,14 @@ describe('écritures partielles (patchSet)', () => {
     expect(readQuarantine()[0]).toMatchObject({ op: { type: 'patchSet', id: 's9' }, reason: '23514 : rejet' });
   });
 
-  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', () => {
+  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', async () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     enqueue(execOp());
     adoptLegacyOps();
+    await registrySettled();
     const setItem = vi.spyOn(localStorage, 'setItem');
     adoptLegacyOps();
+    await registrySettled();
     expect(setItem).not.toHaveBeenCalled();
   });
 

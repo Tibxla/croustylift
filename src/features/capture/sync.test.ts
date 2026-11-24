@@ -43,6 +43,12 @@ import { saveLocalAccount } from '../../lib/local-account';
 
 class MemoryStorage {
   private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(i: number): string | null {
+    return [...this.store.keys()][i] ?? null;
+  }
   getItem(k: string): string | null {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }

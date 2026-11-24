@@ -189,18 +189,29 @@ describe('quota atteint au milieu d’un geste', () => {
     storedWrites()
       .filter((write) => write.fate === 'pending')
       .map(({ op }) => `${op.type}:${op.id}${'only' in op ? `:${op.only}` : ''}`);
-  /** La taille de l'enregistrement quand il ne porte que la première écriture du geste. */
+  /** La place que prend, seule, la première écriture du geste. */
   const sizeWithFirstOnly = (gesture: SetGesture): number => {
-    enqueueAll([gesture.ops[0]!]);
-    const size = localStorage.getItem(REGISTRY_KEY)!.length;
-    clearQueue();
-    return size;
-  };
-  /** Le stockage n'accepte l'enregistrement que jusqu'à `max` caractères. */
-  const capRegistry = (max: number) => {
+    const sizes: number[] = [];
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY && v.length > max) throw new Error('QuotaExceededError');
+      sizes.push(v.length);
+      setItem(k, v);
+    };
+    enqueueAll([gesture.ops[0]!]);
+    localStorage.setItem = setItem;
+    clearQueue();
+    return sizes[0]!;
+  };
+  /** L'appareil n'accepte les écritures du registre que jusqu'à `max` caractères en tout. */
+  const capRegistry = (max: number) => {
+    const setItem = localStorage.setItem.bind(localStorage);
+    const sizes = new Map<string, number>();
+    localStorage.setItem = (k: string, v: string) => {
+      if (k.startsWith(REGISTRY_KEY)) {
+        const total = [...sizes].reduce((sum, [key, size]) => sum + (key === k ? 0 : size), 0) + v.length;
+        if (total > max) throw new Error('QuotaExceededError');
+        sizes.set(k, v.length);
+      }
       setItem(k, v);
     };
   };
@@ -281,7 +292,9 @@ describe('écriture refusée, puis corrigée ou supprimée', () => {
       setItem(k, v);
     };
     enqueueAll(correctSet(state, BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);
-    expect(writes).toEqual([REGISTRY_KEY]);
+    // Une seule écriture, dans une clé à elle : jamais une réécriture du registre.
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^croustylift:registre:in:/);
     expect(quarantined()).toEqual(['insertSet:s4:123456']);
     // Le registre sait que la correction dépend de ce refus (abandon, feuille).
     expect(listRefused()[0]?.dependents).toMatchObject([{ type: 'patchSet', id: 's4', only: 'values', weightKg: 100 }]);
@@ -291,7 +304,7 @@ describe('écriture refusée, puis corrigée ou supprimée', () => {
     const state = await withRefusedS4();
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     enqueueAll(correctSet(state, BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);

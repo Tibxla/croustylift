@@ -33,7 +33,7 @@ import {
   type SyncFns,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
-import { legacyQueueWrites, REGISTRY_KEY, storedWrites } from '../../test/registry';
+import { legacyQueueWrites, REGISTRY_KEY, registrySettled, storedWrites } from '../../test/registry';
 
 class MemoryStorage {
   store = new Map<string, string>();
@@ -133,9 +133,10 @@ describe('version inconnue : une version plus récente de l’app a écrit le re
     expect(localStorage.getItem(REGISTRY_KEY)).toBe(future);
   });
 
-  it('un enregistrement de la version courante n’est pas « plus récent »', () => {
+  it('un enregistrement de la version courante n’est pas « plus récent »', async () => {
     localStorage.removeItem(REGISTRY_KEY);
     enqueue(insert('s1'));
+    await flush(base().fns);
     expect(registryOutdated()).toBe(false);
     expect(JSON.parse(localStorage.getItem(REGISTRY_KEY)!)).toMatchObject({ v: 1 });
   });
@@ -165,8 +166,9 @@ describe('première ouverture : la file et la quarantaine de l’ancien format e
     localStorage.setItem(LEGACY_QUARANTINE, JSON.stringify(legacyQuarantine));
   });
 
-  it('d’un coup : chaque écriture garde son identité, son compte, son sort et sa place', () => {
+  it('d’un coup : chaque écriture garde son identité, son compte, son sort et sa place', async () => {
     adoptLegacyOps();
+    await registrySettled();
 
     expect(storedWrites().map((w) => `${w.uid}:${w.fate}`)).toEqual([
       'r3:refused',
@@ -208,12 +210,14 @@ describe('première ouverture : la file et la quarantaine de l’ancien format e
       setItem(k, v);
     };
     adoptLegacyOps();
+    await registrySettled();
     expect(legacyQueueWrites()).toHaveLength(2);
     expect(storedWrites()).toHaveLength(5);
 
     // Ouverture suivante.
     dead = false;
     adoptLegacyOps();
+    await registrySettled();
     expect(storedWrites()).toHaveLength(5);
     expect(legacyQueueWrites()).toEqual([]);
     expect(localStorage.getItem(LEGACY_QUARANTINE)).toBeNull();
@@ -226,7 +230,7 @@ describe('première ouverture : la file et la quarantaine de l’ancien format e
   it('stockage plein à la conversion : les anciennes clés restent la seule trace, rien n’est effacé', () => {
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     adoptLegacyOps();
@@ -650,7 +654,7 @@ describe('une écriture acquittée reste le temps qu’une lecture partie avant 
     enqueueAll([insert('s1'), insert('s2', 2)]);
     await flush(base().fns);
     expect(storedWrites().map((w) => w.fate)).toEqual(['acked', 'acked']);
-    // Il reste de la place pour une écriture, pas pour trois.
+    // Il reste de la place pour une écriture au registre, pas pour trois.
     const room = localStorage.getItem(REGISTRY_KEY)!.length;
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
@@ -659,6 +663,8 @@ describe('une écriture acquittée reste le temps qu’une lecture partie avant 
     };
 
     enqueue(insert('s3', 3));
+    // La passe fait entrer la saisie au registre (réseau coupé : rien ne part).
+    await flush(base({ cuts: () => true }).fns);
 
     expect(storageFailing()).toBe(false);
     expect(storedWrites().map((w) => `${w.op.id}:${w.fate}`)).toEqual(['s3:pending']);
@@ -683,15 +689,16 @@ describe('relecture contradictoire : conversion sous stockage plein', () => {
     localStorage.setItem(LEGACY_QUEUE, legacy);
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
     adoptLegacyOps();
+    await registrySettled();
     // Seconde reprise (début d'une passe), réseau coupé : rien n'est acquitté.
     await flush(base({ cuts: () => true }).fns);
 
-    expect(localStorage.getItem(LEGACY_QUEUE)).toBe(legacy);
+    expect(legacyQueueWrites()).toEqual(JSON.parse(legacy));
   });
 });
 
@@ -713,9 +720,10 @@ describe('relecture contradictoire : ordre de l’ancienne file', () => {
 });
 
 describe('relecture contradictoire : l’ancien onglet n’envoie plus sa propre file', () => {
-  it('le registre actif pose en tête de l’ancienne file une écriture que l’ancienne version ne sait pas jouer : sa passe s’arrête dessus', () => {
+  it('le registre actif pose en tête de l’ancienne file une écriture que l’ancienne version ne sait pas jouer : sa passe s’arrête dessus', async () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     adoptLegacyOps();
+    await registrySettled();
     const queue = JSON.parse(localStorage.getItem(LEGACY_QUEUE)!) as { type: string; _owner?: string }[];
     expect(queue).toHaveLength(1);
     expect(queue[0]).toMatchObject({ _owner: 'user-1' });
@@ -731,6 +739,7 @@ describe('relecture contradictoire : l’ancien onglet n’envoie plus sa propre
   it('ce que l’ancien onglet enfile derrière est repris ici, à sa place : la correction la plus récente part en dernier', async () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     adoptLegacyOps();
+    await registrySettled();
     // Ici d'abord : 90 kg. Puis l'ancien onglet, plus tard : 100 kg, derrière le verrou.
     enqueue(correction('s1', 90));
     const now = storedWrites()[0]!.n;
@@ -793,5 +802,101 @@ describe('relecture contradictoire : une écriture acquittée trop ancienne n’
     now += 60 * 60 * 1000;
 
     expect(writesSince(stamp)).toEqual([]);
+  });
+});
+
+// --- Second tour (constats 5 et 3 de la vérification ciblée) ----------------------
+
+describe('second tour : un renvoi réussi n’efface pas un refus plus récent', () => {
+  it('deux corrections refusées, 90 puis 100 kg : la première renvoyée avec succès, la seconde reste', async () => {
+    enqueue(correction('s1', 90));
+    enqueue(correction('s1', 100));
+    await flush(base({ refuses: () => '42501' }).fns);
+    const [first, second] = listRefused();
+    expect([first!.op, second!.op]).toMatchObject([{ weightKg: 90 }, { weightKg: 100 }]);
+
+    await retryRefused(first!.refusalId);
+    await flush(base().fns);
+
+    expect(listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([100]);
+  });
+});
+
+describe('second tour : le verrou de l’ancienne file suit le compte, et tient sous stockage plein', () => {
+  const stops = () =>
+    (JSON.parse(localStorage.getItem(LEGACY_QUEUE) ?? '[]') as { _uid?: string; _owner?: string }[]).filter(
+      (op) => op._uid === 'registre-actif',
+    );
+
+  it('posé avant toute connexion, il est complété dès qu’un compte est reconnu', async () => {
+    clearLocalAccount();
+    adoptLegacyOps();
+    await flush(base().fns);
+    // Connexion : la passe qui suit l'arrivée du compte complète le verrou.
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    await flush(base().fns, async () => 'user-1');
+
+    expect(stops().map((op) => op._owner)).toContain('user-1');
+  });
+
+  it('un autre compte arrive : le verrou vaut pour les deux', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    await flush(base().fns);
+    saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
+    await flush(base().fns);
+
+    expect(stops().map((op) => op._owner).sort()).toEqual(['user-1', 'user-2']);
+  });
+
+  it('stockage plein : le verrou est posé EN TÊTE de l’ancienne file, sans rien en retirer', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    const op = { ...insert('seule-trace'), _uid: 'q1', _owner: 'user-1', _at: 1000 };
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([op]));
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    await flush(base({ cuts: () => true }).fns);
+
+    const queue = JSON.parse(localStorage.getItem(LEGACY_QUEUE)!) as { _uid: string }[];
+    expect(queue.map((o) => o._uid)).toEqual(['registre-actif', 'q1']);
+  });
+});
+
+describe('second tour : un ancien onglet enfile derrière le verrou, la reprise est réveillée', () => {
+  /** Un onglet neuf, avec une fenêtre qui reçoit les événements `storage` des autres onglets. */
+  async function tabWithWindow() {
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    vi.resetModules();
+    const tab = await import('./outbox');
+    const storageEvent = (key: string | null) => target.dispatchEvent(Object.assign(new Event('storage'), { key }));
+    return { tab, storageEvent };
+  }
+
+  it('une écriture dans l’ancienne clé relance la passe de l’app, sans attendre une saisie ici', async () => {
+    const { tab, storageEvent } = await tabWithWindow();
+    const runner = vi.fn(async () => undefined);
+    tab.setFlushRetryRunner(runner);
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([{ ...insert('vieux'), _uid: 'old-1', _at: Date.now() }]));
+
+    storageEvent(LEGACY_QUEUE);
+
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it('une autre clé, ou rien à envoyer, ne réveille rien', async () => {
+    const { tab, storageEvent } = await tabWithWindow();
+    const runner = vi.fn(async () => undefined);
+    tab.setFlushRetryRunner(runner);
+
+    storageEvent(LEGACY_QUEUE); // rien n'y attend
+    localStorage.setItem(LEGACY_QUEUE, JSON.stringify([{ ...insert('vieux'), _uid: 'old-1', _at: Date.now() }]));
+    storageEvent('croustylift:readcache:x');
+    storageEvent(null);
+
+    expect(runner).not.toHaveBeenCalled();
   });
 });

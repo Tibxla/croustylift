@@ -121,12 +121,6 @@ perte), finition.
   correction, l'ancienne part après et gagne en base, sur les colonnes qu'elle écrit :
   c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas se présente : dater
   les écritures d'une même ligne côté base.
-- **Deux onglets qui écrivent le registre au même instant** (finition). Chaque transition
-  est une lecture-modification-écriture synchrone d'un seul enregistrement, mais
-  `localStorage` n'a pas de verrou entre processus : deux enfilements simultanés dans
-  deux onglets peuvent se marcher dessus, comme avec la file d'avant. La passe d'envoi,
-  le renvoi et l'abandon sont ordonnés par le verrou du navigateur. Piste : un stockage
-  transactionnel (écarté pour l'instant, ADR 0025).
 - **Version inconnue du registre** (finition). Un onglet resté sur une version plus
   ancienne que celle qui a écrit le registre n'envoie plus rien et demande de recharger ;
   ce qu'on y saisit d'ici là ne tient qu'en mémoire. Piste, à la première montée de

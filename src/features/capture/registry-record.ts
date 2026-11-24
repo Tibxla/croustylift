@@ -479,7 +479,11 @@ export function acknowledge(
     // nouvelle valeur, et renvoyables par-dessus elle. Les colonnes qu'elle ne
     // couvre pas restent refusées.
     const covers = columnsOf(sent);
-    for (const old of [...draft.record.entries]) {
+    // Les refus ANTÉRIEURS seulement, par position : un refus plus récent que
+    // l'écriture acquittée (un ancien refus renvoyé avec succès) reste la
+    // dernière saisie de l'utilisateur.
+    const at = draft.record.entries.findIndex((e) => e.uid === uid);
+    for (const old of draft.record.entries.slice(0, at)) {
       if (old.fate !== 'refused' || old.owner !== entry.owner || old.op.type !== 'patchSet' || old.op.id !== sent.id) continue;
       if (old.op.only !== sent.only) continue;
       const left = columnsOf(old.op).filter((col) => !covers.includes(col));

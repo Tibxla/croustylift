@@ -3,6 +3,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OutboxOp, SyncFns } from './outbox';
 
+import { storedPendingIds } from '../../test/registry';
+
 type Outbox = typeof import('./outbox');
 
 /** Stockage partagé, énumérable, dont l'écriture de la file peut être refusée. */
@@ -14,7 +16,7 @@ class SharedStorage {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
   setItem(k: string, v: string): void {
-    if (this.full && k === 'croustylift:registre') throw new Error('QuotaExceededError');
+    if (this.full && k.startsWith('croustylift:registre')) throw new Error('QuotaExceededError');
     this.store.set(k, String(v));
   }
   removeItem(k: string): void {
@@ -73,15 +75,8 @@ async function until(ready: () => boolean): Promise<void> {
   if (!ready()) throw new Error('condition jamais atteinte');
 }
 
-/** Les écritures EN ATTENTE de l'enregistrement tel qu'il est écrit sur l'appareil. */
-const persistedIds = () =>
-  (
-    JSON.parse(storage.getItem('croustylift:registre') ?? '{"entries":[]}') as {
-      entries: { op: OutboxOp; fate: string }[];
-    }
-  ).entries
-    .filter((entry) => entry.fate === 'pending')
-    .map((entry) => entry.op.id);
+/** Les écritures EN ATTENTE que l'appareil porte (enregistrement et boîte d'entrée). */
+const persistedIds = () => storedPendingIds(storage);
 
 beforeEach(() => {
   storage = new SharedStorage();
@@ -347,5 +342,58 @@ describe('verrou de flush occupé par un autre onglet', () => {
     expect(tabB.sent).toEqual([]);
     // Un seul réveil, qui trouve la file vide et ne redemande pas le verrou.
     expect(lockRequests.mock.calls.length).toBe(0);
+  });
+});
+
+// Constat 2 de la relecture contradictoire : `localStorage` n'a pas de verrou
+// entre processus. L'onglet A lit le registre pour acquitter une série, l'onglet
+// B enfile au même instant, puis A écrit son brouillon, d'avant la saisie de B.
+describe('enfilement dans un onglet pendant l’acquittement dans l’autre', () => {
+  it('la saisie de B survit à l’écriture, périmée, de A', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    const tabA = recorder();
+    await a.flush(tabA.fns); // S0 est au registre, acquittée
+    a.enqueue(setOp('S1'));
+    // Au moment précis où A écrit le registre (acquittement de S1), B enfile S2 :
+    // l'écriture de A, préparée avant, ne la contient pas.
+    const setItem = storage.setItem.bind(storage);
+    let interleaved = false;
+    storage.setItem = (k: string, v: string) => {
+      if (k.startsWith('croustylift:registre') && !interleaved && v.includes('"acked"') && v.includes('S1')) {
+        interleaved = true;
+        b.enqueue(setOp('S2'));
+      }
+      setItem(k, v);
+    };
+
+    await a.flush(tabA.fns);
+    storage.setItem = setItem;
+
+    expect(interleaved).toBe(true);
+    // S2 n'a pas été écrasée : elle est partie (ici, la passe de A l'a reprise
+    // en relisant le registre), une seule fois, et plus rien n'attend.
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    expect([...tabA.sent, ...tabB.sent].filter((id) => id === 'S2')).toEqual(['S2']);
+    expect(b.readQueue()).toEqual([]);
+    expect(persistedIds()).toEqual([]);
+  });
+
+  it('un geste est UNE écriture de l’appareil, dans une clé que personne d’autre ne réécrit', async () => {
+    const a = await openTab();
+    const writes: string[] = [];
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      writes.push(k);
+      setItem(k, v);
+    };
+    a.enqueueAll([setOp('S1'), setOp('S2')]);
+    storage.setItem = setItem;
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^croustylift:registre:in:/);
+    expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
   });
 });

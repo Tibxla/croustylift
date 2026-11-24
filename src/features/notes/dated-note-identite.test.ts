@@ -298,17 +298,17 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
       { ...legacyWrite, _uid: 'uid-ecriture' },
       { ...legacyDelete, _uid: 'uid-effacement' },
     ]);
-    const before = localStorage.getItem('croustylift:outbox');
+    const before = legacyQueueWrites();
     // Le stockage refuse toute écriture du registre : la conversion ne peut pas s'écrire.
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
     adoptLegacyOps();
-    // L'ancienne file reste la seule trace sur l'appareil : elle n'est pas effacée.
-    expect(localStorage.getItem('croustylift:outbox')).toBe(before);
+    // L'ancienne file reste la seule trace sur l'appareil : elle n'est pas vidée.
+    expect(legacyQueueWrites()).toEqual(before);
     // La file LUE porte bien l'effacement complété, une seule fois, après l'écriture.
     expect(readQueue().map((op) => op.type)).toEqual(['upsertDatedNote', 'deleteDatedNote']);
     expect(readQueue()[1]).toMatchObject({ _uid: 'uid-effacement', executionId: EXEC, exerciseId: EXO });
@@ -331,7 +331,7 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     ]);
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 

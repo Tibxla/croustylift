@@ -20,7 +20,7 @@ import {
   type ReadStamp,
   type SyncFns,
 } from './outbox';
-import { REGISTRY_KEY } from '../../test/registry';
+import { REGISTRY_KEY, storedWrites } from '../../test/registry';
 import { computeSetBadges } from './set-badges';
 import { changeSetSide, correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
 import { deletionPreview } from './set-ranks';
@@ -875,7 +875,7 @@ describe('gestes sur les séries sous stockage plein', () => {
     }
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
@@ -883,7 +883,7 @@ describe('gestes sur les séries sous stockage plein', () => {
     state = play(state, correctSet(state, BENCH, 's3', { weightKg: 82.5, reps: 6, rir: 0 })!);
     state = play(state, deleteSet(state, BENCH, 's1')!);
     expect(storageFailing()).toBe(true);
-    expect(localStorage.getItem(REGISTRY_KEY)).toBeNull();
+    expect(storedWrites()).toEqual([]);
     expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
       'patchSet:s3',
       'deleteSet:s1',
