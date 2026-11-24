@@ -27,8 +27,9 @@ describe('formatRate', () => {
 })
 
 describe('formatCount', () => {
-  it('une décimale et une virgule, comme la fin de séance', () => {
+  it('une décimale et une virgule, un entier sans décimale, comme la fin de séance', () => {
     expect(formatCount(5.8)).toBe('5,8')
-    expect(formatCount(6)).toBe('6,0')
+    expect(formatCount(6)).toBe('6')
+    expect(formatCount(5.96)).toBe('6')
   })
 })

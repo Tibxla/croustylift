@@ -29,14 +29,17 @@ export function formatSetCount(n: number): string {
 }
 
 /**
- * Un décompte de séries FRACTIONNAIRE (ADR 0006, pondération par reps) : toujours
- * une décimale, virgule décimale : "5,8", "6,0". La forme de la fin de séance,
+ * Un décompte de séries FRACTIONNAIRE (ADR 0006, pondération par reps) : une
+ * décimale, virgule décimale, sauf pour un entier : "5,8", "6" (jamais « 1,0
+ * série »). La forme de la fin de séance,
  * du décompte prévu de l'éditeur de séance et du journal de l'Analyse. Défini
  * ici, dans le chemin critique : l'Analyse le reprend (analysis/format.ts), et
  * non l'inverse, pour ne pas tirer son code dans le chunk d'entrée.
  */
 export function formatCount(value: number): string {
-  return value.toFixed(1).replace('.', ',');
+  // Arrondi d'abord : 5,96 s'écrit « 6 », pas « 6,0 ».
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace('.', ',');
 }
 
 /** e1RM arrondi à 0,5 kg, format FR : "94,4". */
