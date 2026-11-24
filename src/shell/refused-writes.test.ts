@@ -1,6 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import type { RefusedWrite } from '../features/capture/outbox';
-import { canRetry, dependentsOf, describeRefusal, fmtDay, fmtWhen, refusalReason } from './refused-writes';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { clearQueue, enqueue, type RefusedWrite } from '../features/capture/outbox';
+import { saveLocalAccount } from '../lib/local-account';
+import {
+  canRetry,
+  dependentsOf,
+  describeRefusal,
+  fmtDay,
+  fmtWhen,
+  refusalReason,
+  RESEND_BLOCK_TEXT,
+  resendBlock,
+} from './refused-writes';
 
 const at = '2026-11-24T13:05:00.000Z';
 const lookup = { exerciseName: (id: string) => (id === 'ex1' ? 'Développé couché' : undefined) };
@@ -140,5 +150,69 @@ describe('saisies refusées lues par un humain', () => {
   it('les dates se lisent en français', () => {
     expect(fmtDay('2026-03-05')).toBe('5 mars');
     expect(fmtWhen(at)).toMatch(/^le 24 nov\. à \d{1,2} h 05$/);
+  });
+});
+
+// « Renvoyer » qui ne remet rien en file (`retryRefused` rend faux) : la feuille
+// dit pourquoi, avec le même prédicat que la file (`setWriteQueued`, même série
+// et même compte). Une suppression de la série en file n'est pas un stockage plein.
+describe('pourquoi « Renvoyer » n’a rien renvoyé', () => {
+  class MemoryStorage {
+    private store = new Map<string, string>();
+    getItem(k: string): string | null {
+      return this.store.get(k) ?? null;
+    }
+    setItem(k: string, v: string): void {
+      this.store.set(k, String(v));
+    }
+    removeItem(k: string): void {
+      this.store.delete(k);
+    }
+    clear(): void {
+      this.store.clear();
+    }
+    get length(): number {
+      return this.store.size;
+    }
+    key(i: number): string | null {
+      return [...this.store.keys()][i] ?? null;
+    }
+  }
+
+  const refused = (owner: string | undefined = 'user-1'): RefusedWrite =>
+    entry({ type: 'insertSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 80, reps: 8, rir: 2, ...(owner ? { _owner: owner } : {}) }, '42501 : new row violates row-level security policy');
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage = new MemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    clearQueue();
+  });
+
+  it('une suppression de cette série attend : le refus partira avec elle', () => {
+    enqueue({ type: 'deleteSet', id: 'set-1', exerciseIds: ['ex1'] });
+    expect(resendBlock(refused(), true)).toBe('deletion-queued');
+    expect(RESEND_BLOCK_TEXT['deletion-queued']).toBe('Une suppression de cette série attend déjà l’envoi : ce refus partira avec elle.');
+  });
+
+  it('une correction de cette série attend : elle partira avec', () => {
+    enqueue({ type: 'patchSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 82.5, reps: 8, rir: 2, only: 'values' });
+    expect(resendBlock(refused(), true)).toBe('correction-queued');
+  });
+
+  it('correction ET suppression en file : la suppression l’emporte', () => {
+    enqueue({ type: 'patchSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 82.5, reps: 8, rir: 2, only: 'values' });
+    enqueue({ type: 'deleteSet', id: 'set-1', exerciseIds: ['ex1'] });
+    expect(resendBlock(refused(), true)).toBe('deletion-queued');
+  });
+
+  it('la suppression d’une AUTRE série, ou celle d’un autre compte, ne compte pas : stockage', () => {
+    enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: ['ex1'] });
+    expect(resendBlock(refused(), true)).toBe('storage');
+    expect(resendBlock(refused('user-2'), true)).toBe('storage');
+    expect(RESEND_BLOCK_TEXT.storage).toMatch(/stockage/);
+  });
+
+  it('l’entrée a disparu : réglée depuis un autre onglet', () => {
+    expect(resendBlock(refused(), false)).toBe('settled');
   });
 });

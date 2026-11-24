@@ -9,11 +9,11 @@
 // `abandonRefused`), intouchée. Elles ne voient que les saisies du compte
 // reconnu.
 import { useCallback, useEffect, useState } from 'react';
-import { abandonRefused, isSetWrite, listRefused, OUTBOX_CHANGED_EVENT, readQueue, retryRefused, type RefusedWrite } from '../features/capture/outbox';
+import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, retryRefused, type RefusedWrite } from '../features/capture/outbox';
 import { listExercisesForCapture } from '../features/capture/data';
 import { flushOutbox } from '../features/capture/sync';
 import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
-import { dependentsOf, describeRefusal, fmtWhen } from './refused-writes';
+import { dependentsOf, describeRefusal, fmtWhen, RESEND_BLOCK_TEXT, resendBlock } from './refused-writes';
 
 type Outcome = { id: string; text: string };
 
@@ -61,19 +61,12 @@ function RefusedList() {
     setBusy(entry.refusalId);
     setOutcome(null);
     if (!retryRefused(entry.refusalId)) {
-      // Une correction de la même série attend déjà en file : elle reconstituera
-      // la série à partir de ce refus, rien à renvoyer. Sinon, le stockage.
-      // Elle n'est plus là : réglée depuis un autre onglet.
+      // Une écriture de la même série attend déjà en file (une suppression, ou
+      // une correction qui reconstituera la série à partir de ce refus) : rien à
+      // renvoyer. Elle n'est plus là : réglée depuis un autre onglet. Sinon, le
+      // stockage (cf. `resendBlock`).
       const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
-      const queued = isSetWrite(entry.op) && readQueue().some((op) => isSetWrite(op) && op.id === entry.op.id);
-      setOutcome({
-        id: entry.refusalId,
-        text: !stillThere
-          ? 'Cette saisie a déjà été réglée, depuis un autre onglet.'
-          : queued
-            ? 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.'
-            : 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
-      });
+      setOutcome({ id: entry.refusalId, text: RESEND_BLOCK_TEXT[resendBlock(entry, stillThere)] });
       setBusy(null);
       refresh();
       return;

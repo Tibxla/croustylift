@@ -1,13 +1,13 @@
 // Les saisies refusées par le serveur (quarantaine de la file, ADR 0018), lues
-// par un humain : quoi, quand, pourquoi. Pur, testé ; l'écran est
-// RefusedWritesSheet.tsx.
+// par un humain : quoi, quand, pourquoi. Pur, testé, sauf `resendBlock` qui lit
+// la file ; l'écran est RefusedWritesSheet.tsx.
 //
 // La file ne porte que des identifiants : le nom de l'exo vient du catalogue
 // local (lu par l'appelant, hors ligne compris), la date d'une séance de son op
 // de création quand elle est connue. La raison est la chaîne stockée par la
 // file : « <code SQLSTATE> : <message> » pour un refus de la base (traduite
 // par `errorMessage`, comme partout), ou la dépendance à une séance refusée.
-import type { RefusedWrite } from '../features/capture/outbox';
+import { isSetWrite, readQueue, setWriteQueued, type RefusedWrite } from '../features/capture/outbox';
 import { errorMessage } from '../lib/error-message';
 
 export interface RefusalText {
@@ -167,3 +167,29 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
       return { ...base, what: 'Retrait d’une séance vide', detail: '' };
   }
 }
+
+/** Pourquoi « Renvoyer » n'a rien remis en file (`retryRefused` a rendu faux). */
+export type ResendBlock = 'settled' | 'deletion-queued' | 'correction-queued' | 'storage';
+
+/**
+ * La cause d'un « Renvoyer » sans effet, `stillThere` disant si l'entrée est
+ * encore listée. Une écriture de la même série attend en file, par le prédicat
+ * même de `retryRefused` (`setWriteQueued` : insertion, correction ou
+ * suppression, du même compte) : une suppression, qui l'emporte si les deux
+ * attendent, ou une correction. Sinon c'est le stockage qui a refusé.
+ */
+export function resendBlock(entry: RefusedWrite, stillThere: boolean): ResendBlock {
+  if (!stillThere) return 'settled';
+  const op = entry.op;
+  if (!isSetWrite(op) || !setWriteQueued(op.id, op._owner)) return 'storage';
+  const deleting = readQueue().some((q) => q.type === 'deleteSet' && q.id === op.id && q._owner === op._owner);
+  return deleting ? 'deletion-queued' : 'correction-queued';
+}
+
+/** Ce que la feuille dit pour chaque cause. */
+export const RESEND_BLOCK_TEXT: Record<ResendBlock, string> = {
+  settled: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
+  'deletion-queued': 'Une suppression de cette série attend déjà l’envoi : ce refus partira avec elle.',
+  'correction-queued': 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.',
+  storage: 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
+};
