@@ -326,6 +326,10 @@ export function ExerciseCapture({
         : { value: formatE1rm(displayRecord.bestE1rm), unit: 'kg' }
       : null;
   const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
+  // Graduations de la règle en CRANS (pas libre, ex. 1,75 kg) : une majeure
+  // étiquetée environ tous les 5 kg, une moyenne à mi-chemin si elle tombe juste.
+  const majorEvery = Math.max(1, Math.round(5 / stepKg));
+  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
   const doneSides = unilateral ? sidesDoneAt(progress.sets, currentSetOrder(progress.sets)) : [];
 
   return (
@@ -335,7 +339,15 @@ export function ExerciseCapture({
       {/* Nom et UNE ligne : le plan, puis le bilan dès le minimum de séries (il
           rouvre le récap). Notes à droite, sans hauteur en plus. */}
       <div className="relative px-5 pt-1">
-        <h2 className="truncate text-[32px] font-[650] leading-[1.1] tracking-[-0.03em] text-ink">{exercise.name}</h2>
+        {/* Un nom long descend d'un cran plutôt que de pousser l'instrument sous la
+            barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
+        <h2
+          className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
+            exercise.name.length <= 18 ? 'text-[32px]' : exercise.name.length <= 24 ? 'text-[28px]' : 'text-[22px] leading-[35px]'
+          }`}
+        >
+          {exercise.name}
+        </h2>
         <div className="mt-0.5 flex h-[22px] items-center pr-12 text-[15px] text-muted">
           {reachedMin ? (
             <button
@@ -413,7 +425,7 @@ export function ExerciseCapture({
           </div>
         )}
 
-        <div className="mt-1">
+        <div>
           <WeightReadout value={weightKg} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
         </div>
 
@@ -424,8 +436,8 @@ export function ExerciseCapture({
             steps={weightKg / stepKg /* fractionnaire hors pas : l'aiguille tombe entre deux crans */}
             max={Math.max(Math.round(RULER_MAX_KG / stepKg), Math.ceil(weightKg / stepKg))}
             pxPerStep={Math.max(8, 11.2 * stepKg) /* un petit pas reste lisible : 8 px au moins entre deux crans */}
-            isMajor={(s) => (s * stepKg) % 5 === 0}
-            isMid={(s) => (s * stepKg) % 2.5 === 0}
+            isMajor={(s) => s % majorEvery === 0}
+            isMid={(s) => midEvery > 0 && s % midEvery === 0}
             majorLabel={(s) => formatWeight(s * stepKg)}
             format={(s) => `${formatWeight(roundWeightKg(s * stepKg))} kg`}
             onChange={(s) => setWeightKg(roundWeightKg(s * stepKg))}
@@ -433,7 +445,7 @@ export function ExerciseCapture({
           />
         </div>
 
-        <dl className="mt-1 grid grid-cols-3 gap-3 px-5">
+        <dl className="grid grid-cols-3 gap-3 px-5">
           <div aria-live="polite">
             <dt className="text-[13px] text-muted">{livePerf?.label ?? 'e1RM'}</dt>
             <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">
@@ -465,7 +477,7 @@ export function ExerciseCapture({
           </div>
         </dl>
 
-        <div className="mt-2 flex flex-col gap-1">
+        <div className="mt-2 flex flex-col gap-0.5">
           {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
           <NumberRow
             key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}

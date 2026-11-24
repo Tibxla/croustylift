@@ -9,9 +9,11 @@
 //
 // SAISIE PRÉCISE : toucher la valeur ouvre le clavier numérique (inputmode
 // decimal, virgule acceptée, 72 px donc pas de zoom iOS) pour une valeur hors du
-// pas de la règle. Entrée ou toucher ailleurs valide, Échap ou un champ vide
-// annule ; la valeur est bornée (`parseTypedValue`) et la règle se recale dessus.
-// Le clavier reste facultatif : la règle est le geste principal.
+// pas de la règle. La valeur suit la frappe, bornée (`parseTypedValue`), et la
+// règle se recale dessus : toucher « Logger » sans fermer le clavier logge bien
+// la valeur tapée. Entrée ou toucher ailleurs garde la valeur, Échap ou un champ
+// vide rend celle d'avant. Le clavier reste facultatif : la règle est le geste
+// principal.
 import { useRef, useState } from 'react';
 import { formatWeight } from './format';
 import { parseTypedValue, WEIGHT_MAX_KG } from './stepper-utils';
@@ -21,20 +23,25 @@ const BIG = 'text-[72px] font-[650] leading-none tracking-[-0.045em]';
 export function WeightReadout({ value, onChange }: { value: number; onChange: (kg: number) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  // Échap pose ce drapeau : le `blur` qui suit ne doit pas valider.
-  const cancelled = useRef(false);
+  // La valeur d'avant la saisie, rendue par Échap ou un champ vide.
+  const before = useRef(value);
   const shown = formatWeight(value);
   const [whole, decimals] = shown.split(',');
 
   const start = () => {
-    cancelled.current = false;
+    before.current = value;
     setDraft(shown);
     setEditing(true);
   };
-  const commit = (raw: string) => {
+  const type = (raw: string) => {
+    const clean = raw.replace(/[^\d.,]/g, '');
+    setDraft(clean);
+    // Rien d'exploitable (vide, « , ») : on garde la valeur d'avant pour l'instant.
+    if (/\d/.test(clean)) onChange(parseTypedValue(clean, 0, WEIGHT_MAX_KG, before.current, true));
+  };
+  const close = (raw: string) => {
     setEditing(false);
-    if (cancelled.current) return;
-    onChange(parseTypedValue(raw, 0, WEIGHT_MAX_KG, value, true));
+    if (!/\d/.test(raw)) onChange(before.current);
   };
 
   if (editing) {
@@ -50,17 +57,19 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
           aria-label="Poids en kg, valeur précise"
           value={draft}
           onFocus={(e) => e.currentTarget.select()}
-          onChange={(e) => setDraft(e.target.value.replace(/[^\d.,]/g, ''))}
+          onChange={(e) => type(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
               e.currentTarget.blur();
             } else if (e.key === 'Escape') {
-              cancelled.current = true;
-              e.currentTarget.blur();
+              e.preventDefault();
+              setDraft('');
+              onChange(before.current);
+              setEditing(false);
             }
           }}
-          onBlur={(e) => commit(e.currentTarget.value)}
+          onBlur={(e) => close(e.currentTarget.value)}
           className={`focus-own tnum w-full min-w-0 border-b-2 border-ink bg-transparent text-center text-ink outline-none ${BIG}`}
         />
         <span className="pointer-events-none absolute bottom-1 right-5 text-[22px] font-medium text-muted">kg</span>

@@ -1397,8 +1397,14 @@ function CapturePanel({
       : { aria: `Annuler la série ${lastSet.order}`, sub: `série ${lastSet.order}` }
     : null;
 
+  // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
+  // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
+  // par le serveur se disent en clair, en tête.
+  const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+
   return (
     <>
+      <SyncBanner line={alarm} />
       <ExerciseCapture
         exercise={exercise}
         progress={progress}
@@ -1423,20 +1429,20 @@ function CapturePanel({
           suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
           geste répété, toujours au même endroit, sans enfoncement. Rien ne change
           de place quand le minimum du plan est atteint (décision du 23/11). */}
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1.5">
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
         {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
             même largeur, qu'Annuler soit là ou non. */}
         <div className="mb-1.5 grid grid-cols-[1fr_76px_1fr] gap-2">
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
-            aria-label={`Sommaire de la séance, ${settled} exos faits sur ${total}${
+            aria-label={`Sommaire de la séance, ${settled} exo${settled > 1 ? 's' : ''} fait${settled > 1 ? 's' : ''} sur ${total}${
               sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
             }`}
             className={BAR_BTN}
           >
             <span className="text-[16px] font-medium leading-tight text-ink">Sommaire</span>
-            <span className="tnum truncate text-[13px] leading-tight text-muted">{sommaireDetail(sync, settled, total)}</span>
+            <span className="tnum w-full truncate text-[13px] leading-tight text-muted">{sommaireDetail(sync, settled, total)}</span>
           </button>
           {undoWhat ? (
             <button
@@ -1462,7 +1468,7 @@ function CapturePanel({
               className={BAR_BTN}
             >
               <span className="text-[16px] font-medium leading-tight text-ink">Exo suivant</span>
-              <span className="truncate text-[13px] leading-tight text-muted">{next.name}</span>
+              <span className="w-full truncate text-[13px] leading-tight text-muted">{next.name}</span>
             </button>
           ) : canFinish ? (
             <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>

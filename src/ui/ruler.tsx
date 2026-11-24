@@ -122,7 +122,8 @@ export function Ruler({
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           e.preventDefault();
           stopAnim();
-          onChange(clamp(steps + (e.key === 'ArrowRight' ? 1 : -1)));
+          // Hors cran (valeur tapée au clavier) : la flèche va au cran entier suivant.
+          onChange(clamp(e.key === 'ArrowRight' ? Math.floor(steps) + 1 : Math.ceil(steps) - 1));
         }
       }}
       onPointerDown={(e) => {
