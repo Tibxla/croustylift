@@ -5,7 +5,7 @@
 // regarder créait une seconde ligne (avant la migration 0018) ou était refusé
 // par son index unique (après : 23505, saisie en quarantaine). Les deux états
 // du schéma sont rejoués ici sur une table en mémoire.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface NoteRow {
   id: string;
@@ -251,10 +251,21 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
   const legacyWrite = { type: 'upsertDatedNote', id: EN_FILE, executionId: EXEC, exerciseId: EXO, body: 'saisie puis effacée', _seq: 1 };
   const legacyDelete = { type: 'deleteDatedNote', id: EN_FILE, _seq: 2 };
 
+  // Le verrou d'ambiance de Node, gardé pour jouer un détenteur extérieur.
+  const ambientLocks = navigator.locks;
+
   beforeEach(() => {
     (globalThis as unknown as { localStorage: Storage }).localStorage =
       new MemoryStorage() as unknown as Storage;
     clearQueue();
+    // Ce bloc vérifie le rejeu, pas le verrou entre onglets (outbox-onglets.test.ts,
+    // outbox.test.ts) : sans l'API, la passe tourne sans verrou (`underFlushLock`),
+    // et rien hors du test ne peut la bloquer.
+    vi.stubGlobal('navigator', {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it.each([
@@ -332,6 +343,30 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     expect(server.rows).toHaveLength(1);
     expect(server.rows[0]).toMatchObject({ body: 'réécrite après l’effacement' });
     vi.restoreAllMocks();
+  });
+
+  // Ce bloc ne doit dépendre que de la file et du serveur simulé. Or `flush` passe
+  // par `navigator.locks`, que Node 24 fournit : un verrou d'ambiance que tout
+  // code du même fil peut tenir. Tenu ailleurs, la passe ne jouait rien et
+  // rendait `remaining: 2` sans erreur.
+  it('le verrou de flush tenu hors du test ne fait pas manquer le rejeu', async () => {
+    let release!: () => void;
+    await new Promise<void>((tenu) => {
+      void ambientLocks.request('croustylift:outbox:flush', () => {
+        tenu();
+        return new Promise<void>((resolve) => (release = resolve));
+      });
+    });
+    try {
+      server.rows = [historique('texte d’avant')];
+      legacyQueue([legacyWrite, legacyDelete]);
+      adoptLegacyOps();
+      const result = await flush(syncFns);
+      expect(result.remaining).toBe(0);
+      expect(server.rows).toEqual([]);
+    } finally {
+      release();
+    }
   });
 
   it('sans complément, le défaut est bien là : l’effacement par id laisse la note', async () => {
