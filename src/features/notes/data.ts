@@ -163,28 +163,6 @@ async function writeExerciseNote(exerciseId: string, body: string): Promise<void
 // Note datée (dated_notes) — saisie en Capture, le jour de la séance
 // =====================================================================
 
-/**
- * Corps de la note datée d'un exo pour une exécution (chaîne vide si aucune).
- * Une exécution n'a normalement qu'une note par exo (l'UI n'en crée qu'une) ;
- * on prend la plus récente par sécurité (`limit(1)`). Sert à RÉHYDRATER la
- * saisie en Capture après un reload.
- */
-export async function loadDatedNote(
-  executionId: string,
-  exerciseId: string,
-): Promise<string> {
-  const { data, error } = await supabase
-    .from('dated_notes')
-    .select('body')
-    .eq('execution_id', executionId)
-    .eq('exercise_id', exerciseId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.body ?? '';
-}
-
 /** Violation d'unicité (Postgres 23505) : ici, le couple de la migration 0018. */
 function isUniqueViolation(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === '23505';
@@ -193,7 +171,7 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * L'id de la note datée que la base tient pour ce couple (exécution, exercice),
  * ou `null`. S'il y en a plusieurs (doublons d'avant la migration 0018), la plus
- * récente : celle que lisent `loadDatedNote` et la réhydratation de la Capture.
+ * récente : celle que lit la réhydratation de la Capture.
  */
 async function findDatedNoteId(executionId: string, exerciseId: string): Promise<string | null> {
   const { data, error } = await supabase

@@ -1,4 +1,4 @@
-// Tests unitaires du reducer de capture et de ses helpers (getProgress, statusOf).
+// Tests unitaires du reducer de capture et de ses helpers (getProgress, hydratedState…).
 //
 // Pas de localStorage, pas de React : logique pure uniquement.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -6,7 +6,6 @@ import {
   captureReducer,
   getProgress,
   getDatedNote,
-  statusOf,
   initialState,
   isExecutionStarted,
   isPristine,
@@ -78,58 +77,6 @@ describe('getProgress', () => {
     const p = getProgress(after, 'bench-press');
     expect(p.sets).toHaveLength(1);
     expect(p.sets[0]).toMatchObject({ weightKg: 80, reps: 8, rir: 2, order: 1 });
-  });
-});
-
-// --- statusOf ----------------------------------------------------------------
-
-describe('statusOf', () => {
-  const empty: ExerciseProgress = { sets: [], setIds: [], skipped: false };
-
-  it('todo : aucune série, non passé', () => {
-    expect(statusOf(empty, 3)).toBe('todo');
-  });
-
-  it('skipped : marqué passé, indépendamment des séries', () => {
-    const p: ExerciseProgress = { sets: [], setIds: [], skipped: true };
-    expect(statusOf(p, 3)).toBe('skipped');
-  });
-
-  it('in-progress : des séries mais pas encore le min prescrit', () => {
-    const p: ExerciseProgress = {
-      sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
-      setIds: ['s1'],
-      skipped: false,
-    };
-    expect(statusOf(p, 3)).toBe('in-progress');
-  });
-
-  it('done : atteint exactement le min prescrit', () => {
-    const sets = [
-      { weightKg: 80, reps: 8, rir: 2, order: 1 },
-      { weightKg: 80, reps: 8, rir: 2, order: 2 },
-      { weightKg: 80, reps: 8, rir: 2, order: 3 },
-    ];
-    const p: ExerciseProgress = { sets, setIds: ['s1', 's2', 's3'], skipped: false };
-    expect(statusOf(p, 3)).toBe('done');
-  });
-
-  it('done : dépasse le min prescrit', () => {
-    const sets = [
-      { weightKg: 80, reps: 8, rir: 2, order: 1 },
-      { weightKg: 80, reps: 8, rir: 2, order: 2 },
-      { weightKg: 80, reps: 8, rir: 2, order: 3 },
-      { weightKg: 80, reps: 8, rir: 2, order: 4 },
-    ];
-    const p: ExerciseProgress = { sets, setIds: ['s1', 's2', 's3', 's4'], skipped: false };
-    // prescribedMin = 3, 4 séries loggées -> done
-    expect(statusOf(p, 3)).toBe('done');
-  });
-
-  it('skipped prime sur tout le reste (même si des séries sont loggées)', () => {
-    const sets = [{ weightKg: 80, reps: 8, rir: 2, order: 1 }];
-    const p: ExerciseProgress = { sets, setIds: ['s1'], skipped: true };
-    expect(statusOf(p, 3)).toBe('skipped');
   });
 });
 
@@ -455,43 +402,6 @@ describe('captureReducer — skip-exercise / unskip-exercise', () => {
   });
 });
 
-// --- captureReducer — reset --------------------------------------------------
-
-describe('captureReducer — reset', () => {
-  it('vide le progrès et met à jour executionId', () => {
-    let state = mkState();
-    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId: 's1', set: set1 });
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-new' });
-    expect(after.progress).toEqual({});
-    expect(after.executionId).toBe('exec-new');
-    expect(after.activeExerciseId).toBeNull();
-  });
-
-  it('conserve le sessionId', () => {
-    const state = mkState();
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
-    expect(after.sessionId).toBe(state.sessionId);
-  });
-
-  it('vide les notes datées (elles visaient l’exécution précédente, désormais close)', () => {
-    let state = mkState();
-    state = captureReducer(state, {
-      type: 'set-dated-note',
-      exerciseId: 'bench-press',
-      noteId: 'note-1',
-      body: 'note du jour',
-    });
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-new' });
-    expect(getDatedNote(after, 'bench-press')).toBeNull();
-  });
-
-  it('lève la clôture : une séance neuve repart en cours (closedAt null)', () => {
-    const closed = captureReducer(mkState(), { type: 'close', closedAt: 1_700_000 });
-    const after = captureReducer(closed, { type: 'reset', executionId: 'exec-3' });
-    expect(after.closedAt).toBeNull();
-  });
-});
-
 // --- captureReducer — close --------------------------------------------------
 
 describe('captureReducer — close', () => {
@@ -547,6 +457,14 @@ describe('hydratedState', () => {
     // Pas de progrès à réhydrater : capture vierge sous la date donnée.
     expect(state.progress).toEqual({});
     expect(state.date).toBe('2026-06-18');
+    // Séance neuve (ancienne action `reset`) : même séance, rien de l'exécution
+    // d'avant (ni notes, ni disposition, ni suivi), et pas close.
+    expect(state.sessionId).toBe(upperA.id);
+    expect(state.activeExerciseId).toBeNull();
+    expect(state.datedNotes).toEqual({});
+    expect(state.closedAt).toBeNull();
+    expect(state.layout).toBeUndefined();
+    expect(state.sinceLoad).toBeUndefined();
   });
 
   it('ignore un exo sans série (réalisé vide) et porte les notes datées', () => {
@@ -722,28 +640,6 @@ describe('mergeProgress', () => {
   it('reste « en cours » : closedAt null après fusion', () => {
     const merged = mergeProgress(supa({}), local({}));
     expect(merged.closedAt).toBeNull();
-  });
-});
-
-// --- progression (statut global via statusOf) --------------------------------
-
-describe('progression globale via statusOf', () => {
-  it('séquence todo -> in-progress -> done en loggant 3 séries (min=3)', () => {
-    let state = mkState();
-    // prescribedMin = 3 (upperA bench-press sets.min = 3)
-    const exId = 'bench-press';
-    const min = upperA.exercises.find((e) => e.exerciseId === exId)!.prescription.sets.min;
-
-    expect(statusOf(getProgress(state, exId), min)).toBe('todo');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's1', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('in-progress');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's2', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('in-progress');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's3', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('done');
   });
 });
 
@@ -1425,10 +1321,6 @@ describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
     expect(mergeProgress(fromBase, edited()).layout).toEqual(edited().layout);
     // L'état hydraté de la base seule n'en porte aucune.
     expect(fromBase.layout).toBeUndefined();
-  });
-
-  it('une nouvelle exécution (reset) repart sans disposition', () => {
-    expect(captureReducer(edited(), { type: 'reset', executionId: 'exec-2' }).layout).toBeUndefined();
   });
 
   it('les entrées mal formées d’un état persisté sont écartées', () => {

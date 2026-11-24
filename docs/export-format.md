@@ -1,8 +1,8 @@
 # Format de l'export JSON (backup utilisateur)
 
-Le bouton « Exporter mes données » (surface Séances, section Données) télécharge un backup JSON de tout le compte. Il sert l'auditabilité et de filet contre l'éviction du stockage local iOS. Le bouton « Importer mes données » le restaure dans le compte.
+Le bouton « Exporter » (Réglages, section Données) télécharge un backup JSON de tout le compte. Il sert l'auditabilité et de filet contre l'éviction du stockage local iOS. Le bouton « Importer » le restaure dans le compte.
 
-Code : `src/features/export/` (`export.ts` et `import.ts` = coeurs testés, `data.ts` et `data-import.ts` = client, téléchargement et lecture du fichier, `ExportButton.tsx` et `ImportButton.tsx` = UI). Nom du fichier : `croustylift-backup-AAAA-MM-JJ.json`.
+Code : `src/features/export/` (`export.ts` et `import.ts` = coeurs testés, `data.ts` et `data-import.ts` = client, téléchargement et lecture du fichier, l'UI dans `src/features/settings/ReglagesScreen.tsx`). Nom du fichier : `croustylift-backup-AAAA-MM-JJ.json`.
 
 ## Structure (version 2)
 

@@ -9,11 +9,6 @@ export function measureLabel(unit: CurveUnit): string {
   return unit === 'reps' ? 'reps eff.' : 'e1RM'
 }
 
-/** L'intitulé du chiffre héros d'une carte. */
-export function heroLabel(unit: CurveUnit): string {
-  return unit === 'reps' ? 'Reps effectives' : 'e1RM estimé'
-}
-
 /** Le libellé des séries 2+ : une moyenne de la mesure. */
 export function secondaryLabel(unit: CurveUnit): string {
   return unit === 'reps' ? 'reps eff. moyennes' : 'e1RM moyen'

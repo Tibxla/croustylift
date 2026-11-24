@@ -32,8 +32,6 @@ export const EXERCISE_WRITE_BLOCK = 'ecriture-override-exercice';
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type OverrideRow = Database['public']['Tables']['exercise_overrides']['Row'];
 
-export type { ExerciseOverrideValues } from '../../domain/exercise-override';
-
 /** Adapte une ligne `exercise_overrides` (snake_case, nullable) vers la forme du domaine. */
 function rowToOverrideValues(row: OverrideRow): ExerciseOverrideValues {
   return {

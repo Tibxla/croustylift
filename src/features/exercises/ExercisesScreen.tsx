@@ -2,8 +2,7 @@
 //
 // Architecture (calquée sur SeancesScreen / SeanceEditor) : on SÉPARE le
 // chargement Supabase de la PRÉSENTATION. `ExercisesView` est PUR (props =
-// données + callbacks) et se monte tel quel dans le harness de screenshot, sans
-// réseau. `ExercisesScreen` est le conteneur : il charge via listExercises (lit
+// données + callbacks), sans réseau. `ExercisesScreen` est le conteneur : il charge via listExercises (lit
 // base + perso), mute via create/update/deletePersonalExercise, et recharge.
 //
 // Périmètre (cf. GLOSSARY.md) :
@@ -14,9 +13,8 @@
 //   - exo PERSO (owner_id = auth.uid()) : créer, modifier (nom + muscles +
 //     unilatéral, « renommer » = changer le champ nom) et supprimer.
 //   - NOTE par exo (exercise_notes #26, déjà per-user) : éditable pour TOUS les
-//     exos (base ET perso) DANS le formulaire « Modifier / Personnaliser » (la note
-//     vit dans ExerciseForm, plus d'action note sur la carte de liste). Chargée à
-//     l'ouverture du form ; corps vide = suppression.
+//     exos (base ET perso) depuis la fiche, dans la feuille de note commune
+//     (NoteSheet) ; corps vide = suppression.
 //
 // Pages (kit E, DESIGN.md), en état local comme l'Analyse :
 //   liste     recherche au clavier (texte libre, admis), filtre par muscle

@@ -1,7 +1,7 @@
 // Champ de saisie d'une note (texte libre, issue #26).
 //
 // Une note EST du texte : le ban du clavier OS (DESIGN.md) ne vise QUE les
-// chiffres mesurés (poids/reps/RIR via Stepper), pas la prose. Un <textarea>
+// chiffres mesurés (poids, reps, RIR : règle et rangées de chiffres), pas la prose. Un <textarea>
 // natif est donc légitime ici, comme le <input text> des noms d'exos.
 //
 // Rendu : la zone de texte du kit (src/ui/fields.tsx), un seul indicateur de

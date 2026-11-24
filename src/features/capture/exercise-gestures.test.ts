@@ -14,7 +14,6 @@ import {
   persist,
   type CaptureState,
 } from './state';
-import { buildSummary } from './summary';
 import { buildSessionRecap } from './session-recap';
 
 class MemoryStorage {
@@ -67,10 +66,11 @@ describe('restoreSkippedExercise (« Remettre » un exo passé)', () => {
       set: { weightKg: 80, reps: 8, rir: 2 },
     });
     state = skipped(state);
-    expect(buildSummary(upperA, state).exercisesSkipped).toBe(1);
+    expect(buildSessionRecap(upperA, state).counts.passe).toBe(1);
     state = captureReducer(state, restoreSkippedExercise(state, BENCH)!.action);
     expect(getProgress(state, BENCH).sets).toHaveLength(1);
-    expect(buildSummary(upperA, state).exercisesSkipped).toBe(0);
+    expect(buildSessionRecap(upperA, state).counts.passe).toBe(0);
+    expect(buildSessionRecap(upperA, state).exercises[0]?.status).toBe('en-cours');
   });
 
   it('passé puis remis sans rien saisir : le tableau est de nouveau intact', () => {
@@ -155,7 +155,9 @@ describe('replaceExercise', () => {
     const next = captureReducer(state, gesture.action);
     expect(getProgress(next, first.exerciseId).sets).toHaveLength(1);
     expect(gesture.ops).toEqual([]);
-    expect(buildSummary(gesture.session, next)).toMatchObject({ exercisesTotal: upperA.exercises.length + 1, exercisesDone: 0 });
+    const recap = buildSessionRecap(gesture.session, next);
+    expect(recap.exercises).toHaveLength(upperA.exercises.length + 1);
+    expect(recap.counts.fait).toBe(0);
   });
 
   it.each(['base', 'file'])('série du Journal arrivée après le remplacement (%s) : l’exo et ses kg reviennent et restent au rechargement', (source) => {

@@ -52,7 +52,6 @@ export function SecondaryButton({
   meta,
   onClick,
   disabled,
-  press = true,
   ariaLabel,
   size = 'md',
   className = '',
@@ -61,8 +60,6 @@ export function SecondaryButton({
   meta?: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  /** false : pas d'enfoncement (geste répété en salle). */
-  press?: boolean;
   ariaLabel?: string;
   size?: 'md' | 'sm';
   className?: string;
@@ -75,7 +72,7 @@ export function SecondaryButton({
       aria-label={ariaLabel}
       className={`flex min-w-0 items-center gap-3 rounded-block border-[1.5px] border-ink bg-raise text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint ${
         size === 'sm' ? 'h-11 px-3.5' : 'h-12 px-4'
-      } ${meta ? 'justify-between' : 'justify-center'} ${press ? 'ui-press' : ''} ${className}`}
+      } ${meta ? 'justify-between' : 'justify-center'} ui-press ${className}`}
     >
       <span className={`truncate font-semibold ${size === 'sm' ? 'text-[15px]' : 'text-[16px]'}`}>{children}</span>
       {meta && <span className="flex-none text-[14px] text-muted">{meta}</span>}

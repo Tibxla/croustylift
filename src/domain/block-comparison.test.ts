@@ -1,16 +1,35 @@
 import { describe, it, expect } from 'vitest'
 import type { ExerciseExecution, Block } from './types'
 import {
-  compareBlocks,
   compareBlockSeances,
   defaultComparisonPair,
   summarizeBlockSeances,
 } from './block-comparison'
 
 // Helpers : fabrique des exécutions d'un exo avec une 1ʳᵉ série au poids voulu.
-// `compareBlocks` dérive sa pente de la courbe primaire (1ʳᵉ série), exactement
+// La comparaison dérive sa pente de la courbe primaire (1ʳᵉ série), exactement
 // comme l'analyse mono-bloc : reps/rir fixés, seul le poids bouge dans le temps.
 const EXO = 'dev-couche'
+
+/**
+ * Deux blocs lus dans UNE même séance : les règles de fenêtre, de pente et de
+ * verdict de `compareBlockSeances`, sans la dimension séance (ancien
+ * `compareBlocks`, qui ne filtrait pas par séance).
+ */
+const ONE_SEANCE = 'seance-unique'
+function compareInOneSeance(
+  executions: ExerciseExecution[],
+  exerciseId: string,
+  first: Block,
+  second: Block,
+) {
+  return compareBlockSeances(
+    executions.map((e) => ({ ...e, seanceId: ONE_SEANCE })),
+    exerciseId,
+    { block: first, seanceId: ONE_SEANCE },
+    { block: second, seanceId: ONE_SEANCE },
+  )
+}
 
 function exec(date: string, weightKg: number): ExerciseExecution {
   return {
@@ -24,7 +43,7 @@ function block(configId: string, start: string, end: string | null): Block {
   return { configId, start, end }
 }
 
-describe('compareBlocks', () => {
+describe('comparaison de deux blocs', () => {
   it('attribue à chaque bloc sa pente %/semaine et désigne le plus rapide', () => {
     // Bloc A (janvier) : progression douce. Bloc B (février) : progression raide.
     const executions: ExerciseExecution[] = [
@@ -38,7 +57,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.block).toBe(blockA)
     expect(result.second.block).toBe(blockB)
@@ -63,7 +82,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     // A n'a que ses 3 points de janvier ; le point du 1er février tombe dans B.
     expect(result.first.pointCount).toBe(3)
@@ -80,7 +99,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.pointCount).toBe(0)
     expect(result.second.pointCount).toBe(4)
@@ -96,7 +115,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.pointCount).toBe(3)
   })
@@ -112,7 +131,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.weeklyRate).not.toBeNull()
     expect(result.second.weeklyRate).toBeNull()
@@ -128,7 +147,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.weeklyRate).toBeNull()
     expect(result.second.weeklyRate).toBeNull()
@@ -148,7 +167,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.weeklyRate).toBeCloseTo(result.second.weeklyRate!, 10)
     expect(result.winner).toBe('tie')
@@ -164,7 +183,7 @@ describe('compareBlocks', () => {
     const blockA = block('A', '2026-01-01', '2026-02-01')
     const blockB = block('B', '2026-02-01', null)
 
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
 
     expect(result.first.curve).toHaveLength(2)
     expect(result.second.curve).toHaveLength(2)
@@ -336,7 +355,7 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
       at('2026-09-29', 100, { startedAt: '2026-09-29T16:00:00+00:00' }),
       at('2026-10-06', 101, { startedAt: '2026-10-06T16:00:00+00:00' }),
     ]
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
     expect(result.first.curve.map((p) => p.date)).toEqual([
       '2026-09-08',
       '2026-09-15',
@@ -347,14 +366,14 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
 
   it('séance lancée après l’édition, le même jour : elle va au nouveau bloc', () => {
     const executions = [at('2026-09-22', 105, { startedAt: '2026-09-22T18:00:00+00:00' })]
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
     expect(result.first.pointCount).toBe(0)
     expect(result.second.pointCount).toBe(1)
   })
 
   it('lancée pile à l’instant de la coupure : début inclus, fin exclue', () => {
     const executions = [at('2026-09-22', 105, { startedAt: '2026-09-22T17:30:00+00:00' })]
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
     expect(result.first.pointCount).toBe(0)
     expect(result.second.pointCount).toBe(1)
   })
@@ -364,7 +383,7 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
     // ligne : il ne remplace jamais le lancement. Le jour de la coupure va donc
     // au bloc qui s'ouvre, comme avant.
     const executions = [at('2026-09-22', 105, { createdAt: '2026-09-22T16:05:00+00:00' })]
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
     expect(result.first.pointCount).toBe(0)
     expect(result.second.pointCount).toBe(1)
   })
@@ -376,7 +395,7 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
     const londonA: Block = { ...blockA, endAt: '2026-09-22T22:30:00+00:00' }
     const londonB: Block = { ...blockB, startAt: '2026-09-22T22:30:00+00:00' }
     const executions = [at('2026-09-23', 105, { startedAt: '2026-09-22T22:10:00+00:00' })]
-    const result = compareBlocks(executions, EXO, londonA, londonB)
+    const result = compareInOneSeance(executions, EXO, londonA, londonB)
     expect(result.first.pointCount).toBe(1)
     expect(result.second.pointCount).toBe(0)
   })
@@ -388,13 +407,13 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
         createdAt: '2026-09-22T19:00:00+00:00',
       }),
     ]
-    expect(compareBlocks(executions, EXO, blockA, blockB).first.pointCount).toBe(1)
+    expect(compareInOneSeance(executions, EXO, blockA, blockB).first.pointCount).toBe(1)
   })
 
   it('sans lancement, un instant de création tardif ne déplace pas une séance d’un autre jour', () => {
     // Séance du 15/09 hors ligne, ligne créée en base le 23/09 seulement.
     const executions = [at('2026-09-15', 102.5, { createdAt: '2026-09-23T07:00:00+00:00' })]
-    const result = compareBlocks(executions, EXO, blockA, blockB)
+    const result = compareInOneSeance(executions, EXO, blockA, blockB)
     expect(result.first.pointCount).toBe(1)
     expect(result.second.pointCount).toBe(0)
   })
@@ -417,7 +436,7 @@ describe('rattachement d’une exécution à son bloc par instant', () => {
       at('2026-09-22', 100, { startedAt: '2026-09-22T08:00:00+00:00' }),
       at('2026-09-22', 105, { startedAt: '2026-09-22T16:00:00+00:00' }),
     ]
-    const result = compareBlocks(executions, EXO, morning, afternoon)
+    const result = compareInOneSeance(executions, EXO, morning, afternoon)
     expect(result.first.curve.map((p) => p.e1rm)).toHaveLength(1)
     expect(result.second.curve.map((p) => p.e1rm)).toHaveLength(1)
     expect(result.first.curve[0]!.e1rm).toBeLessThan(result.second.curve[0]!.e1rm)
@@ -464,7 +483,7 @@ describe('verdict de comparaison et arrondi d’affichage', () => {
     }))
   }
   const compare = (first: number, second: number) =>
-    compareBlocks(
+    compareInOneSeance(
       [...atRate(first, '2026-01-05'), ...atRate(second, '2026-03-02')],
       EXO,
       blocks[0],

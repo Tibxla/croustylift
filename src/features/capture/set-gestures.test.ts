@@ -800,16 +800,6 @@ describe('réponse livrée après l’acquittement de gestes faits pendant son t
     persist(state);
     expect(loadPersisted(upperA, DATE)!.sinceLoad).toBeUndefined();
   });
-
-  it('une séance neuve (reset) repart sans suivi', () => {
-    let state = logS2(atDeparture());
-    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
-    const fresh = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
-    expect(fresh.sinceLoad?.removed).toEqual({});
-    expect(fresh.sinceLoad?.edited).toEqual({});
-    // Le compteur, lui, ne recule pas : un relevé d'avant reste antérieur.
-    expect(mutationMark(fresh)).toBe(mutationMark(state));
-  });
 });
 
 // Stockage de l'appareil plein : la file ne s'écrit plus, elle tient en mémoire

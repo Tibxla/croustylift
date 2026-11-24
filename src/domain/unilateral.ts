@@ -116,16 +116,6 @@ export function firstSeriesWeakSet(sets: PerformedSet[]): PerformedSet | null {
 }
 
 /**
- * e1RM représentatif de la 1ʳᵉ série d'une exécution (cf. `firstSeriesWeakSet`) :
- * l'e1RM de la 1ʳᵉ série en bilatéral, celui du CÔTÉ FAIBLE en unilatéral.
- * `null` si l'exécution n'a aucune série.
- */
-export function weakSideE1rm(sets: PerformedSet[]): number | null {
-  const set = firstSeriesWeakSet(sets)
-  return set === null ? null : estimateE1rm(set.weightKg, set.reps, set.rir)
-}
-
-/**
  * La mesure d'une série sur une courbe, dans l'unité de la courbe (cf.
  * `curveUnit`, primary-curve.ts) :
  *   - 'reps' : ses reps effectives ;

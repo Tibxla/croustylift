@@ -1,5 +1,5 @@
-// Fonction pure de parse/clamp de la SAISIE TAPÉE au pavé numérique du Stepper.
-// Séparée du composant pour rester testable sans DOM.
+// Bornes et arrondis des valeurs d'une série, et parse/clamp de la SAISIE TAPÉE
+// au clavier (le poids, WeightReadout). Purs, testables sans DOM.
 
 /**
  * Plafonds de saisie, alignés sur les colonnes de `performed_sets` : `weight_kg`
@@ -23,9 +23,8 @@ export function roundWeightKg(weightKg: number): number {
 }
 
 /**
- * Arrondit une valeur de stepper selon son champ : au centième pour un champ à
- * décimales (le poids), à l'entier sinon (reps, RIR). Partagé par les deux
- * steppers pour leurs boutons +/−.
+ * Arrondit une valeur selon son champ : au centième pour un champ à décimales
+ * (le poids), à l'entier sinon (reps, RIR).
  */
 export function roundStepperValue(value: number, allowDecimals: boolean): number {
   return allowDecimals ? roundWeightKg(value) : Math.round(value);
@@ -51,10 +50,10 @@ export function boundSetValues<T extends { weightKg: number; reps: number; rir: 
 /**
  * Parse une valeur TAPÉE au pavé numérique et la borne à [min, max].
  *
- * Contrairement au pas des boutons +/− (incrément/décrément fixe, ex. 2,5 kg),
- * la valeur tapée PRÉSERVE sa précision décimale : taper « 13,25 » donne 13,25,
- * on ne la « snappe » JAMAIS au pas d'incrément (issue #58). Le pas ne concerne
- * que les boutons +/−, jamais la saisie directe.
+ * Contrairement au pas de la règle (cran fixe, ex. 2,5 kg), la valeur tapée
+ * PRÉSERVE sa précision décimale : taper « 13,25 » donne 13,25, on ne la
+ * « snappe » JAMAIS au cran (issue #58). Le pas ne concerne que la règle,
+ * jamais la saisie directe.
  *
  *   - normalise la virgule décimale FR en point (« 13,25 » comme « 13.25 ») ;
  *   - `allowDecimals=false` (reps, RIR) : arrondit à l'entier le plus proche

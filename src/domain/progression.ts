@@ -72,7 +72,7 @@ export function weeklyProgressionRate(
   }
 
   // Base nulle (tous les e1RM à 0) → taux RELATIF indéfini : division par 0 qui
-  // donnerait NaN/Infinity et contaminerait compareBlocks/decideWinner. On
+  // donnerait NaN/Infinity et contaminerait compareBlockSeances/decideWinner. On
   // renvoie null, dans le même esprit que la garde sxx ci-dessus : pas de
   // pourcentage de progression mesurable sans base non nulle.
   if (meanY === 0) {

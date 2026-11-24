@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   pairSidesByOrder,
-  weakSideE1rm,
+  firstSeriesWeakSet,
   sidesDoneAt,
   isSetComplete,
   currentSetOrder,
@@ -105,14 +105,14 @@ describe('pairSidesByOrder', () => {
   })
 })
 
-describe('weakSideE1rm', () => {
-  it('bilatéral (aucun side) : e1RM de la 1ʳᵉ série, inchangé', () => {
+describe('firstSeriesWeakSet (le point de la courbe primaire)', () => {
+  it('bilatéral (aucun side) : la 1ʳᵉ série, inchangée', () => {
     const sets: PerformedSet[] = [
       { weightKg: 100, reps: 5, rir: 2, order: 1 },
       { weightKg: 95, reps: 6, rir: 1, order: 2 },
     ]
 
-    expect(weakSideE1rm(sets)).toBeCloseTo(estimateE1rm(100, 5, 2))
+    expect(firstSeriesWeakSet(sets)).toBe(sets[0])
   })
 
   it('unilatéral : prend le côté FAIBLE (e1RM le plus bas) de la 1ʳᵉ série', () => {
@@ -122,70 +122,54 @@ describe('weakSideE1rm', () => {
       { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
     ]
 
-    const left = estimateE1rm(28, 10, 2)
-    const right = estimateE1rm(32, 10, 2)
-    expect(weakSideE1rm(sets)).toBeCloseTo(Math.min(left, right))
-    expect(weakSideE1rm(sets)).toBeCloseTo(left)
+    expect(estimateE1rm(28, 10, 2)).toBeLessThan(estimateE1rm(32, 10, 2))
+    expect(firstSeriesWeakSet(sets)).toBe(sets[0])
   })
 
   it('unilatéral : le côté faible n’est pas toujours le plus léger (reps/RIR comptent)', () => {
-    // Droite plus lourde mais à RIR plus haut/reps plus hautes -> e1RM peut basculer.
+    // À poids égal, la droite à reps et RIR plus hauts a l'e1RM le plus haut.
     const sets: PerformedSet[] = [
-      { weightKg: 30, reps: 8, rir: 0, order: 1, side: 'left' },
       { weightKg: 30, reps: 12, rir: 3, order: 1, side: 'right' },
+      { weightKg: 30, reps: 8, rir: 0, order: 1, side: 'left' },
     ]
 
-    const left = estimateE1rm(30, 8, 0)
-    const right = estimateE1rm(30, 12, 3)
     // gauche (moins de reps/RIR) a l'e1RM le plus bas -> côté faible
-    expect(left).toBeLessThan(right)
-    expect(weakSideE1rm(sets)).toBeCloseTo(left)
+    expect(estimateE1rm(30, 8, 0)).toBeLessThan(estimateE1rm(30, 12, 3))
+    expect(firstSeriesWeakSet(sets)).toBe(sets[1])
   })
 
   it('unilatéral : ne regarde QUE la 1ʳᵉ série (order min), pas les suivantes', () => {
     const sets: PerformedSet[] = [
+      // 2ᵉ série (plus faible), saisie avant dans le tableau : ne doit PAS influencer le point
+      { weightKg: 20, reps: 6, rir: 0, order: 2, side: 'left' },
+      { weightKg: 21, reps: 6, rir: 0, order: 2, side: 'right' },
       // 1ʳᵉ série
       { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
       { weightKg: 31, reps: 10, rir: 2, order: 1, side: 'right' },
-      // 2ᵉ série (plus faible) : ne doit PAS influencer le point
-      { weightKg: 20, reps: 6, rir: 0, order: 2, side: 'left' },
-      { weightKg: 21, reps: 6, rir: 0, order: 2, side: 'right' },
     ]
 
-    const left1 = estimateE1rm(30, 10, 2)
-    const right1 = estimateE1rm(31, 10, 2)
-    expect(weakSideE1rm(sets)).toBeCloseTo(Math.min(left1, right1))
+    expect(firstSeriesWeakSet(sets)).toBe(sets[2])
   })
 
-  it('unilatéral incomplet (un seul côté loggé) : utilise le côté présent', () => {
-    const sets: PerformedSet[] = [
-      { weightKg: 28, reps: 10, rir: 2, order: 1, side: 'left' },
-    ]
-
-    expect(weakSideE1rm(sets)).toBeCloseTo(estimateE1rm(28, 10, 2))
+  it('unilatéral incomplet (un seul côté loggé) : utilise le côté présent, gauche ou droite', () => {
+    for (const side of ['left', 'right'] as const) {
+      const sets: PerformedSet[] = [{ weightKg: 28, reps: 10, rir: 2, order: 1, side }]
+      expect(firstSeriesWeakSet(sets)).toBe(sets[0])
+    }
   })
 
   it('bilatéral : deux séries au même order (anomalie) départagent de façon déterministe (plus petit e1RM), stable', () => {
     // Anomalie : un exo bilatéral a normalement UNE série par order. Si deux
     // existent au même order 1, le résultat ne doit pas dépendre de l'ordre du
     // tableau. On retient le plus petit e1RM (lecture « côté faible »).
-    const strongFirst: PerformedSet[] = [
-      { weightKg: 110, reps: 5, rir: 2, order: 1 },
-      { weightKg: 100, reps: 5, rir: 2, order: 1 },
-    ]
-    const weakFirst: PerformedSet[] = [
-      { weightKg: 100, reps: 5, rir: 2, order: 1 },
-      { weightKg: 110, reps: 5, rir: 2, order: 1 },
-    ]
-    const expected = estimateE1rm(100, 5, 2)
-    expect(weakSideE1rm(strongFirst)).toBeCloseTo(expected)
-    expect(weakSideE1rm(weakFirst)).toBeCloseTo(expected)
-    // Même valeur quel que soit l'ordre d'entrée : déterministe.
-    expect(weakSideE1rm(strongFirst)).toBeCloseTo(weakSideE1rm(weakFirst) as number)
+    const weak = { weightKg: 100, reps: 5, rir: 2, order: 1 }
+    const strong = { weightKg: 110, reps: 5, rir: 2, order: 1 }
+    expect(firstSeriesWeakSet([strong, weak])).toBe(weak)
+    expect(firstSeriesWeakSet([weak, strong])).toBe(weak)
   })
 
   it('renvoie null pour une exécution sans série', () => {
-    expect(weakSideE1rm([])).toBeNull()
+    expect(firstSeriesWeakSet([])).toBeNull()
   })
 })
 

@@ -20,15 +20,7 @@ import { listExercises } from '../capture/data';
 import { withReloadBlocked } from '../../pwa/blockers';
 import { STARTER_TEMPLATE, firstNameProblem, resolveStarterPrescriptions } from './template';
 
-export {
-  isFirstLaunch,
-  STARTER_TEMPLATE,
-  DEFAULT_ROUTINE_NAME,
-  resolveStarterPrescriptions,
-  FIRST_NAME_MAX_LENGTH,
-  type StarterExercise,
-  type StarterTemplate,
-} from './template';
+export { STARTER_TEMPLATE, DEFAULT_ROUTINE_NAME, FIRST_NAME_MAX_LENGTH } from './template';
 
 /** Paramètres du premier lancement : noms saisis + choix d'inclure le modèle de départ. */
 export interface FirstRoutineInput {

@@ -5,13 +5,9 @@
 // muscles principaux (au moins un, cases à cocher) et mouvement (Bilatéral ou
 // Unilatéral, choix en mots).
 //
-// Deux mises en page, une seule logique :
-//   - `frame` fourni : un écran entier (en-tête nommé, retour, action principale
-//     dans la barre collée du bas) ; l'onglet « Exercices » ;
-//   - sans `frame` : un bloc posé dans le flux d'un autre écran, l'action en
-//     bouton secondaire et « Annuler » en lien (l'écran hôte garde son bouton
-//     principal) ; l'éditeur de séance. Le bloc porte lui-même la marge d'écran
-//     (px-5) et ses filets vont bord à bord : l'hôte le pose sans marge.
+// Toujours en écran entier (`frame`) : en-tête nommé, retour, action principale
+// dans la barre collée du bas. La note d'instructions ne vit pas ici : elle se
+// modifie dans la feuille de note commune (NoteSheet).
 //
 // Kit E (DESIGN.md) : aucun signal ; une case cochée est un carré blanc cassé
 // plein ET un nom en demi-gras, jamais la couleur seule ; cibles de 48 px ;
@@ -26,7 +22,6 @@ import {
   toggleMuscle,
   validatePersonalExercise,
 } from '../authoring/exercise-input';
-import { NoteField } from '../notes/NoteField';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { errorMessage } from '../../lib/error-message';
 import {
@@ -38,10 +33,8 @@ import {
   PrimaryButton,
   Screen,
   ScreenHeader,
-  SecondaryButton,
   SectionTitle,
   TextField,
-  TextLink,
 } from '../../ui';
 
 /** Raison du blocage de rechargement tenu par un formulaire d'exo modifié et non enregistré. */
@@ -61,26 +54,14 @@ export interface ExerciseFormProps {
   submitLabel: string;
   /** Libellé pendant l'enregistrement (ex. « Création… », « Enregistrement… »). */
   submitBusyLabel: string;
-  /**
-   * Note d'instructions de l'exo (exercise_notes #26), éditée DANS le formulaire
-   * d'édition. `undefined` = pas de champ note (flux de création : l'exo n'existe
-   * pas encore, la note se pose ensuite par « Modifier »). `''` = note vide éditable.
-   */
-  initialNote?: string;
-  /**
-   * Soumission validée. Reçoit la note SEULEMENT quand `initialNote` est fourni
-   * (sinon `undefined`). Résolu = enregistré (le parent ferme alors le form).
-   */
-  onSubmit: (value: ExerciseFormValue, note?: string) => Promise<void>;
+  /** Soumission validée. Résolu = enregistré (le parent ferme alors le form). */
+  onSubmit: (value: ExerciseFormValue) => Promise<void>;
   /** Retour sans enregistrer. */
   onCancel: () => void;
   /** Donne le focus au champ nom au montage (création surtout). Défaut true. */
   autoFocusName?: boolean;
-  /**
-   * Écran entier : titre, ligne sous le titre et libellé du retour (qui vaut
-   * « Annuler »). Absent : bloc dans le flux de l'écran hôte.
-   */
-  frame?: { title: string; meta?: ReactNode; backLabel: string };
+  /** Écran entier : titre, ligne sous le titre et libellé du retour (qui vaut « Annuler »). */
+  frame: { title: string; meta?: ReactNode; backLabel: string };
   /** Nom de départ d'une création (la recherche qui n'a rien trouvé). */
   prefillName?: string;
 }
@@ -89,7 +70,6 @@ export function ExerciseForm({
   initial,
   submitLabel,
   submitBusyLabel,
-  initialNote,
   onSubmit,
   onCancel,
   autoFocusName = true,
@@ -100,11 +80,9 @@ export function ExerciseForm({
   const [name, setName] = useState(startName);
   const [muscles, setMuscles] = useState<string[]>(initial?.primaryMuscles ?? []);
   const [unilateral, setUnilateral] = useState(initial?.unilateral ?? false);
-  const [note, setNote] = useState(initialNote ?? '');
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasNote = initialNote !== undefined;
 
   // Saisie en cours (création ou édition) : aucun rechargement automatique tant
   // qu'elle ne vit qu'en mémoire. Levé au démontage (le parent ferme le
@@ -114,8 +92,7 @@ export function ExerciseForm({
   const dirty =
     name !== startName ||
     muscles.join('\n') !== (initial?.primaryMuscles ?? []).join('\n') ||
-    unilateral !== (initial?.unilateral ?? false) ||
-    note !== (initialNote ?? '');
+    unilateral !== (initial?.unilateral ?? false);
   const releaseDraft = useReloadBlockWhile(EXERCISE_DRAFT_BLOCK, dirty);
 
   const trimmed = name.trim();
@@ -132,10 +109,7 @@ export function ExerciseForm({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit(
-        { name: trimmed, primaryMuscles: muscles, unilateral },
-        hasNote ? note : undefined,
-      );
+      await onSubmit({ name: trimmed, primaryMuscles: muscles, unilateral });
       // Succès : le parent ferme le formulaire, pas de reset nécessaire ici.
       releaseDraft();
     } catch (err) {
@@ -221,19 +195,6 @@ export function ExerciseForm({
           {MUSCLE_GROUPS.length % 2 === 1 && <span aria-hidden className="border-b border-line" />}
         </div>
       </div>
-
-      {hasNote && (
-        <div className="px-5 pt-5">
-          <NoteField
-            id="exercise-form-note"
-            label="Note de l'exercice"
-            hint="Tes repères techniques. Visibles en référence pendant la séance."
-            placeholder="Prise serrée, coudes rentrés…"
-            value={note}
-            onChange={setNote}
-          />
-        </div>
-      )}
     </>
   );
 
@@ -246,40 +207,22 @@ export function ExerciseForm({
     void submit();
   };
 
-  if (frame) {
-    return (
-      <form className="flex flex-1 flex-col" noValidate onSubmit={onFormSubmit}>
-        <ImplicitSubmit />
-        <Screen
-          bottom={
-            <>
-              {errorLine}
-              <PrimaryButton onClick={() => void submit()} disabled={busy}>
-                {busy ? submitBusyLabel : submitLabel}
-              </PrimaryButton>
-            </>
-          }
-        >
-          <ScreenHeader title={frame.title} meta={frame.meta} back={{ label: frame.backLabel, onClick: cancel }} />
-          {fields}
-        </Screen>
-      </form>
-    );
-  }
-
   return (
-    <form noValidate onSubmit={onFormSubmit}>
+    <form className="flex flex-1 flex-col" noValidate onSubmit={onFormSubmit}>
       <ImplicitSubmit />
-      {fields}
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-5">
-        <SecondaryButton onClick={() => void submit()} disabled={busy}>
-          {busy ? submitBusyLabel : submitLabel}
-        </SecondaryButton>
-        <TextLink tone="muted" onClick={busy ? undefined : cancel}>
-          Annuler
-        </TextLink>
-      </div>
-      {error && <div className="mt-3 px-5">{errorLine}</div>}
+      <Screen
+        bottom={
+          <>
+            {errorLine}
+            <PrimaryButton onClick={() => void submit()} disabled={busy}>
+              {busy ? submitBusyLabel : submitLabel}
+            </PrimaryButton>
+          </>
+        }
+      >
+        <ScreenHeader title={frame.title} meta={frame.meta} back={{ label: frame.backLabel, onClick: cancel }} />
+        {fields}
+      </Screen>
     </form>
   );
 }

@@ -64,18 +64,19 @@ Projet perso (et quelques potes). PWA installable, **offline-first**, **0 € d'
 - PWA installable, safe-area iOS, `prefers-reduced-motion` respecté.
 - **Mise à jour sans invite** : une nouvelle version s'installe au lancement ou à un
   changement d'onglet, jamais pendant une séance. La version qui tourne (commit et
-  date de build) s'affiche dans le bloc Compte de l'Analyse.
+  date de build) s'affiche dans Réglages.
 
-## Design — « L'instrument de nuit »
+## Design — « Signal »
 
-Un instrument de précision qu'on lit dans le noir. Le mode sombre n'est pas un goût : c'est la
-réponse à l'usage (néons durs, bras tendu, une main libre). L'« impressionnant » vient de la
-**précision**, pas de la décoration.
+Un cadran noir, du texte blanc cassé, et une seule couleur qui veut dire quelque chose. Le
+mode sombre n'est pas un goût : c'est la réponse à l'usage (néons durs, bras tendu, une main
+libre).
 
-- **Un seul accent** violet, sur **≤ 10 %** de l'écran *(The One Voice Rule)*.
-- **Chiffres mesurés en mono tabulaire** (Geist Mono, zéro barré) — la signature instrument.
-- Statut par **couleur + forme** (▲ ▬ ▼), jamais la couleur seule. Pas de rouge « énergie ».
-- Tokens **OKLCH**, contraste **WCAG AA** plancher, tap-targets ≥ 44px.
+- **Une seule couleur**, le signal (jaune par défaut, réglable), réservée à « tu es ici » et
+  à « mieux que la dernière fois ».
+- **Inter partout**, chiffres tabulaires pour les nombres seulement.
+- Statut par **couleur + forme** (▲ ▬ ▼), jamais la couleur seule.
+- Plat, structuré par des filets ; contraste **WCAG AA** prouvé par script, cibles ≥ 44 px.
 
 Le système complet est documenté dans **[`DESIGN.md`](./DESIGN.md)** (format Stitch + tokens).
 
@@ -85,9 +86,9 @@ Le système complet est documenté dans **[`DESIGN.md`](./DESIGN.md)** (format S
 |---|---|
 | Front | **React 19** · **Vite** · **TypeScript** (strict) · **Tailwind CSS v4** |
 | Données | **Supabase** — Auth + Postgres + RLS · sync UUID client, last-write-wins |
-| Dataviz | **Recharts** (courbe e1RM, comparaisons) |
+| Dataviz | Graphe **SVG maison** (`analysis/Chart.tsx`) : courbe e1RM, comparaisons |
 | PWA | `vite-plugin-pwa` / Workbox — precache + offline |
-| Typo | Geist · Geist Mono *(auto-hébergées, sous-ensemble latin)* |
+| Typo | Inter Variable *(auto-hébergée, sous-ensemble latin, `src/fonts.css`)* |
 | Tests | **Vitest** · domaine métier en **TDD** |
 
 ## Démarrage

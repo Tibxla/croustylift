@@ -26,7 +26,6 @@ import {
   readOwnQueue,
   readQuarantine,
   quarantineCount,
-  heldCount,
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
@@ -36,6 +35,12 @@ import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
+/** Tout ce que l'appareil retient, tous comptes confondus (file et quarantaine). */
+const heldTotal = () => {
+  const { own, foreign } = heldCounts();
+  return own + foreign;
+};
+
 const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, _at, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
@@ -1352,7 +1357,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(readQuarantine()[0]?.op._owner).toBe('user-1');
   });
 
-  it('heldCount compte file et quarantaine ; clearQueue purge les deux', async () => {
+  it('heldCounts compte file et quarantaine ; clearQueue purge les deux', async () => {
     enqueue(setOp('set-refuse', 1));
     const fns = okFns();
     fns.insertSet = vi.fn(async () => {
@@ -1362,10 +1367,12 @@ describe('quarantaine (rejet définitif de la base)', () => {
     enqueue({ type: 'deleteSet', id: 'set-9' });
 
     expect(pendingCount()).toBe(1);
-    expect(heldCount()).toBe(2);
+    expect(heldTotal()).toBe(2);
+    // Sans compte reconnu, une op sans compte est tenue pour la sienne.
+    expect(heldCounts()).toEqual({ own: 2, ownRefused: 1, foreign: 0 });
 
     clearQueue();
-    expect(heldCount()).toBe(0);
+    expect(heldTotal()).toBe(0);
     expect(readQuarantine()).toEqual([]);
   });
 
@@ -1556,7 +1563,7 @@ describe('purgeByExecution et quarantaine', () => {
     purgeByExecution('exec-abandon');
 
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['set-autre']);
-    expect(heldCount()).toBe(1);
+    expect(heldTotal()).toBe(1);
   });
 
   it('ne touche pas la quarantaine d’un AUTRE compte pour la même exécution', async () => {
@@ -1657,7 +1664,7 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
 
     expect(quarantineCount()).toBe(0);
     expect(readQueue()).toEqual([]);
-    expect(heldCount()).toBe(0);
+    expect(heldTotal()).toBe(0);
   });
 
   it('identité inconnue : rien ne bouge', async () => {
@@ -1727,7 +1734,7 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
 
     expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
     // Le compteur global, lui, compte toujours tout.
-    expect(heldCount()).toBe(3);
+    expect(heldTotal()).toBe(3);
   });
 
   it('une op sans compte (bundle antérieur) est tenue pour celle du compte reconnu', () => {
@@ -1752,7 +1759,7 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
 
   it('seul le forçage (clearQueue) jette tout', () => {
     clearQueue();
-    expect(heldCount()).toBe(0);
+    expect(heldTotal()).toBe(0);
   });
 });
 
