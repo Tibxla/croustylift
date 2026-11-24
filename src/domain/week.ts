@@ -12,8 +12,3 @@ export function weekStartIso(dateIso: string): string {
   const z = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${z(date.getMonth() + 1)}-${z(date.getDate())}`
 }
-
-/** `dateIso` tombe-t-il dans la même semaine civile que `referenceIso` ? */
-export function isSameWeek(dateIso: string, referenceIso: string): boolean {
-  return weekStartIso(dateIso) === weekStartIso(referenceIso)
-}

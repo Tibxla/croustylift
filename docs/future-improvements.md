@@ -16,10 +16,10 @@ figure pas n'est pas connu.
 - ✅ **Résilience** : error boundary de rendu (racine + par surface), crash hooks
   `LoginScreen` (hooks avant return conditionnel).
 - ✅ **Perf** : lazy-load de l'Analyse et vendors en chunks séparés (`react`, `supabase`
-  au lancement ; `recharts` avec l'Analyse seulement). Leur hash ne change pas d'un
+  au lancement ; l'Analyse et les écrans de second rang à la demande). Leur hash ne change pas d'un
   déploiement à l'autre : seul le code de l'app est retéléchargé. Chaque chunk a un
   budget gzip, vérifié en CI (`scripts/bundle-size.mjs`, qui fait foi pour les chiffres).
-  Polices restreintes au sous-ensemble latin de Geist et Geist Mono (59 ko précachés).
+  Police restreinte au sous-ensemble latin d'Inter Variable (`src/fonts.css`).
 - ✅ **Domaine** : gardes division par zéro (`meanY`) et fourchette inversée (`min>max`).
 - ✅ **Sync/outbox** : reset orphelin compensé (`deleteExecution`), `handleSaveDatedNote`
   sur projection `stateRef` (M6), garde de tête outbox robuste via `_seq`, `mergeProgress`
@@ -70,7 +70,7 @@ figure pas n'est pas connu.
   sa propre sauvegarde ne heurte rien (mêmes ids), mais importer dans un compte qui porte
   déjà une routine du même nom sous un autre id lève une violation d'unicité (23505),
   remontée brute par l'import, qui n'écrit alors rien (transaction unique, migration
-  0024). Cas marginal ; piste si ça arrive : traduire l'erreur dans `ImportButton` et
+  0024). Cas marginal ; piste si ça arrive : traduire l'erreur dans l'import (`export/data-import.ts`) et
   proposer de renommer.
 
 - **Séance retouchée en plein entraînement** : une exécution garde la version de séance
@@ -154,12 +154,12 @@ perte), finition.
 
 ### Messages, tests, build
 
-- **Aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM. La
-  logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
+- **Presque aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM :
+  seul `capture/SetBand.test.tsx` rend un composant, en HTML statique
+  (`renderToStaticMarkup`). La logique des écrans est extraite en fonctions pures testées (`surface-switch.ts`,
   `seance-dirty.ts`, `pwa/reload-guards.ts`) ; le câblage des composants (garde de
   sortie, blocages de rechargement, brouillons) n'est vérifié qu'en navigateur.
-- **Exports sans consommateur hors tests** (finition) : `loadDatedNote`
-  (`notes/data.ts`), `listRefused` (`capture/outbox.ts`) et `initialState`
-  (`capture/state.ts`). `upperA` (`capture/fixtures.ts`) est le jeu d'essai des tests,
-  gardé tel quel. Les autres exports sans appelant extérieur servent dans leur propre
-  fichier : ce sont des `export` posés pour les tests, pas du code mort.
+- **Exports sans consommateur hors tests** : `initialState` (`capture/state.ts`) et
+  `upperA` (`capture/fixtures.ts`) sont des auxiliaires des tests, gardés tels quels.
+  Les autres exports sans appelant extérieur servent dans leur propre fichier : ce
+  sont des `export` posés pour les tests, pas du code mort.

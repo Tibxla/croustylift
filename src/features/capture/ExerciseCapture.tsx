@@ -291,8 +291,7 @@ export function ExerciseCapture({
   const livePerf = perfReadout(weightKg, reps, rir);
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
-  // complètes (une série unilatérale = gauche + droite). Le badge de déviation
-  // reste cantonné au bilatéral (le diff prescription/réel par côté est hors #46).
+  // complètes (une série unilatérale = gauche + droite).
   const reachedMin = completedSets >= prescription.sets.min;
   // Borne HAUTE prescrite : c'est ELLE qui déclenche le récap de fin d'exo (et non
   // le min), pour ne pas couper l'enchaînement quand on vise encore une série de

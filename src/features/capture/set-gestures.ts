@@ -67,7 +67,7 @@
 // (`reconcileProgress` et le cas `reconcile-progress` du réducteur, state.ts).
 
 import type { PerformedSet } from '../../domain/types';
-import type { InsertSetOp, OutboxOp, PatchSetOp } from './outbox';
+import type { OutboxOp, PatchSetOp } from './outbox';
 import { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
 import { getProgress, type CaptureAction, type CaptureState } from './state';
@@ -82,25 +82,17 @@ export interface SetGesture {
 export type SetEntry = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
 /**
- * L'op qui écrit la série `set` d'id `id`. Sans `only` : upsert complet
- * (`insertSet`). Avec `only` : écriture partielle d'une série existante
- * (`patchSet`, outbox.ts), les valeurs seules ou le rang seul.
+ * L'op qui réécrit la série existante `set` d'id `id` : écriture partielle
+ * (`patchSet`, outbox.ts), les valeurs seules ou le rang seul. Le log d'une
+ * série neuve pose son `insertSet` lui-même (CaptureScreen).
  */
-export function writeSetOp(state: CaptureState, exerciseId: string, id: string, set: PerformedSet): InsertSetOp;
 export function writeSetOp(
   state: CaptureState,
   exerciseId: string,
   id: string,
   set: PerformedSet,
   only: 'values' | 'rank',
-): PatchSetOp;
-export function writeSetOp(
-  state: CaptureState,
-  exerciseId: string,
-  id: string,
-  set: PerformedSet,
-  only?: 'values' | 'rank',
-): InsertSetOp | PatchSetOp {
+): PatchSetOp {
   const row = {
     id,
     executionId: state.executionId,
@@ -111,7 +103,7 @@ export function writeSetOp(
     rir: set.rir,
     ...(set.side ? { side: set.side } : {}),
   };
-  return only ? { type: 'patchSet', ...row, only } : { type: 'insertSet', ...row };
+  return { type: 'patchSet', ...row, only };
 }
 
 /**
@@ -141,7 +133,7 @@ export function correctSet(
   };
 }
 
-export { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion, type RankPolicy } from './set-ranks';
+export { logicalSetRows, ranksAfterDeletion } from './set-ranks';
 
 /**
  * Supprime la série à laquelle appartient la ligne d'id `setId` dans l'exo

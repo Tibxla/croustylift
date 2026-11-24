@@ -52,7 +52,6 @@ export function E1rmChart({
   onSelect,
   record,
   valueText,
-  height = 232,
 }: {
   /** Les courbes AFFICHÉES, celle qui porte la lecture en tête. */
   series: E1rmSeries[];
@@ -67,7 +66,6 @@ export function E1rmChart({
   record?: { value: number; label: string };
   /** Le point choisi en mots, pour le curseur des lecteurs d'écran. */
   valueText: (sel: ChartSel) => string;
-  height?: number;
 }) {
   const populated = series.filter((s) => s.curve.length > 0);
   const accent = populated[0];
@@ -103,7 +101,7 @@ export function E1rmChart({
   return (
     <Chart
       series={chartSeries}
-      height={height}
+      height={232}
       selected={selected}
       onSelect={onSelect}
       xDomain={axis?.domain}

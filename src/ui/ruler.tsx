@@ -9,10 +9,8 @@ import { prefersReducedMotion } from './motion';
  *
  *  Les graduations vivent sur une PISTE translatée en `transform` (la graduation
  *  v est à v × pxPerStep du centre de la piste). Le glissé suit le doigt sans
- *  transition. Au toucher, la piste saute au cran ; avec `animateTap`, elle y
- *  glisse en 190 ms (ease-out fort), et un nouveau toucher ou un glissé repart
- *  de la position affichée (interruptible). Ni le clavier ni un changement venu
- *  de l'extérieur n'animent. Réduire les animations : aucun glissé.
+ *  transition. Au toucher, la piste saute au cran. Ni le clavier ni un
+ *  changement venu de l'extérieur n'animent.
  *
  *  ÉLAN (grosse marche, ex. +40 kg) : un glissé lâché vite continue sur sa
  *  lancée, proportionnelle à la vitesse du doigt sur ses 100 dernières ms
@@ -33,7 +31,6 @@ export function Ruler({
   tickColor,
   needle = 'var(--sig)',
   height = 62,
-  animateTap = false,
   compact = false,
 }: {
   steps: number;
@@ -52,8 +49,6 @@ export function Ruler({
   /** Couleur de l'aiguille : le signal, sauf quand la règle porte elle-même des couleurs. */
   needle?: string;
   height?: number;
-  /** Le toucher fait glisser la règle jusqu'au cran (190 ms) au lieu d'y sauter. */
-  animateTap?: boolean;
   /** Écran bas : graduations et aiguille plus courtes, étiquettes rapprochées. */
   compact?: boolean;
 }) {
@@ -63,9 +58,9 @@ export function Ruler({
   const gesture = useRef<{ x: number; start: number; moved: boolean; last: number; trail: { x: number; t: number }[] } | null>(null);
   const animTimer = useRef(0);
   const [drag, setDrag] = useState<number | null>(null);
-  /** Durée du glissé animé en cours (toucher ou élan), 0 sinon. */
+  /** Durée du glissé animé en cours (élan), 0 sinon. */
   const [animMs, setAnimMs] = useState(0);
-  const tapAnim = animMs > 0;
+  const animating = animMs > 0;
   /** Demi-largeur en crans : assez de graduations pour couvrir la règle, sans en dessiner hors champ. */
   const [half, setHalf] = useState(14);
   const value = drag ?? steps;
@@ -86,7 +81,7 @@ export function Ruler({
   /** Valeur affichée sous l'aiguille, même en plein glissé animé. */
   const shownValue = () => {
     const el = track.current;
-    if (!tapAnim || !el) return value;
+    if (!animating || !el) return value;
     const t = getComputedStyle(el).transform;
     return t && t !== 'none' ? -new DOMMatrixReadOnly(t).m41 / pxPerStep : value;
   };
@@ -105,7 +100,7 @@ export function Ruler({
   // demi-largeur), le départ et l'arrivée restent garnis. L'élan peut dépasser
   // une largeur : la fenêtre s'élargit le temps du glissé.
   const base = Math.round(value);
-  const reach = 2 * half + 2 + (tapAnim ? 64 : 0);
+  const reach = 2 * half + 2 + (animating ? 64 : 0);
   const ticks: number[] = [];
   for (let k = -reach; k <= reach; k++) if (base + k >= 0 && base + k <= max) ticks.push(base + k);
 
@@ -134,7 +129,7 @@ export function Ruler({
         e.currentTarget.setPointerCapture(e.pointerId);
         // Interrompre un glissé animé : on repart de ce qui est affiché.
         const from = shownValue();
-        if (tapAnim) {
+        if (animating) {
           stopAnim();
           setDrag(from);
         }
@@ -161,7 +156,6 @@ export function Ruler({
         if (!g.moved) {
           const r = e.currentTarget.getBoundingClientRect();
           const target = clamp(Math.round(g.start + (e.clientX - (r.left + r.width / 2)) / pxPerStep));
-          if (animateTap && target !== g.start) playAnim(190);
           onChange(target);
         } else {
           // Élan : vitesse du doigt sur ses 100 dernières ms (px/ms).
@@ -193,7 +187,7 @@ export function Ruler({
           transform: `translate3d(${-value * pxPerStep}px, 0, 0)`,
           // Sans glissé animé, aucune transition : la règle sert des centaines de
           // fois par séance, elle suit le doigt et saute au cran touché.
-          transition: tapAnim ? `transform ${animMs}ms cubic-bezier(0.23, 1, 0.32, 1)` : 'none',
+          transition: animating ? `transform ${animMs}ms cubic-bezier(0.23, 1, 0.32, 1)` : 'none',
         }}
       >
         {ticks.map((v) => {

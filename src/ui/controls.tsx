@@ -5,12 +5,10 @@ import type { ReactNode } from 'react';
  *  (jamais le signal). */
 export function Switch({
   label,
-  meta,
   checked,
   onChange,
 }: {
   label: string;
-  meta?: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -24,7 +22,6 @@ export function Switch({
     >
       <span className="min-w-0 flex-1">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
-        {meta && <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>}
       </span>
       <span aria-hidden className="w-8 text-right text-[14px] text-muted">
         {checked ? 'Oui' : 'Non'}
