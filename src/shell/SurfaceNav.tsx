@@ -14,7 +14,8 @@
 // LARGEUR : les cinq mots font 344 px avec leurs marges. Sous 350 px (iPhone SE
 // de 1ʳᵉ génération, zoom d'affichage des mini), mots à 14 px et marges de 6 px,
 // sinon « Réglages » sortait de l'écran et toute l'app glissait de côté ; chaque
-// mot garde 44 px de large au moins (« Exos »).
+// mot garde 44 px de large au moins (« Exos »). À partir de 380 px, la ligne
+// prend 11 px de marge : le premier mot commence à 20 px, comme les titres.
 //
 // DIAGNOSTIC : un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage
 // (registre R4, src/viewport/). C'est le seul geste disponible sur tous les
@@ -37,7 +38,7 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
   return (
     <nav
       aria-label="Surfaces"
-      className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2"
+      className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2 min-[380px]:px-[11px]"
       style={{ WebkitTouchCallout: 'none' }}
       onPointerDown={() => {
         longPressed.current = false;
