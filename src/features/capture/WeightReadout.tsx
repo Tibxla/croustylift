@@ -9,52 +9,77 @@
 // invisible à 72 px). Le saut entre 80 et 82,5 est voulu.
 //
 // SAISIE PRÉCISE : toucher la valeur ouvre le clavier numérique (inputmode
-// decimal, virgule acceptée, 72 px donc pas de zoom iOS) pour une valeur hors du
+// decimal, virgule acceptée, 56 px au moins donc pas de zoom iOS) pour une valeur
+// hors du
 // pas de la règle. La valeur suit la frappe, bornée (`parseTypedValue`), et la
 // règle se recale dessus : toucher « Logger » sans fermer le clavier logge bien
 // la valeur tapée. Entrée ou toucher ailleurs garde la valeur, Échap ou un champ
 // vide rend celle d'avant. Le clavier reste facultatif : la règle est le geste
 // principal.
 import { useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { useCompact } from '../../ui';
 import { formatWeight } from './format';
 import { parseTypedValue, WEIGHT_MAX_KG } from './stepper-utils';
 
-const BIG = 'text-[72px] font-[650] leading-none tracking-[-0.045em]';
-const SIZE = 72;
+const FACE = 'font-[650] leading-none tracking-[-0.045em]';
 /** Marge d'écran de chaque côté, et place de « kg » (écart compris) à droite :
  *  le nombre centré tient si sa largeur ne dépasse pas la largeur moins 2 × (marge + kg). */
 const GUTTER = 20;
 const KG_ROOM = 34;
 
+function Kg() {
+  // Largeur nulle : « kg » suit le nombre sur sa ligne de base sans décaler son centrage.
+  return (
+    <span aria-hidden className="w-0 overflow-visible whitespace-nowrap">
+      <span className="ml-1.5 text-[22px] font-medium text-muted">kg</span>
+    </span>
+  );
+}
+
 export function WeightReadout({ value, onChange }: { value: number; onChange: (kg: number) => void }) {
+  // Écran bas (360×780) : 56 px au lieu de 72, pour garder RIR au-dessus de la barre.
+  const base = useCompact() ? 56 : 72;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   // La valeur d'avant la saisie, rendue par Échap ou un champ vide.
   const before = useRef(value);
   const shown = formatWeight(value);
-  const box = useRef<HTMLButtonElement>(null);
+  const text = editing ? draft || '0' : shown;
+
+  // Taille ajustée : une copie invisible du texte, à la taille de base, dit sa
+  // largeur ; au-delà de la place, la taille se réduit d'autant (affichage et saisie).
+  const box = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
-  const [size, setSize] = useState(SIZE);
+  const input = useRef<HTMLInputElement>(null);
+  const [fit, setFit] = useState({ size: base, width: 0 });
   useLayoutEffect(() => {
     const b = box.current;
     const p = probe.current;
     if (!b || !p || typeof ResizeObserver === 'undefined') return;
-    const fit = () => {
+    const measure = () => {
       const room = b.clientWidth - 2 * (GUTTER + KG_ROOM);
       const natural = p.getBoundingClientRect().width;
-      setSize(natural > room ? Math.max(32, Math.floor((SIZE * room) / natural)) : SIZE);
+      const size = natural > room ? Math.max(32, Math.floor((base * room) / natural)) : base;
+      setFit({ size, width: Math.ceil((natural * size) / base) + 4 });
     };
     // La copie change de taille avec le texte, la boîte avec l'écran.
-    const ro = new ResizeObserver(fit);
+    const ro = new ResizeObserver(measure);
     ro.observe(b);
     ro.observe(p);
     return () => ro.disconnect();
-  }, [editing]);
+  }, [base]);
 
   const start = () => {
     before.current = value;
-    setDraft(shown);
-    setEditing(true);
+    // iOS n'ouvre le clavier que si le focus est donné DANS le geste : le champ est
+    // monté de façon synchrone, puis focalisé tout de suite.
+    flushSync(() => {
+      setDraft(shown);
+      setEditing(true);
+    });
+    input.current?.focus();
+    input.current?.select();
   };
   const type = (raw: string) => {
     const clean = raw.replace(/[^\d.,]/g, '');
@@ -67,59 +92,54 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
     if (!/\d/.test(raw)) onChange(before.current);
   };
 
-  if (editing) {
-    return (
-      <div className="relative flex h-[72px] items-center justify-center px-5">
-        <input
-          // Le champ ne vit que le temps de la saisie, ouverte par un toucher.
-          autoFocus
-          type="text"
-          inputMode="decimal"
-          enterKeyHint="done"
-          autoComplete="off"
-          aria-label="Poids en kg, valeur précise"
-          value={draft}
-          onFocus={(e) => e.currentTarget.select()}
-          onChange={(e) => type(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              e.currentTarget.blur();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              setDraft('');
-              onChange(before.current);
-              setEditing(false);
-            }
-          }}
-          onBlur={(e) => close(e.currentTarget.value)}
-          className={`focus-own tnum w-full min-w-0 border-b-2 border-ink bg-transparent text-center text-ink outline-none ${BIG}`}
-        />
-        <span className="pointer-events-none absolute bottom-1 right-5 text-[22px] font-medium text-muted">kg</span>
-      </div>
-    );
-  }
-
   return (
-    <button
-      ref={box}
-      type="button"
-      onClick={start}
-      aria-label={`Poids : ${shown} kg. Toucher pour saisir une valeur précise`}
-      className="relative flex h-[72px] w-full items-center justify-center overflow-hidden text-ink active:opacity-70"
-    >
-      <span aria-hidden className="inline-flex items-baseline">
-        <span className="tnum font-[650] leading-none tracking-[-0.045em]" style={{ fontSize: size }}>
-          {shown}
+    <div ref={box} className="relative flex items-center justify-center overflow-hidden" style={{ height: base }}>
+      {editing ? (
+        <span className="inline-flex items-baseline">
+          <input
+            ref={input}
+            type="text"
+            inputMode="decimal"
+            enterKeyHint="done"
+            autoComplete="off"
+            aria-label="Poids en kg, valeur précise"
+            value={draft}
+            onChange={(e) => type(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setDraft('');
+                onChange(before.current);
+                setEditing(false);
+              }
+            }}
+            onBlur={(e) => close(e.currentTarget.value)}
+            className={`focus-own tnum min-w-[0.6em] border-b-2 border-ink bg-transparent p-0 text-center text-ink outline-none ${FACE}`}
+            style={{ fontSize: fit.size, width: fit.width || undefined }}
+          />
+          <Kg />
         </span>
-        {/* Largeur nulle : « kg » suit le nombre sans décaler son centrage. */}
-        <span className="w-0 overflow-visible whitespace-nowrap">
-          <span className="ml-1.5 text-[22px] font-medium text-muted">kg</span>
-        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={start}
+          aria-label={`Poids : ${shown} kg. Toucher pour saisir une valeur précise`}
+          className="flex h-full w-full items-center justify-center text-ink active:opacity-70"
+        >
+          <span aria-hidden className="inline-flex items-baseline">
+            <span className={`tnum ${FACE}`} style={{ fontSize: fit.size }}>
+              {shown}
+            </span>
+            <Kg />
+          </span>
+        </button>
+      )}
+      <span ref={probe} aria-hidden className={`tnum pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap ${FACE}`} style={{ fontSize: base }}>
+        {text}
       </span>
-      <span ref={probe} aria-hidden className={`tnum pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap ${BIG}`}>
-        {shown}
-      </span>
-    </button>
+    </div>
   );
 }
