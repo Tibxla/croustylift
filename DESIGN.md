@@ -175,7 +175,7 @@ Palette **retenue** : neuf valeurs, toutes définies une fois dans `src/index.cs
 
 ### Hierarchy
 
-- **Poids lu** (650, 72 px, `-0.045em`, tabulaire) : la charge de la série en cours. 56 px en lecture secondaire.
+- **Poids lu** (650, 72 px, `-0.045em`, tabulaire) : la charge de la série en cours. 56 px en lecture secondaire et sur écran bas (≤ 800 px de haut), 48 px sur écran très bas (≤ 700 px, iPhone SE).
 - **Titre d'instrument** (650, 32 px, `-0.03em`) : nom de l'exo en salle.
 - **Titre d'écran** (650, 28 px, `-0.025em`) : en-tête de chaque écran.
 - **Chiffre clé** (500, 22 px, tabulaire) : e1RM, totaux, valeurs d'une ligne d'instrument.
@@ -265,7 +265,8 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Règle de poids** : au pas de Réglages, graduation majeure tous les 5 kg, élan sur un coup sec ; jusqu'à 500 kg (au-delà, le clavier).
 - **Rangées de numéros** (`NumberRow`) : reps 1 à 50, RIR 0 à 10, élargies si la valeur en sort ; un tap, une valeur.
 - **Barre du pouce** : rangée du haut à trois places fixes (Sommaire, Annuler la série n, Exo suivant ou Terminer), Sommaire et Exo suivant au même gabarit (48 px, deux lignes, même ligne de base) ; dessous, Logger en bloc plein, toujours au même endroit, sans enfoncement. Rien ne change de place au minimum du plan.
-- **Mesure du brouillon** : e1RM (ou reps effectives à 0 kg), écart à la Référence et record en chiffres seuls, sans signe ni couleur : le signal ne juge que des séries faites.
+- **Mesure du brouillon** : e1RM (ou reps effectives à 0 kg), « Écart e1RM » à la Référence et record en chiffres seuls, sans couleur ni ▲ : le signal ne juge que des séries faites. L'écart nomme sa mesure, sinon « +3,3 kg » se lit comme un poids à ajouter. Les libellés « e1RM » et « RIR » se touchent (soulignés d'un filet gris) et ouvrent leur définition en une phrase (`src/lib/glossary-text.ts`).
+- **Paliers de hauteur** : écran bas (≤ 800 px, `useCompact`) puis très bas (≤ 700 px, `useCompactTight`) ; à chaque palier la Salle se resserre pour que la rangée RIR reste au-dessus de la barre du pouce.
 
 ### Feuille basse
 
