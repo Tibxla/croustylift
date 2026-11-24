@@ -62,6 +62,8 @@ import {
   fateOf,
   fromLegacy,
   heldBy,
+  isExpired,
+  legacyIdentity,
   parseRecord,
   prune,
   refuse,
@@ -400,6 +402,43 @@ const CORRUPT_KEY = 'croustylift:outbox:corrupt';
 const LEGACY_QUEUE_KEY = 'croustylift:outbox';
 const LEGACY_QUARANTINE_KEY = 'croustylift:outbox:quarantine';
 
+// VERROU DE L'ANCIENNE FILE. Un onglet resté sur l'ancienne version envoie
+// SA file, sous le même verrou que nous : il pouvait donc envoyer une
+// correction récente avant qu'une plus ancienne, déjà au registre, ne parte
+// d'ici, et l'ancienne gagnait en base. Tant que le registre est actif,
+// l'ancienne file commence donc par une écriture d'un type que l'ancienne
+// version ne sait pas jouer : sa passe S'ARRÊTE dessus (règle « type d'op
+// inconnu », qu'elle applique déjà) et n'envoie plus rien. Ce qu'elle enfile
+// derrière est repris ici (`absorbLegacy`), à sa place dans l'ordre d'envoi.
+// Elle porte le compte reconnu : sous une session, l'ancienne version ne
+// regarde que les écritures de son compte. À retirer avec la reprise.
+const LEGACY_STOP_UID = 'registre-actif';
+function legacyStop(): string {
+  const owner = loadLocalAccount()?.userId;
+  return JSON.stringify([
+    { type: 'registreActif', id: 'registre', _uid: LEGACY_STOP_UID, _at: 0, ...(owner ? { _owner: owner } : {}) },
+  ]);
+}
+
+/** L'ancienne file est-elle réduite à son verrou, sans rien à reprendre ? */
+function legacySealed(): boolean {
+  return localStorage.getItem(LEGACY_QUEUE_KEY) === legacyStop() && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null;
+}
+
+/** Réduit l'ancienne file à son verrou et efface l'ancienne quarantaine. */
+function sealLegacy(): void {
+  try {
+    localStorage.removeItem(LEGACY_QUARANTINE_KEY);
+    localStorage.setItem(LEGACY_QUEUE_KEY, legacyStop());
+  } catch {
+    try {
+      localStorage.removeItem(LEGACY_QUEUE_KEY);
+    } catch {
+      /* no-op */
+    }
+  }
+}
+
 // REPLI MÉMOIRE, engagé quand l'appareil refuse d'écrire l'enregistrement
 // (quota plein, mode privé), ou qu'une version plus récente l'a écrit. Il ne
 // tient PAS une copie du registre : le registre est commun aux onglets, et le
@@ -475,7 +514,10 @@ function readLegacy(): LegacyEntry[] {
   if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) {
     return [];
   }
-  return fromLegacy(legacyArray(LEGACY_QUEUE_KEY), legacyArray(LEGACY_QUARANTINE_KEY));
+  const queue = legacyArray(LEGACY_QUEUE_KEY).filter(
+    (op) => (op as { _uid?: unknown } | null)?._uid !== LEGACY_STOP_UID,
+  );
+  return fromLegacy(queue, legacyArray(LEGACY_QUARANTINE_KEY));
 }
 
 /**
@@ -501,6 +543,32 @@ function open(): { draft: Draft; outdated: boolean; legacy: number } {
 /** Lecture seule du registre (cf. `open`). */
 function view(): RegistryRecord {
   return open().draft.record;
+}
+
+/**
+ * Sous stockage plein, les clés de l'ancien format restent la seule trace
+ * durable de ce qu'elles portent (cf. `absorbLegacy`). Elles ne gardent alors
+ * que ce que le registre retient encore : une écriture acquittée, abandonnée
+ * ou purgée ici en est retirée, sinon elle rentrerait de nouveau à la lecture
+ * suivante. Les réduire libère de la place : l'écriture passe.
+ */
+function trimLegacy(record: RegistryRecord): void {
+  if (localStorage.getItem(LEGACY_QUEUE_KEY) === null && localStorage.getItem(LEGACY_QUARANTINE_KEY) === null) return;
+  const kept = new Set(record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
+  const stays = (op: unknown) =>
+    (op as { _uid?: unknown } | null)?._uid === LEGACY_STOP_UID || kept.has(legacyIdentity(op));
+  try {
+    const queue = legacyArray(LEGACY_QUEUE_KEY);
+    const trimmedQueue = queue.filter(stays);
+    if (trimmedQueue.length !== queue.length) localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(trimmedQueue));
+    const quarantine = legacyArray(LEGACY_QUARANTINE_KEY);
+    const trimmedQuarantine = quarantine.filter((q) => stays((q as { op?: unknown } | null)?.op));
+    if (trimmedQuarantine.length !== quarantine.length) {
+      localStorage.setItem(LEGACY_QUARANTINE_KEY, JSON.stringify(trimmedQuarantine));
+    }
+  } catch {
+    // Elles restent telles quelles : leurs écritures repartiront, sans effet.
+  }
 }
 
 /** Retire l'enregistrement de l'appareil. Faux si même cela est refusé. */
@@ -545,6 +613,9 @@ function commit(draft: Draft, outdated: boolean): boolean {
       }
     }
     if (!written) written = writeMakingRoom(() => persist(draft.record));
+    // Ce que les clés de l'ancien format portaient et qui est réglé ici n'a
+    // plus à y rester : relu, il repartirait à chaque passe.
+    if (!written) trimLegacy(draft.record);
     // Plus rien à retenir (tout est acquitté) : retirer l'enregistrement passe
     // même sur un appareil plein, et rien n'est alors en retard sur l'appareil.
     if (!written && draft.record.entries.length === 0) written = removeRegistry();
@@ -713,9 +784,13 @@ export interface LocalWrite {
  * écritures non acquittées sont rendues.
  */
 export function writesSince(stamp: ReadStamp | null | undefined): LocalWrite[] {
+  // Une écriture acquittée depuis plus longtemps que sa rétention n'est plus
+  // appliquée, même si rien ne l'a encore retirée du registre : elle masquerait
+  // sans borne une correction venue d'un autre appareil.
+  const now = Date.now();
   return view()
     .entries.filter(
-      (e) => isOwn(e) && (e.fate !== 'acked' || (stamp != null && (e.ack ?? 0) > stamp)),
+      (e) => isOwn(e) && (e.fate !== 'acked' || (stamp != null && (e.ack ?? 0) > stamp && !isExpired(e, now))),
     )
     .map((e) => ({ uid: e.uid, n: e.n, op: e.op, fate: e.fate }));
 }
@@ -834,7 +909,8 @@ export function purgeByExecution(executionId: string): void {
 
 /**
  * Fait entrer au registre ce que portent les clés de l'ancien format, puis les
- * efface : le registre d'abord, les anciennes clés ensuite. Si l'app s'arrête
+ * vide (l'ancienne file ne garde que son verrou, cf. `LEGACY_STOP_UID`) : le
+ * registre d'abord, les anciennes clés ensuite. Si l'app s'arrête
  * entre les deux, le registre fait foi à l'ouverture suivante (une écriture déjà
  * connue n'entre pas deux fois, cf. `admit`).
  *
@@ -845,17 +921,17 @@ export function purgeByExecution(executionId: string): void {
  */
 function absorbLegacy(adopt?: (draft: Draft) => void): void {
   if (typeof localStorage === 'undefined') return;
-  const present =
-    localStorage.getItem(LEGACY_QUEUE_KEY) !== null ||
-    localStorage.getItem(LEGACY_QUARANTINE_KEY) !== null;
   const { draft, outdated } = open();
   adopt?.(draft);
   // Sous une version plus récente, rien n'est écrit ni effacé.
   if (outdated) return;
-  // Les anciennes clés ne sont effacées que si leur contenu est bien écrit au
-  // registre : sinon elles restent la seule trace sur l'appareil.
-  if (draft.log.length > 0 && !commit(draft, false)) return;
-  if (present) removeLegacyKeys(false);
+  if (draft.log.length > 0) commit(draft, false);
+  // Les anciennes clés ne sont vidées que si TOUT le registre est écrit sur
+  // l'appareil : tant qu'une partie ne tient qu'en mémoire (stockage plein, à
+  // cette reprise ou à une précédente), elles restent la seule trace durable de
+  // ce qu'elles portent.
+  if (activeVolatile() !== null) return;
+  if (!legacySealed()) sealLegacy();
 }
 
 /**

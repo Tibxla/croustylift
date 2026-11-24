@@ -89,7 +89,7 @@ vi.mock('../../lib/supabase', () => {
 });
 
 import { adoptLegacyOps, clearQueue, flush, listRefused, readQueue } from '../capture/outbox';
-import { REGISTRY_KEY, storedWrites } from '../../test/registry';
+import { legacyQueueWrites, REGISTRY_KEY, storedWrites } from '../../test/registry';
 import { syncFns } from '../capture/sync';
 import { datedNoteId } from './dated-note-id';
 import {
@@ -282,7 +282,7 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     expect(readQueue()[1]).toMatchObject({ type: 'deleteDatedNote', id: EN_FILE, executionId: EXEC, exerciseId: EXO });
     expect(storedWrites()[1]?.op).toMatchObject({ executionId: EXEC, exerciseId: EXO });
     // L'ancienne file a quitté l'appareil : le registre fait foi.
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(legacyQueueWrites()).toEqual([]);
 
     const result = await flush(syncFns);
     expect(result.remaining).toBe(0);

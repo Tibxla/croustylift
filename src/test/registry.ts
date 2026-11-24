@@ -58,3 +58,13 @@ export function otherTabAcknowledgesAll(storage: KeyValue = localStorage): void 
   });
   storage.setItem(REGISTRY_KEY, JSON.stringify({ ...record, seq, entries }));
 }
+
+/**
+ * Ce que l'ancienne file porte encore à reprendre : ses écritures, sans le
+ * verrou que le registre y pose pour arrêter les onglets de l'ancienne version.
+ */
+export function legacyQueueWrites(storage: KeyValue = localStorage): unknown[] {
+  const raw = storage.getItem('croustylift:outbox');
+  const queue = raw ? (JSON.parse(raw) as { _uid?: string }[]) : [];
+  return queue.filter((op) => op._uid !== 'registre-actif');
+}

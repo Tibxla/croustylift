@@ -28,6 +28,7 @@ import {
   type PatchSetOp,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
+import { legacyQueueWrites } from '../../test/registry';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
@@ -1950,7 +1951,7 @@ describe('écritures partielles (patchSet)', () => {
 
     // Les anciennes clés sont effacées : un onglet resté sur l'ancienne version
     // n'y trouve plus rien à rejouer.
-    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(legacyQueueWrites()).toEqual([]);
     expect(localStorage.getItem(QUARANTINE_KEY)).toBeNull();
     expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
     expect(readQueue()[1]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
@@ -1960,6 +1961,7 @@ describe('écritures partielles (patchSet)', () => {
   it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     enqueue(execOp());
+    adoptLegacyOps();
     const setItem = vi.spyOn(localStorage, 'setItem');
     adoptLegacyOps();
     expect(setItem).not.toHaveBeenCalled();

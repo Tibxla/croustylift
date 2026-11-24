@@ -33,7 +33,7 @@ import {
   type SyncFns,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
-import { REGISTRY_KEY, storedWrites } from '../../test/registry';
+import { legacyQueueWrites, REGISTRY_KEY, storedWrites } from '../../test/registry';
 
 class MemoryStorage {
   store = new Map<string, string>();
@@ -179,7 +179,7 @@ describe('première ouverture : la file et la quarantaine de l’ancien format e
     ]);
     expect(storedWrites().every((w) => w.owner === owner)).toBe(true);
     // Le registre d'abord, les anciennes clés ensuite.
-    expect(localStorage.getItem(LEGACY_QUEUE)).toBeNull();
+    expect(legacyQueueWrites()).toEqual([]);
     expect(localStorage.getItem(LEGACY_QUARANTINE)).toBeNull();
   });
 
@@ -194,24 +194,28 @@ describe('première ouverture : la file et la quarantaine de l’ancien format e
   });
 
   it('app arrêtée entre l’écriture du registre et l’effacement des anciennes clés : le registre fait foi, rien n’entre deux fois', async () => {
-    // L'effacement échoue une fois (l'app meurt à cet instant).
+    // L'app meurt juste après l'écriture du registre : les anciennes clés ne
+    // sont ni vidées ni effacées.
     const removeItem = localStorage.removeItem.bind(localStorage);
-    let crashed = false;
+    const setItem = localStorage.setItem.bind(localStorage);
+    let dead = true;
     localStorage.removeItem = (k: string) => {
-      if (!crashed && k.startsWith(LEGACY_QUEUE)) {
-        crashed = true;
-        throw new Error('arrêt de l’app');
-      }
+      if (dead && k.startsWith(LEGACY_QUEUE)) throw new Error('arrêt de l’app');
       removeItem(k);
     };
+    localStorage.setItem = (k: string, v: string) => {
+      if (dead && k.startsWith(LEGACY_QUEUE)) throw new Error('arrêt de l’app');
+      setItem(k, v);
+    };
     adoptLegacyOps();
-    expect(localStorage.getItem(LEGACY_QUEUE)).not.toBeNull();
+    expect(legacyQueueWrites()).toHaveLength(2);
     expect(storedWrites()).toHaveLength(5);
 
     // Ouverture suivante.
+    dead = false;
     adoptLegacyOps();
     expect(storedWrites()).toHaveLength(5);
-    expect(localStorage.getItem(LEGACY_QUEUE)).toBeNull();
+    expect(legacyQueueWrites()).toEqual([]);
     expect(localStorage.getItem(LEGACY_QUARANTINE)).toBeNull();
 
     const b = base();
@@ -251,7 +255,7 @@ describe('ancien onglet : ce qu’il écrit encore dans les anciennes clés est 
     await flush(b.fns);
 
     expect(b.sent).toEqual(['insertSet:vieux']);
-    expect(localStorage.getItem(LEGACY_QUEUE)).toBeNull();
+    expect(legacyQueueWrites()).toEqual([]);
   });
 
   it('une écriture de l’ancien onglet prend sa place par son instant : son insertion part AVANT la correction faite ici ensuite', async () => {
@@ -667,5 +671,127 @@ describe('sans compte reconnu', () => {
     enqueue(insert('s1'));
     expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 0 });
     expect(writesSince(null).map((w) => w.op.id)).toEqual(['s1']);
+  });
+});
+
+// --- Constats de la relecture contradictoire (Codex, 24/11) -----------------------
+
+describe('relecture contradictoire : conversion sous stockage plein', () => {
+  it('deux reprises de suite sans pouvoir écrire le registre : les anciennes clés, seule trace, ne sont jamais effacées', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    const legacy = JSON.stringify([{ ...insert('seule-trace'), _uid: 'q1', _owner: 'user-1', _at: 1000 }]);
+    localStorage.setItem(LEGACY_QUEUE, legacy);
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    adoptLegacyOps();
+    // Seconde reprise (début d'une passe), réseau coupé : rien n'est acquitté.
+    await flush(base({ cuts: () => true }).fns);
+
+    expect(localStorage.getItem(LEGACY_QUEUE)).toBe(legacy);
+  });
+});
+
+describe('relecture contradictoire : ordre de l’ancienne file', () => {
+  it('une insertion sans instant suivie d’une suppression datée garde l’ordre de la file', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    localStorage.setItem(
+      LEGACY_QUEUE,
+      JSON.stringify([
+        { ...insert('s1'), _uid: 'q1', _owner: 'user-1', _seq: 1 },
+        { ...del('s1'), _uid: 'q2', _owner: 'user-1', _seq: 2, _at: 5000 },
+      ]),
+    );
+    adoptLegacyOps();
+    const b = base();
+    await flush(b.fns);
+    expect(b.sent).toEqual(['insertSet:s1', 'deleteSet:s1']);
+  });
+});
+
+describe('relecture contradictoire : l’ancien onglet n’envoie plus sa propre file', () => {
+  it('le registre actif pose en tête de l’ancienne file une écriture que l’ancienne version ne sait pas jouer : sa passe s’arrête dessus', () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    adoptLegacyOps();
+    const queue = JSON.parse(localStorage.getItem(LEGACY_QUEUE)!) as { type: string; _owner?: string }[];
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({ _owner: 'user-1' });
+    // Aucun type que l'ancienne version envoie.
+    expect([
+      'upsertExecution', 'insertSet', 'patchSet', 'deleteSet', 'updateExecution', 'upsertDatedNote',
+      'deleteDatedNote', 'upsertExerciseNote', 'deleteExerciseNote', 'deleteExecution', 'deleteExecutionIfEmpty',
+    ]).not.toContain(queue[0]!.type);
+    // Et ce n'est une écriture pour personne ici.
+    expect(heldCounts()).toEqual({ own: 0, ownRefused: 0, foreign: 0 });
+  });
+
+  it('ce que l’ancien onglet enfile derrière est repris ici, à sa place : la correction la plus récente part en dernier', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    adoptLegacyOps();
+    // Ici d'abord : 90 kg. Puis l'ancien onglet, plus tard : 100 kg, derrière le verrou.
+    enqueue(correction('s1', 90));
+    const now = storedWrites()[0]!.n;
+    const stop = JSON.parse(localStorage.getItem(LEGACY_QUEUE)!) as unknown[];
+    localStorage.setItem(
+      LEGACY_QUEUE,
+      JSON.stringify([...stop, { ...correction('s1', 100), _uid: 'old-1', _owner: 'user-1', _at: now + 60_000 }]),
+    );
+    const weights: number[] = [];
+    const fns = new Proxy({}, { get: () => async (op: { weightKg: number }) => void weights.push(op.weightKg) }) as SyncFns;
+
+    await flush(fns);
+
+    expect(weights).toEqual([90, 100]);
+    // L'ancienne file est de nouveau réduite à son verrou.
+    expect(JSON.parse(localStorage.getItem(LEGACY_QUEUE)!)).toHaveLength(1);
+  });
+});
+
+describe('relecture contradictoire : un refus dépassé par une écriture acquittée', () => {
+  it('correction refusée, puis correction plus récente acquittée : l’ancienne n’est plus appliquée ni renvoyable', async () => {
+    enqueue(correction('s1', 90));
+    await flush(base({ refuses: () => '42501' }).fns);
+    expect(listRefused()).toHaveLength(1);
+    enqueue(correction('s1', 100));
+    await flush(base().fns);
+
+    expect(listRefused()).toEqual([]);
+    // Une lecture fraîche porte 100 kg : plus aucune écriture locale à lui appliquer.
+    expect(writesSince(readStamp())).toEqual([]);
+  });
+
+  it('colonnes disjointes : le refus garde ce que la nouvelle écriture ne couvre pas', async () => {
+    enqueue({ ...correction('s1', 90), reps: 12, cols: ['weightKg', 'reps'] } as OutboxOp);
+    await flush(base({ refuses: () => '42501' }).fns);
+    enqueue(correction('s1', 100));
+    await flush(base().fns);
+
+    expect(listRefused().map((r) => (r.op as { cols?: string[] }).cols)).toEqual([['reps']]);
+  });
+
+  it('une remontée de rang acquittée n’efface pas une correction de valeurs refusée', async () => {
+    enqueue(correction('s1', 90));
+    await flush(base({ refuses: () => '42501' }).fns);
+    enqueue({ ...correction('s1', 80), only: 'rank', cols: undefined, setOrder: 2 } as OutboxOp);
+    await flush(base().fns);
+    expect(listRefused()).toHaveLength(1);
+  });
+});
+
+describe('relecture contradictoire : une écriture acquittée trop ancienne n’est plus rejouée', () => {
+  it('passé dix minutes sans aucune transition, une lecture antérieure ne la reçoit plus', async () => {
+    let now = Date.now() + 2_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stamp = readStamp();
+    enqueue(insert('s1'));
+    await flush(base().fns);
+    expect(writesSince(stamp)).toHaveLength(1);
+
+    now += 60 * 60 * 1000;
+
+    expect(writesSince(stamp)).toEqual([]);
   });
 });

@@ -472,8 +472,32 @@ export function acknowledge(
     );
     for (const old of moot) replace(draft, old, acked);
   }
+  if (sent.type === 'patchSet') {
+    // Une écriture partielle acquittée DÉPASSE les anciens refus d'écritures
+    // partielles de la même série, sur les colonnes qu'elle vient d'écrire :
+    // gardés, ils seraient appliqués par-dessus une lecture qui porte déjà la
+    // nouvelle valeur, et renvoyables par-dessus elle. Les colonnes qu'elle ne
+    // couvre pas restent refusées.
+    const covers = columnsOf(sent);
+    for (const old of [...draft.record.entries]) {
+      if (old.fate !== 'refused' || old.owner !== entry.owner || old.op.type !== 'patchSet' || old.op.id !== sent.id) continue;
+      if (old.op.only !== sent.only) continue;
+      const left = columnsOf(old.op).filter((col) => !covers.includes(col));
+      if (left.length === 0) replace(draft, old, acked);
+      else if (old.op.only === 'values') draft.patch(old.uid, { op: { ...old.op, cols: left as SetColumn[] } });
+    }
+  }
   prune(draft);
   return { touches };
+}
+
+type SetColumn = 'weightKg' | 'reps' | 'rir';
+
+/** Les colonnes qu'une écriture partielle pose (cf. `PatchSetOp`). */
+function columnsOf(op: PatchSetOp): string[] {
+  if (op.only === 'rank') return ['setOrder'];
+  if (op.only === 'side') return ['side'];
+  return op.cols ?? ['weightKg', 'reps', 'rir'];
 }
 
 /** Les exos dont l'historique change en base quand `sent` est acquittée. */
@@ -512,10 +536,19 @@ function touchedExercises(record: RegistryRecord, sent: OutboxOp, owner: string 
 export function prune(draft: Draft): void {
   const now = draft.now();
   const acked = draft.record.entries.filter((e) => e.fate === 'acked');
-  const stale = acked.filter((e) => now - (e.ack ?? 0) > ACKED_RETENTION_MS);
+  const stale = acked.filter((e) => isExpired(e, now));
   const kept = acked.filter((e) => !stale.includes(e)).sort((a, b) => (a.ack ?? 0) - (b.ack ?? 0));
   const overflow = kept.slice(0, Math.max(0, kept.length - ACKED_MAX));
   draft.drop([...stale, ...overflow].map((e) => e.uid));
+}
+
+/**
+ * L'écriture acquittée a-t-elle passé sa rétention ? Elle ne doit alors plus
+ * être appliquée à aucune lecture, même si rien ne l'a encore retirée (le
+ * registre n'est nettoyé qu'à la transition suivante).
+ */
+export function isExpired(entry: Entry, now: number): boolean {
+  return entry.fate === 'acked' && now - (entry.ack ?? 0) > ACKED_RETENTION_MS;
 }
 
 /** Remet une écriture refusée en attente, à sa place d'origine. */
@@ -572,6 +605,11 @@ function stripQueueFields(op: LegacyOp): OutboxOp {
   return rest as OutboxOp;
 }
 
+/** L'identité au registre d'une écriture de l'ancien format : son UUID d'enfilement, à défaut son contenu. */
+export function legacyIdentity(op: unknown): string {
+  return (op as { _uid?: string } | null)?._uid ?? `legacy:${JSON.stringify(op)}`;
+}
+
 /** Une écriture reprise de l'ancien format ; `n` nul : instant d'enfilement inconnu. */
 export type LegacyEntry = Omit<Entry, 'n'> & { n: number | null };
 
@@ -587,7 +625,7 @@ export type LegacyEntry = Omit<Entry, 'n'> & { n: number | null };
  */
 export function fromLegacy(queue: readonly unknown[], quarantine: readonly unknown[]): LegacyEntry[] {
   const out: LegacyEntry[] = [];
-  const identity = (op: LegacyOp) => op._uid ?? `legacy:${JSON.stringify(op)}`;
+  const identity = legacyIdentity;
   for (const raw of quarantine) {
     const q = raw as LegacyQuarantined | null;
     if (!q || typeof q !== 'object' || !q.op || typeof q.op !== 'object') continue;
@@ -603,21 +641,27 @@ export function fromLegacy(queue: readonly unknown[], quarantine: readonly unkno
     if (reason.startsWith('dépend de l')) out.push({ ...base, fate: 'pending' });
     else out.push({ ...base, fate: 'refused', refusal: { reason, at, ...(q.superseded ? { superseded: true as const } : {}) } });
   }
+  const ops = queue.filter(
+    (raw): raw is LegacyOp => typeof raw === 'object' && raw !== null && typeof (raw as LegacyOp).type === 'string',
+  );
   let previous = 0;
-  for (const raw of queue) {
-    const op = raw as LegacyOp | null;
-    if (!op || typeof op !== 'object' || typeof op.type !== 'string') continue;
+  ops.forEach((op, index) => {
     // L'ordre de la file fait foi entre ses écritures : jamais un numéro plus
-    // petit que celui de l'écriture datée qui la précède.
+    // petit que celui de l'écriture datée qui la précède. Une écriture sans
+    // instant prend celui de sa voisine datée (celle d'avant, sinon celle
+    // d'après) : elle reste à sa place dans la file. Sans aucune voisine datée,
+    // son numéro est pris à l'entrée.
     if (op._at !== undefined) previous = Math.max(previous, op._at);
+    const next = ops.slice(index + 1).find((later) => later._at !== undefined)?._at;
+    const n = op._at !== undefined || previous > 0 ? previous : (next ?? null);
     out.push({
-      n: op._at !== undefined ? previous : null,
+      n,
       uid: identity(op),
       ...(op._owner ? { owner: op._owner } : {}),
       op: upgradeLegacyOp(stripQueueFields(op)),
       fate: 'pending',
     });
-  }
+  });
   // Tri stable : les écritures datées par instant (la quarantaine et la file
   // s'entrelacent), puis celles sans instant, dans leur ordre.
   return out
