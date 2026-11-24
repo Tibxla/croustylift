@@ -482,15 +482,17 @@ export function PastSessionEditor({
         </div>
       </Sheet>
 
-      <Sheet
-        open={pendingLeave !== null}
-        title="Abandonner les corrections ?"
-        onClose={() => setPendingLeave(null)}
-        footer={
-          <>
+      <Sheet open={pendingLeave !== null} title="Abandonner les corrections ?" onClose={() => setPendingLeave(null)}>
+        {/* Même forme que les autres confirmations : la phrase, puis l'option
+            sûre en bouton et la perte en lien. */}
+        <div className="px-5 pb-2 pt-1">
+          <p className="max-w-[36ch] text-[16px] leading-[1.45] text-ink">
+            Tes corrections de cette séance ne sont pas enregistrées. En quittant, elles sont perdues.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <SecondaryButton onClick={() => setPendingLeave(null)}>Continuer à corriger</SecondaryButton>
             <TextLink
               tone="muted"
-              className="self-start"
               onClick={() => {
                 const leave = pendingLeave;
                 setPendingLeave(null);
@@ -500,13 +502,8 @@ export function PastSessionEditor({
             >
               Abandonner les corrections
             </TextLink>
-            <PrimaryButton onClick={() => setPendingLeave(null)}>Continuer à corriger</PrimaryButton>
-          </>
-        }
-      >
-        <p className="px-5 pb-2 text-[16px] leading-[1.5] text-ink">
-          Tes corrections de cette séance ne sont pas enregistrées. En quittant, elles sont perdues.
-        </p>
+          </div>
+        </div>
       </Sheet>
     </EditorFrame>
   );
