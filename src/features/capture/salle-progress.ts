@@ -29,12 +29,17 @@ export const EXO_STATE_WORD: Record<ExoState, string> = {
   skipped: 'passé',
 };
 
-/** Exos réglés : faits ou passés (le compte « n sur m » du Sommaire). */
-export function settledCount(session: Session, state: CaptureState): number {
-  return session.exercises.filter((ex) => {
+/** Exos faits et exos passés, comptés à part : « 2 sur 6 faits · 1 passé ». Un
+ *  exo passé n'est pas fait (un trou assumé, pas une réussite). */
+export function exoCounts(session: Session, state: CaptureState): { done: number; skipped: number } {
+  let done = 0;
+  let skipped = 0;
+  for (const ex of session.exercises) {
     const s = exoState(getProgress(state, ex.exerciseId), ex.prescription.sets.min);
-    return s === 'done' || s === 'skipped';
-  }).length;
+    if (s === 'done') done += 1;
+    else if (s === 'skipped') skipped += 1;
+  }
+  return { done, skipped };
 }
 
 /**

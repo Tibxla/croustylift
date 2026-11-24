@@ -103,7 +103,7 @@ import { pairSidesByOrder } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 import type { IndexItem } from './ExerciseIndex';
-import { exoState, logicalSetsDone, nextExerciseId, resumeWord, settledCount } from './salle-progress';
+import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner } from '../../ui';
 import { syncLine, type SyncState } from '../../shell/sync-line';
@@ -1283,7 +1283,8 @@ function CaptureBoard({
       fill: Math.min(1, logicalSetsDone(p) / Math.max(1, ex.prescription.sets.min)),
     };
   });
-  const settled = settledCount(session, state);
+  // Exos faits, et passés à part : un exo passé n'est pas « fait ».
+  const counts = exoCounts(session, state);
   const nextId = nextExerciseId(session, state, state.activeExerciseId);
   const nextEx = nextId ? (session.exercises.find((e) => e.exerciseId === nextId) ?? null) : null;
 
@@ -1320,7 +1321,7 @@ function CaptureBoard({
           progress={getProgress(state, activeExercise.exerciseId)}
           index={indexItems}
           next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
-          settled={settled}
+          done={counts.done}
           total={session.exercises.length}
           canFinish={loggedAny}
           datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
@@ -1341,7 +1342,8 @@ function CaptureBoard({
             session={session}
             templateExerciseIds={templateExerciseIds(initialTemplate)}
             state={state}
-            settled={settled}
+            done={counts.done}
+            skipped={counts.skipped}
             staleSince={staleSince}
             canFinish={loggedAny}
             onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
@@ -1379,12 +1381,12 @@ function SalleSync() {
 
 /** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
  *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
-function sommaireDetail(sync: SyncState, settled: number, total: number): string {
+function sommaireDetail(sync: SyncState, done: number, total: number): string {
   if (sync.unsaved) return 'stockage plein';
   if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
   if (sync.pending > 0) return `envoi · ${sync.pending}`;
   if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
-  return `${settled} sur ${total} faits`;
+  return `${done} sur ${total} faits`;
 }
 
 /** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
@@ -1406,7 +1408,7 @@ function CapturePanel({
   progress,
   index,
   next,
-  settled,
+  done,
   total,
   canFinish,
   datedNote,
@@ -1425,8 +1427,8 @@ function CapturePanel({
   index: IndexItem[];
   /** L'exo que propose « Exo suivant » et où il reprend, ou null. */
   next: { exerciseId: string; name: string; resume: string | null } | null;
-  /** Exos faits ou passés, et leur total (bouton Sommaire). */
-  settled: number;
+  /** Exos faits (pas les passés), et leur total (bouton Sommaire). */
+  done: number;
   total: number;
   /** Au moins une série loggée dans la séance : Terminer est possible. */
   canFinish: boolean;
@@ -1541,7 +1543,7 @@ function CapturePanel({
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
-            aria-label={`Sommaire de la séance, ${settled} exo${settled > 1 ? 's' : ''} fait${settled > 1 ? 's' : ''} sur ${total}${
+            aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
               sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
             }`}
             className={BAR_BTN}
@@ -1554,7 +1556,7 @@ function CapturePanel({
                 sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
               }`}
             >
-              {sommaireDetail(sync, settled, total)}
+              {sommaireDetail(sync, done, total)}
             </span>
           </button>
           {undoWhat ? (

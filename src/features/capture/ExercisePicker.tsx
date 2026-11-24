@@ -47,8 +47,10 @@ interface ExercisePickerProps {
   /** Ids des exos du template d'origine (réf. du diff de déviations, figée). */
   templateExerciseIds: string[];
   state: CaptureState;
-  /** Exos faits ou passés. */
-  settled: number;
+  /** Exos faits (un exo passé n'en fait pas partie). */
+  done: number;
+  /** Exos passés, dits à part. */
+  skipped: number;
   /** Séance d'un jour passé restée ouverte (« hier »), ou null. */
   staleSince: string | null;
   /** Au moins une série loggée : la séance peut se terminer. */
@@ -85,7 +87,8 @@ export function ExercisePicker({
   session,
   templateExerciseIds,
   state,
-  settled,
+  done,
+  skipped,
   staleSince,
   canFinish,
   onPick,
@@ -130,7 +133,7 @@ export function ExercisePicker({
       <div className="flex-1">
         <ScreenHeader
           title={session.name}
-          meta={`${settled} sur ${total} faits${settled === total && total > 0 ? ' · tous les exos sont réglés' : ''}`}
+          meta={`${done} sur ${total} faits${skipped > 0 ? ` · ${skipped} passé${skipped > 1 ? 's' : ''}` : ''}${done + skipped === total && total > 0 ? ' · tous les exos sont réglés' : ''}`}
         />
 
         {/* Séance d'un jour passé restée ouverte : on le dit, avec ses sorties. */}

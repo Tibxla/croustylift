@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
 import type { Session, SessionExercise } from './fixtures';
-import { exoState, nextExerciseId, resumeWord, settledCount } from './salle-progress';
+import { exoCounts, exoState, nextExerciseId, resumeWord } from './salle-progress';
 import type { CaptureState, ExerciseProgress } from './state';
 
 const ex = (id: string, min = 3): SessionExercise => ({
@@ -48,8 +48,8 @@ describe('nextExerciseId', () => {
 });
 
 describe('compte et reprise', () => {
-  it('compte les exos faits ou passés', () => {
-    expect(settledCount(session, stateWith({ a: prog([set(1), set(2), set(3)]), b: prog([], true), c: prog([set(1)]) }))).toBe(2);
+  it('compte les exos faits, et les passés à part', () => {
+    expect(exoCounts(session, stateWith({ a: prog([set(1), set(2), set(3)]), b: prog([], true), c: prog([set(1)]) }))).toEqual({ done: 1, skipped: 1 });
   });
 
   it('dit où reprend un exo entamé', () => {
