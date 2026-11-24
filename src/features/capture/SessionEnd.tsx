@@ -4,17 +4,15 @@
 // (cf. décisions produit révisées). Un récap sobre encadre la saisie, puis un
 // écran de confirmation clôt la séance.
 //
-// L'« optionnel » du BPM est matérialisé : non saisi = ligne repliée avec un
-// bouton « + Ajouter… » ; on l'ouvre pour révéler un Stepper (DESIGN.md, jamais
-// d'<input> ni de clavier OS), on le retire pour revenir à « non saisi ». Le
-// bouton « Clôturer sans noter » clôt sans BPM. Le primaire (accent violet, la
-// seule tache de couleur de l'écran) enregistre puis bascule en confirmation.
-import { useState } from 'react';
-import { Stepper } from './Stepper';
-import { MetricRow } from './MetricRow';
+// L'« optionnel » du BPM est matérialisé : non saisi = un bouton « Ajouter le
+// BPM moyen » ; on l'ouvre pour révéler une règle (jamais de clavier), on le
+// retire pour revenir à « non saisi ». « Clôturer sans noter » clôt sans BPM ;
+// le bouton principal enregistre puis bascule en confirmation.
+import { useState, type ReactNode } from 'react';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import { formatCount } from './format';
 import { errorMessage } from '../../lib/error-message';
+import { PrimaryButton, Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, TextLink } from '../../ui';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
@@ -60,12 +58,8 @@ interface SessionEndProps {
 }
 
 const BPM_DEFAULT = 130;
-const BPM_STEP = 5;
-const BPM_FINE = 1;
-
-function intFormat(value: number): string {
-  return String(Math.round(value));
-}
+const BPM_MIN = 30;
+const BPM_MAX = 240;
 
 export function SessionEnd({
   summary,
@@ -117,183 +111,126 @@ export function SessionEnd({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-4 pt-3">
-      {/* Retour à la capture */}
-      <button
-        type="button"
-        onClick={onBack}
-        className="btn btn-ghost -ml-1 mb-2 self-start rounded-lg py-2 pr-3 text-sm font-medium"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
-        Retour à la capture
-      </button>
-
-      <h2 className="text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
-        Fin de séance
-      </h2>
-      <p className="mt-1.5 text-[15px] text-ink-muted">{summary.sessionName}</p>
-
-      <SummaryCard summary={summary} durationMin={durationMin} />
+    <Screen
+      bottom={
+        <>
+          <PrimaryButton disabled={saving} onClick={handleSaveAndClose}>
+            {saving ? 'Enregistrement…' : 'Enregistrer et clôturer'}
+          </PrimaryButton>
+          <SecondaryButton disabled={saving} onClick={handleSkip}>
+            Clôturer sans noter
+          </SecondaryButton>
+        </>
+      }
+    >
+      <ScreenHeader title="Fin de séance" meta={summary.sessionName} back={{ label: 'Retour à la capture', onClick: onBack }} />
+      <Figures summary={summary} durationMin={durationMin} />
       <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
 
-      <p className="mt-7 text-sm text-ink-muted">
-        Note ton BPM moyen si tu veux, c&apos;est optionnel.
-      </p>
-
-      <div className="mt-3 flex flex-col gap-3">
-        <MetricRow
-          title="BPM moyen"
-          addLabel="Ajouter le BPM moyen"
-          hint="Fréquence cardiaque moyenne de la séance."
-          on={bpmOn}
-          onAdd={() => setBpmOn(true)}
-          onRemove={() => setBpmOn(false)}
-        >
-          <Stepper
-            label="BPM moyen"
-            unit="bpm"
-            value={bpm}
-            step={BPM_STEP}
-            fineStep={BPM_FINE}
-            min={30}
-            max={240}
-            format={intFormat}
-            onChange={setBpm}
-          />
-        </MetricRow>
-      </div>
+      <SectionTitle aside="facultatif">BPM moyen</SectionTitle>
+      {bpmOn ? (
+        <div className="border-t border-line pt-3">
+          <p className="tnum px-5 text-center text-[32px] font-[650] leading-none tracking-[-0.03em] text-ink" aria-hidden>
+            {bpm}
+            <span className="ml-1.5 text-[17px] font-medium text-muted">bpm</span>
+          </p>
+          <div className="mt-2">
+            <Ruler
+              label="BPM moyen"
+              steps={bpm - BPM_MIN}
+              max={BPM_MAX - BPM_MIN}
+              pxPerStep={8}
+              isMajor={(s) => (s + BPM_MIN) % 10 === 0}
+              isMid={(s) => (s + BPM_MIN) % 5 === 0}
+              majorLabel={(s) => String(s + BPM_MIN)}
+              format={(s) => `${s + BPM_MIN} battements par minute`}
+              onChange={(s) => setBpm(s + BPM_MIN)}
+            />
+          </div>
+          <div className="px-5">
+            <TextLink tone="muted" onClick={() => setBpmOn(false)}>
+              Retirer le BPM moyen
+            </TextLink>
+          </div>
+        </div>
+      ) : (
+        <div className="px-5">
+          <p className="text-[15px] leading-[1.45] text-muted">Fréquence cardiaque moyenne de la séance, si tu l’as.</p>
+          <SecondaryButton className="mt-3" onClick={() => setBpmOn(true)}>
+            Ajouter le BPM moyen
+          </SecondaryButton>
+        </div>
+      )}
 
       {error && (
-        <p className="mt-4 break-words text-xs text-warn" role="alert">
-          Échec de l&apos;enregistrement : {error}
+        <p role="alert" className="mx-5 mt-4 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
+          Échec de l’enregistrement : {error}
         </p>
       )}
-
-      {/* Actions collées en bas (zone du pouce) : `sticky`, fond plein, encoche
-          basse comprise, au bas de l'écran même quand le récap est court. */}
-      <div className="sticky bottom-0 z-10 -mx-4 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
-        <div className="mx-auto flex w-full max-w-md flex-col gap-2">
-          <button
-            type="button"
-            disabled={saving}
-            onClick={handleSaveAndClose}
-            className="btn btn-primary h-14 w-full rounded-2xl text-lg"
-          >
-            {saving ? 'Enregistrement…' : 'Enregistrer et clôturer'}
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={handleSkip}
-            className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium"
-          >
-            Clôturer sans noter
-          </button>
-        </div>
-      </div>
-    </div>
+    </Screen>
   );
 }
 
-/**
- * Carte de récap : exos faits / total + total de séries + durée auto (chiffres
- * en mono). La durée est un readout lecture seule, jamais saisie ; absente si
- * non chronométrée.
- */
-function SummaryCard({
-  summary,
-  durationMin,
-}: {
-  summary: SessionSummary;
-  durationMin: number | null;
-}) {
+/** Une ligne de chiffres : libellé à gauche, valeur à droite. */
+function Line({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="mt-4 grid grid-cols-2 gap-2.5">
-      <div className="surface-card rounded-2xl px-4 py-3.5">
-        <p className="text-xs font-medium text-ink-muted">Exercices faits</p>
-        <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-          {summary.exercisesDone}
-          <span className="text-base text-ink-muted">/{summary.exercisesTotal}</span>
-        </p>
-        {summary.exercisesSkipped > 0 && (
-          <p className="mt-0.5 text-xs text-ink-muted">
-            dont {summary.exercisesSkipped} passé{summary.exercisesSkipped > 1 ? 's' : ''}
-          </p>
-        )}
-      </div>
-      <div className="surface-card rounded-2xl px-4 py-3.5">
-        <p className="text-xs font-medium text-ink-muted">Séries loggées</p>
-        <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-          {formatCount(summary.totalSets)}
-        </p>
-      </div>
-      {durationMin != null && (
-        <div className="surface-card rounded-2xl px-4 py-3.5">
-          <p className="text-xs font-medium text-ink-muted">Durée</p>
-          <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-            {durationMin}
-            <span className="text-base text-ink-muted"> min</span>
-          </p>
-        </div>
-      )}
+    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+      <span className="text-[16px] text-muted">{label}</span>
+      <span className="tnum text-right text-[17px] font-medium text-ink">{value}</span>
+    </div>
+  );
+}
+
+/** Récap : exos faits sur le total (et passés), séries comptées, durée
+ *  chronométrée (lecture seule, absente si non mesurée). */
+function Figures({ summary, durationMin }: { summary: SessionSummary; durationMin: number | null }) {
+  return (
+    <div className="border-t border-line">
+      <Line
+        label="Exos faits"
+        value={
+          <>
+            {summary.exercisesDone} sur {summary.exercisesTotal}
+            {summary.exercisesSkipped > 0 && (
+              <span className="text-[14px] font-normal text-muted">
+                {' '}
+                · {summary.exercisesSkipped} passé{summary.exercisesSkipped > 1 ? 's' : ''}
+              </span>
+            )}
+          </>
+        }
+      />
+      <Line label="Séries" value={formatCount(summary.totalSets)} />
+      {durationMin != null && <Line label="Durée" value={`${durationMin} min`} />}
     </div>
   );
 }
 
 /**
- * Décompte RÉEL des séries par muscle principal (issue #60), affiché en fin de
- * séance sous le récap. Dérivé des séries loggées et pondéré par reps (cf.
- * buildSummary). On ne parle PAS de « volume » (terme proscrit, GLOSSARY.md) :
- * « séries par muscle ».
- *
- * DESIGN.md : chiffres en mono tabulaire (.readout) alignés en colonne, un muscle
- * par ligne, ordre canonique stable, décompte fractionnaire à une décimale
- * (virgule FR). Rendu seulement s'il y a au moins un muscle (sinon le récap suffit).
+ * Décompte RÉEL des séries par muscle principal (issue #60), pondéré par reps
+ * (cf. buildSummary). On ne parle PAS de « volume » (terme proscrit,
+ * GLOSSARY.md) : « séries par muscle ». Un muscle par ligne, ordre canonique,
+ * une décimale ; un trait proportionnel au muscle le plus travaillé. Rendu
+ * seulement s'il y a au moins un muscle.
  */
 function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number> }) {
   const muscles = orderMusclesCanonical(Object.keys(setsByMuscle));
   if (muscles.length === 0) return null;
-
-  // Barre proportionnelle au max (le muscle dominant fait 100 %).
   const max = Math.max(...muscles.map((m) => setsByMuscle[m] ?? 0), 1);
-
   return (
-    <section
-      className="panel mt-2.5 rounded-2xl px-4 py-4"
-      aria-label="Séries par muscle"
-    >
-      <p className="readout text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-        Séries par muscle
-      </p>
-      <ul className="mt-3 flex flex-col gap-3">
+    <section aria-label="Séries par muscle">
+      <SectionTitle>Séries par muscle</SectionTitle>
+      <ul className="border-t border-line">
         {muscles.map((muscle) => {
           const value = setsByMuscle[muscle] ?? 0;
-          const pct = Math.round((value / max) * 100);
           return (
-            <li key={muscle}>
+            <li key={muscle} className="border-b border-line px-5 py-2.5">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
-                <span className="readout shrink-0 text-[13px] tabular-nums text-ink">
-                  {formatCount(value)}
-                </span>
+                <span className="min-w-0 truncate text-[16px] text-ink">{muscle}</span>
+                <span className="tnum flex-none text-[16px] text-ink">{formatCount(value)}</span>
               </div>
-              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2">
-                <div
-                  className="h-full rounded-full bg-accent"
-                  style={{ width: `${pct}%` }}
-                />
+              <div className="mt-1.5 h-[3px] bg-line">
+                <div className="h-full bg-muted" style={{ width: `${Math.round((value / max) * 100)}%` }} />
               </div>
             </li>
           );
@@ -305,10 +242,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
 
 // --- Confirmation -----------------------------------------------------------
 
-/* `MetricRow` est désormais une primitive partagée (`./MetricRow`), réutilisée
-   par l'édition d'une séance passée (PastSessionEditor). */
-
-/** Écran de confirmation : séance close, récap + durée auto + BPM saisi (si présent). */
+/** Écran de confirmation : séance rangée, récap, durée, BPM saisi (si présent). */
 function SessionDone({
   summary,
   durationMin,
@@ -320,62 +254,16 @@ function SessionDone({
   values: SessionEndValues;
   onNewSession: () => void;
 }) {
-  const hasBpm = typeof values.bpmAvg === 'number';
-
   return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-12 pt-10">
-      <div className="flex flex-col items-center text-center">
-        <span
-          className="flex h-14 w-14 items-center justify-center rounded-full border text-good"
-          style={{
-            background: 'color-mix(in oklab, var(--color-good), transparent 84%)',
-            borderColor: 'color-mix(in oklab, var(--color-good), transparent 55%)',
-          }}
-          aria-hidden="true"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="28"
-            height="28"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M4 12l5 5L20 6" />
-          </svg>
-        </span>
-        <h2 className="mt-4 text-3xl font-semibold tracking-[-0.025em] text-ink">Séance terminée</h2>
-        <p className="mt-1.5 text-[15px] text-ink-muted">{summary.sessionName}</p>
-      </div>
-
-      <SummaryCard summary={summary} durationMin={durationMin} />
-      <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
-
-      {hasBpm && (
-        <div className="mt-2.5">
-          <div className="surface-card rounded-2xl px-4 py-3.5">
-            <p className="text-xs font-medium text-ink-muted">BPM moyen</p>
-            <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-              {values.bpmAvg}
-              <span className="text-base text-ink-muted"> bpm</span>
-            </p>
-          </div>
+    <Screen bottom={<PrimaryButton onClick={onNewSession}>Nouvelle séance</PrimaryButton>}>
+      <ScreenHeader title="Séance rangée" meta={summary.sessionName} />
+      <Figures summary={summary} durationMin={durationMin} />
+      {typeof values.bpmAvg === 'number' && (
+        <div>
+          <Line label="BPM moyen" value={`${values.bpmAvg} bpm`} />
         </div>
       )}
-
-      <p className="mt-6 text-center text-sm text-ink-muted">
-        C&apos;est noté. Tu peux ranger le téléphone.
-      </p>
-
-      <button
-        type="button"
-        onClick={onNewSession}
-        className="btn btn-primary mt-8 h-12 w-full rounded-2xl text-base"
-      >
-        Nouvelle séance
-      </button>
-    </div>
+      <MuscleBreakdown setsByMuscle={summary.setsByMuscle} />
+    </Screen>
   );
 }
