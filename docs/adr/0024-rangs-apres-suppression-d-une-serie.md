@@ -20,8 +20,9 @@ Proposition : **les suivantes remontent**. Le rang d'une série est sa place dan
 
 ## Conséquences
 
-- Supprimer une série réécrit chaque série qui la suivait dans l'exo (un `insertSet` par ligne, qui met à jour son rang). Dans la file : les suppressions d'abord, puis les réécritures, pour qu'aucune série gardée ne partage un rang avec celle qui s'en va si l'envoi s'interrompt entre deux écritures. Aucune unicité ne porte sur le rang en base.
-- Unilatéral : c'est la série entière qui part, gauche et droite, et les deux côtés des suivantes remontent ensemble (ADR 0005 : un rang commun aux deux côtés).
+- Supprimer une série réécrit chaque série qui la suivait dans l'exo (un `patchSet` par ligne, qui n'écrit que son rang). Dans la file : les suppressions d'abord, puis les réécritures, pour qu'aucune série gardée ne partage un rang avec celle qui s'en va si l'envoi s'interrompt entre deux écritures. Aucune unicité ne porte sur le rang en base.
+- Unilatéral : c'est la série entière qui part, gauche et droite, et les deux côtés des suivantes remontent ensemble (ADR 0005 : un rang commun aux deux côtés). Seulement pour une paire sans ambiguïté (une gauche et une droite à ce rang) ; sinon la ligne touchée part seule.
+- Deux lignes au même rang (deux onglets ont chacun ajouté une série depuis le même état ; la base n'y met aucune unicité) : supprimer l'une ne retire qu'elle. Le rang reste occupé par l'autre, donc rien ne remonte : faire remonter les suivantes créerait une nouvelle collision.
 - Hors ligne, plusieurs suppressions de suite empilent des réécritures ; chacune est idempotente par id, la dernière gagne.
 - Une réponse tardive de la base, partie avant la suppression, ne ramène ni la série ni les anciens rangs : l'état local des séries touchées pendant le trajet prime (ADR 0021).
-- La règle tient en un endroit : `RANK_POLICY_AFTER_DELETION` et `ranksAfterDeletion` (`src/features/capture/set-ranks.ts`). Passer à `'gap'` suffit à laisser un trou ; le geste n'enfile alors que la suppression.
+- La règle tient en un endroit : `RANK_POLICY_AFTER_DELETION`, `logicalSetRows` et `ranksAfterDeletion` (`src/features/capture/set-ranks.ts`). Passer à `'gap'` suffit à laisser un trou ; le geste n'enfile alors que la suppression.

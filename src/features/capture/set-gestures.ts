@@ -43,10 +43,14 @@
 // touche ni l'autre ni le rang de la série.
 //
 // SUPPRIMER UNE SÉRIE (`deleteSet`), n'importe laquelle. On désigne une ligne par
-// son id ; c'est sa série LOGIQUE qui part : en unilatéral, la gauche ET la
-// droite (c'est ce que dit la confirmation à l'écran). Les rangs des séries
-// suivantes suivent LA règle de `ranksAfterDeletion` (set-ranks.ts : remontée
-// par défaut, ADR 0024 proposé ; une constante à changer pour laisser un trou).
+// son id ; c'est sa série LOGIQUE qui part (`logicalSetRows`, set-ranks.ts) :
+// en bilatéral la ligne seule, même si une autre partage son rang (deux onglets
+// ont chacun ajouté une série) ; en unilatéral la gauche ET la droite quand
+// elles forment une paire sans ambiguïté (c'est ce que dit la confirmation à
+// l'écran), sinon la ligne seule. Les rangs des séries suivantes suivent LA
+// règle de `ranksAfterDeletion` (set-ranks.ts : remontée par défaut, seulement
+// si le rang est devenu vide, ADR 0024 proposé ; une constante à changer pour
+// laisser un trou).
 // Écritures, dans cet ordre : un `deleteSet` par ligne supprimée, PUIS un
 // `patchSet` avec `only: 'rank'` par ligne dont le rang a changé (seul le
 // rang est écrit, jamais les valeurs). Suppressions d'abord,
@@ -64,7 +68,7 @@
 
 import type { PerformedSet } from '../../domain/types';
 import type { InsertSetOp, OutboxOp, PatchSetOp } from './outbox';
-import { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion } from './set-ranks';
+import { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
 import { getProgress, type CaptureAction, type CaptureState } from './state';
 
@@ -137,7 +141,7 @@ export function correctSet(
   };
 }
 
-export { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion, type RankPolicy } from './set-ranks';
+export { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion, type RankPolicy } from './set-ranks';
 
 /**
  * Supprime la série à laquelle appartient la ligne d'id `setId` dans l'exo
@@ -146,27 +150,23 @@ export { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion, type RankPolicy } from 
 export function deleteSet(state: CaptureState, exerciseId: string, setId: string): SetGesture | null {
   const progress = getProgress(state, exerciseId);
   const index = progress.setIds.indexOf(setId);
-  const target = index === -1 ? undefined : progress.sets[index];
-  if (target === undefined) return null;
+  if (progress.sets[index] === undefined) return null;
 
-  const rows = progress.sets.map((set, i) => ({ set, id: progress.setIds[i] ?? null }));
-  const removed = rows.filter((row) => row.set.order === target.order);
-  const after = ranksAfterDeletion(
-    rows.map((row) => ({ ...row.set, id: row.id })),
-    target.order,
-    RANK_POLICY_AFTER_DELETION,
-  );
-  const orderBefore = new Map(rows.map((row) => [row.id, row.set.order] as const));
+  const rows = progress.sets.map((set, i) => ({ ...set, id: progress.setIds[i] ?? null }));
+  const removed = logicalSetRows(rows, index);
+  const after = ranksAfterDeletion(rows, removed, RANK_POLICY_AFTER_DELETION);
+  const orderBefore = new Map(rows.map((row) => [row.id, row.order] as const));
 
-  const deletes: OutboxOp[] = removed.flatMap((row) =>
+  const deletes: OutboxOp[] = removed.flatMap((i) => {
+    const id = rows[i]?.id ?? null;
     // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
-    row.id === null ? [] : [{ type: 'deleteSet' as const, id: row.id, exerciseIds: [exerciseId] }],
-  );
+    return id === null ? [] : [{ type: 'deleteSet' as const, id, exerciseIds: [exerciseId] }];
+  });
   const rewrites: OutboxOp[] = after.flatMap(({ id, ...set }) =>
     id === null || orderBefore.get(id) === set.order ? [] : [writeSetOp(state, exerciseId, id, set, 'rank')],
   );
   return {
-    action: { type: 'delete-set', exerciseId, order: target.order },
+    action: { type: 'delete-set', exerciseId, setId },
     ops: [...deletes, ...rewrites],
   };
 }

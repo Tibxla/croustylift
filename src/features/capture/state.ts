@@ -6,7 +6,7 @@ import type { Session } from './fixtures';
 import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
 import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
-import { ranksAfterDeletion } from './set-ranks';
+import { logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -172,11 +172,12 @@ export type CaptureAction =
       setId: string;
       values: Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
     }
-  // Supprime la série LOGIQUE de rang `order` de l'exo, où qu'elle soit : toutes
-  // ses lignes (gauche et droite en unilatéral). Les rangs des suivantes suivent
-  // la règle de `ranksAfterDeletion` (set-ranks.ts). Construite par `deleteSet`
-  // (set-gestures.ts), qui rend aussi les écritures à enfiler.
-  | { type: 'delete-set'; exerciseId: string; order: number }
+  // Supprime la série LOGIQUE de la ligne d'id `setId`, où qu'elle soit : la
+  // ligne seule, ou la paire gauche et droite de son rang en unilatéral
+  // (`logicalSetRows`, set-ranks.ts). Les rangs des suivantes suivent la règle
+  // de `ranksAfterDeletion`. Construite par `deleteSet` (set-gestures.ts), qui
+  // rend aussi les écritures à enfiler.
+  | { type: 'delete-set'; exerciseId: string; setId: string }
   // Note datée d'un exo (issue #26). `noteId` = UUID client de la ligne
   // `dated_notes`, fourni par le caller pour que l'état et l'op d'outbox visent
   // la même ligne. Un `body` vide est conservé tel quel dans l'état ; c'est la
@@ -1109,15 +1110,17 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
 
     case 'delete-set': {
       const prev = getProgress(state, action.exerciseId);
-      if (!prev.sets.some((set) => set.order === action.order)) return state;
+      const index = prev.setIds.indexOf(action.setId);
+      if (prev.sets[index] === undefined) return state;
       // Les ids suivent leurs séries : on renumérote des paires (série, id).
       const before = prev.sets.map((set, i) => ({ ...set, id: prev.setIds[i] ?? null }));
-      const rows = ranksAfterDeletion(before, action.order);
+      const removed = logicalSetRows(before, index);
+      const rows = ranksAfterDeletion(before, removed);
       const orderBefore = new Map(before.map((row) => [row.id, row.order] as const));
       return {
         ...state,
         sinceLoad: trackLocally(state, {
-          removed: before.filter((row) => row.order === action.order).map((row) => row.id),
+          removed: removed.map((i) => before[i]?.id ?? null),
           edited: rows.filter((row) => orderBefore.get(row.id) !== row.order).map((row) => row.id),
         }),
         progress: {

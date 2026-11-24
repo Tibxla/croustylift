@@ -9,7 +9,21 @@
 //
 // Pour basculer : changer `RANK_POLICY_AFTER_DELETION`. Le réducteur
 // (`delete-set`, state.ts) et le geste (`deleteSet`, set-gestures.ts) passent
-// tous deux par `ranksAfterDeletion`, rien d'autre ne connaît la règle.
+// tous deux par `logicalSetRows` puis `ranksAfterDeletion`, rien d'autre ne
+// connaît la règle.
+//
+// QUELLES LIGNES PARTENT (`logicalSetRows`). On désigne une LIGNE ; c'est sa
+// série logique qui part. En bilatéral, la ligne seule : deux lignes peuvent
+// partager un rang (deux onglets ont chacun ajouté une série depuis le même
+// état, la base n'y met aucune unicité), la bande en montre alors deux cases,
+// et supprimer l'une ne doit pas emporter l'autre. En unilatéral, la gauche ET
+// la droite du rang, mais seulement quand elles forment une paire sans
+// ambiguïté (exactement une gauche et une droite à ce rang) ; sinon, la ligne
+// seule.
+//
+// QUI REMONTE (`ranksAfterDeletion`). Seulement si le rang est devenu VIDE :
+// avec A1, B2, C2, D3, supprimer B laisse C au rang 2, et faire remonter D
+// créerait une nouvelle collision (D2).
 
 import type { PerformedSet } from '../../domain/types';
 
@@ -20,17 +34,39 @@ export type RankPolicy = 'compact' | 'gap';
 export const RANK_POLICY_AFTER_DELETION: RankPolicy = 'compact';
 
 /**
- * Les séries restantes après la suppression de la série LOGIQUE de rang
- * `deletedOrder` (toutes ses lignes : gauche et droite en unilatéral), avec
- * leurs rangs selon la règle. Les deux côtés d'une série gardent un rang
- * commun. Pur ; l'ordre des lignes est conservé.
+ * Les index des lignes qui partent quand on supprime la série de la ligne
+ * `index` (cf. en-tête) : la ligne seule, ou la paire gauche et droite de son
+ * rang. Vide si `index` ne désigne aucune ligne. Pur.
+ */
+export function logicalSetRows<T extends Pick<PerformedSet, 'order' | 'side'>>(
+  sets: readonly T[],
+  index: number,
+): number[] {
+  const target = sets[index];
+  if (target === undefined) return [];
+  if (target.side === undefined) return [index];
+  const sameRank = sets.flatMap((set, i) => (set.order === target.order ? [i] : []));
+  const sides = new Set(sameRank.map((i) => sets[i]!.side));
+  const pair = sameRank.length === 2 && sides.has('left') && sides.has('right');
+  return pair ? sameRank : [index];
+}
+
+/**
+ * Les lignes restantes après le retrait des lignes d'index `removed` (une
+ * série logique, cf. `logicalSetRows`), avec leurs rangs selon la règle : si le
+ * rang retiré est devenu vide, les suivantes remontent d'un rang ('compact').
+ * Les deux côtés d'une série gardent un rang commun. Pur ; l'ordre des lignes
+ * est conservé.
  */
 export function ranksAfterDeletion<T extends Pick<PerformedSet, 'order'>>(
   sets: readonly T[],
-  deletedOrder: number,
+  removed: readonly number[],
   policy: RankPolicy = RANK_POLICY_AFTER_DELETION,
 ): T[] {
-  const kept = sets.filter((set) => set.order !== deletedOrder);
-  if (policy === 'gap') return kept;
+  const gone = new Set(removed);
+  const kept = sets.filter((_, i) => !gone.has(i));
+  const deletedOrder = sets[removed[0] ?? -1]?.order;
+  if (policy === 'gap' || deletedOrder === undefined) return kept;
+  if (kept.some((set) => set.order === deletedOrder)) return kept;
   return kept.map((set) => (set.order > deletedOrder ? { ...set, order: set.order - 1 } : set));
 }

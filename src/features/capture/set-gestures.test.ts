@@ -17,7 +17,7 @@ import {
   type SyncFns,
 } from './outbox';
 import { computeSetBadges } from './set-badges';
-import { correctSet, deleteSet, ranksAfterDeletion } from './set-gestures';
+import { correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
 import {
   captureReducer,
   getProgress,
@@ -353,21 +353,127 @@ describe('ranksAfterDeletion (LA règle des rangs après une suppression)', () =
   const sets = [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(80, 6, 0, 3), ps(75, 8, 1, 4)];
 
   it('remontée (règle retenue) : les séries suivantes prennent le rang du dessus, sans trou', () => {
-    expect(ranksAfterDeletion(sets, 2).map((s) => s.order)).toEqual([1, 2, 3]);
-    expect(ranksAfterDeletion(sets, 2).map((s) => s.reps)).toEqual([8, 6, 8]);
+    expect(ranksAfterDeletion(sets, [1]).map((s) => s.order)).toEqual([1, 2, 3]);
+    expect(ranksAfterDeletion(sets, [1]).map((s) => s.reps)).toEqual([8, 6, 8]);
   });
 
   it('la règle par défaut est la remontée', () => {
-    expect(ranksAfterDeletion(sets, 2)).toEqual(ranksAfterDeletion(sets, 2, 'compact'));
+    expect(ranksAfterDeletion(sets, [1])).toEqual(ranksAfterDeletion(sets, [1], 'compact'));
   });
 
   it('trou (l’autre règle, un argument à changer) : les rangs restants ne bougent pas', () => {
-    expect(ranksAfterDeletion(sets, 2, 'gap').map((s) => s.order)).toEqual([1, 3, 4]);
+    expect(ranksAfterDeletion(sets, [1], 'gap').map((s) => s.order)).toEqual([1, 3, 4]);
   });
 
   it('unilatéral : la série entière part, gauche et droite, et les deux côtés des suivantes remontent ensemble', () => {
     const uni = [ps(12, 10, 2, 1, 'left'), ps(12, 10, 2, 1, 'right'), ps(12, 9, 2, 2, 'left'), ps(12, 9, 2, 2, 'right'), ps(12, 8, 1, 3, 'left')];
-    expect(ranksAfterDeletion(uni, 1).map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
+    expect(logicalSetRows(uni, 1)).toEqual([0, 1]);
+    expect(ranksAfterDeletion(uni, logicalSetRows(uni, 1)).map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
+  });
+
+  it('un rang encore occupé après la suppression ne fait rien remonter (sinon une nouvelle collision)', () => {
+    // A1, B2, C2, D3 : supprimer B laisse C au rang 2, D reste au rang 3.
+    const twin = [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(82.5, 7, 1, 2), ps(80, 6, 0, 3)];
+    expect(ranksAfterDeletion(twin, [1]).map((s) => `${s.order}:${s.weightKg}`)).toEqual(['1:80', '2:82.5', '3:80']);
+  });
+});
+
+describe('logicalSetRows (les lignes d’une série logique)', () => {
+  it('bilatéral : la seule ligne visée, même si une autre partage son rang', () => {
+    const twin = [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(82.5, 7, 1, 2)];
+    expect(logicalSetRows(twin, 1)).toEqual([1]);
+    expect(logicalSetRows(twin, 2)).toEqual([2]);
+  });
+
+  it('unilatéral : la paire gauche et droite du rang, quel que soit le côté touché', () => {
+    const uni = [ps(12, 10, 2, 1, 'right'), ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 2, 'left')];
+    expect(logicalSetRows(uni, 0)).toEqual([0, 1]);
+    expect(logicalSetRows(uni, 1)).toEqual([0, 1]);
+  });
+
+  it('unilatéral, un seul côté au rang : la seule ligne', () => {
+    const lefts = [ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 2, 'left'), ps(12, 8, 2, 3, 'left')];
+    expect(logicalSetRows(lefts, 1)).toEqual([1]);
+  });
+
+  it('unilatéral ambigu (deux gauches et une droite au même rang) : la seule ligne visée', () => {
+    const odd = [ps(12, 10, 2, 1, 'left'), ps(12, 11, 2, 1, 'left'), ps(12, 10, 2, 1, 'right')];
+    expect(logicalSetRows(odd, 0)).toEqual([0]);
+    expect(logicalSetRows(odd, 2)).toEqual([2]);
+  });
+});
+
+// Deux onglets ajoutent chacun une série depuis le même état : deux lignes
+// bilatérales au même rang, que la base accepte (aucune unicité sur le rang).
+// Après reprise, la bande en montre deux cases. Supprimer l'une enfilait un
+// `deleteSet` pour CHAQUE ligne du rang : la série gardée partait aussi.
+describe('deleteSet après la reprise de deux lignes au même rang', () => {
+  /** S1, puis S2 saisie dans deux onglets (s2a, s2b), puis S3 : la séance reprise. */
+  function resumedTwins(): CaptureState {
+    return {
+      ...started(),
+      progress: {
+        [BENCH]: {
+          sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(82.5, 7, 1, 2), ps(80, 6, 0, 3)],
+          setIds: ['s1', 's2a', 's2b', 's3'],
+          skipped: false,
+        },
+      },
+    };
+  }
+
+  it('ne supprime que la ligne touchée ; le rang reste occupé, rien ne remonte', () => {
+    const state = resumedTwins();
+    const gesture = deleteSet(state, BENCH, 's2a')!;
+    expect(gesture.ops).toEqual([{ type: 'deleteSet', id: 's2a', exerciseIds: [BENCH] }]);
+    const next = captureReducer(state, gesture.action);
+    expect(getProgress(next, BENCH).setIds).toEqual(['s1', 's2b', 's3']);
+    expect(getProgress(next, BENCH).sets).toEqual([ps(80, 8, 2, 1), ps(82.5, 7, 1, 2), ps(80, 6, 0, 3)]);
+  });
+
+  it('l’autre ligne du rang survit en base', async () => {
+    const base = fakeBase();
+    for (const [id, order, kg] of [['s1', 1, 80], ['s2a', 2, 80], ['s2b', 2, 82.5], ['s3', 3, 80]] as const) {
+      base.rows.set(id, { setOrder: order, weightKg: kg, reps: 7, rir: 1 });
+    }
+    play(resumedTwins(), deleteSet(resumedTwins(), BENCH, 's2b')!);
+    await flush(base.fns);
+    expect([...base.rows.entries()].map(([id, row]) => `${id}@${row.setOrder}`)).toEqual(['s1@1', 's2a@2', 's3@3']);
+    expect(base.sent).toEqual(['delete:s2b']);
+  });
+
+  it('unilatéral, trois gauches de suite (une série par rang) : seule la touchée part, la suivante remonte', () => {
+    const state: CaptureState = {
+      ...started(),
+      progress: {
+        curl: {
+          sets: [ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 2, 'left'), ps(12, 8, 2, 3, 'left')],
+          setIds: ['l1', 'l2', 'l3'],
+          skipped: false,
+        },
+      },
+    };
+    const gesture = deleteSet(state, 'curl', 'l2')!;
+    expect(gesture.ops.map((op) => `${op.type}:${op.id}`)).toEqual(['deleteSet:l2', 'patchSet:l3']);
+    const next = captureReducer(state, gesture.action);
+    expect(getProgress(next, 'curl').setIds).toEqual(['l1', 'l3']);
+    expect(getProgress(next, 'curl').sets.map((s) => s.order)).toEqual([1, 2]);
+  });
+
+  it('unilatéral ambigu (deux gauches et une droite au même rang) : seule la ligne touchée part', () => {
+    const state: CaptureState = {
+      ...started(),
+      progress: {
+        curl: {
+          sets: [ps(12, 10, 2, 1, 'left'), ps(12, 11, 2, 1, 'left'), ps(12, 10, 2, 1, 'right'), ps(12, 9, 2, 2, 'left')],
+          setIds: ['la', 'lb', 'r1', 'l2'],
+          skipped: false,
+        },
+      },
+    };
+    const gesture = deleteSet(state, 'curl', 'lb')!;
+    expect(gesture.ops).toEqual([{ type: 'deleteSet', id: 'lb', exerciseIds: ['curl'] }]);
+    expect(getProgress(captureReducer(state, gesture.action), 'curl').setIds).toEqual(['la', 'r1', 'l2']);
   });
 });
 
