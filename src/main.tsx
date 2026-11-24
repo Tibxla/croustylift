@@ -9,8 +9,13 @@ import { AuthProvider } from './auth/AuthProvider'
 import { ErrorBoundary } from './ErrorBoundary'
 import { initServiceWorker, requestReload } from './pwa/register'
 import { watchRecoveryLink } from './pwa/recovery-watch'
+import { applyStoredSignal } from './settings/reglages'
 import { DiagPanel } from './viewport/DiagPanel'
 import { startViewportWatch } from './viewport/watch'
+
+// Couleur de signal choisie (Réglages), posée sur :root avant le premier rendu :
+// aucun écran ne s'affiche d'abord dans la couleur par défaut.
+applyStoredSignal()
 
 // Hors de l'arbre React : ces deux services vivent autant que la page et ne
 // doivent pas dépendre d'un écran monté (login, premier lancement, erreur).
