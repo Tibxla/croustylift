@@ -8,7 +8,7 @@
 //
 // Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
 // arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
-// geste délibéré, visible dans le diff. Dernière révision : lot 2 de la refonte E
+// geste délibéré, visible dans le diff. Dernière révision : lot 3 de la refonte E
 // (taille mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -19,7 +19,7 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 82_500, // code de l'app (mesuré : 78 642, refonte E lot 2 : Salle, règle, rangées de numéros ; 75 495 au lot 1)
+  'index.js': 91_000, // code de l'app (mesuré : 86 613, refonte E lot 3 : correction et suppression d'une série, Sommaire, fin de séance enrichie et lecture de la semaine ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
