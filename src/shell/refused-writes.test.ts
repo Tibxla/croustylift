@@ -94,6 +94,32 @@ describe('saisies refusées lues par un humain', () => {
     expect(refusalReason(entry(op, ''))).toBe('Le serveur l’a refusée sans dire pourquoi.');
   });
 
+  it('donnée mal formée (22P02 et les autres refus de données, classe 22) : pas de « Renvoyer », abandonner puis ressaisir, jamais recharger', () => {
+    const op = { type: 'insertSet', id: 's', executionId: 'x', exerciseId: 'ex1', setOrder: 1, weightKg: 80, reps: 8, rir: 2 } as const;
+    const malformed = [
+      '22P02 : invalid input syntax for type uuid: "abc"',
+      '22007 : invalid input syntax for type date: "2026-13-40"',
+      '22008 : date/time field value out of range: "2026-02-30"',
+      '22023 : invalid parameter value',
+      '22004 : null value not allowed',
+      '22P05 : unsupported Unicode escape sequence',
+    ];
+    for (const reason of malformed) {
+      const t = describeRefusal(entry(op, reason), lookup);
+      expect(t.retryable, reason).toBe(false);
+      expect(canRetry({ reason }), reason).toBe(false);
+      expect(t.reason, reason).toBe('Une donnée est mal formée : la renvoyer échouera encore. Abandonne-la et ressaisis-la.');
+    }
+  });
+
+  it('aucun motif de la feuille ne dit de recharger l’écran', () => {
+    const op = { type: 'deleteExecution', id: 'x' } as const;
+    const codes = ['22P02', '22001', '22003', '22007', '22012', '23502', '23503', '23505', '23514', '23P01', '42501', 'PGRST116', '57014'];
+    for (const code of codes) {
+      expect(refusalReason(entry(op, `${code} : something went wrong`)), code).not.toMatch(/[Rr]echarge/);
+    }
+  });
+
   it('une saisie retenue par sa séance ne se renvoie pas seule et part avec elle', () => {
     const exec = entry({ type: 'upsertExecution', id: 'x1', seanceVersionId: 'v', performedOn: '2026-11-24' }, '23503 : fk');
     const set = { ...entry({ type: 'insertSet', id: 's', executionId: 'x1', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x1, en quarantaine"), refusalId: 'r2' };

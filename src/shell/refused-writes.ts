@@ -51,6 +51,16 @@ function kg(n: number): string {
 
 /** Refus d'une valeur : la renvoyer telle quelle échouera à l'identique. */
 const VALUE_REFUSALS = new Set(['23514', '22003', '22001', '23502']);
+/**
+ * Donnée mal formée : toute la classe 22 de Postgres (« data exception » :
+ * 22P02 texte illisible pour son type, 22007 date invalide, 22023 paramètre
+ * invalide…), hors les dépassements déjà dans `VALUE_REFUSALS`. La file la met
+ * en quarantaine (`isPermanentRejection`, outbox.ts) ; la renvoyer échouera à
+ * l'identique, et recharger l'écran n'y change rien.
+ */
+const isMalformed = (code: string) => /^22[0-9A-Z]{3}$/.test(code) && !VALUE_REFUSALS.has(code);
+/** Refus que renvoyer ne lèvera pas : valeur, donnée mal formée, élément lié supprimé. */
+const isValueRefusal = (code: string) => VALUE_REFUSALS.has(code) || isMalformed(code) || code === '23503';
 const SILENT = 'Le serveur l’a refusée sans dire pourquoi.';
 /** Message intégré de Postgres ou PostgREST (anglais), par opposition au motif
  *  français écrit par un trigger, qui passe tel quel (cf. lib/error-message). */
@@ -72,6 +82,9 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
     if (isBuiltIn(message) && VALUE_REFUSALS.has(code)) {
       return 'Une valeur dépasse ce que le serveur accepte : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
     }
+    if (isBuiltIn(message) && isMalformed(code)) {
+      return 'Une donnée est mal formée : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
+    }
     if (isBuiltIn(message) && code === '23503') return 'Elle visait un élément supprimé depuis un autre appareil. Abandonne-la.';
     const text = errorMessage({ code, message }).trim();
     if (text === '' || /\(code [0-9A-Z]+\)/.test(text)) return SILENT;
@@ -83,14 +96,15 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
 /**
  * Renvoyer telle quelle peut-il aboutir ? Non pour une création de séance
  * dépassée, une saisie retenue par sa séance (elle repart avec elle), une valeur
- * refusée ou un élément lié supprimé : le serveur refuserait à l'identique.
+ * refusée, une donnée mal formée ou un élément lié supprimé : le serveur
+ * refuserait à l'identique.
  */
 export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): boolean {
   if (entry.superseded || isDependent(entry)) return false;
   const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(entry.reason ?? '');
   if (!m) return true;
   const [, code = '', message = ''] = m;
-  return !(isBuiltIn(message) && (VALUE_REFUSALS.has(code) || code === '23503'));
+  return !(isBuiltIn(message) && isValueRefusal(code));
 }
 
 /** Retenue seulement parce que la création de sa séance a été refusée. */
