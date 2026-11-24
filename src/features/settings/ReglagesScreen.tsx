@@ -15,13 +15,18 @@
 // de poids de la Salle (refonte E, lot Capture) ; la Capture actuelle garde ses
 // boutons + et − à pas fixe.
 //
+// Données : la sauvegarde de tout le compte dans un fichier (issue #8) et sa
+// restauration (issue #35), deux boutons secondaires côte à côte. L'import
+// upserte chaque ligne par son id, en une transaction : il ajoute et met à jour,
+// ne supprime rien (features/export/import.ts).
+//
 // Compte : l'e-mail et la Déconnexion, gardée tant que des saisies attendent la
 // synchro (ADR 0012) : l'option sûre est le bouton, la perte un lien discret.
 // À propos : la version qui tourne (le déploiement est manuel, c'est ici qu'on la
 // vérifie depuis le téléphone), la mise à jour si une attend, et le relevé
 // d'affichage (diagnostic des barres basses de l'iPhone, aussi par un appui long
 // sur la navigation).
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { PendingWritesError } from '../../auth/auth-context';
 import { captureInProgress, requestReload, useUpdateReady } from '../../pwa/register';
 import { signalHex, signalName, STEP_INC, STEP_MAX, STEP_MIN, updateReglages, useReglages } from '../../settings/reglages';
@@ -29,6 +34,8 @@ import { CLARTE_DEFAUT, CLARTE_MAX, FREE_NAME, freeHex, HUE_MAX, HUE_STEP, reada
 import { Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, TextLink } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { signOutRefusalLabel } from '../capture/sync-label';
+import { downloadUserData, exportFilename } from '../export/data';
+import { restoreFromFile } from '../export/data-import';
 import { formatWeight } from '../capture/format';
 import { APP_VERSION_LABEL } from '../../version';
 import { openDiag } from '../../viewport/watch';
@@ -45,6 +52,7 @@ export function ReglagesScreen({
       <ScreenHeader title="Réglages" />
       <SignalSection />
       <SalleSection />
+      <DonneesSection />
       <CompteSection email={email} onSignOut={onSignOut} />
       <AboutSection />
       <div className="h-[calc(1.5rem+var(--safe-bottom))]" />
@@ -250,6 +258,89 @@ function SalleSection() {
           onChange={(v) => updateReglages({ stepKg: v })}
         />
       </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Données                                                                    */
+/* ------------------------------------------------------------------------ */
+
+type DataStatus =
+  | { phase: 'idle' }
+  | { phase: 'busy'; what: 'export' | 'import' }
+  | { phase: 'done'; message: string }
+  | { phase: 'error'; message: string };
+
+function DonneesSection() {
+  const [status, setStatus] = useState<DataStatus>({ phase: 'idle' });
+  const fileInput = useRef<HTMLInputElement>(null);
+  const busy = status.phase === 'busy';
+
+  const exportData = async () => {
+    setStatus({ phase: 'busy', what: 'export' });
+    const filename = exportFilename();
+    try {
+      await downloadUserData();
+      setStatus({ phase: 'done', message: `${filename} téléchargé. Range-le en lieu sûr.` });
+    } catch (err) {
+      setStatus({ phase: 'error', message: errorMessage(err) });
+    }
+  };
+
+  const importData = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Réinitialisé pour que le même fichier puisse être choisi à nouveau.
+    e.target.value = '';
+    if (!file) return;
+    setStatus({ phase: 'busy', what: 'import' });
+    try {
+      await restoreFromFile(file);
+      setStatus({ phase: 'done', message: 'Données importées. Recharge l’app pour voir les changements.' });
+    } catch (err) {
+      setStatus({ phase: 'error', message: errorMessage(err) });
+    }
+  };
+
+  return (
+    <section>
+      <SectionTitle>Données</SectionTitle>
+      <p className="px-5 text-[15px] leading-[1.45] text-muted">
+        Tout ton historique dans un fichier : routines, séances, séries, notes, exos perso. L’import ajoute et met à
+        jour, ne supprime rien.
+      </p>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".json,application/json"
+        onChange={(e) => void importData(e)}
+        className="sr-only"
+        aria-hidden="true"
+        tabIndex={-1}
+      />
+      <div className="mt-3 flex gap-2 px-5">
+        <SecondaryButton className="flex-1" ariaLabel="Exporter mes données" disabled={busy} onClick={() => void exportData()}>
+          {status.phase === 'busy' && status.what === 'export' ? 'Export…' : 'Exporter'}
+        </SecondaryButton>
+        <SecondaryButton
+          className="flex-1"
+          ariaLabel="Importer un fichier de sauvegarde"
+          disabled={busy}
+          onClick={() => fileInput.current?.click()}
+        >
+          {status.phase === 'busy' && status.what === 'import' ? 'Import…' : 'Importer'}
+        </SecondaryButton>
+      </div>
+      {status.phase === 'done' && (
+        <p role="status" className="px-5 pt-2 text-[14px] text-muted">
+          {status.message}
+        </p>
+      )}
+      {status.phase === 'error' && (
+        <p role="alert" className="mx-5 mt-3 break-words border-l-[3px] border-ink pl-3 text-[15px] leading-[1.45] text-ink">
+          {status.message}
+        </p>
+      )}
     </section>
   );
 }

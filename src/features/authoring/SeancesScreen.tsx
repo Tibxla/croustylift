@@ -41,8 +41,6 @@ import {
 import { SeanceEditor } from './SeanceEditor';
 import { nextFreeName } from '../../domain/unique-name';
 import { planRowActions } from './archive';
-import { ExportButton } from '../export/ExportButton';
-import { ImportButton } from '../export/ImportButton';
 import { errorMessage } from '../../lib/error-message';
 
 type RoutineRow = Database['public']['Tables']['routines']['Row'];
@@ -400,30 +398,7 @@ export function RoutinesView({
         </ArchivedSection>
       )}
 
-      <DataSection />
     </div>
-  );
-}
-
-/**
- * Section « Données » : backup JSON de tout le compte (issue #8). Discrète, en
- * bas de l'écran d'accueil des routines : c'est l'endroit « au calme » naturel
- * pour exporter, sans alourdir la capture en salle.
- */
-function DataSection() {
-  return (
-    <section className="mt-8 border-t border-hair pt-5">
-      <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">Données</h3>
-      <p className="mb-3 text-sm text-ink-muted">
-        Télécharge une sauvegarde JSON de tes exos perso, routines, séances et historique.
-        Garde-la en cas de perte du stockage local. Pour restaurer, importe le fichier
-        de sauvegarde.
-      </p>
-      <div className="flex flex-col gap-2.5">
-        <ExportButton />
-        <ImportButton />
-      </div>
-    </section>
   );
 }
 
