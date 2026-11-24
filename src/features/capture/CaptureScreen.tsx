@@ -1409,11 +1409,19 @@ function logLabel(side: Side | null, rank: number, plannedMax: number): string {
 }
 
 /** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
- *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
+ *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales).
+ *  Sous 340 px (320) : marges de 8 px et titre à 15 px, sinon « Sommai… » et
+ *  « Exo sui… » (cf. la colonne du milieu, `BAR_GRID`). */
 const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line';
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line [@media(max-width:339px)]:px-2';
 /** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
-const BAR_TITLE = 'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink';
+const BAR_TITLE =
+  'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink [@media(max-width:339px)]:text-[15px]';
+/** Rangée du haut : colonne du milieu (Annuler) à largeur bornée, Sommaire et
+ *  Exo suivant gardent la même largeur, qu'Annuler soit là ou non ; resserrée
+ *  sous 340 px pour laisser leurs titres entiers. */
+const BAR_GRID =
+  'mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2 [@media(max-width:339px)]:grid-cols-[1fr_minmax(48px,60px)_1fr]';
 
 function CapturePanel({
   exercise,
@@ -1553,9 +1561,7 @@ function CapturePanel({
           geste répété, toujours au même endroit, sans enfoncement. Rien ne change
           de place quand le minimum du plan est atteint (décision du 23/11). */}
       <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
-        {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
-            même largeur, qu'Annuler soit là ou non. */}
-        <div className="mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2">
+        <div className={BAR_GRID}>
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
@@ -1581,7 +1587,7 @@ function CapturePanel({
               aria-label={undoWhat.aria}
               className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
             >
-              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4">Annuler</span>
+              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4 [@media(max-width:339px)]:text-[15px]">Annuler</span>
               <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
             </button>
           ) : (
