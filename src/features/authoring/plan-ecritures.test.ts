@@ -11,6 +11,10 @@ const server = vi.hoisted(() => ({
   rpcError: null as unknown,
   /** Erreur propre à une fonction (prime sur `rpcError`). */
   rpcErrors: {} as Record<string, unknown>,
+  /** Réponses successives d'une fonction (prime sur `rpcErrors`), consommées dans l'ordre. */
+  rpcReplies: {} as Record<string, { data?: unknown; error?: unknown }[]>,
+  /** Écritures directes sur les tables (chemin de repli). */
+  inserts: [] as { table: string; row: unknown }[],
   deleteError: null as unknown,
   /** Appelé au moment où la requête de suppression part. */
   onDelete: null as (() => void) | null,
@@ -35,7 +39,22 @@ vi.mock('../../lib/supabase', () => {
       return query;
     }
     if (table === 'seances') {
-      return { delete: () => ({ eq: () => Promise.resolve({ error: server.deleteError }) }) };
+      return {
+        delete: () => ({ eq: () => Promise.resolve({ error: server.deleteError }) }),
+        select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [{ position: 0 }, { position: 1 }], error: null }) }) }),
+        insert: (row: Row) => {
+          server.inserts.push({ table, row });
+          return { select: () => ({ single: () => Promise.resolve({ data: { id: 'legacy-seance', ...row }, error: null }) }) };
+        },
+      };
+    }
+    if (table === 'seance_versions') {
+      return {
+        insert: (row: Row) => {
+          server.inserts.push({ table, row });
+          return Promise.resolve({ error: null });
+        },
+      };
     }
     if (table === 'routines') {
       return {
@@ -51,6 +70,8 @@ vi.mock('../../lib/supabase', () => {
   };
   const rpc = (fn: string, args: unknown) => {
     server.rpcCalls.push({ fn, args });
+    const reply = server.rpcReplies[fn]?.shift();
+    if (reply) return Promise.resolve({ data: reply.data ?? null, error: reply.error ?? null });
     return Promise.resolve({ error: server.rpcErrors[fn] ?? server.rpcError });
   };
   return { supabase: { from, rpc } };
@@ -63,6 +84,7 @@ import {
   deleteSeance,
   getCurrentRoutineId,
   REORDER_CONFLICT_MESSAGE,
+  createSeance,
   reorderSeances,
 } from './data';
 
@@ -71,6 +93,8 @@ beforeEach(() => {
   server.rpcCalls = [];
   server.rpcError = null;
   server.rpcErrors = {};
+  server.rpcReplies = {};
+  server.inserts = [];
   server.deleteError = null;
   server.onDelete = null;
 });
@@ -107,6 +131,52 @@ describe('getCurrentRoutineId', () => {
       },
     ];
     expect(await getCurrentRoutineId()).toBeNull();
+  });
+});
+
+describe('createSeance', () => {
+  const created = { id: 'x', routine_id: 'routine-1', name: 'Push', position: 2, archived_at: null };
+
+  it('crée la séance et sa version 1 en UNE requête (create_seance), avec un id fourni par le client', async () => {
+    server.rpcReplies.create_seance = [{ data: created }];
+    await expect(createSeance('routine-1', { name: 'Push' })).resolves.toEqual(created);
+    expect(server.rpcCalls).toHaveLength(1);
+    const call = server.rpcCalls[0]!;
+    expect(call.fn).toBe('create_seance');
+    expect(call.args).toMatchObject({ p_routine_id: 'routine-1', p_name: 'Push', p_prescriptions: [] });
+    expect((call.args as { p_seance_id: string }).p_seance_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(server.inserts).toEqual([]);
+  });
+
+  it('réponse perdue (erreur réseau) : la demande est rejouée avec le MÊME id, sans doublon', async () => {
+    server.rpcReplies.create_seance = [{ error: { message: 'TypeError: Failed to fetch', code: '' } }, { data: created }];
+    await expect(createSeance('routine-1', { name: 'Push' })).resolves.toEqual(created);
+    const ids = server.rpcCalls.map((c) => (c.args as { p_seance_id: string }).p_seance_id);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it('nom déjà pris (23505) : dit en clair, sans rejeu', async () => {
+    server.rpcReplies.create_seance = [{ error: { code: '23505', message: 'duplicate key value violates unique constraint "seances_routine_name_unique"' } }];
+    await expect(createSeance('routine-1', { name: 'Push' })).rejects.toThrow('Cette routine a déjà une séance « Push ». Choisis un autre nom.');
+    expect(server.rpcCalls).toHaveLength(1);
+  });
+
+  it('une copie passe ses prescriptions dans la même requête', async () => {
+    server.rpcReplies.create_seance = [{ data: created }];
+    await createSeance('routine-1', { name: 'Push' }, [
+      { exerciseId: 'e1', position: 0, sets: { min: 2, max: 3 }, reps: { min: 8, max: 12 }, rir: { min: 1, max: 2 } },
+    ]);
+    expect(server.rpcCalls[0]!.args).toMatchObject({
+      p_prescriptions: [{ exercise_id: 'e1', position: 0, sets_min: 2, sets_max: 3, reps_min: 8, reps_max: 12, rir_min: 1, rir_max: 2 }],
+    });
+  });
+
+  it('fonction absente de la base (0027 pas encore passée) : repli sur la séance puis sa version', async () => {
+    server.rpcReplies.create_seance = [{ error: { code: 'PGRST202', message: 'Could not find the function' } }];
+    const seance = await createSeance('routine-1', { name: 'Push' });
+    expect(seance.id).toBe('legacy-seance');
+    expect(server.inserts.map((i) => i.table)).toEqual(['seances', 'seance_versions']);
   });
 });
 

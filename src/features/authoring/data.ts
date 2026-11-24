@@ -542,41 +542,76 @@ export async function listSeances(routineId: string): Promise<SeanceRow[]> {
 }
 
 /**
- * Crée une séance en fin de routine (position = max + 1) ET sa version v1 VIDE,
- * pour qu'elle ait toujours une version courante (cf. invariant ADR 0001).
- * Renvoie la séance créée.
+ * Crée une séance en fin de routine ET sa version 1 (vide, ou avec les
+ * prescriptions d'une copie), pour qu'elle ait toujours une version courante
+ * (cf. invariant ADR 0001). Renvoie la séance créée.
  *
- * La position envoyée n'est qu'une proposition, tirée d'une lecture qui peut
- * dater : la base la recalcule en fin de routine sous le verrou de la routine,
- * commun avec le réordonnancement (trigger `seances_en_fin`, migration 0026).
- * Le client la calcule encore pour rester juste tant que 0026 n'est pas en base.
+ * En UNE transaction côté serveur, par la RPC `create_seance` (migration
+ * 0027) : en deux requêtes, une coupure entre la séance et sa version laissait
+ * une séance que la Salle refuse de lancer, et le nouvel essai butait sur
+ * l'unicité du nom. L'id de la séance est tiré ici : une demande dont la
+ * réponse s'est perdue (erreur réseau, sans code de la base) est rejouée une
+ * fois avec le MÊME id, et la base rend la séance déjà créée sans doublon.
+ * La position n'est pas envoyée : la base la place en fin de routine, sous le
+ * verrou de la routine (trigger `seances_en_fin`, migration 0026).
  *
- * Pas de transaction client : si l'insert de la version échouait après la
- * séance, on aurait une séance sans version (template incomplet). On insère donc
- * la version juste après et on remonte l'erreur telle quelle le cas échéant.
+ * Tant que la fonction n'est pas en base : repli sur les requêtes séparées
+ * (séance à max + 1, version, puis version des prescriptions d'une copie),
+ * comme le client d'avant.
  */
 export async function createSeance(
   routineId: string,
   input: { name: string },
+  prescriptions: PrescriptionInput[] = [],
 ): Promise<SeanceRow> {
   return planWrite(async () => {
-    const existing = await listSeances(routineId);
-    const position = nextPosition(existing.map((s) => s.position));
-
-    const { data: seance, error: seanceErr } = await supabase
-      .from('seances')
-      .insert({ routine_id: routineId, name: input.name, position })
-      .select('*')
-      .single();
-    if (seanceErr) throw nameConflictError(seanceErr, 'seance', input.name);
-
-    const { error: versionErr } = await supabase
-      .from('seance_versions')
-      .insert({ seance_id: seance.id, version: 1 });
-    if (versionErr) throw versionErr;
-
-    return seance;
+    const rpc = supabase.rpc.bind(supabase) as unknown as (
+      fn: 'create_seance',
+      args: { p_seance_id: string; p_routine_id: string; p_name: string; p_prescriptions: unknown[] },
+    ) => PromiseLike<{ data: unknown; error: unknown }>;
+    const args = {
+      p_seance_id: crypto.randomUUID(),
+      p_routine_id: routineId,
+      p_name: input.name,
+      // Les colonnes de `prescriptions`, sans la version (posée par la base).
+      p_prescriptions: prescriptions.map((p) => ({
+        exercise_id: p.exerciseId,
+        position: p.position,
+        sets_min: p.sets.min,
+        sets_max: p.sets.max,
+        reps_min: p.reps.min,
+        reps_max: p.reps.max,
+        rir_min: p.rir.min,
+        rir_max: p.rir.max,
+      })),
+    };
+    let { data, error } = await rpc('create_seance', args);
+    if (error && !(error as { code?: unknown }).code) ({ data, error } = await rpc('create_seance', args));
+    if (!error) return data as SeanceRow;
+    if (!isMissingFunction(error)) throw nameConflictError(error, 'seance', input.name);
+    return createSeanceInSteps(routineId, input.name, prescriptions);
   });
+}
+
+/** L'ancien chemin, en requêtes séparées : seulement sans `create_seance` en base. */
+async function createSeanceInSteps(routineId: string, name: string, prescriptions: PrescriptionInput[]): Promise<SeanceRow> {
+  const existing = await listSeances(routineId);
+  const position = nextPosition(existing.map((s) => s.position));
+
+  const { data: seance, error: seanceErr } = await supabase
+    .from('seances')
+    .insert({ routine_id: routineId, name, position })
+    .select('*')
+    .single();
+  if (seanceErr) throw nameConflictError(seanceErr, 'seance', name);
+
+  const { error: versionErr } = await supabase
+    .from('seance_versions')
+    .insert({ seance_id: seance.id, version: 1 });
+  if (versionErr) throw versionErr;
+
+  if (prescriptions.length > 0) await saveSeanceVersion(seance.id, prescriptions);
+  return seance;
 }
 
 /** Renomme une séance. */
@@ -922,12 +957,7 @@ export async function duplicateSeance(
 ): Promise<SeanceRow> {
   return planWrite(async () => {
     const source = await loadSeanceEditor(sourceSeanceId);
-    const prescriptions = toDuplicatedPrescriptions(source);
-
-    const seance = await createSeance(routineId, { name });
-    if (prescriptions.length > 0) {
-      await saveSeanceVersion(seance.id, prescriptions);
-    }
-    return seance;
+    // La copie et ses prescriptions en une transaction (`create_seance`).
+    return createSeance(routineId, { name }, toDuplicatedPrescriptions(source));
   });
 }

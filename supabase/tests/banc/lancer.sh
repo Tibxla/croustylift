@@ -35,7 +35,7 @@ sql tests/banc/01_jeu_d_essai.sql
 
 # Ordre de DÉPLOIEMENT (supabase/tests/ORDRE.md), pas l'ordre des numéros : les
 # migrations qui attendent le nouveau client passent en dernier.
-ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0025 0026 0016 0018 0021 0022"
+ORDRE="0015 0017 0019a 0019b 0019c 0020 0023 0024 0025 0026 0027 0016 0018 0021 0022"
 [ "$(echo $ORDRE | wc -w)" = "$(ls migrations | awk '$0 > "0015"' | wc -l)" ] || { echo "ORDRE ne couvre pas toutes les migrations"; exit 1; }
 
 for n in $ORDRE; do
@@ -328,4 +328,39 @@ commeA "update public.seances set archived_at = now() where id = '$PUSH'" >/dev/
 r=$(commeA "update public.seances set archived_at = null, position = 0 where id = '$PUSH'")
 if [ "$(position "$PUSH")" = 2 ]; then echo "OK    séance désarchivée : la base la place en fin (2), quelle que soit la position envoyée"
 else echo "ECHEC désarchivage : $r (position $(position "$PUSH"))"; exit 1; fi
+echo "== création d'une séance en une transaction (0027)"
+NS=a0000000-0000-0000-0000-0000000000b6
+EXO=a0000000-0000-0000-0000-0000000000e1
+cree() { # cree <compte> <id> <nom> : réponse de la base à create_seance
+  docker exec -i "$NOM" psql -U postgres -q -A -t -v ON_ERROR_STOP=1 \
+    -c "set role authenticated" -c "set request.jwt.claim.sub = '$1'" \
+    -c "select (public.create_seance('$2', '$R', '$3', '[{\"exercise_id\": \"$EXO\", \"position\": 0, \"sets_min\": 2, \"sets_max\": 3, \"reps_min\": 8, \"reps_max\": 12, \"rir_min\": 1, \"rir_max\": 2}]'::jsonb)).name" 2>&1 || true
+}
+compte() { docker exec -i "$NOM" psql -U postgres -A -t -c "$1"; }
+etat() { # séances au nom donné / versions / prescriptions de la séance $NS
+  echo "$(compte "select count(*) from public.seances where routine_id = '$R' and name = '$1'")/$(compte "select count(*) from public.seance_versions where seance_id = '$NS'")/$(compte "select count(*) from public.prescriptions p join public.seance_versions v on v.id = p.seance_version_id where v.seance_id = '$NS'")"
+}
+r=$(cree "$A" "$NS" "Créée en bloc")
+if [ "$r" = "Créée en bloc" ] && [ "$(etat "Créée en bloc")" = "1/1/1" ] && [ "$(position "$NS")" = 3 ]; then
+  echo "OK    création : la séance, sa version 1 et ses prescriptions, en fin de routine"
+else echo "ECHEC création : $r (état $(etat "Créée en bloc"), position $(position "$NS"))"; exit 1; fi
+r=$(cree "$A" "$NS" "Créée en bloc")
+if [ "$r" = "Créée en bloc" ] && [ "$(etat "Créée en bloc")" = "1/1/1" ]; then echo "OK    rejeu du même id (réponse perdue) : la même séance rendue, rien en double"
+else echo "ECHEC rejeu : $r (état $(etat "Créée en bloc"))"; exit 1; fi
+r=$(cree "$A" "$NS" "Autre nom")
+if echo "$r" | grep -q "ERROR" && [ "$(etat "Créée en bloc")" = "1/1/1" ]; then echo "OK    même id pour une autre séance : refusé"
+else echo "ECHEC même id, autre séance : $r"; exit 1; fi
+r=$(cree "$B" b0000000-0000-0000-0000-0000000000b7 "Chez A")
+if echo "$r" | grep -q "ERROR" && [ "$(compte "select count(*) from public.seances where name = 'Chez A'")" = 0 ]; then echo "OK    autre compte : refusé, rien de créé"
+else echo "ECHEC autre compte : $r"; exit 1; fi
+r=$(cree "$A" a0000000-0000-0000-0000-0000000000b8 "Créée en bloc")
+if echo "$r" | grep -q "23505\|duplicate key\|seances_routine_name_unique\|seances_owner_routine_name_unique" \
+   && [ "$(compte "select count(*) from public.seances where id = 'a0000000-0000-0000-0000-0000000000b8'")" = 0 ] \
+   && [ "$(compte "select count(*) from public.seance_versions where seance_id = 'a0000000-0000-0000-0000-0000000000b8'")" = 0 ]; then
+  echo "OK    nom en double : refusé (23505), ni séance ni version orpheline"
+else echo "ECHEC nom en double : $r"; exit 1; fi
+r=$(docker exec -i "$NOM" psql -U postgres -q -A -t -c "set role anon" \
+  -c "select public.create_seance('a0000000-0000-0000-0000-0000000000b9', '$R', 'Anonyme')" 2>&1 || true)
+if echo "$r" | grep -q "permission denied"; then echo "OK    appel sans compte : refusé"
+else echo "ECHEC appel sans compte : $r"; exit 1; fi
 echo "== banc vert"

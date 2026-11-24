@@ -1,4 +1,4 @@
-# Ordre de déploiement des migrations 0015 à 0026
+# Ordre de déploiement des migrations 0015 à 0027
 
 Les numéros ne donnent pas l'ordre. Quatre migrations (0016, 0018, 0021, 0022) refuseraient des écritures que le client encore déployé produit : elles attendent le nouveau client, puis le passage des anciens. Le banc local (`banc/lancer.sh`) rejoue exactement cet ordre.
 
@@ -19,6 +19,7 @@ Avant chaque migration : sa requête de contrôle préalable, en commentaire en 
 9. `0025_delete_execution_if_empty.sql` : la suppression conditionnelle d'une exécution ouverte et vide (« Changer de séance » dans la Salle). À appliquer AVANT le déploiement du client qui l'appelle (`deleteExecutionIfEmpty`, `src/features/capture/data.ts`) : sans elle, ce client ne supprime rien et une exécution vide reste ouverte (la prochaine ouverture l'adopte). Un repli non atomique a été retiré le 24/11 : il pouvait emporter une série acquittée par un autre appareil.
 
 10. `0026_reorder_seances_revision.sql` : le réordonnancement sous révision (voir sa section plus bas). À appliquer AVANT le client qui l'appelle.
+11. `0027_creer_seance.sql` : la création d'une séance et de sa version 1 en une transaction (voir sa section plus bas). Après 0026, AVANT le client qui l'appelle.
 
 Effet visible sur le client en place : aucun.
 
@@ -79,3 +80,16 @@ Elle passe AVANT le déploiement du client qui l'appelle (`reorderSeances`, `src
 4. Déployer le client.
 
 Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé ; ajout pendant un réordonnancement : attend puis va en fin ; trois séances en position 0 puis un ajout : en fin, et le réordonnancement d'avant l'ajout est refusé ; désarchivage en fin). PAS encore appliquée en prod.
+
+## 0027 : créer une séance en une transaction
+
+`0027_creer_seance.sql` ajoute `create_seance(p_seance_id, p_routine_id, p_name, p_prescriptions)` : la séance, sa version 1 et, pour une copie, ses prescriptions, d'un seul tenant. Le client créait la séance puis sa version en deux requêtes : une coupure entre les deux laissait une séance que la Salle refuse de lancer, et le nouvel essai butait sur l'unicité du nom. L'id vient du client : une demande rejouée parce que sa réponse s'est perdue rend la séance déjà créée, sans doublon. La position est posée en fin de routine, puis recalculée par le trigger `seances_en_fin` de 0026 : 0027 passe APRÈS 0026.
+
+Elle passe AVANT le déploiement du client qui l'appelle (`createSeance` et `duplicateSeance`, `src/features/authoring/data.ts`). Ce client marche aussi sans elle : la fonction absente (PGRST202), il revient aux requêtes séparées, comme le client d'avant.
+
+1. Contrôle préalable (en tête du fichier) : aucune ligne.
+2. Appliquer la migration (attente de verrou bornée à 5 s, rejouable).
+3. Test de contrôle `supabase/tests/0027_creer_seance.sql` : aucune ligne `ECHEC`.
+4. Déployer le client (après 0026 et 0027).
+
+Passée au banc local le 2026-11-24 (création avec sa version et ses prescriptions, en fin de routine ; rejeu du même id sans doublon ; même id pour une autre séance refusé ; autre compte refusé, rien de créé ; nom en double refusé en 23505, ni séance ni version orpheline ; appel sans compte refusé). PAS encore appliquée en prod.
