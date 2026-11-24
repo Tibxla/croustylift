@@ -51,6 +51,8 @@ import { restoreFromFile } from '../export/data-import';
 import { formatWeight } from '../capture/format';
 import { APP_VERSION_LABEL } from '../../version';
 import { openDiag } from '../../viewport/watch';
+import { useSyncState } from '../../shell/useSyncState';
+import { useOpenRefusedWrites } from '../../shell/refused-context';
 
 export function ReglagesScreen({
   email,
@@ -324,6 +326,7 @@ function DonneesSection() {
   return (
     <section>
       <SectionTitle>Données</SectionTitle>
+      <RefusedEntry />
       <p className="px-5 text-[15px] leading-[1.45] text-muted">
         Tout ton historique dans un fichier : routines, séances, séries, notes, exos perso. L’import ajoute et met à
         jour, ne supprime rien.
@@ -369,6 +372,23 @@ function DonneesSection() {
 /* ------------------------------------------------------------------------ */
 
 type SignOutIssue = { kind: 'pending'; pending: number; refused: number } | { kind: 'error'; message: string };
+
+/** Saisies refusées par le serveur : l'entrée vers leur écran, seulement s'il y en a. */
+function RefusedEntry() {
+  const { refused } = useSyncState();
+  const open = useOpenRefusedWrites();
+  if (refused === 0 || !open) return null;
+  return (
+    <div className="px-5 pb-4">
+      <SecondaryButton className="w-full" meta={String(refused)} onClick={open}>
+        {refused > 1 ? 'Saisies refusées' : 'Saisie refusée'}
+      </SecondaryButton>
+      <p className="mt-1.5 text-[14px] leading-[1.4] text-muted">
+        Le serveur les a refusées : elles attendent sur cet appareil que tu les renvoies ou les abandonnes.
+      </p>
+    </div>
+  );
+}
 
 function CompteSection({
   email,

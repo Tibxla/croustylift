@@ -108,6 +108,7 @@ import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner } from '../../ui';
 import { syncLine, type SyncState } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
+import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
 import { buildSessionRecap } from './session-recap';
@@ -1377,7 +1378,9 @@ type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
  *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
  *  sous la barre du pouce. */
 function SalleSync() {
-  return <SyncBanner line={syncLine(useSyncState())} />;
+  const sync = useSyncState();
+  const openRefused = useOpenRefusedWrites();
+  return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
 }
 
 /** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
@@ -1501,10 +1504,11 @@ function CapturePanel({
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
   // par le serveur se disent en clair, en tête.
   const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const openRefused = useOpenRefusedWrites();
 
   return (
     <>
-      <SyncBanner line={alarm} />
+      <SyncBanner line={alarm} action={refusedAction(sync.refused, openRefused)} />
       <ExerciseCapture
         exercise={exercise}
         progress={progress}

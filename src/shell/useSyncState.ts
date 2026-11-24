@@ -2,7 +2,10 @@
 //
 // Lecture SEULE des API exposées par la file (features/capture/outbox.ts) et
 // par l'état de capture (state.ts), qui restent intouchés : `pendingCount`,
-// `quarantineCount`, `storageFailing`, `capturePersistFailing`.
+// `listRefused`, `storageFailing`, `capturePersistFailing`. Les refus comptés
+// sont ceux du compte reconnu (`listRefused`), les seuls que l'écran des saisies
+// refusées montre et laisse renvoyer ou abandonner : ceux d'un autre compte
+// restent sur l'appareil sans être annoncés ici.
 //
 // Ce qui manque : la file n'émet pas d'événement à chaque mutation (enfilage,
 // passe d'envoi). Elle n'émet `OUTBOX_CHANGED_EVENT` que sur un nouvel essai
@@ -11,7 +14,7 @@
 // stockage modifié par un autre onglet) et on relit l'état toutes les 2 s, ce
 // qui ne coûte que deux lectures du stockage local.
 import { useSyncExternalStore } from 'react';
-import { OUTBOX_CHANGED_EVENT, pendingCount, quarantineCount, storageFailing } from '../features/capture/outbox';
+import { listRefused, OUTBOX_CHANGED_EVENT, pendingCount, storageFailing } from '../features/capture/outbox';
 import { capturePersistFailing } from '../features/capture/state';
 import type { SyncState } from './sync-line';
 
@@ -30,7 +33,7 @@ function subscribe(cb: () => void): () => void {
 /** Clé stable : useSyncExternalStore exige un instantané identique tant que rien ne change. */
 function snapshot(): string {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-  return [pendingCount(), quarantineCount(), offline ? 1 : 0, storageFailing() || capturePersistFailing() ? 1 : 0].join('|');
+  return [pendingCount(), listRefused().length, offline ? 1 : 0, storageFailing() || capturePersistFailing() ? 1 : 0].join('|');
 }
 
 export function useSyncState(): SyncState {

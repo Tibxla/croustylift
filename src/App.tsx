@@ -28,6 +28,8 @@ import { SurfaceNavigationContext } from './shell/navigation'
 import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
 import { SheetSlotContext, SyncBanner } from './ui'
+import { RefusedWritesContext, refusedAction } from './shell/refused-context'
+import { RefusedWritesSheet } from './shell/RefusedWritesSheet'
 import { errorMessage } from './lib/error-message'
 
 // L'Analyse (graphes, éditeur de séance passée) se charge en PARESSEUX pour
@@ -201,6 +203,10 @@ function AuthenticatedApp({
   const [sheetSlot, setSheetSlot] = useState<HTMLElement | null>(null)
   // État réel de la file d'écritures, pour la ligne de synchro sous la navigation.
   const sync = useSyncState()
+  // Écran des saisies refusées (feuille), ouvert depuis la ligne de synchro de
+  // toute surface ou depuis Réglages.
+  const [refusedOpen, setRefusedOpen] = useState(false)
+  const openRefused = useCallback(() => setRefusedOpen(true), [])
 
   useEffect(() => {
     let active = true
@@ -300,6 +306,7 @@ function AuthenticatedApp({
       <SurfaceNav current={surface} onSelect={goTo} />
 
       <SurfaceNavigationContext.Provider value={goTo}>
+        <RefusedWritesContext.Provider value={openRefused}>
         <SheetSlotContext.Provider value={sheetSlot}>
           {/* Colonne flexible de la hauteur de la fenêtre (sous la navigation) :
               une barre collée en bas d'écran y reste même quand le contenu est
@@ -312,7 +319,9 @@ function AuthenticatedApp({
                 la Salle, qui garde la sienne tant que l'écran de capture n'est
                 pas refait. Dans la colonne : sa hauteur compte dans celle de
                 l'écran, le document ne défile pas pour elle. */}
-            {surface !== 'capture' && <SyncBanner line={syncLine(sync)} />}
+            {surface !== 'capture' && (
+              <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />
+            )}
             <ErrorBoundary key={surface}>
               <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
                 {surface === 'capture' && <CaptureScreen />}
@@ -326,7 +335,9 @@ function AuthenticatedApp({
               </Suspense>
             </ErrorBoundary>
           </div>
+          <RefusedWritesSheet open={refusedOpen} onClose={() => setRefusedOpen(false)} />
         </SheetSlotContext.Provider>
+        </RefusedWritesContext.Provider>
       </SurfaceNavigationContext.Provider>
 
       {/* Emplacement des feuilles basses : collé en bas de la zone visible, sans
