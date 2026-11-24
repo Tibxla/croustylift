@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AuthShell } from './AuthShell'
+import { Notice, PrimaryButton, SecondaryButton, TextLink } from '../ui'
 import { arrivalGuardLabel } from '../features/capture/sync-label'
 
 /**
@@ -27,50 +28,39 @@ export function ArrivalGuardScreen({
 }) {
   const [confirm, setConfirm] = useState(false)
   return (
-    <AuthShell mark={false} titleSize={30} title="Des saisies attendent.">
-      <p className="text-sm leading-[1.5] text-ink">
+    <AuthShell
+      title="Des saisies attendent"
+      bottom={
+        confirm ? undefined : (
+          <PrimaryButton onClick={onCancel}>Revenir à la connexion</PrimaryButton>
+        )
+      }
+    >
+      <p className="px-5 text-[16px] leading-[1.5] text-ink">
         {arrivalGuardLabel({ held, heldEmail, arrivingEmail })}
       </p>
-      {confirm ? (
-        <div className="mt-6 flex flex-col gap-3">
-          <p role="alert" className="text-sm text-warn">
+      <div className="px-5 pt-4">
+        {confirm ? (
+          <Notice
+            role="alert"
+            title="Effacer ces saisies&#8239;?"
+            actions={
+              <>
+                <SecondaryButton onClick={() => setConfirm(false)}>Garder</SecondaryButton>
+                <TextLink tone="muted" onClick={onForce}>
+                  Purger et continuer
+                </TextLink>
+              </>
+            }
+          >
             Continuer efface définitivement ces saisies de l’appareil.
-          </p>
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setConfirm(false)}
-              className="btn btn-secondary h-11 rounded-xl px-4 text-sm"
-            >
-              Annuler
-            </button>
-            <button
-              type="button"
-              onClick={onForce}
-              className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium text-warn"
-            >
-              Purger et continuer
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-6 flex flex-col gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="btn btn-primary h-14 w-full rounded-2xl text-base"
-          >
-            Revenir à la connexion
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirm(true)}
-            className="h-11 rounded text-sm font-medium text-ink-muted transition active:text-ink"
-          >
+          </Notice>
+        ) : (
+          <TextLink tone="muted" onClick={() => setConfirm(true)}>
             Continuer avec ce compte…
-          </button>
-        </div>
-      )}
+          </TextLink>
+        )}
+      </div>
     </AuthShell>
   )
 }

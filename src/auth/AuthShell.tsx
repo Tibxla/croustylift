@@ -1,175 +1,53 @@
-// Coquille commune aux écrans d'entrée (Login, Mot de passe oublié, Réinitialisation).
-// Colonne centrée verticalement, padding latéral ~30px, marque optionnelle en haut,
-// titre / sous-titre, puis le contenu. Plus de pied « OFFLINE-FIRST · CHIFFRÉ » :
-// il promettait un chiffrement que l'app ne démontre pas (registre U25). Centralisé
-// pour que les trois écrans partagent EXACTEMENT le même rythme et la même matière.
-import { useState, type ReactNode } from 'react'
+// Coquille commune aux écrans d'entrée (connexion, mot de passe oublié,
+// définition du mot de passe, garde d'arrivée), au kit E : un en-tête d'écran
+// comme partout ailleurs (titre de 28 px, ligne grise dessous, retour nommé),
+// les champs au fil du doigt, et l'action principale en bloc plein dans la barre
+// collée du bas. Pas de marque à halo, pas de slogan, pas de pied « OFFLINE-FIRST
+// · CHIFFRÉ » : il promettait un chiffrement que l'app ne démontre pas (registre
+// U25, U2, U40).
+//
+// `onSubmit` : l'écran est un formulaire. La barre du bas en fait partie, si
+// bien que le bouton principal y est un vrai `submit` et qu'Entrée dans un champ
+// valide le formulaire, sans bouton caché.
+import type { FormEvent, ReactNode } from 'react'
+import { Screen, ScreenHeader } from '../ui'
 
 export function AuthShell({
-  mark = true,
   title,
-  titleSize = 32,
-  subtitle,
+  meta,
+  back,
+  bottom,
+  onSubmit,
   children,
-  backLabel,
-  onBack,
 }: {
-  mark?: boolean
   title: string
-  /** Taille du titre en px (32 sur Login, 30 sur les sous-écrans — cf. maquette). */
-  titleSize?: number
-  subtitle?: ReactNode
-  children: ReactNode
-  /** Libellé du bouton retour haut (ex. « Connexion ») ; rendu seulement si `onBack`. */
-  backLabel?: string
-  onBack?: () => void
+  /** Une ligne sous le titre. */
+  meta?: ReactNode
+  /** Retour nommé (« ‹ Connexion »). Sans retour, un blanc tient la place de la navigation. */
+  back?: { label: string; onClick: () => void }
+  /** L'action principale (et ce qui l'accompagne), dans la barre collée du bas. */
+  bottom?: ReactNode
+  onSubmit?: (e: FormEvent) => void
+  children?: ReactNode
 }) {
+  const screen = (
+    <Screen bottom={bottom}>
+      {!back && <div aria-hidden="true" className="h-12" />}
+      <ScreenHeader title={title} meta={meta} back={back} />
+      {children}
+    </Screen>
+  )
   return (
-    <main className="flex min-h-screen flex-col bg-bg px-[30px] text-ink">
-      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-12">
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            className="-ml-1 mb-6 inline-flex items-center gap-1 self-start rounded px-1 py-1 text-[13px] font-medium text-ink-muted transition active:text-ink"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-            {backLabel ?? 'Retour'}
-          </button>
+    <main className="flex min-h-screen flex-col bg-bg text-ink">
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col">
+        {onSubmit ? (
+          <form noValidate onSubmit={onSubmit} className="flex flex-1 flex-col">
+            {screen}
+          </form>
+        ) : (
+          screen
         )}
-        {mark && <PlaquetteMark />}
-        <h1
-          className="font-semibold leading-[1.05] tracking-[-0.025em] text-ink"
-          style={{ fontSize: `${titleSize}px` }}
-        >
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="mt-2.5 text-[15px] leading-[1.45] text-ink-muted">{subtitle}</p>
-        )}
-        <div className="mt-8">{children}</div>
       </div>
     </main>
-  )
-}
-
-/**
- * Plaquette du Login : carré 62px (fond levé, bordure hair-strong) contenant les
- * 3 barres ascendantes de la marque (faint / muted / blanc cassé). Plate, sans
- * dégradé ni halo (refonte E) ; l'écran de connexion sera refait au lot dédié. */
-function PlaquetteMark() {
-  return (
-    <div
-      aria-hidden="true"
-      className="mb-[30px] flex h-[62px] w-[62px] items-end justify-center gap-1 rounded-block border border-hair-strong bg-surface pb-[15px]"
-    >
-      <span className="w-1.5 rounded-[3px] bg-ink-faint" style={{ height: 11 }} />
-      <span className="w-1.5 rounded-[3px] bg-ink-muted" style={{ height: 18 }} />
-      <span
-        className="w-1.5 rounded-[3px] bg-accent"
-        style={{ height: 26 }}
-      />
-    </div>
-  )
-}
-
-/** Libellé de champ : 15 px en casse de phrase, gris (jamais de surtitre en majuscules, DESIGN.md). */
-export function FieldLabel({
-  htmlFor,
-  children,
-}: {
-  htmlFor: string
-  children: ReactNode
-}) {
-  return (
-    <label
-      htmlFor={htmlFor}
-      className="mb-2 block text-[15px] font-medium text-muted"
-    >
-      {children}
-    </label>
-  )
-}
-
-/**
- * Champ mot de passe avec bascule afficher/masquer (icône œil), comme la maquette.
- * Le `.field` porte la matière (bordure hairline, halo accent au focus) ; l'œil est
- * un bouton ghost à droite, tap-target suffisant, jamais porté par la couleur seule
- * (libellé aria explicite).
- */
-export function PasswordField({
-  id,
-  value,
-  onChange,
-  autoComplete,
-  minLength,
-  placeholder = '••••••••',
-}: {
-  id: string
-  value: string
-  onChange: (v: string) => void
-  autoComplete: string
-  minLength?: number
-  placeholder?: string
-}) {
-  const [show, setShow] = useState(false)
-  return (
-    <div className="relative">
-      <input
-        id={id}
-        type={show ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        required
-        minLength={minLength}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="field h-[54px] w-full rounded-[14px] pl-4 pr-12 text-base"
-        placeholder={placeholder}
-      />
-      <button
-        type="button"
-        onClick={() => setShow((s) => !s)}
-        aria-label={show ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
-        aria-pressed={show}
-        className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-xl text-ink-muted transition active:text-ink"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="20"
-          height="20"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {show ? (
-            <>
-              <path d="M9.9 4.2A10.5 10.5 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.4 3.4M6.6 6.6A18 18 0 0 0 2 12s3.5 8 10 8a10.5 10.5 0 0 0 5.4-1.5" />
-              <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
-              <path d="M3 3l18 18" />
-            </>
-          ) : (
-            <>
-              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-              <circle cx="12" cy="12" r="3" />
-            </>
-          )}
-        </svg>
-      </button>
-    </div>
   )
 }

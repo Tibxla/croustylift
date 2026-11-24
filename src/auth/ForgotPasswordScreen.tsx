@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { AuthShell, FieldLabel } from './AuthShell'
+import { AuthShell } from './AuthShell'
+import { PrimaryButton, TextField } from '../ui'
 
 /** Traduit les erreurs Supabase de réinitialisation en français lisible. */
 function frenchError(message: string): string {
@@ -44,74 +45,49 @@ export function ForgotPasswordScreen({ onBack }: Props) {
   if (sent) {
     return (
       <AuthShell
-        mark={false}
-        titleSize={30}
-        title="E-mail envoyé."
-        subtitle="Si un compte existe pour cette adresse, tu recevras un lien de réinitialisation."
+        title="E-mail envoyé"
+        back={{ label: 'Connexion', onClick: onBack }}
+        bottom={<PrimaryButton onClick={onBack}>Retour à la connexion</PrimaryButton>}
       >
-        <button
-          type="button"
-          onClick={onBack}
-          className="block w-full rounded text-center text-sm font-medium text-accent-ink transition active:text-accent"
-        >
-          Retour à la connexion
-        </button>
+        <div className="px-5">
+          <p className="text-[16px] leading-[1.5] text-ink">
+            Si un compte existe pour <span className="font-semibold">{email.trim()}</span>, tu
+            recevras un lien de réinitialisation.
+          </p>
+          <p className="mt-2 text-[15px] leading-[1.5] text-muted">
+            Il ouvre l’écran du nouveau mot de passe et ne sert qu’une fois.
+          </p>
+        </div>
       </AuthShell>
     )
   }
 
   return (
     <AuthShell
-      mark={false}
-      titleSize={30}
-      backLabel="Connexion"
-      onBack={onBack}
-      title="Mot de passe oublié."
-      subtitle="Saisis ton e-mail pour recevoir un lien de réinitialisation."
-    >
-      <form onSubmit={handleSubmit} className="space-y-[18px]" noValidate>
-        <div>
-          <FieldLabel htmlFor="forgot-email">E-mail</FieldLabel>
-          <input
-            id="forgot-email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="field h-[54px] w-full rounded-[14px] px-4 text-base"
-            placeholder="toi@exemple.com"
-          />
-        </div>
-
-        {error && (
-          <p role="alert" className="flex items-start gap-2 text-sm text-warn">
-            <svg
-              viewBox="0 0 24 24"
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              className="mt-0.5 shrink-0"
-            >
-              <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-            </svg>
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={submitting || !email}
-          className="btn btn-primary h-14 w-full rounded-2xl text-[17px]"
-        >
+      title="Mot de passe oublié"
+      meta="Saisis ton e-mail pour recevoir un lien de réinitialisation."
+      back={{ label: 'Connexion', onClick: onBack }}
+      onSubmit={handleSubmit}
+      bottom={
+        <PrimaryButton type="submit" disabled={submitting || !email}>
           {submitting ? 'Envoi en cours…' : 'Envoyer le lien'}
-        </button>
-      </form>
+        </PrimaryButton>
+      }
+    >
+      <TextField
+        id="forgot-email"
+        label="E-mail"
+        type="email"
+        inputMode="email"
+        autoComplete="email"
+        required
+        value={email}
+        onChange={setEmail}
+        placeholder="toi@exemple.com"
+        enterKeyHint="send"
+        error={error}
+        className="px-5"
+      />
     </AuthShell>
   )
 }
