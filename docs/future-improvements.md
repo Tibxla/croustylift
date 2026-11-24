@@ -122,9 +122,31 @@ perte), finition.
   l'écriture est entrée en mémoire). Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
   et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
   se présente : dater les écritures d'une même ligne côté base.
+- **État de séance retenu en mémoire, réécrit par-dessus un autre onglet** (mineure,
+  acceptée). Stockage plein, deux onglets : l'onglet A quitte la Capture avec son état
+  refusé, retenu en mémoire. L'onglet B écrit ensuite une disposition plus récente de
+  la même séance, ou la clôt. La place revenue, la prochaine demande de rechargement
+  dans A réécrit son ancien état : la disposition de B est écrasée, ou la séance
+  close redevient reprenable. Piste : retenir la version persistée au moment du refus
+  et la comparer avant la nouvelle tentative ; en cas d'écriture concurrente,
+  respecter la clôture et garder la plus récente (`retryPersistCaptureState`,
+  `capture/state.ts`).
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
   à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
   quarantaine, qui se décide par écriture.
+
+### Capture, reprise
+
+- **Série annulée ressuscitée par une réponse tardive** (mineure, acceptée). La
+  lecture de l'exécution du jour part avec l'insertion d'une série encore en file ;
+  passé le délai d'ouverture, l'utilisateur annule cette série dans la Capture ;
+  l'insertion puis la suppression sont acquittées avant le retour de la réponse, la
+  file est vide à l'arrivée. Le rapprochement écarte bien la série, mais le rejeu des
+  écritures relevées au départ la réinsère : elle réapparaît au tableau alors qu'elle
+  n'est plus en base, et la série suivante saute son rang. Piste : faire primer les
+  annulations locales survenues pendant la lecture sur les insertions relevées au
+  départ, même acquittées (`applyQueuedSets` après `reconcileProgress`,
+  `capture/state.ts`).
 
 ### Comptes
 

@@ -383,14 +383,34 @@ export function readQueue(): OutboxOp[] {
   const persisted = readPersistedQueue();
   const gap = activeVolatile();
   if (gap === null) return persisted;
-  // Une op tenue en mémoire remplace celle de même identité que l'écart retire
-  // (op MODIFIÉE à identité constante, cf. `writeQueue`) ; elle ne double jamais
-  // une op de même identité restée dans la file persistée.
-  const kept = persisted.filter((op) => !gap.removals.has(opKey(op)));
+  // Une op MODIFIÉE à identité constante (cf. `writeQueue`) est à la fois dans
+  // les retraits (sa version persistée) et dans les ajouts (sa version voulue) :
+  // elle est remplacée À SA PLACE dans la file persistée. La retirer puis la
+  // replacer comme un ajout la faisait passer après les ops qui la suivaient :
+  // file héritée « écrire, effacer, réécrire » la même note, l'effacement
+  // complété partait en dernier et supprimait la note réécrite. Si sa version
+  // persistée a disparu (un autre onglet l'a envoyée), elle reste un ajout.
+  const modified = new Map(
+    gap.adds.filter((op) => gap.removals.has(opKey(op))).map((op) => [opKey(op), op] as const),
+  );
+  const replaced = new Set<string>();
+  const kept: OutboxOp[] = [];
+  for (const op of persisted) {
+    const key = opKey(op);
+    if (!gap.removals.has(key)) {
+      kept.push(op);
+      continue;
+    }
+    const wanted = modified.get(key);
+    if (wanted === undefined) continue;
+    kept.push(wanted);
+    replaced.add(key);
+  }
+  // Une op tenue en mémoire ne double jamais une op de même identité de la file.
   const keptKeys = new Set(kept.map(opKey));
   return mergeByEnqueueTime(
     kept,
-    gap.adds.filter((op) => !keptKeys.has(opKey(op))),
+    gap.adds.filter((op) => !replaced.has(opKey(op)) && !keptKeys.has(opKey(op))),
     gap.seen,
   );
 }

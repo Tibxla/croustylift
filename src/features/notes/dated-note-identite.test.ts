@@ -306,6 +306,34 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     vi.restoreAllMocks();
   });
 
+  it('stockage plein, file héritée « écrire, effacer, réécrire » : l’effacement complété garde sa place, le dernier texte subsiste', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    server.rows = [historique('texte d’avant')];
+    legacyQueue([
+      { ...legacyWrite, _uid: 'uid-ecrire' },
+      { ...legacyDelete, _uid: 'uid-effacer' },
+      { ...legacyWrite, body: 'réécrite après l’effacement', _seq: 3, _uid: 'uid-reecrire' },
+    ]);
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    adoptLegacyOps();
+    // L'effacement complété reste ENTRE les deux écritures.
+    expect(readQueue().map((op) => op._uid)).toEqual(['uid-ecrire', 'uid-effacer', 'uid-reecrire']);
+    expect(readQueue()[1]).toMatchObject({ executionId: EXEC, exerciseId: EXO });
+
+    const result = await flush(syncFns);
+    expect(result.remaining).toBe(0);
+    // Avant : il était replacé après les ops déjà vues, partait en dernier, et
+    // supprimait la note réécrite.
+    expect(server.rows).toHaveLength(1);
+    expect(server.rows[0]).toMatchObject({ body: 'réécrite après l’effacement' });
+    vi.restoreAllMocks();
+  });
+
   it('sans complément, le défaut est bien là : l’effacement par id laisse la note', async () => {
     server.rows = [historique('texte d’avant')];
     legacyQueue([legacyWrite, legacyDelete]);
