@@ -1014,8 +1014,8 @@ function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows
             return (
               <div key={m} className={`border-b border-line py-2.5 ${i % 2 === 0 ? 'border-r pl-5 pr-3' : 'pl-4 pr-5'}`}>
                 <dt className="text-[14px] text-muted">{muscleLabel(m)}</dt>
-                <dd className="mt-0.5 flex items-baseline gap-2">
-                  <span className={`text-[20px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
+                <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
+                  <span className={`text-[22px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
                   {changed && <span className="text-[13px] text-faint">avant {b}</span>}
                 </dd>
               </div>
