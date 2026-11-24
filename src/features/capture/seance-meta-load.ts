@@ -64,18 +64,34 @@ async function fetchSeancesMeta(seanceIds: readonly string[]): Promise<StoredMap
  * Lit la méta (copie d'abord, revalidée en fond) et appelle `onChange` à chaque
  * nouvelle copie, y compris celle de la revalidation. Tolérant : une méta est un
  * confort, son échec ne dit rien. Rend la fonction de désabonnement.
+ *
+ * Hors du rejeu global (`replay: false`) : rejouée après chaque flush, elle
+ * relisait versions, prescriptions et dernière exécution de chaque séance pour
+ * un sélecteur fermé, en plein exercice. Elle se revalide au retour du réseau
+ * (`online` sur `events`), tant que le sélecteur est monté. `fetcher` et
+ * `events` sont injectables pour les tests.
  */
-export function watchSeancesMeta(seanceIds: readonly string[], onChange: (stored: StoredMap) => void): () => void {
+export function watchSeancesMeta(
+  seanceIds: readonly string[],
+  onChange: (stored: StoredMap) => void,
+  { fetcher = () => fetchSeancesMeta(seanceIds), events = typeof window === 'undefined' ? null : window }: { fetcher?: () => Promise<StoredMap>; events?: EventTarget | null } = {},
+): () => void {
   let alive = true;
   const off = onReadWritten((key) => {
     if (alive && key === SEANCES_META_KEY) onChange(peekSeancesMeta());
   });
-  void cachedRead(SEANCES_META_KEY, () => fetchSeancesMeta(seanceIds)).then(
+  const read = () => cachedRead(SEANCES_META_KEY, fetcher, { replay: false });
+  void read().then(
     (stored) => alive && onChange(stored),
     () => {},
   );
+  // Au retour du réseau, seule la revalidation compte : elle arrive par
+  // `onReadWritten` (la copie, déjà montrée, ne repasse pas après elle).
+  const revalidate = () => void read().catch(() => {});
+  events?.addEventListener('online', revalidate);
   return () => {
     alive = false;
     off();
+    events?.removeEventListener('online', revalidate);
   };
 }
