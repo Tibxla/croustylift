@@ -249,6 +249,14 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Choix exclusif** (`Choice`) : des mots, le choisi en demi-gras souligné de 2 px. Pas de pilules.
 - **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Flèches au clavier.
 
+### Salle
+
+- **Lecture du poids** (`WeightReadout`) : 72 px, chiffres tabulaires, la partie entière finit pile au centre (au-dessus de l'aiguille), les décimales commencent au centre, « kg » tient une place fixe au bord droit : rien ne saute de 80 à 82,5. La toucher ouvre le clavier numérique pour une valeur précise (virgule acceptée, bornée) ; Entrée ou toucher ailleurs valide, Échap ou vide annule, la règle se recale.
+- **Règle de poids** : au pas de Réglages, graduation majeure tous les 5 kg, élan sur un coup sec ; jusqu'à 500 kg (au-delà, le clavier).
+- **Rangées de numéros** (`NumberRow`) : reps 1 à 50, RIR 0 à 10, élargies si la valeur en sort ; un tap, une valeur.
+- **Barre du pouce** : rangée du haut à trois places fixes (Sommaire, Annuler la série n, Exo suivant ou Terminer), Sommaire et Exo suivant au même gabarit (48 px, deux lignes, même ligne de base) ; dessous, Logger en bloc plein, toujours au même endroit, sans enfoncement. Rien ne change de place au minimum du plan.
+- **Mesure du brouillon** : e1RM (ou reps effectives à 0 kg), écart à la Référence et record en chiffres seuls, sans signe ni couleur : le signal ne juge que des séries faites.
+
 ### Feuille basse
 
 - **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête, défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.

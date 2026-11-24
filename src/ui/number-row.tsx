@@ -183,7 +183,7 @@ export function NumberRow({
               style={{ flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
             >
               <span
-                className={`flex h-full items-center justify-center text-[23px] tracking-[-0.01em] ${
+                className={`flex h-full items-center justify-center text-[22px] tracking-[-0.01em] ${
                   sel ? 'font-bold text-ink' : inPlan ? 'text-ink' : 'text-faint'
                 }`}
               >
