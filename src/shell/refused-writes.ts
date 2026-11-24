@@ -1,13 +1,13 @@
 // Les saisies refusées par le serveur (quarantaine de la file, ADR 0018), lues
-// par un humain : quoi, quand, pourquoi. Pur, testé ; l'écran est
-// RefusedWritesSheet.tsx.
+// par un humain : quoi, quand, pourquoi. Pur, testé, sauf `resendBlock` qui lit
+// la file ; l'écran est RefusedWritesSheet.tsx.
 //
 // La file ne porte que des identifiants : le nom de l'exo vient du catalogue
 // local (lu par l'appelant, hors ligne compris), la date d'une séance de son op
 // de création quand elle est connue. La raison est la chaîne stockée par la
 // file : « <code SQLSTATE> : <message> » pour un refus de la base (traduite
 // par `errorMessage`, comme partout), ou la dépendance à une séance refusée.
-import type { RefusedWrite } from '../features/capture/outbox';
+import { isSetWrite, readQueue, setWriteQueued, type RefusedWrite } from '../features/capture/outbox';
 import { errorMessage } from '../lib/error-message';
 
 export interface RefusalText {
@@ -51,6 +51,16 @@ function kg(n: number): string {
 
 /** Refus d'une valeur : la renvoyer telle quelle échouera à l'identique. */
 const VALUE_REFUSALS = new Set(['23514', '22003', '22001', '23502']);
+/**
+ * Donnée mal formée : toute la classe 22 de Postgres (« data exception » :
+ * 22P02 texte illisible pour son type, 22007 date invalide, 22023 paramètre
+ * invalide…), hors les dépassements déjà dans `VALUE_REFUSALS`. La file la met
+ * en quarantaine (`isPermanentRejection`, outbox.ts) ; la renvoyer échouera à
+ * l'identique, et recharger l'écran n'y change rien.
+ */
+const isMalformed = (code: string) => /^22[0-9A-Z]{3}$/.test(code) && !VALUE_REFUSALS.has(code);
+/** Refus que renvoyer ne lèvera pas : valeur, donnée mal formée, élément lié supprimé. */
+const isValueRefusal = (code: string) => VALUE_REFUSALS.has(code) || isMalformed(code) || code === '23503';
 const SILENT = 'Le serveur l’a refusée sans dire pourquoi.';
 /** Message intégré de Postgres ou PostgREST (anglais), par opposition au motif
  *  français écrit par un trigger, qui passe tel quel (cf. lib/error-message). */
@@ -72,6 +82,9 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
     if (isBuiltIn(message) && VALUE_REFUSALS.has(code)) {
       return 'Une valeur dépasse ce que le serveur accepte : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
     }
+    if (isBuiltIn(message) && isMalformed(code)) {
+      return 'Une donnée est mal formée : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
+    }
     if (isBuiltIn(message) && code === '23503') return 'Elle visait un élément supprimé depuis un autre appareil. Abandonne-la.';
     const text = errorMessage({ code, message }).trim();
     if (text === '' || /\(code [0-9A-Z]+\)/.test(text)) return SILENT;
@@ -83,14 +96,15 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
 /**
  * Renvoyer telle quelle peut-il aboutir ? Non pour une création de séance
  * dépassée, une saisie retenue par sa séance (elle repart avec elle), une valeur
- * refusée ou un élément lié supprimé : le serveur refuserait à l'identique.
+ * refusée, une donnée mal formée ou un élément lié supprimé : le serveur
+ * refuserait à l'identique.
  */
 export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): boolean {
   if (entry.superseded || isDependent(entry)) return false;
   const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(entry.reason ?? '');
   if (!m) return true;
   const [, code = '', message = ''] = m;
-  return !(isBuiltIn(message) && (VALUE_REFUSALS.has(code) || code === '23503'));
+  return !(isBuiltIn(message) && isValueRefusal(code));
 }
 
 /** Retenue seulement parce que la création de sa séance a été refusée. */
@@ -153,3 +167,29 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
       return { ...base, what: 'Retrait d’une séance vide', detail: '' };
   }
 }
+
+/** Pourquoi « Renvoyer » n'a rien remis en file (`retryRefused` a rendu faux). */
+export type ResendBlock = 'settled' | 'deletion-queued' | 'correction-queued' | 'storage';
+
+/**
+ * La cause d'un « Renvoyer » sans effet, `stillThere` disant si l'entrée est
+ * encore listée. Une écriture de la même série attend en file, par le prédicat
+ * même de `retryRefused` (`setWriteQueued` : insertion, correction ou
+ * suppression, du même compte) : une suppression, qui l'emporte si les deux
+ * attendent, ou une correction. Sinon c'est le stockage qui a refusé.
+ */
+export function resendBlock(entry: RefusedWrite, stillThere: boolean): ResendBlock {
+  if (!stillThere) return 'settled';
+  const op = entry.op;
+  if (!isSetWrite(op) || !setWriteQueued(op.id, op._owner)) return 'storage';
+  const deleting = readQueue().some((q) => q.type === 'deleteSet' && q.id === op.id && q._owner === op._owner);
+  return deleting ? 'deletion-queued' : 'correction-queued';
+}
+
+/** Ce que la feuille dit pour chaque cause. */
+export const RESEND_BLOCK_TEXT: Record<ResendBlock, string> = {
+  settled: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
+  'deletion-queued': 'Une suppression de cette série attend déjà l’envoi : ce refus partira avec elle.',
+  'correction-queued': 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.',
+  storage: 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
+};

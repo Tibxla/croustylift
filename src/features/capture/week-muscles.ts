@@ -1,10 +1,13 @@
 // Chargeur de la fin de séance : ce que `weekSetsByMuscle` (session-recap.ts)
 // attend en plus de l'état de capture. LECTURE SEULE, aucune écriture.
 //
-//   - AVANT : les séries des AUTRES exécutions de la semaine civile (lundi au
-//     dimanche, `weekStartIso` sur la date adoptée de la séance), lues en base.
-//     L'exécution en cours est exclue : ses séries déjà envoyées sont comptées
-//     dans « aujourd'hui », depuis l'état de capture. Les muscles et le drapeau
+//   - AVANT : les séries des AUTRES exécutions de la semaine civile faites AVANT
+//     la séance close, lues en base : du lundi (`weekStartIso` sur la date
+//     adoptée de la séance) à la veille de cette date, plus celles du même jour
+//     commencées avant elle (`isBefore`). Une séance lancée le lundi et rangée
+//     le jeudi ne compte donc pas le mardi ni le mercredi. L'exécution en cours
+//     est exclue : ses séries déjà envoyées sont comptées dans « aujourd'hui »,
+//     depuis l'état de capture. Les muscles et le drapeau
 //     unilatéral passent par les overrides de l'utilisateur (comme la Capture).
 //     Lecture paginée par curseur sur `id` (`fetchAllRows` : le plafond de 1000
 //     lignes de PostgREST tronque en silence), par le client habituel (délai et
@@ -47,14 +50,6 @@ export interface WeekMusclesInput {
   routineName: string | null;
 }
 
-/** Le dimanche (jour ISO) de la semaine civile qui commence le lundi `mondayIso`. */
-export function sundayOf(mondayIso: string): string {
-  const [y, m, d] = mondayIso.split('-').map(Number);
-  const date = new Date(y ?? 0, (m ?? 1) - 1, (d ?? 1) + 6);
-  const z = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${z(date.getMonth() + 1)}-${z(date.getDate())}`;
-}
-
 /** Une série de la semaine telle que la rend la lecture, son exo et son exécution joints. */
 export type WeekSetRow = {
   id: string;
@@ -68,15 +63,34 @@ export type WeekSetRow = {
   exercises: { name: string; unilateral: boolean; primary_muscles: string[] | null } | null;
   executions: {
     performed_on: string;
+    /** Le lancement de l'exécution ; `null` sur une ligne héritée. */
+    started_at: string | null;
     created_at: string;
     seance_versions: { seances: { name: string } | null } | null;
   } | null;
 };
 
 const WEEK_SET_SELECT =
-  'id, weight_kg, reps, rir, set_order, side, exercise_id, execution_id, exercises ( name, unilateral, primary_muscles ), executions!inner ( performed_on, created_at, seance_versions ( seances ( name ) ) )';
+  'id, weight_kg, reps, rir, set_order, side, exercise_id, execution_id, exercises ( name, unilateral, primary_muscles ), executions!inner ( performed_on, started_at, created_at, seance_versions ( seances ( name ) ) )';
 
 const toSide = (raw: string | null): Side | undefined => (raw === 'left' || raw === 'right' ? raw : undefined);
+
+/** La séance close : son jour adopté et son lancement (epoch ms). */
+export interface ClosedSeanceBound {
+  dateIso: string;
+  startedAt: number;
+}
+
+/**
+ * Une exécution vient-elle AVANT la séance close ? Un jour antérieur, oui ; un
+ * jour postérieur, non. Le même jour : si elle a été commencée avant, d'après
+ * son `started_at`, ou sa création à défaut (ligne héritée sans lancement).
+ */
+export function isBefore(meta: NonNullable<WeekSetRow['executions']>, bound: ClosedSeanceBound): boolean {
+  if (meta.performed_on !== bound.dateIso) return meta.performed_on < bound.dateIso;
+  const started = Date.parse(meta.started_at ?? meta.created_at);
+  return Number.isFinite(started) && started < bound.startedAt;
+}
 
 /**
  * Partie PURE de la lecture de la semaine. Les séries arrivent dans l'ordre des
@@ -84,16 +98,19 @@ const toSide = (raw: string | null): Side | undefined => (raw === 'left' || raw 
  * par création, et dans chaque exécution un exo par exo (ses séries ensemble :
  * elles se comptent en séries logiques), muscles et drapeau unilatéral fusionnés
  * avec les overrides. L'exécution `excludeExecutionId` est ignorée (garde-fou :
- * la requête l'exclut déjà), comme une ligne sans exécution jointe.
+ * la requête l'exclut déjà), comme une ligne sans exécution jointe. Avec
+ * `bound`, seules restent les exécutions faites avant la séance close (`isBefore`).
  */
 export function weekRowsToBefore(
   rows: WeekSetRow[],
   overrides: Map<string, ExerciseOverrideValues>,
   excludeExecutionId: string | null = null,
+  bound: ClosedSeanceBound | null = null,
 ): { before: PerformedExercise[]; seancesBefore: WeekSeance[] } {
   const executions = new Map<string, { meta: NonNullable<WeekSetRow['executions']>; sets: WeekSetRow[] }>();
   for (const row of rows) {
     if (!row.executions || row.execution_id === excludeExecutionId) continue;
+    if (bound && !isBefore(row.executions, bound)) continue;
     const entry = executions.get(row.execution_id) ?? { meta: row.executions, sets: [] };
     entry.sets.push(row);
     executions.set(row.execution_id, entry);
@@ -128,9 +145,9 @@ export function weekRowsToBefore(
   return { before, seancesBefore };
 }
 
-async function loadBefore(dateIso: string, currentExecutionId: string) {
+async function loadBefore(dateIso: string, currentExecutionId: string, currentStartedAt: number) {
   const monday = weekStartIso(dateIso);
-  const sunday = sundayOf(monday);
+  // Jusqu'au jour de la séance compris : le même jour se tranche à son lancement.
   const [rows, overrides] = await Promise.all([
     fetchAllRows<WeekSetRow>((after, limit) =>
       afterId(
@@ -138,7 +155,7 @@ async function loadBefore(dateIso: string, currentExecutionId: string) {
           .from('performed_sets')
           .select(WEEK_SET_SELECT)
           .gte('executions.performed_on', monday)
-          .lte('executions.performed_on', sunday)
+          .lte('executions.performed_on', dateIso)
           .neq('execution_id', currentExecutionId)
           .order('id')
           .limit(limit),
@@ -147,7 +164,7 @@ async function loadBefore(dateIso: string, currentExecutionId: string) {
     ),
     loadExerciseOverrides(),
   ]);
-  return weekRowsToBefore(rows, overrides, currentExecutionId);
+  return weekRowsToBefore(rows, overrides, currentExecutionId, { dateIso, startedAt: currentStartedAt });
 }
 
 async function loadPlanned(seanceId: string): Promise<WeekMusclesInput['planned']> {
@@ -184,9 +201,11 @@ export async function loadWeekMuscles(params: {
   seanceId: string;
   dateIso: string;
   currentExecutionId: string;
+  /** Le lancement de l'exécution en cours (epoch ms) : borne les séances du même jour. */
+  currentStartedAt: number;
 }): Promise<WeekMusclesInput> {
   const [before, planned, routineName] = await Promise.allSettled([
-    loadBefore(params.dateIso, params.currentExecutionId),
+    loadBefore(params.dateIso, params.currentExecutionId, params.currentStartedAt),
     loadPlanned(params.seanceId),
     loadRoutineName(params.seanceId),
   ]);

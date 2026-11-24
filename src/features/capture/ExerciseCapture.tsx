@@ -41,6 +41,7 @@ import { formatE1rm, formatRange, formatWeight } from './format';
 import { roundWeightKg } from './stepper-utils';
 import { SetEditSheet } from './SetEditSheet';
 import type { SetEntry } from './set-gestures';
+import { weightGraduations } from './weight-graduations';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
@@ -341,10 +342,9 @@ export function ExerciseCapture({
         : { value: formatE1rm(displayRecord.bestE1rm), unit: 'kg' }
       : null;
   const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
-  // Graduations de la règle en CRANS (pas libre, ex. 1,75 kg) : une majeure
-  // étiquetée environ tous les 5 kg, une moyenne à mi-chemin si elle tombe juste.
-  const majorEvery = Math.max(1, Math.round(5 / stepKg));
-  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
+  // Graduations de la règle en CRANS du pas réglé : les étiquettes tombent sur
+  // des poids ronds (weight-graduations.ts).
+  const { majorEvery, midEvery } = weightGraduations(stepKg);
   // Les côtés déjà faits de la série en cours, et sa place (ce que dit le
   // sélecteur : « faite pour la série n ») ; pas `rank`, qui suit le côté choisi.
   const currentOrder = currentSetOrder(progress.sets);

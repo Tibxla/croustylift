@@ -1,14 +1,21 @@
 import { Component, useContext, useState, type ErrorInfo, type ReactNode } from 'react'
-import { isChunkLoadError } from './pwa/update'
+import { isChunkLoadError, type SurfaceName } from './pwa/update'
 import { manualReload } from './pwa/register'
 import type { ManualReloadVerdict } from './pwa/manual-reload'
 import { SurfaceNavigationContext } from './shell/navigation'
+import { leaveToSalle, salleExit } from './recovery-exit'
 import { Alert, PrimaryButton, SecondaryButton } from './ui'
 
 interface Props {
   children: ReactNode
   /** Rendu de secours. Défaut : écran plein « Recharger l'app ». */
   fallback?: ReactNode
+  /**
+   * La surface que la frontière enveloppe, dans le shell. Sur la Salle, la sortie
+   * de secours ne peut pas « y retourner » (on y est déjà, et la clé de la
+   * frontière ne changerait pas) : elle la réaffiche en remontant la frontière.
+   */
+  surface?: SurfaceName
 }
 
 interface State {
@@ -32,6 +39,11 @@ export class ErrorBoundary extends Component<Props, State> {
     return { error }
   }
 
+  /** Oublie l'erreur : les enfants sont remontés à neuf au rendu suivant. */
+  reset = (): void => {
+    this.setState({ error: null })
+  }
+
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Pas de service de reporting (local-first, 0 €) : on trace en console pour le
     // diagnostic. Les logs navigateur font le reste.
@@ -41,7 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.error === null) return this.props.children
     if (this.props.fallback !== undefined) return this.props.fallback
-    return <RecoveryScreen error={this.state.error} />
+    return <RecoveryScreen error={this.state.error} surface={this.props.surface} onReset={this.reset} />
   }
 }
 
@@ -52,10 +64,25 @@ export class ErrorBoundary extends Component<Props, State> {
  * « Recharger l'app » passe par les mêmes gardes (pwa/manual-reload.ts) : tant
  * que des saisies ne tiennent qu'en mémoire, ou qu'un brouillon ou une écriture
  * est en cours, il ne recharge pas, dit pourquoi et propose de revenir à la
- * Salle (dans le shell authentifié).
+ * Salle (dans le shell authentifié), ou de la réafficher si c'est elle qui a
+ * planté (`salleExit`). Le message technique de l'erreur, souvent en anglais
+ * (« Failed to fetch dynamically imported module »), ne s'affiche pas : il
+ * reste en console (`componentDidCatch`).
  */
-function RecoveryScreen({ error }: { error: Error }) {
+export function RecoveryScreen({
+  error,
+  surface,
+  onReset,
+}: {
+  error: Error
+  surface?: SurfaceName
+  onReset: () => void
+}) {
   const goTo = useContext(SurfaceNavigationContext)
+  const exit = salleExit(surface)
+  // Ce que dit le refus de rechargement : « reviens à la Salle » sonne faux quand
+  // on y est déjà.
+  const back = exit.remount ? 'Réaffiche la Salle' : 'Reviens à la Salle'
   const [refusal, setRefusal] = useState<Exclude<ManualReloadVerdict, 'reload'> | null>(null)
   const missingChunk = isChunkLoadError(error)
   // Dans le shell, l'écran prend la place d'une surface (le shell porte déjà le
@@ -68,12 +95,11 @@ function RecoveryScreen({ error }: { error: Error }) {
           ? "Cet écran n'a pas pu se charger : l'app a été mise à jour, ou le réseau manque."
           : "Quelque chose a planté à l'affichage."}
       </p>
-      <p className="mt-2 max-w-full break-words text-[14px] text-faint">{error.message}</p>
       {refusal && (
         <Alert label="Pas de rechargement" className="mt-4">
           {refusal === 'unsaved'
-            ? 'des saisies ne sont encore qu’en mémoire (le stockage de l’appareil est plein) : recharger les perdrait. Reviens à la Salle et libère de la place, ou attends le réseau pour qu’elles partent.'
-            : 'un brouillon ou un enregistrement est en cours : recharger le perdrait. Reviens à la Salle et termine-le d’abord.'}
+            ? `des saisies ne sont encore qu’en mémoire (le stockage de l’appareil est plein) : recharger les perdrait. ${back} et libère de la place, ou attends le réseau pour qu’elles partent.`
+            : `un brouillon ou un enregistrement est en cours : recharger le perdrait. ${back} et termine-le d’abord.`}
         </Alert>
       )}
       <div className="mt-5 flex flex-col gap-2">
@@ -86,7 +112,7 @@ function RecoveryScreen({ error }: { error: Error }) {
           Recharger l'app
         </PrimaryButton>
         {goTo && (
-          <SecondaryButton onClick={() => goTo('capture')}>Retour à la Salle</SecondaryButton>
+          <SecondaryButton onClick={() => leaveToSalle(surface, { goTo, reset: onReset })}>{exit.label}</SecondaryButton>
         )}
       </div>
     </Frame>

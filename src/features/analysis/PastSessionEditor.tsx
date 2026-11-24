@@ -45,6 +45,7 @@ import { setLeaveGuard } from '../authoring/seance-dirty';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { errorMessage } from '../../lib/error-message';
 import { formatDateLong, formatDuration } from './format';
+import { weightGraduations } from '../capture/weight-graduations';
 
 /** Raison du blocage de rechargement tenu par des corrections non sauvées d'une séance passée. */
 const PAST_SESSION_DRAFT_BLOCK = 'brouillon-seance-passee';
@@ -736,8 +737,7 @@ function SetSheet({
   const what = `Série ${editing.rank}${side ? `, ${side}` : ''}`;
   const both = editing.logicalIds.length > 1;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
-  const majorEvery = Math.max(1, Math.round(5 / stepKg));
-  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
+  const { majorEvery, midEvery } = weightGraduations(stepKg);
 
   return (
     <Sheet

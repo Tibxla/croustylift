@@ -1032,7 +1032,7 @@ function supersededInQueue(op: OutboxOp): boolean {
 }
 
 /** La file porte-t-elle une écriture de la série `setId` pour ce compte ? */
-function setWriteQueued(setId: string, owner: string | undefined): boolean {
+export function setWriteQueued(setId: string, owner: string | undefined): boolean {
   return readQueue().some(
     (op) => (isSetWrite(op) || op.type === 'deleteSet') && op.id === setId && op._owner === owner,
   );

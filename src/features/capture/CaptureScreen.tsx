@@ -1236,7 +1236,12 @@ function CaptureBoard({
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
     setWeek(null);
-    void loadWeekMuscles({ seanceId: session.id, dateIso: date, currentExecutionId: state.executionId }).then(setWeek);
+    void loadWeekMuscles({
+      seanceId: session.id,
+      dateIso: date,
+      currentExecutionId: state.executionId,
+      currentStartedAt: state.startedAt,
+    }).then(setWeek);
   }, [state.startedAt, state.executionId, session.id, date]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
@@ -1334,7 +1339,7 @@ function CaptureBoard({
           exercise={activeExercise}
           progress={getProgress(state, activeExercise.exerciseId)}
           index={indexItems}
-          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
+          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId), nextEx.unilateral ?? false) } : null}
           done={counts.done}
           total={session.exercises.length}
           canFinish={loggedAny}

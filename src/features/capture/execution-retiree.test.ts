@@ -1,5 +1,5 @@
-// Une séance clôturée, annulée ou supprimée dont l'écriture n'est pas encore
-// acquittée n'est pas reprise par la Capture.
+// Une séance clôturée, annulée, supprimée ou quittée par « Changer de séance »
+// dont l'écriture n'est pas encore acquittée n'est pas reprise par la Capture.
 //
 // Le bug : Clôture et Annulation effacent l'état local AVANT que leur écriture
 // soit acquittée. Capture rouverte le même jour avant l'envoi (clôture en salle
@@ -18,6 +18,8 @@ const server = vi.hoisted(() => ({
   duringRead: null as (() => void) | null,
   /** Notes datées de l'exécution, telles que la base les rend. */
   notes: [] as { id: string; exercise_id: string; body: string; created_at: string }[],
+  /** Séries de l'exécution, telles que la base les rend. */
+  sets: [] as { id: string; exercise_id: string; weight_kg: number; reps: number; rir: number; set_order: number; side: string | null }[],
 }));
 
 vi.mock('../../lib/supabase', () => {
@@ -51,12 +53,12 @@ vi.mock('../../lib/supabase', () => {
       return query;
     }
     if (table === 'performed_sets' || table === 'dated_notes') {
-      // Séries et notes de l'exécution : select → eq → order. Aucune série ici.
+      // Séries et notes de l'exécution : select → eq → order.
       const query = {
         select: () => query,
         eq: () => query,
         order: () =>
-          Promise.resolve({ data: table === 'dated_notes' ? server.notes : [], error: null }),
+          Promise.resolve({ data: table === 'dated_notes' ? server.notes : server.sets, error: null }),
       };
       return query;
     }
@@ -99,6 +101,8 @@ const cloture = (id: string): OutboxOp => ({
   closedAt: '2026-11-23T19:02:00.000Z',
 });
 const suppression = (id: string): OutboxOp => ({ type: 'deleteExecution', id });
+/** Le ménage de « Changer de séance » : supprimée par la base si encore ouverte et vide. */
+const changement = (id: string): OutboxOp => ({ type: 'deleteExecutionIfEmpty', id, exerciseIds: [] });
 
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage =
@@ -108,6 +112,7 @@ beforeEach(() => {
   server.openExecutionId = 'exec-1';
   server.duringRead = null;
   server.notes = [];
+  server.sets = [];
 });
 
 describe('isExecutionRetiredInQueue', () => {
@@ -117,6 +122,16 @@ describe('isExecutionRetiredInQueue', () => {
 
   it('suppression en attente de cette exécution : retirée', () => {
     expect(isExecutionRetiredInQueue('exec-1', [suppression('exec-1')])).toBe(true);
+  });
+
+  it('suppression conditionnelle (« Changer de séance ») de cette exécution, vide : retirée', () => {
+    expect(isExecutionRetiredInQueue('exec-1', [changement('exec-1')])).toBe(true);
+  });
+
+  it('suppression conditionnelle d’une exécution qui porte déjà une saisie : la base la garde, pas retirée', () => {
+    expect(isExecutionRetiredInQueue('exec-1', [changement('exec-1')], true)).toBe(false);
+    // Une suppression sans condition, elle, retire quoi qu'il y ait dedans.
+    expect(isExecutionRetiredInQueue('exec-1', [suppression('exec-1')], true)).toBe(true);
   });
 
   it('clôture ou suppression d’une AUTRE exécution : sans effet', () => {
@@ -168,6 +183,52 @@ describe('loadTodayExecution et les écritures en attente', () => {
     // dont la réponse montre encore l'exécution ouverte.
     server.duringRead = () => clearQueue();
     expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  // Le scénario : la séance s'ouvre à 18 h 00 (exec-1, son début acquitté), on
+  // la quitte aussitôt par « Changer de séance » sans rien saisir. Sur un réseau
+  // lent, la suppression conditionnelle attend encore quand on rouvre la même
+  // séance vingt minutes plus tard : la base montre toujours exec-1 ouverte,
+  // `started_at` à 18 h 00. Adoptée, la séance rouverte comptait ces vingt
+  // minutes dans sa durée. Elle repart désormais vierge (nouvelle exécution,
+  // nouveau début), et la suppression en file part comme prévu.
+  it('« Changer de séance » pas encore envoyé : la séance quittée n’est pas réadoptée avec son ancien début', async () => {
+    enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23', 'exec-1')).toBeNull();
+  });
+
+  it('« Changer de séance » enfilé PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
+    server.duringRead = () => void enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » acquitté PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
+    enqueue(changement('exec-1'));
+    server.duringRead = () => clearQueue();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » en file, mais une série arrivée d’un autre appareil : la base garde l’exécution, elle reste adoptée', async () => {
+    server.sets = [{ id: 'set-a', exercise_id: 'bench', weight_kg: 80, reps: 8, rir: 2, set_order: 1, side: null }];
+    enqueue(changement('exec-1'));
+    const today = await loadTodayExecution('seance-1', '2026-11-23');
+    expect(today?.executionId).toBe('exec-1');
+    expect(today?.progress.bench?.setIds).toEqual(['set-a']);
+  });
+
+  it('« Changer de séance » après une série loggée puis annulée ici : vide pour la base, pas réadoptée', async () => {
+    // La série est encore en base, sa suppression attend devant le ménage.
+    server.sets = [{ id: 'set-a', exercise_id: 'bench', weight_kg: 80, reps: 8, rir: 2, set_order: 1, side: null }];
+    enqueue({ type: 'deleteSet', id: 'set-a', exerciseIds: ['bench'] });
+    enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » d’une note laissée par un autre onglet : la base garde l’exécution, elle reste adoptée', async () => {
+    server.notes = [{ id: 'note-h', exercise_id: 'bench', body: 'coude gauche', created_at: '2026-11-23T18:05:00Z' }];
+    enqueue(changement('exec-1'));
+    expect((await loadTodayExecution('seance-1', '2026-11-23'))?.executionId).toBe('exec-1');
   });
 
   it('clôture en attente d’une autre exécution : celle du jour reste adoptée', async () => {

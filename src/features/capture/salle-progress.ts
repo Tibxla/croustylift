@@ -4,6 +4,7 @@
 // SÉRIES LOGIQUES (`countLogicalSetsDone`, un `order` = une série, gauche et
 // droite d'un unilatéral comptant pour une), comparées au minimum prescrit.
 import { countLogicalSetsDone } from '../../domain/set-count';
+import { currentSetOrder, defaultSide, sidesDoneAt, targetSlotForSide } from '../../domain/unilateral';
 import type { ExoState } from '../../ui';
 import type { Session } from './fixtures';
 import { getProgress, type CaptureState, type ExerciseProgress } from './state';
@@ -60,8 +61,20 @@ export function nextExerciseId(session: Session, state: CaptureState, currentId:
   return null;
 }
 
-/** Où reprend un exo entamé : « série 2 », ou null s'il n'est pas commencé. */
-export function resumeWord(progress: ExerciseProgress): string | null {
+/**
+ * Où reprend un exo entamé : « série 2 », ou null s'il n'est pas commencé. En
+ * unilatéral, la série et le côté que vise l'instrument à l'ouverture, par la
+ * même règle (le côté proposé, `defaultSide`, et la série qu'il remplit,
+ * `targetSlotForSide`) : la droite de la série 1 quand seule sa gauche est faite,
+ * « série 1, droite », et non « série 2 ». Le côté n'est dit que pour une série
+ * entamée d'un seul côté.
+ */
+export function resumeWord(progress: ExerciseProgress, unilateral = false): string | null {
   const done = logicalSetsDone(progress);
-  return done > 0 ? `série ${done + 1}` : null;
+  if (done === 0) return null;
+  if (!unilateral) return `série ${done + 1}`;
+  const side = defaultSide(progress.sets);
+  const rank = targetSlotForSide(progress.sets, side) + 1;
+  const started = sidesDoneAt(progress.sets, currentSetOrder(progress.sets)).length === 1;
+  return started ? `série ${rank}, ${side === 'left' ? 'gauche' : 'droite'}` : `série ${rank}`;
 }

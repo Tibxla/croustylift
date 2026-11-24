@@ -56,4 +56,21 @@ describe('compte et reprise', () => {
     expect(resumeWord(prog([]))).toBeNull();
     expect(resumeWord(prog([set(1), set(2)]))).toBe('série 3');
   });
+
+  // L'instrument vise la série que complète le côté proposé (`defaultSide`,
+  // `targetSlotForSide`) : « Exo suivant » annonce la même. Gauche puis droite ;
+  // refaire gauche ouvre la série suivante ; une droite complète la dernière
+  // série entamée.
+  it('unilatéral : la reprise annonce la série et le côté que vise l’instrument', () => {
+    expect(resumeWord(prog([set(1, 'left')]), true)).toBe('série 1, droite');
+    expect(resumeWord(prog([set(1, 'right')]), true)).toBe('série 1, gauche');
+    expect(resumeWord(prog([set(1, 'left'), set(1, 'right')]), true)).toBe('série 2');
+    expect(resumeWord(prog([set(1, 'left'), set(2, 'left')]), true)).toBe('série 2, droite');
+    expect(resumeWord(prog([set(1, 'left'), set(1, 'right'), set(2, 'left')]), true)).toBe('série 2, droite');
+    expect(resumeWord(prog([]), true)).toBeNull();
+  });
+
+  it('bilatéral : inchangé', () => {
+    expect(resumeWord(prog([set(1)]), false)).toBe('série 2');
+  });
 });

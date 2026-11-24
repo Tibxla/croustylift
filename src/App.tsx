@@ -378,7 +378,7 @@ function AuthenticatedApp({
             {surface !== 'capture' && (
               <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />
             )}
-            <ErrorBoundary key={surface}>
+            <ErrorBoundary key={surface} surface={surface}>
               <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
                 {surface === 'capture' && <CaptureScreen />}
                 {surface === 'analysis' && <AnalysisScreen />}

@@ -28,6 +28,7 @@ import { deletionPreview } from './set-ranks';
 import type { ExerciseProgress } from './state';
 import { roundWeightKg } from './stepper-utils';
 import { WeightReadout } from './WeightReadout';
+import { weightGraduations } from './weight-graduations';
 
 const REPS_ROW_MAX = 50;
 const RIR_ROW_MAX = 10;
@@ -97,8 +98,7 @@ export function SetEditSheet({
   const { bothSides, movedRanks: later } = deletionPreview(progress.sets, index);
   const what = side ? `Série ${rank}, ${sideWord(side)}` : `Série ${rank}`;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
-  const majorEvery = Math.max(1, Math.round(5 / stepKg));
-  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
+  const { majorEvery, midEvery } = weightGraduations(stepKg);
 
   const gone =
     bothSides
