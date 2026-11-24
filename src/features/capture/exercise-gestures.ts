@@ -26,8 +26,10 @@
 // le geste dans la disposition persistée (`layout`), et `openExerciseId` : le
 // remplaçant, si l'exo remplacé était celui que l'instrument affichait (l'écran
 // dispatche alors `open-exercise`), sinon `null`. « Commencé » est inscrit dans
-// le geste (`keepsReplaced`) et jamais redérivé au rechargement : supprimer plus
-// tard la série de l'exo remplacé ne fait pas bouger la liste. Le remplaçant
+// le geste (`keepsReplaced`). Si la base ou la file révèle ensuite une série
+// sur l'exo masqué, le réducteur complète ce geste. L'écran rejoue alors la
+// disposition corrigée depuis le template. Elle persiste même si la série est
+// ensuite supprimée. Le remplaçant
 // doit arriver prêt à afficher (historique, note), comme pour un ajout.
 
 import type { Session, SessionExercise } from './fixtures';

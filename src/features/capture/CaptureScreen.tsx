@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -40,10 +41,8 @@ import {
 } from './data';
 import type { PreviousDatedNote } from './fixtures';
 import {
-  addExercise,
   layoutEditOf,
   replayLayout,
-  swapExercise,
   templateExerciseIds,
 } from './session-edit';
 import {
@@ -74,6 +73,7 @@ import {
   previousDayIso,
   applyQueuedSets,
   reconcileProgress,
+  withReconciledProgress,
   resolveCaptureDate,
   shouldReanchorLaunch,
   todayIso,
@@ -119,10 +119,9 @@ type LoadState =
   | { phase: 'empty' }
   | {
       phase: 'ready';
-      /** La séance du jour : le template de l'exécution, disposition rejouée. */
-      session: Session;
-      /** Les ids du TEMPLATE seul, référence du diff de déviations (ADR 0002). */
-      templateIds: string[];
+      template: Session;
+      /** Exos du journal de disposition, dans l'ordre des gestes. */
+      extras: (SessionExercise | null)[];
       /**
        * L'id d'exécution posé par ce chargement. Il entre dans la clé du tableau
        * de capture : un chargement qui adopte une AUTRE exécution (réponse
@@ -363,13 +362,6 @@ export function CaptureScreen() {
         ),
         previousDatedNote: previousDatedNotes[ex.exerciseId] ?? null,
       });
-      // Le TEMPLATE de l'exécution, puis la séance du jour : le template sur
-      // lequel la disposition est rejouée (cf. `replayLayout`).
-      const template: Session = { ...base, exercises: withRows.map(derived) };
-      const session = replayLayout(template, layout, (_edit, index) => {
-        const extra = extras[index];
-        return extra ? derived(extra) : null;
-      });
       // On transporte l'init vers le reducer via une ref, posée AVANT le passage
       // en « ready » pour être prête au 1ᵉʳ render de CaptureBoard. `today === null`
       // (aucune exécution en base ce jour-là) → séance neuve : id client neuf et
@@ -397,8 +389,8 @@ export function CaptureScreen() {
       initRef.current = init;
       setLoad({
         phase: 'ready',
-        session,
-        templateIds: templateExerciseIds(template),
+        template: { ...base, exercises: withRows.map(derived) },
+        extras: extras.map((extra) => extra && derived(extra)),
         generation: loadGenRef.current,
         executionId: init.executionId,
         seanceVersionId,
@@ -624,9 +616,9 @@ export function CaptureScreen() {
 
   return (
     <CaptureBoard
-      key={`${load.session.id}:${load.executionId}`}
-      session={load.session}
-      templateIds={load.templateIds}
+      key={`${load.template.id}:${load.executionId}`}
+      template={load.template}
+      extras={load.extras}
       lateBox={lateBox}
       boardStateRef={boardStateRef}
       generation={load.generation}
@@ -699,8 +691,8 @@ function enqueueAndFlush(...ops: Parameters<typeof enqueue>): void {
 // --- Le tableau de capture (séance chargée) ---------------------------------
 
 function CaptureBoard({
-  session: initialSession,
-  templateIds,
+  template: initialTemplate,
+  extras: initialExtras,
   lateBox,
   boardStateRef,
   generation,
@@ -709,9 +701,8 @@ function CaptureBoard({
   init,
   onExitToLaunch,
 }: {
-  session: Session;
-  /** Ids du template seul (sans les exos ajoutés ou remplaçants de la disposition). */
-  templateIds: string[];
+  template: Session;
+  extras: (SessionExercise | null)[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
   lateBox: LateMailbox<ReconcileAction>;
   /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
@@ -735,12 +726,9 @@ function CaptureBoard({
   // nouveau board).
   const [date] = useState(() => init.date);
 
-  // La séance courante évolue à la volée : ajout / swap d'un exo hors template
-  // (issue #36). Elle arrive ici disposition DÉJÀ rejouée (exos ajoutés ou
-  // remplacés avant ce montage, cf. `loadSeance`). Le TEMPLATE d'origine reste la
-  // référence du diff de déviations : ses ids sont passés à part (`templateIds`),
-  // il n'est JAMAIS modifié (le versionné en base non plus).
-  const [session, setSession] = useState(initialSession);
+  // Garder aussi les exos masqués : une série du Journal peut les faire
+  // revenir avec leur prescription, leur historique et leur note.
+  const [sources, setSources] = useState({ template: initialTemplate, extras: initialExtras });
 
   // RÉFÉRENCE SUIVIE EN DIRECT (ADR 0020). La séance s'ouvre sur les copies
   // locales, que leur revalidation de fond rattrape juste APRÈS : une série
@@ -758,9 +746,9 @@ function CaptureBoard({
     let subscribed = true;
     const refresh = (onlyExerciseId?: string) => {
       if (!subscribed) return;
-      setSession((current) => {
+      setSources((current) => {
         let changed = false;
-        const exercises = current.exercises.map((ex) => {
+        const refreshExercise = (ex: SessionExercise) => {
           if (onlyExerciseId !== undefined && ex.exerciseId !== onlyExerciseId) return ex;
           const history = peekExerciseHistory(
             ex.exerciseId,
@@ -771,8 +759,10 @@ function CaptureBoard({
           if (history === null || sameExerciseHistory(ex, history)) return ex;
           changed = true;
           return { ...ex, ...history };
-        });
-        return changed ? { ...current, exercises } : current;
+        };
+        const exercises = current.template.exercises.map(refreshExercise);
+        const extras = current.extras.map((ex) => ex && refreshExercise(ex));
+        return changed ? { template: { ...current.template, exercises }, extras } : current;
       });
     };
     const unsubscribe = onExerciseRowsWritten(refresh);
@@ -796,7 +786,7 @@ function CaptureBoard({
     // (lue pendant le rendu, elle valait un warning `react-hooks/refs`).
     const { date: adoptedDate, executionId, startedAt, progress, datedNotes, restored } = init;
     const fromSupabase = hydratedState(
-      initialSession,
+      initialTemplate,
       progress,
       datedNotes,
       adoptedDate,
@@ -813,7 +803,7 @@ function CaptureBoard({
     const { queuedOps } = init;
     const withQueued = (built: CaptureState): CaptureState => {
       const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
-      return progress === built.progress ? built : { ...built, progress };
+      return withReconciledProgress(built, progress);
     };
     if (!restored) return withQueued(versioned);
     const merged = mergeProgress(versioned, restored);
@@ -827,6 +817,11 @@ function CaptureBoard({
       progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
     });
   });
+
+  const session = useMemo(
+    () => replayLayout(sources.template, state.layout ?? [], (_edit, i) => sources.extras[i] ?? null),
+    [sources, state.layout],
+  );
 
   // Miroir SYNCHRONE du state pour dériver les ops d'outbox (bug M6). `state`
   // capturé par les handlers est figé entre deux renders : deux taps « Logger »
@@ -1063,11 +1058,11 @@ function CaptureBoard({
   // le nouveau corps dans la séance en mémoire AVANT le réseau, l'affichage est
   // immédiat ; la durabilité est portée par l'outbox.
   const handleSaveExerciseNote = useCallback((exerciseId: string, body: string) => {
-    setSession((s) => ({
-      ...s,
-      exercises: s.exercises.map((ex) =>
-        ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex,
-      ),
+    const update = (ex: SessionExercise) =>
+      ex.exerciseId === exerciseId ? { ...ex, perExerciseNote: body } : ex;
+    setSources(({ template, extras }) => ({
+      template: { ...template, exercises: template.exercises.map(update) },
+      extras: extras.map((ex) => ex && update(ex)),
     }));
     enqueueAndFlush(exerciseNoteOutboxOp({ exerciseId, body }));
   }, []);
@@ -1084,13 +1079,13 @@ function CaptureBoard({
   // reconstruite du template plus ce journal (`replayLayout`). Sans cela l'exo
   // ajouté disparaissait du sélecteur et ses séries sortaient du récap.
   const handleAddExercise = useCallback((exercise: SessionExercise) => {
-    setSession((s) => addExercise(s, exercise));
+    setSources((s) => ({ ...s, extras: [...s.extras, exercise] }));
     dispatch({ type: 'edit-layout', edit: layoutEditOf(exercise) });
   }, []);
 
   const handleSwapExercise = useCallback(
     (targetExerciseId: string, replacement: SessionExercise) => {
-      setSession((s) => swapExercise(s, targetExerciseId, replacement));
+      setSources((s) => ({ ...s, extras: [...s.extras, replacement] }));
       dispatch({ type: 'edit-layout', edit: layoutEditOf(replacement, targetExerciseId) });
     },
     [],
@@ -1254,7 +1249,7 @@ function CaptureBoard({
           <SalleSync />
           <ExercisePicker
             session={session}
-            templateExerciseIds={templateIds}
+            templateExerciseIds={templateExerciseIds(initialTemplate)}
             state={state}
             settled={settled}
             staleSince={staleSince}

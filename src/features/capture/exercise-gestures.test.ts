@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { upperA } from './fixtures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
-import { deriveExerciseDeviations, replayLayout, templateExerciseIds } from './session-edit';
+import { deriveExerciseDeviations, layoutEditOf, replayLayout, templateExerciseIds } from './session-edit';
 import type { SessionExercise } from './fixtures';
 import {
   applyQueuedSets,
@@ -15,6 +15,7 @@ import {
   type CaptureState,
 } from './state';
 import { buildSummary } from './summary';
+import { buildSessionRecap } from './session-recap';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -157,11 +158,48 @@ describe('replaceExercise', () => {
     expect(buildSummary(gesture.session, next)).toMatchObject({ exercisesTotal: upperA.exercises.length + 1, exercisesDone: 0 });
   });
 
+  it.each(['base', 'file'])('série du Journal arrivée après le remplacement (%s) : l’exo et ses kg reviennent et restent au rechargement', (source) => {
+    const before = fresh();
+    const gesture = replaceExercise(before, upperA, BENCH, machine)!;
+    const swapped = captureReducer(before, gesture.action);
+    const next = captureReducer(swapped, {
+      type: 'reconcile-progress',
+      knownAtDeparture: [],
+      pendingSetIds: [],
+      base: source === 'base' ? { [BENCH]: { sets: [set(1)], setIds: ['journal'] } } : {},
+      queuedOps: source === 'file' ? [{
+        type: 'insertSet', id: 'journal', exerciseId: BENCH, executionId: before.executionId,
+        setOrder: 1, weightKg: 80, reps: 8, rir: 2,
+      }] : [],
+    });
+    persist(next);
+    for (const state of [next, loadPersisted(upperA, DATE)!]) {
+      const session = replayLayout(upperA, state.layout!, () => machine);
+      expect(ids(session)).toEqual([BENCH, machine.exerciseId, ...ids(upperA).slice(1)]);
+      expect(session.exercises[1]).toMatchObject({ origin: 'swapped', swappedFrom: BENCH });
+      expect(buildSessionRecap(session, state)).toMatchObject({ setsLogged: 1, liftedKg: 640 });
+      expect(state.layout![0]?.keepsReplaced).toBe(true);
+    }
+  });
+
   it('l’exo affiché était celui qu’on remplace : l’instrument passe au remplaçant', () => {
     const shown = captureReducer(logged(), { type: 'open-exercise', exerciseId: first.exerciseId });
     expect(replaceExercise(shown, upperA, first.exerciseId, machine)!.openExerciseId).toBe('chest-machine');
     const elsewhere = captureReducer(logged(), { type: 'open-exercise', exerciseId: second.exerciseId });
     expect(replaceExercise(elsewhere, upperA, first.exerciseId, machine)!.openExerciseId).toBeNull();
+  });
+
+  it('une série du Journal sur un exo déjà réajouté le laisse à sa nouvelle place', () => {
+    const before = fresh();
+    const swapped = captureReducer(before, replaceExercise(before, upperA, BENCH, machine)!.action);
+    const added = captureReducer(swapped, { type: 'edit-layout', edit: layoutEditOf(first) });
+    const next = captureReducer(added, {
+      type: 'reconcile-progress', knownAtDeparture: [], pendingSetIds: [],
+      base: { [BENCH]: { sets: [set(1)], setIds: ['journal'] } },
+    });
+    const session = replayLayout(upperA, next.layout!, (edit) => edit.exerciseId === BENCH ? first : machine);
+    expect(ids(session)).toEqual([machine.exerciseId, ...ids(upperA).slice(1), BENCH]);
+    expect(buildSessionRecap(session, next)).toMatchObject({ setsLogged: 1, liftedKg: 640 });
   });
 
   it('rien à faire : cible absente de la séance, ou remplaçant déjà dans la séance', () => {

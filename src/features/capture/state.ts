@@ -62,7 +62,7 @@ export interface LayoutEdit {
    * Pour un remplacement : l'exo remplacé AVAIT DÉJÀ des séries au moment du
    * geste (machine prise en cours d'exo). Il reste alors dans la séance, à sa
    * place, avec ses séries, et le remplaçant s'insère juste après lui. Inscrit
-   * au moment du geste et jamais redérivé au rejeu : supprimer ensuite la série
+   * au moment du geste ou à la réception de ses séries : supprimer ensuite la série
    * de l'exo remplacé ne doit pas faire bouger la liste. Absent : le remplaçant
    * prend la place de l'exo (geste d'avant ce champ, ou exo pas commencé).
    */
@@ -1016,6 +1016,28 @@ function mutationsSince(
   return { removed: after(state.sinceLoad?.removed), edited: after(state.sinceLoad?.edited) };
 }
 
+/** Adopte le réalisé final, après rejeu de la file, et garde les exos remplacés qui ont une série. */
+export function withReconciledProgress(state: CaptureState, progress: CaptureState['progress']): CaptureState {
+  const layout = state.layout;
+  let corrected: LayoutEdit[] | undefined;
+  if (layout) {
+    // Un exo réajouté depuis son remplacement a déjà sa place. Seul son
+    // dernier retrait peut encore le masquer, même après plusieurs échanges.
+    const restored = new Set<string>();
+    for (let i = layout.length - 1; i >= 0; i--) {
+      const edit: LayoutEdit = layout[i]!;
+      const target = edit.replaces;
+      if (target && !edit.keepsReplaced && !restored.has(target) && progress[target]?.sets.length) {
+        corrected ??= layout.slice();
+        corrected[i] = { ...edit, keepsReplaced: true };
+      }
+      restored.add(edit.exerciseId);
+    }
+  }
+  if (!corrected && state.progress === progress) return state;
+  return { ...state, progress, ...(corrected && { layout: corrected }) };
+}
+
 export function captureReducer(state: CaptureState, action: CaptureAction): CaptureState {
   switch (action.type) {
     case 'open-exercise':
@@ -1156,19 +1178,20 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       const queued = (action.queuedOps ?? []).filter(
         (op) => !((op.type === 'insertSet' || op.type === 'deleteSet') && touched.has(op.id)),
       );
+      const progress = queued.length ? applyQueuedSets(reconciled, queued, state.executionId) : reconciled;
       return {
-        ...state,
-        progress: action.queuedOps
-          ? applyQueuedSets(reconciled, queued, state.executionId)
-          : reconciled,
+        ...withReconciledProgress(state, progress),
         datedNotes: action.datedNotes
           ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
           : state.datedNotes,
       };
     }
 
-    case 'edit-layout':
-      return { ...state, layout: [...(state.layout ?? []), action.edit] };
+    case 'edit-layout': {
+      const { edit } = action;
+      const started = edit.replaces && state.progress[edit.replaces]?.sets.length;
+      return { ...state, layout: [...(state.layout ?? []), started ? { ...edit, keepsReplaced: true } : edit] };
+    }
 
     case 'close':
       // Fige la clôture EN MÉMOIRE. Tout le reste (réalisé, ids) est conservé : le
