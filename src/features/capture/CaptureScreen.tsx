@@ -106,7 +106,9 @@ import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, Sy
 import { syncLine, type SyncState } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
-import { buildSummary, elapsedMinutesSince } from './summary';
+import { elapsedMinutesSince } from './summary';
+import { buildSessionRecap } from './session-recap';
+import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
@@ -1187,17 +1189,27 @@ function CaptureBoard({
   // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
   // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
+  // La semaine (séries par muscle contre le prévu) se lit à l'ouverture de la
+  // fin, sans bloquer « Ranger la séance » : `null` tant qu'elle court.
+  const [week, setWeek] = useState<WeekMusclesInput | null>(null);
   const openFinish = useCallback(() => {
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
-  }, [state.startedAt]);
+    setWeek(null);
+    void loadWeekMuscles({ seanceId: session.id, dateIso: date, currentExecutionId: state.executionId }).then(setWeek);
+  }, [state.startedAt, state.executionId, session.id, date]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
   const loggedAny = session.exercises.some(
     (ex) => getProgress(state, ex.exerciseId).sets.length > 0,
   );
 
-  const summary = buildSummary(session, state);
+  const recap = buildSessionRecap(session, state);
+  const today = session.exercises.map((ex) => ({
+    unilateral: ex.unilateral ?? false,
+    primaryMuscles: ex.primaryMuscles ?? [],
+    sets: getProgress(state, ex.exerciseId).sets,
+  }));
 
   // La séance reprise est-elle celle d'un jour PASSÉ (restée ouverte) ? `date` est
   // figée au montage ; « hier » ou plus (cf. `formatRelativeDay`).
@@ -1223,7 +1235,8 @@ function CaptureBoard({
         type: 'updateExecution',
         id: state.executionId,
         bpmAvg: values.bpmAvg,
-        durationMin: durationMin ?? undefined,
+        // La durée retenue à la fin (chrono, ou corrigée par crans de 5 min).
+        durationMin: values.durationMin,
         // Matérialise la clôture EN BASE (ADR 0009) : `loadTodayExecution` filtre
         // sur `closed_at`, donc cette séance « rangée » n'est PLUS réhydratée — on
         // repart vraiment vierge même après un reload (le cache local, lui, est
@@ -1234,7 +1247,7 @@ function CaptureBoard({
       // (son état `saved`) ; le câblage de persistance nettoie alors le cache.
       dispatch({ type: 'close', closedAt: closedAtMs });
     },
-    [state.executionId, durationMin],
+    [state.executionId],
   );
 
   // L'index du haut et le bouton Sommaire : l'état de chaque exo de la séance.
@@ -1256,7 +1269,10 @@ function CaptureBoard({
       <div className="flex min-h-surface flex-col">
         <SalleSync />
         <SessionEnd
-          summary={summary}
+          recap={recap}
+          today={today}
+          week={week}
+          dateIso={date}
           durationMin={durationMin}
           onSave={handleFinish}
           onBack={() => setPhase('capture')}
