@@ -113,7 +113,9 @@ export interface InsertSetOp {
  *   - `only: 'values'` : seuls poids, reps et RIR sont écrits (correction d'une
  *     série) ; son rang en base n'est pas touché ;
  *   - `only: 'rank'` : seul le rang est écrit (remontée après une suppression) ;
- *     ses valeurs en base ne sont pas touchées.
+ *     ses valeurs en base ne sont pas touchées ;
+ *   - `only: 'side'` : seul le côté est écrit (série unilatérale saisie du
+ *     mauvais côté) ; ni son rang ni ses valeurs ne sont touchés.
  * Sans cela, deux gestes faits depuis deux onglets s'écrasaient : une remontée
  * de rang réécrivait les valeurs d'avant une correction encore en file, une
  * correction réécrivait le rang d'avant une remontée. Une écriture partielle
@@ -143,7 +145,7 @@ export interface PatchSetOp {
   reps: number;
   rir: number;
   side?: Side;
-  only: 'values' | 'rank';
+  only: 'values' | 'rank' | 'side';
   /**
    * Pour `only: 'values'` : les colonnes que le geste a CHANGÉES, les seules
    * écrites en base (last-write-wins par colonne, ADR 0003) : corriger le poids

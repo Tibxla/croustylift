@@ -110,13 +110,16 @@ export const syncFns: SyncFns = {
       performedOn: op.performedOn,
       startedAt: op.startedAt,
     }),
-  // Écriture partielle (correction : valeurs seules ; remontée : rang seul) :
-  // un `update` qui ne recrée jamais la ligne (cf. `PatchSetOp`, outbox.ts).
+  // Écriture partielle (correction : valeurs seules ; remontée : rang seul ;
+  // changement de côté : côté seul) : un `update` qui ne recrée jamais la ligne
+  // (cf. `PatchSetOp`, outbox.ts).
   patchSet: async (op) => {
     await patchSet(
       op.only === 'values'
         ? { id: op.id, only: 'values', weightKg: op.weightKg, reps: op.reps, rir: op.rir, cols: op.cols }
-        : { id: op.id, only: 'rank', setOrder: op.setOrder },
+        : op.only === 'side'
+          ? { id: op.id, only: 'side', side: op.side ?? null }
+          : { id: op.id, only: 'rank', setOrder: op.setOrder },
     );
   },
   insertSet: async (op) => {

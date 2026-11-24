@@ -22,7 +22,7 @@ import {
 } from './outbox';
 import { REGISTRY_KEY } from '../../test/registry';
 import { computeSetBadges } from './set-badges';
-import { correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
+import { changeSetSide, correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
 import { deletionPreview } from './set-ranks';
 import {
   captureReducer,
@@ -102,11 +102,12 @@ function fakeBase() {
       rows.set(op.id, { setOrder: op.setOrder, weightKg: op.weightKg, reps: op.reps, rir: op.rir, side: op.side });
     },
     // Écriture partielle : un `update`, jamais une création (cf. `patchSet`, data.ts).
-    patchSet: async (op: { id: string; only: 'values' | 'rank'; setOrder: number; weightKg: number; reps: number; rir: number }) => {
-      sent.push(`patch:${op.id}:${op.only === 'values' ? `${op.weightKg}x${op.reps}` : `@${op.setOrder}`}`);
+    patchSet: async (op: { id: string; only: 'values' | 'rank' | 'side'; setOrder: number; weightKg: number; reps: number; rir: number; side?: string }) => {
+      sent.push(`patch:${op.id}:${op.only === 'values' ? `${op.weightKg}x${op.reps}` : op.only === 'side' ? `côté ${op.side}` : `@${op.setOrder}`}`);
       const known = rows.get(op.id);
       if (!known) return;
       if (op.only === 'values') Object.assign(known, { weightKg: op.weightKg, reps: op.reps, rir: op.rir });
+      else if (op.only === 'side') known.side = op.side;
       else known.setOrder = op.setOrder;
     },
     deleteSet: async (op: { id: string }) => {
@@ -356,6 +357,87 @@ describe('correction et réponse tardive de la base', () => {
     const elsewhere = { [BENCH]: { sets: [ps(80, 10, 2, 1), ps(80, 7, 1, 2), ps(80, 6, 0, 3)], setIds: ['s1', 's2', 's3'] } };
     const next = answer(corrected, stamp, elsewhere);
     expect(getProgress(next, BENCH).sets[0]).toEqual(ps(85, 10, 2, 1));
+  });
+});
+
+// --- Changer le côté d'une série unilatérale ----------------------------------
+
+describe('changeSetSide (le côté d’une série, écrit seul)', () => {
+  const CURL = 'curl';
+  /** Série 1 complète (gauche et droite), série 2 saisie à gauche seulement. */
+  const unilateral = (): CaptureState => ({
+    ...started(),
+    progress: {
+      [CURL]: {
+        sets: [ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 1, 'right'), ps(12, 9, 1, 2, 'left')],
+        setIds: ['l1', 'r1', 'l2'],
+        skipped: false,
+      },
+    },
+  });
+
+  it('l’autre côté du rang est libre : la ligne change de côté, rang et valeurs intacts, une écriture du côté seul', () => {
+    const state = unilateral();
+    const gesture = changeSetSide(state, CURL, 'l2', 'right')!;
+    expect(gesture.ops).toEqual([
+      { type: 'patchSet', id: 'l2', executionId: 'exec-1', exerciseId: CURL, setOrder: 2, weightKg: 12, reps: 9, rir: 1, side: 'right', only: 'side' },
+    ]);
+    expect(getProgress(captureReducer(state, gesture.action), CURL).sets).toEqual([
+      ps(12, 10, 2, 1, 'left'),
+      ps(12, 9, 2, 1, 'right'),
+      ps(12, 9, 1, 2, 'right'),
+    ]);
+  });
+
+  it('l’autre côté du rang est pris : rien', () => {
+    expect(changeSetSide(unilateral(), CURL, 'l1', 'right')).toBeNull();
+    expect(changeSetSide(unilateral(), CURL, 'r1', 'left')).toBeNull();
+  });
+
+  it('rien à faire : même côté, ligne inconnue, ligne sans id, exo bilatéral', () => {
+    expect(changeSetSide(unilateral(), CURL, 'l2', 'left')).toBeNull();
+    expect(changeSetSide(unilateral(), CURL, 'inconnue', 'right')).toBeNull();
+    expect(changeSetSide(started(), BENCH, 's1', 'left')).toBeNull();
+    const noId: CaptureState = {
+      ...started(),
+      progress: { [CURL]: { sets: [ps(12, 9, 1, 1, 'left')], setIds: [null], skipped: false } },
+    };
+    expect(changeSetSide(noId, CURL, 'l1', 'right')).toBeNull();
+  });
+
+  it('en base : seul le côté est écrit, une correction faite ailleurs entre-temps n’est pas écrasée', async () => {
+    const base = fakeBase();
+    // Ailleurs, la série a été corrigée à 14 kg depuis que cet appareil l'a lue à 12.
+    base.rows.set('l2', { setOrder: 2, weightKg: 14, reps: 9, rir: 1, side: 'left' });
+    play(unilateral(), changeSetSide(unilateral(), CURL, 'l2', 'right')!);
+    await flush(base.fns);
+    expect(base.sent).toEqual(['patch:l2:côté right']);
+    expect(base.rows.get('l2')).toEqual({ setOrder: 2, weightKg: 14, reps: 9, rir: 1, side: 'right' });
+  });
+
+  it('réponse tardive : le côté changé ici et le poids corrigé ailleurs tiennent ensemble', async () => {
+    const stamp = readStamp();
+    const changed = play(unilateral(), changeSetSide(unilateral(), CURL, 'l2', 'right')!);
+    await flush(fakeBase().fns);
+    const next = answer(changed, stamp, {
+      [CURL]: { sets: [ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 1, 'right'), ps(14, 9, 1, 2, 'left')], setIds: ['l1', 'r1', 'l2'] },
+    });
+    expect(getProgress(next, CURL).sets[2]).toEqual(ps(14, 9, 1, 2, 'right'));
+  });
+
+  it('insertion d’origine refusée : la série part entière, avec son nouveau côté', async () => {
+    enqueue({ type: 'insertSet', id: 'l2', executionId: 'exec-1', exerciseId: CURL, setOrder: 2, weightKg: 12, reps: 9, rir: 1, side: 'left' });
+    const refusing = fakeBase();
+    refusing.fns.insertSet = async () => {
+      throw { code: '23503', message: 'fk' };
+    };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await flush(refusing.fns);
+    play(unilateral(), changeSetSide(unilateral(), CURL, 'l2', 'right')!);
+    const base = fakeBase();
+    await flush(base.fns);
+    expect(base.rows.get('l2')).toEqual({ setOrder: 2, weightKg: 12, reps: 9, rir: 1, side: 'right' });
+    expect(listRefused()).toEqual([]);
   });
 });
 

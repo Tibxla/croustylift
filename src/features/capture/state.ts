@@ -161,6 +161,10 @@ export type CaptureAction =
       setId: string;
       values: Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
     }
+  // Change le CÔTÉ d'une ligne d'un exo unilatéral (saisie du mauvais côté) : ni
+  // son rang ni ses valeurs ne bougent. Construite par `changeSetSide`
+  // (set-gestures.ts), qui vérifie que l'autre côté de ce rang est libre.
+  | { type: 'change-set-side'; exerciseId: string; setId: string; side: Side }
   // Supprime la série LOGIQUE de la ligne d'id `setId`, où qu'elle soit : la
   // ligne seule, ou la paire gauche et droite de son rang en unilatéral
   // (`logicalSetRows`, set-ranks.ts). Les rangs des suivantes suivent la règle
@@ -775,6 +779,19 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       if (current === undefined) return state;
       const sets = prev.sets.slice();
       sets[index] = { ...current, ...action.values };
+      return {
+        ...state,
+        progress: { ...state.progress, [action.exerciseId]: { ...prev, sets } },
+      };
+    }
+
+    case 'change-set-side': {
+      const prev = getProgress(state, action.exerciseId);
+      const index = prev.setIds.indexOf(action.setId);
+      const current = index === -1 ? undefined : prev.sets[index];
+      if (current === undefined) return state;
+      const sets = prev.sets.slice();
+      sets[index] = { ...current, side: action.side };
       return {
         ...state,
         progress: { ...state.progress, [action.exerciseId]: { ...prev, sets } },

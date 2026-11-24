@@ -305,6 +305,10 @@ export function effectiveOp(record: RegistryRecord, entry: Entry): OutboxOp {
   if (only === 'rank') {
     return { ...row, type: 'insertSet', weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
   }
+  if (only === 'side') {
+    // Le côté vient de l'écriture partielle (`row.side`), tout le reste du refus.
+    return { ...row, type: 'insertSet', setOrder: base.setOrder, weightKg: base.weightKg, reps: base.reps, rir: base.rir };
+  }
   const written = new Set(cols ?? ['weightKg', 'reps', 'rir']);
   return {
     ...row,

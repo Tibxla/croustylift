@@ -17,7 +17,8 @@
 //   - une insertion pose la ligne entière ;
 //   - une correction (`patchSet`, `only: 'values'`) ne pose que les colonnes
 //     qu'elle a changées (`cols`), sur une ligne qui existe ;
-//   - une remontée de rang (`only: 'rank'`) ne pose que le rang ;
+//   - une remontée de rang (`only: 'rank'`) ne pose que le rang, un changement
+//     de côté (`only: 'side'`) que le côté ;
 //   - une suppression retire la ligne, celle d'une exécution toutes ses lignes.
 // Une ligne corrigée ailleurs (la lecture porte son nouveau poids) et
 // renumérotée ici garde donc les deux. Une écriture partielle ne crée jamais de
@@ -87,7 +88,10 @@ function applyWrite(lines: Map<string, SetLine>, op: OutboxOp, accepts: (line: S
       if (!known) return;
       const next = { ...known };
       if (op.only === 'rank') next.order = op.setOrder;
-      else {
+      else if (op.only === 'side') {
+        if (op.side) next.side = op.side;
+        else delete next.side;
+      } else {
         const cols = op.cols ?? (['weightKg', 'reps', 'rir'] as const);
         if (cols.includes('weightKg')) next.weightKg = op.weightKg;
         if (cols.includes('reps')) next.reps = op.reps;

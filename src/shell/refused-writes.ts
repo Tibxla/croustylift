@@ -161,7 +161,8 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
     case 'patchSet': {
       const side = op.side === 'left' ? ' · gauche' : op.side === 'right' ? ' · droite' : '';
       const values = `${kg(op.weightKg)} kg × ${op.reps} · RIR ${op.rir}${side}`;
-      const kind = op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : 'nouveau rang';
+      const kind =
+        op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : op.only === 'side' ? 'nouveau côté' : 'nouveau rang';
       return { ...base, what: withExo(`Série ${op.setOrder}`, op.exerciseId), detail: kind ? `${kind} · ${values}` : values };
     }
     case 'deleteSet':

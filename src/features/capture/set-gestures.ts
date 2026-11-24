@@ -70,7 +70,7 @@
 // registre les garde, et le tableau les applique sur la réponse, colonne par
 // colonne (execution-reality.ts, cas `reconcile-progress` du réducteur).
 
-import type { PerformedSet } from '../../domain/types';
+import type { PerformedSet, Side } from '../../domain/types';
 import type { OutboxOp, PatchSetOp } from './outbox';
 import { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
@@ -95,7 +95,7 @@ export function writeSetOp(
   exerciseId: string,
   id: string,
   set: PerformedSet,
-  only: 'values' | 'rank',
+  only: PatchSetOp['only'],
 ): PatchSetOp {
   const row = {
     id,
@@ -138,6 +138,35 @@ export function correctSet(
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
     ops: [{ ...writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values'), cols }],
+  };
+}
+
+/**
+ * Change le CÔTÉ de la ligne d'id `setId` (exo unilatéral : une série saisie à
+ * gauche l'était à droite). Seul le côté est écrit, en base comme à l'écran
+ * (`patchSet` avec `only: 'side'`) : son rang et ses valeurs ne bougent pas.
+ *
+ * Le côté ne change que si l'AUTRE côté de ce rang est libre : une série tient
+ * sur deux lignes au même rang, une gauche et une droite (ADR 0005), et deux
+ * lignes du même côté au même rang ne seraient plus une série. `null` sinon,
+ * comme pour une ligne inconnue, sans id (rien à viser en base), sans côté
+ * (exo bilatéral) ou déjà de ce côté.
+ */
+export function changeSetSide(
+  state: CaptureState,
+  exerciseId: string,
+  setId: string,
+  side: Side,
+): SetGesture | null {
+  const progress = getProgress(state, exerciseId);
+  const index = progress.setIds.indexOf(setId);
+  const current = index === -1 ? undefined : progress.sets[index];
+  if (current === undefined || current.side === undefined || current.side === side) return null;
+  const taken = progress.sets.some((set, i) => i !== index && set.order === current.order && set.side === side);
+  if (taken) return null;
+  return {
+    action: { type: 'change-set-side', exerciseId, setId, side },
+    ops: [writeSetOp(state, exerciseId, setId, { ...current, side }, 'side')],
   };
 }
 

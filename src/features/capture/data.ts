@@ -1420,8 +1420,8 @@ export async function upsertSet(params: {
 
 /**
  * Écriture PARTIELLE d'une série existante, par son id (cf. `PatchSetOp`, outbox.ts) :
- * les valeurs seules (correction) ou le rang seul (remontée après une
- * suppression). Un `update`, jamais un `upsert` : si la ligne n'existe plus,
+ * les valeurs seules (correction), le rang seul (remontée après une
+ * suppression) ou le côté seul. Un `update`, jamais un `upsert` : si la ligne n'existe plus,
  * rien n'est écrit et rien n'est recréé. Idempotent. Rend le nombre de lignes
  * touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès, la série a
  * été supprimée entre-temps.
@@ -1437,10 +1437,12 @@ export async function patchSet(
         /** Les colonnes à écrire ; absent : les trois (cf. `PatchSetOp.cols`). */
         cols?: readonly SetValueColumn[];
       }
-    | { id: string; only: 'rank'; setOrder: number },
+    | { id: string; only: 'rank'; setOrder: number }
+    | { id: string; only: 'side'; side: Side | null },
 ): Promise<number> {
-  let patch: { set_order?: number; weight_kg?: number; reps?: number; rir?: number };
+  let patch: { set_order?: number; weight_kg?: number; reps?: number; rir?: number; side?: Side | null };
   if (params.only === 'rank') patch = { set_order: params.setOrder };
+  else if (params.only === 'side') patch = { side: params.side };
   else {
     // Seules les colonnes que le geste a changées partent : corriger le poids
     // ici et les reps sur un autre appareil garde les deux (ADR 0003).
