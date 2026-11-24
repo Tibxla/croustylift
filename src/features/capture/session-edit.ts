@@ -51,6 +51,27 @@ export function swapExercise(
   return { ...session, exercises };
 }
 
+/**
+ * Insère `replacement` JUSTE APRÈS l'exo `targetExerciseId`, qui reste à sa
+ * place : c'est le remplacement d'un exo DÉJÀ COMMENCÉ (machine prise). Ses
+ * séries restent à lui, il se lit « en cours » ; le remplaçant porte
+ * `origin: 'swapped'` et `swappedFrom`, comme un remplacement en place. Sans
+ * effet si la cible est absente ou si le remplaçant est déjà dans la séance.
+ * Immutable.
+ */
+export function insertReplacementAfter(
+  session: Session,
+  targetExerciseId: string,
+  replacement: SessionExercise,
+): Session {
+  const idx = session.exercises.findIndex((e) => e.exerciseId === targetExerciseId);
+  if (idx === -1) return session;
+  if (session.exercises.some((e) => e.exerciseId === replacement.exerciseId)) return session;
+  const exercises = session.exercises.slice();
+  exercises.splice(idx + 1, 0, { ...replacement, origin: 'swapped', swappedFrom: targetExerciseId });
+  return { ...session, exercises };
+}
+
 /** Une déviation d'EXO dérivée par diff : exo ajouté ou exo remplacé (ADR 0002). */
 export type ExerciseDeviation =
   | { kind: 'added'; exerciseId: string; name: string }
@@ -116,16 +137,27 @@ export function replayLayout(
     const exercise = resolve(edit, index);
     if (!exercise) return;
     const target = edit.kind === 'swapped' ? edit.replaces : undefined;
-    session =
-      target !== undefined && session.exercises.some((e) => e.exerciseId === target)
-        ? swapExercise(session, target, exercise)
-        : addExercise(session, exercise);
+    const targetPresent =
+      target !== undefined && session.exercises.some((e) => e.exerciseId === target);
+    if (!targetPresent || target === undefined) session = addExercise(session, exercise);
+    // `keepsReplaced` : décidé au moment du geste (l'exo remplacé avait des
+    // séries), jamais redérivé ici.
+    else if (edit.keepsReplaced) session = insertReplacementAfter(session, target, exercise);
+    else session = swapExercise(session, target, exercise);
   });
   return session;
 }
 
-/** Le geste d'édition à journaliser pour un exo ajouté ou remplaçant (cf. `layout`). */
-export function layoutEditOf(exercise: SessionExercise, replaces?: string): LayoutEdit {
+/**
+ * Le geste d'édition à journaliser pour un exo ajouté ou remplaçant (cf.
+ * `layout`). `keepsReplaced` : l'exo remplacé avait déjà des séries, il reste
+ * dans la séance (cf. `LayoutEdit.keepsReplaced`).
+ */
+export function layoutEditOf(
+  exercise: SessionExercise,
+  replaces?: string,
+  options: { keepsReplaced?: boolean } = {},
+): LayoutEdit {
   return {
     kind: replaces === undefined ? 'added' : 'swapped',
     exerciseId: exercise.exerciseId,
@@ -133,5 +165,6 @@ export function layoutEditOf(exercise: SessionExercise, replaces?: string): Layo
     unilateral: exercise.unilateral ?? false,
     primaryMuscles: exercise.primaryMuscles ?? [],
     ...(replaces === undefined ? {} : { replaces }),
+    ...(replaces !== undefined && options.keepsReplaced ? { keepsReplaced: true as const } : {}),
   };
 }

@@ -13,6 +13,7 @@
 // REPRISES telles quelles : une métrique manquante reste `null` pour que l'UI ne
 // montre pas de récap trompeur (cf. AC #32). Pure, sans dépendance réseau.
 import { countPerformedSets } from '../../domain/set-count'
+import { liftedKg } from '../../domain/lifted'
 import type { RawLogEntry } from './raw-log'
 
 /** Le récap d'une séance : ses métadonnées + les agrégats de ses séries. */
@@ -43,11 +44,9 @@ export interface SessionSummary {
  * séries en décompte de séries + kg soulevés. Pure.
  */
 export function summarizeSession(entry: RawLogEntry): SessionSummary {
-  let totalLiftedKg = 0
-  for (const exercise of entry.exercises) {
-    // Les kg soulevés cumulent les deux côtés (chacun une ligne).
-    for (const set of exercise.sets) totalLiftedKg += set.weightKg * set.reps
-  }
+  // Les kg soulevés cumulent les deux côtés (chacun une ligne) : même calcul que
+  // la fin de séance (`liftedKg`, domain/lifted.ts).
+  const totalLiftedKg = liftedKg(entry.exercises.flatMap((exercise) => exercise.sets))
 
   // Même fonction que la Clôture. Le journal ne connaît pas le drapeau
   // unilatéral de l'exo : il se lit sur les lignes (un côté = exo unilatéral).

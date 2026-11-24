@@ -1052,7 +1052,27 @@ export function enqueueTracked(op: OutboxOp): string {
     ...(owner ? { _owner: owner } : {}),
   });
   writeQueue(queue);
+  supersedeRefusedSetWrites(op);
   return uid;
+}
+
+/**
+ * Une écriture de série refusée par la base (en quarantaine) n'a plus d'objet
+ * dès qu'une nouvelle écriture de la MÊME série est enfilée : une correction la
+ * remplace, une suppression la rend sans cible. On la retire donc de la
+ * quarantaine. Sans cela, « renvoyer » la saisie refusée réécrirait l'ancienne
+ * valeur par-dessus la correction, et la Déconnexion resterait retenue par une
+ * saisie que l'utilisateur vient de reprendre. Seulement les entrées du compte
+ * reconnu ; les autres écritures refusées (exécution, notes) ne sont pas
+ * concernées.
+ */
+function supersedeRefusedSetWrites(op: OutboxOp): void {
+  if (op.type !== 'insertSet' && op.type !== 'deleteSet') return;
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter(
+    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && isOwnEntry(q)),
+  );
+  if (kept.length !== quarantine.length) writeQuarantine(kept);
 }
 
 /** Enfile une op (cf. `enqueueTracked`) et renvoie la nouvelle longueur de file. */

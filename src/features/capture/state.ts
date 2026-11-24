@@ -6,6 +6,7 @@ import type { Session } from './fixtures';
 import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
 import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
+import { ranksAfterDeletion } from './set-ranks';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
@@ -57,6 +58,15 @@ export interface LayoutEdit {
   primaryMuscles: string[];
   /** Pour un remplacement : l'exo du plan dont celui-ci prend la place. */
   replaces?: string;
+  /**
+   * Pour un remplacement : l'exo remplacé AVAIT DÉJÀ des séries au moment du
+   * geste (machine prise en cours d'exo). Il reste alors dans la séance, à sa
+   * place, avec ses séries, et le remplaçant s'insère juste après lui. Inscrit
+   * au moment du geste et jamais redérivé au rejeu : supprimer ensuite la série
+   * de l'exo remplacé ne doit pas faire bouger la liste. Absent : le remplaçant
+   * prend la place de l'exo (geste d'avant ce champ, ou exo pas commencé).
+   */
+  keepsReplaced?: true;
 }
 
 export interface CaptureState {
@@ -133,6 +143,20 @@ export type CaptureAction =
   // pour que l'état local et l'op d'outbox partagent EXACTEMENT le même id.
   | { type: 'log-set'; exerciseId: string; setId: string; set: Omit<PerformedSet, 'order'> }
   | { type: 'undo-last-set'; exerciseId: string }
+  // Corrige une série déjà loggée, où qu'elle soit dans l'exo : seules ses
+  // valeurs changent (id, rang et côté restent). Construite par `correctSet`
+  // (set-gestures.ts), qui borne les valeurs et rend l'écriture à enfiler.
+  | {
+      type: 'correct-set';
+      exerciseId: string;
+      setId: string;
+      values: Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
+    }
+  // Supprime la série LOGIQUE de rang `order` de l'exo, où qu'elle soit : toutes
+  // ses lignes (gauche et droite en unilatéral). Les rangs des suivantes suivent
+  // la règle de `ranksAfterDeletion` (set-ranks.ts). Construite par `deleteSet`
+  // (set-gestures.ts), qui rend aussi les écritures à enfiler.
+  | { type: 'delete-set'; exerciseId: string; order: number }
   // Note datée d'un exo (issue #26). `noteId` = UUID client de la ligne
   // `dated_notes`, fourni par le caller pour que l'état et l'op d'outbox visent
   // la même ligne. Un `body` vide est conservé tel quel dans l'état ; c'est la
@@ -148,6 +172,13 @@ export type CaptureAction =
       base: Record<string, HydratedProgress>;
       pendingSetIds: string[];
       knownAtDeparture: string[];
+      /**
+       * Le réalisé local tel qu'il était au DÉPART de la lecture, valeurs
+       * comprises. Une série que l'utilisateur a corrigée (ou renumérotée)
+       * pendant le trajet garde sa valeur locale, même si l'écriture a déjà été
+       * acquittée et ne figure plus dans aucun relevé de la file.
+       */
+      departure?: Record<string, ExerciseProgress>;
       /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
       datedNotes?: Record<string, DatedNoteDraft>;
       /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
@@ -681,6 +712,37 @@ export function applyQueuedSets(
   return out;
 }
 
+/**
+ * Les séries que l'utilisateur a touchées sur cet appareil depuis le départ
+ * d'une lecture : celles dont la valeur (rang compris) diffère de celle du
+ * départ, et celles que l'état portait au départ et ne porte plus (supprimées).
+ * Sans `departure`, seules les suppressions se voient (par `knownAtDeparture`).
+ */
+function touchedSinceDeparture(
+  local: Record<string, ExerciseProgress>,
+  departure: Record<string, ExerciseProgress> | undefined,
+  knownAtDeparture: readonly string[],
+): Set<string> {
+  const now = new Map<string, PerformedSet>();
+  for (const p of Object.values(local)) {
+    p.setIds.forEach((id, i) => {
+      const set = p.sets[i];
+      if (id !== null && set) now.set(id, set);
+    });
+  }
+  const touched = new Set<string>();
+  for (const id of knownAtDeparture) if (!now.has(id)) touched.add(id);
+  for (const p of Object.values(departure ?? {})) {
+    p.setIds.forEach((id, i) => {
+      const before = p.sets[i];
+      if (id === null || !before) return;
+      const current = now.get(id);
+      if (current === undefined || !sameSet(before, current)) touched.add(id);
+    });
+  }
+  return touched;
+}
+
 function sameSet(a: PerformedSet, b: PerformedSet): boolean {
   return (
     a.weightKg === b.weightKg &&
@@ -757,14 +819,46 @@ export function reconcileDatedNotes(
 export function reconcileProgress(
   local: Record<string, ExerciseProgress>,
   base: Record<string, HydratedProgress>,
-  options: { pendingSetIds: readonly string[]; knownAtDeparture?: readonly string[] | null },
+  options: {
+    pendingSetIds: readonly string[];
+    knownAtDeparture?: readonly string[] | null;
+    /**
+     * Le réalisé local au départ de la lecture, valeurs comprises. Une série
+     * dont la valeur locale DIFFÈRE de celle du départ a été corrigée (ou
+     * renumérotée) ici pendant le trajet : la réponse, partie avant, porte sa
+     * valeur d'avant, et l'écriture a pu être acquittée entre-temps (aucun
+     * relevé de la file ne la montre plus). La valeur locale est gardée. Une
+     * série inchangée depuis le départ suit la base, qui a pu être corrigée
+     * ailleurs.
+     */
+    departure?: Record<string, ExerciseProgress> | null;
+  },
 ): Record<string, ExerciseProgress> {
   const pending = new Set(options.pendingSetIds);
   const known = options.knownAtDeparture ? new Set(options.knownAtDeparture) : null;
   const localIds = new Set<string>();
+  const localById = new Map<string, PerformedSet>();
   for (const p of Object.values(local)) {
-    for (const id of p.setIds) if (id !== null) localIds.add(id);
+    p.setIds.forEach((id, i) => {
+      if (id === null) return;
+      localIds.add(id);
+      const set = p.sets[i];
+      if (set) localById.set(id, set);
+    });
   }
+  const departureById = new Map<string, PerformedSet>();
+  for (const p of Object.values(options.departure ?? {})) {
+    p.setIds.forEach((id, i) => {
+      const set = p.sets[i];
+      if (id !== null && set) departureById.set(id, set);
+    });
+  }
+  /** La série locale `id` a-t-elle changé de valeur depuis le départ de la lecture ? */
+  const editedSinceDeparture = (id: string): PerformedSet | null => {
+    const before = departureById.get(id);
+    const now = localById.get(id);
+    return before && now && !sameSet(before, now) ? now : null;
+  };
 
   const out: Record<string, ExerciseProgress> = {};
   for (const exerciseId of new Set([...Object.keys(local), ...Object.keys(base)])) {
@@ -780,7 +874,8 @@ export function reconcileProgress(
       baseIds.add(id);
       // Annulée ici pendant le trajet de la lecture : elle ne revient pas.
       if (known?.has(id) && !localIds.has(id)) return;
-      sets.push(set);
+      // Corrigée ici pendant le trajet : sa valeur locale prime.
+      sets.push(editedSinceDeparture(id) ?? set);
       setIds.push(id);
     });
 
@@ -888,6 +983,40 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'correct-set': {
+      const prev = getProgress(state, action.exerciseId);
+      const index = prev.setIds.indexOf(action.setId);
+      const current = index === -1 ? undefined : prev.sets[index];
+      if (current === undefined) return state;
+      const sets = prev.sets.slice();
+      sets[index] = { ...current, ...action.values };
+      return {
+        ...state,
+        progress: { ...state.progress, [action.exerciseId]: { ...prev, sets } },
+      };
+    }
+
+    case 'delete-set': {
+      const prev = getProgress(state, action.exerciseId);
+      if (!prev.sets.some((set) => set.order === action.order)) return state;
+      // Les ids suivent leurs séries : on renumérote des paires (série, id).
+      const rows = ranksAfterDeletion(
+        prev.sets.map((set, i) => ({ ...set, id: prev.setIds[i] ?? null })),
+        action.order,
+      );
+      return {
+        ...state,
+        progress: {
+          ...state.progress,
+          [action.exerciseId]: {
+            ...prev,
+            sets: rows.map(({ id: _id, ...set }) => set),
+            setIds: rows.map((row) => row.id),
+          },
+        },
+      };
+    }
+
     case 'skip-exercise': {
       const prev = getProgress(state, action.exerciseId);
       return {
@@ -919,11 +1048,21 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       const reconciled = reconcileProgress(state.progress, action.base, {
         pendingSetIds: action.pendingSetIds,
         knownAtDeparture: action.knownAtDeparture,
+        departure: action.departure,
       });
+      // Les séries que l'utilisateur a touchées ICI pendant le trajet (corrigées,
+      // renumérotées, supprimées) ne sont pas rejouées depuis la file : l'état
+      // local est plus récent que les écritures relevées au départ, même
+      // acquittées depuis. Sans cela une série annulée ressuscitait, et une
+      // ancienne écriture ramenait un rang d'avant la suppression.
+      const touched = touchedSinceDeparture(state.progress, action.departure, action.knownAtDeparture);
+      const queued = (action.queuedOps ?? []).filter(
+        (op) => !((op.type === 'insertSet' || op.type === 'deleteSet') && touched.has(op.id)),
+      );
       return {
         ...state,
         progress: action.queuedOps
-          ? applyQueuedSets(reconciled, action.queuedOps, state.executionId)
+          ? applyQueuedSets(reconciled, queued, state.executionId)
           : reconciled,
         datedNotes: action.datedNotes
           ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
@@ -1037,6 +1176,7 @@ function normalizeLayout(raw: unknown): { layout?: LayoutEdit[] } {
         ? e.primaryMuscles.filter((m): m is string => typeof m === 'string')
         : [],
       ...(e.kind === 'swapped' ? { replaces: e.replaces } : {}),
+      ...(e.kind === 'swapped' && e.keepsReplaced === true ? { keepsReplaced: true as const } : {}),
     });
   }
   return layout.length > 0 ? { layout } : {};
