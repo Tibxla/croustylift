@@ -642,12 +642,12 @@ export async function unarchiveSeance(id: string): Promise<void> {
 }
 
 /**
- * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Tant
- * que la migration n'est pas appliquée, la fonction n'existe pas : le drapeau
- * reste FAUX et le réordonnancement garde son ancien chemin (une mise à jour
- * par séance). À passer à vrai une fois la migration appliquée en prod.
+ * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Oui
+ * depuis le 2026-11-23 (0023 appliquée en prod) : le réordonnancement passe par
+ * elle, en une transaction. L'ancien chemin (une mise à jour par séance) reste
+ * derrière ce drapeau pour une base qui n'aurait pas la migration.
  */
-export const REORDER_SEANCES_RPC = false;
+export const REORDER_SEANCES_RPC = true;
 
 /**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
