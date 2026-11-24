@@ -339,6 +339,19 @@ export function peekRead<T>(key: string): T | null {
 }
 
 /**
+ * Comme `peekRead`, mais `null` pour une copie marquée périmée par une écriture
+ * faite depuis cet appareil (`invalidateReads`) : pour affirmer quelque chose à
+ * l'utilisateur d'après la copie (« il figure dans Push A »), jamais d'après un
+ * état que l'appareil sait dépassé.
+ */
+export function peekFreshRead<T>(key: string): T | null {
+  const account = loadLocalAccount();
+  if (!account) return null;
+  const entry = readEntry<T>(fullKey(account.userId, key));
+  return entry && !entry.stale ? entry.value : null;
+}
+
+/**
  * Retire UNE copie locale (et sa revalidation connue). Pour l'éviction des
  * copies qui ne seront plus jamais lues (cf. `pruneCaptureCopies`) : sans elle
  * le cache ne faisait que grossir, sur le quota que l'outbox partage.

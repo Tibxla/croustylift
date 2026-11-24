@@ -5,7 +5,7 @@
 // la garde de la base (deletion-guard, refus du serveur) reste le filet. Une
 // séance jamais ouverte sur cet appareil n'y figure pas : l'absence ne prouve
 // rien.
-import { cachedKeys, peekRead } from '../../lib/read-cache';
+import { cachedKeys, peekFreshRead } from '../../lib/read-cache';
 import { SEANCE_TEMPLATE_PREFIX, SEANCE_VERSION_IDS_PREFIX, SEANCE_VERSION_PREFIX } from '../capture/plan-copies';
 
 export interface LocalTemplate {
@@ -22,15 +22,17 @@ export function seancesUsing(exerciseId: string, templates: readonly LocalTempla
   return names;
 }
 
-/** Les templates des versions COURANTES connues de l'appareil (jamais une version d'avant). */
+/** Les templates des versions COURANTES connues de l'appareil (jamais une version
+ *  d'avant, jamais une copie que l'appareil sait périmée : un exo retiré d'une
+ *  séance ici ne doit pas y être annoncé). */
 export function localTemplates(): LocalTemplate[] {
   const out: LocalTemplate[] = [];
   for (const key of cachedKeys(SEANCE_VERSION_PREFIX)) {
     if (key.startsWith(SEANCE_VERSION_IDS_PREFIX)) continue;
     const seanceId = key.slice(SEANCE_VERSION_PREFIX.length);
-    const versionId = peekRead<string>(key);
+    const versionId = peekFreshRead<string>(key);
     if (typeof versionId !== 'string') continue;
-    const tpl = peekRead<{ name?: unknown; exercises?: unknown }>(`${SEANCE_TEMPLATE_PREFIX}${versionId}:${seanceId}`);
+    const tpl = peekFreshRead<{ name?: unknown; exercises?: unknown }>(`${SEANCE_TEMPLATE_PREFIX}${versionId}:${seanceId}`);
     if (!tpl || typeof tpl.name !== 'string' || !Array.isArray(tpl.exercises)) continue;
     const exerciseIds = (tpl.exercises as { exerciseId?: unknown }[])
       .map((e) => e.exerciseId)
