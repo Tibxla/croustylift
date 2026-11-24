@@ -113,6 +113,7 @@ import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
 import { sommaireDetail } from './sommaire-detail';
+import { isDoubleTap, type LogStamp } from './log-guard';
 import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine, watchSeancesMeta } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
@@ -1520,15 +1521,21 @@ function CapturePanel({
   const [announce, setAnnounce] = useState('');
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
+  // Garde contre le rebond de doigt (log-guard.ts) : un second Logger du même
+  // exo sous 600 ms n'écrit rien et n'annonce rien.
+  const lastLogRef = useRef<LogStamp | null>(null);
   const logSet = useCallback(
     (set: { weightKg: number; reps: number; rir: number }) => {
+      const now = performance.now();
+      if (isDoubleTap(lastLogRef.current, exercise.exerciseId, now)) return;
+      lastLogRef.current = { exerciseId: exercise.exerciseId, at: now };
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
         `Série ${rank}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, rank, currentSide],
+    [onLog, rank, currentSide, exercise.exerciseId],
   );
 
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
