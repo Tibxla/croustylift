@@ -67,7 +67,7 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
-import { NoteSheet } from '../notes/NoteSheet';
+import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
 import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   loadExerciseOverrides,
@@ -655,7 +655,17 @@ function Fiche({
           ) : (
             <p className="text-[15px] leading-[1.45] text-muted">Aucune. Elle se lit en salle, dans les notes de l’exo.</p>
           )}
-          {noteUnsaved && <p className="mt-1 text-[14px] font-medium text-ink">Une modification de la note n’est pas enregistrée.</p>}
+          {noteUnsaved && (
+            <TextLink
+              className="mt-1"
+              onClick={() => {
+                setNoteOpen(true);
+                onFlash(null);
+              }}
+            >
+              Reprendre la note non enregistrée
+            </TextLink>
+          )}
         </div>
       </section>
 
@@ -664,7 +674,7 @@ function Fiche({
           exerciseName={exo.name}
           note={saved}
           draft={draft ?? saved}
-          hint="Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle t’appartient : la modifier ne personnalise pas l’exo."
+          hint={NOTE_HINT}
           onDraft={setDraft}
           onSave={saveNote}
           onClose={() => setNoteOpen(false)}

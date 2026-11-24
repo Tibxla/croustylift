@@ -15,6 +15,10 @@ import { isBlankNote } from '../../domain/notes';
 import { errorMessage } from '../../lib/error-message';
 import { FieldError, PrimaryButton, Sheet, TextArea, TextLink } from '../../ui';
 
+/** Ce que fait la note, sous le champ : le même texte partout où elle s'écrit. */
+export const NOTE_HINT =
+  'Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle s’enregistre tout de suite, à part des réglages de la séance.';
+
 export function NoteSheet({
   exerciseName,
   note,
@@ -29,7 +33,7 @@ export function NoteSheet({
   note: string;
   /** Le texte affiché (la note enregistrée tant que rien n'est touché). */
   draft: string;
-  /** Ce que la note fait, sous le champ (propre à l'endroit où elle s'écrit). */
+  /** Ce que la note fait, sous le champ (`NOTE_HINT`). */
   hint: string;
   onDraft: (body: string) => void;
   /** Résolu = enregistrée : la feuille se ferme. */

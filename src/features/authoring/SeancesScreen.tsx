@@ -827,8 +827,14 @@ export function RoutineView({
 
       {seances.length === 0 ? (
         <EmptyState
-          title={archivedRoutine ? 'Aucune séance active' : 'Aucune séance dans cette routine'}
-          body={archivedRoutine ? undefined : 'Crée sa première séance, puis ajoutes-y ses exos.'}
+          title={archivedRoutine || archivedSeances.length > 0 ? 'Aucune séance active' : 'Aucune séance dans cette routine'}
+          body={
+            archivedRoutine
+              ? undefined
+              : archivedSeances.length > 0
+                ? 'Crée une séance, ou désarchive-en une plus bas.'
+                : 'Crée sa première séance, puis ajoutes-y ses exos.'
+          }
         />
       ) : (
         <>

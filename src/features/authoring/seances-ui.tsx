@@ -278,7 +278,7 @@ export function SeanceActionsSheet({
           onCancel={back}
           onConfirm={() => void write.run(onArchive)}
         >
-          <p className="font-medium">Archiver {seanceName} ?</p>
+          <p className="font-medium">Archiver cette séance ?</p>
           <p className="mt-1 text-muted">
             Elle ne se choisit plus en salle. Son historique reste dans l’analyse.
             {inCurrentRoutine && ' Le plan de la routine courante change : un nouveau bloc commence.'}
@@ -296,7 +296,7 @@ export function SeanceActionsSheet({
           onCancel={back}
           onConfirm={() => void write.run(onDelete)}
         >
-          <p className="font-medium">Supprimer {seanceName} ?</p>
+          <p className="font-medium">Supprimer cette séance ?</p>
           <p className="mt-1 text-muted">Jamais faite, elle n’a aucun historique. C’est définitif.</p>
         </Confirm>
       ) : (
@@ -396,7 +396,7 @@ export function RoutineActionsSheet({
           onCancel={back}
           onConfirm={() => void write.run(onSetCurrent)}
         >
-          <p className="font-medium">Définir {routineName} comme routine courante ?</p>
+          <p className="font-medium">En faire la routine courante ?</p>
           <p className="mt-1 text-muted">{replaces}</p>
         </Confirm>
       ) : step === 'archive' ? (
@@ -408,7 +408,7 @@ export function RoutineActionsSheet({
           onCancel={back}
           onConfirm={() => void write.run(onArchive)}
         >
-          <p className="font-medium">Archiver {routineName} ?</p>
+          <p className="font-medium">Archiver cette routine ?</p>
           <p className="mt-1 text-muted">
             Elle quitte ta liste. Ses séances, ses courbes et ses blocs restent dans l’analyse. Tu pourras la désarchiver.
           </p>
@@ -424,9 +424,9 @@ export function RoutineActionsSheet({
           onCancel={back}
           onConfirm={() => void write.run(onDelete)}
         >
-          <p className="font-medium">Supprimer {routineName} ?</p>
+          <p className="font-medium">Supprimer cette routine ?</p>
           <p className="mt-1 text-muted">
-            Jamais faite, elle n’a aucun historique : elle disparaît
+            Jamais utilisée, elle n’a aucun historique : elle disparaît
             {seanceTotal === 1 ? ' avec sa séance' : seanceTotal > 1 ? ` avec ses ${seanceTotal} séances` : ''}. C’est définitif.
           </p>
         </Confirm>
@@ -441,7 +441,7 @@ export function RoutineActionsSheet({
               <ActionRow
                 label="Archiver"
                 disabled={write.busy}
-                meta="Déjà faite : elle s’archive, son historique reste entier. Tu pourras la désarchiver."
+                meta="Déjà utilisée en salle : elle s’archive, son historique reste entier. Tu pourras la désarchiver."
                 onClick={() => setStep('archive')}
               />
             )}
@@ -449,7 +449,7 @@ export function RoutineActionsSheet({
               <ActionRow
                 label="Supprimer"
                 disabled={write.busy}
-                meta="Jamais faite : rien à garder, elle se supprime."
+                meta="Jamais utilisée : rien à garder, elle se supprime avec ses séances."
                 onClick={() => setStep('delete')}
               />
             )}
