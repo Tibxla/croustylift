@@ -20,6 +20,11 @@
 // texte dit quand seule une note est en jeu. L'option sûre est le bouton
 // (« Continuer l'édition »), la perte un lien.
 //
+// Actions de la séance (renommer, dupliquer, archiver ou supprimer) : un ⋯ en
+// tête, à côté de « Réordonner », qui ouvre la même feuille que le ⋯ de sa ligne
+// dans la routine (seances-ui.tsx, object-actions.ts). La garde de sortie la
+// ferme comme les autres feuilles.
+//
 // Doublons d'exos : AUTORISÉS (lourd en début, léger en finition) ; chaque ligne
 // a sa propre identité (rowId). Retirer un exo se défait par « Annuler les
 // modifications » tant que rien n'est enregistré (registre U31).
@@ -64,15 +69,13 @@ import {
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets } from '../../domain/set-count';
 import { errorMessage } from '../../lib/error-message';
-import { planRowActions } from './archive';
+import { menuLabel, seanceMenu } from './object-actions';
 import { fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
-import { NameSheet, ReorderRow } from './seances-ui';
+import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import {
-  ActionRow,
   Alert,
   Choice,
-  Confirm,
   EmptyState,
   FieldError,
   Icon,
@@ -135,6 +138,8 @@ export interface SeanceEditorProps extends SeanceActions {
   seanceName: string;
   /** Retour à la routine. */
   onBack: () => void;
+  /** Ce qu'un geste vient de faire (renommée, copiée), en tête ; null sinon. */
+  flash?: string | null;
 }
 
 let rowIdSeq = 0;
@@ -143,7 +148,7 @@ function freshRowId(): string {
   return `row-${rowIdSeq}`;
 }
 
-export function SeanceEditor({ seanceId, seanceName, onBack, ...actions }: SeanceEditorProps) {
+export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...actions }: SeanceEditorProps) {
   const [load, setLoad] = useState<Load>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
   // Dernière séance réellement chargée : on n'affiche le chargement que pour un
@@ -230,6 +235,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack, ...actions }: Seanc
       }}
       makeRowId={freshRowId}
       actions={actions}
+      flash={flash}
     />
   );
 }
@@ -292,9 +298,9 @@ export interface SeanceEditorViewProps {
   /** Fabrique de rowId (injectée pour rester déterministe en test). */
   makeRowId: () => string;
   actions: SeanceActions;
+  /** Ce qu'un geste vient de faire (renommée, copiée), en tête ; null sinon. */
+  flash?: string | null;
 }
-
-type Pending = null | 'archive' | 'delete';
 
 export function SeanceEditorView({
   seanceName,
@@ -307,6 +313,7 @@ export function SeanceEditorView({
   onCreatePersonal,
   makeRowId,
   actions,
+  flash = null,
 }: SeanceEditorViewProps) {
   const [rows, setRows] = useState<EditorRow[]>(initialRows);
   // Dernières lignes ENREGISTRÉES : la base de comparaison du drapeau « modifié ».
@@ -345,11 +352,7 @@ export function SeanceEditorView({
   const [reorder, setReorder] = useState(false);
   const [moved, setMoved] = useState<string | null>(null);
   const [noteFor, setNoteFor] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const [duplicating, setDuplicating] = useState(false);
-  const [pending, setPending] = useState<Pending>(null);
-  const [acting, setActing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
   // Après un ajout, l'exo neuf s'ouvre et vient en haut de l'écran. Saut sec,
@@ -382,8 +385,7 @@ export function SeanceEditorView({
       // attente derrière elles.
       setAdding(false);
       setNoteFor(null);
-      setRenaming(false);
-      setDuplicating(false);
+      setMenuOpen(false);
       setPendingLeave(() => proceed);
     });
     return () => setLeaveGuard(null);
@@ -539,17 +541,6 @@ export function SeanceEditorView({
     }
   }
 
-  async function act(action: () => Promise<void>) {
-    setActing(true);
-    setActionError(null);
-    try {
-      await action();
-    } catch (err) {
-      setActionError(errorMessage(err));
-      setActing(false);
-    }
-  }
-
   const empty = rows.length === 0;
   // Textes de la confirmation de sortie : quand seule une note est en jeu (cas
   // du retour différé après un enregistrement réussi), elle le dit.
@@ -568,7 +559,12 @@ export function SeanceEditorView({
     // « Séance enregistrée » rend sa place au bouton (cf. seance-dirty, `editingResumed`).
     setSave(editingResumed);
   };
-  const lifecycle = planRowActions({ executed: actions.executed, archived: false, isCurrent: false });
+  const menuItems = seanceMenu({
+    executed: actions.executed,
+    inCurrentRoutine: actions.isCurrentRoutine,
+    hasExercises: savedRows.length > 0,
+    unsavedEdits: unsaved,
+  });
   const noteRow = noteFor ? rows.find((r) => r.exerciseId === noteFor) : undefined;
 
   // Confirmation de sortie : une feuille, au-dessus de l'éditeur comme de la
@@ -685,33 +681,46 @@ export function SeanceEditorView({
         meta={empty ? undefined : plural(rows.length, 'exo')}
         back={{ label: actions.routineName, onClick: requestBack }}
         action={
-          rows.length > 1 ? (
-            reorder ? (
-              <SecondaryButton
-                size="sm"
-                onClick={() => {
-                  setReorder(false);
-                  setMoved(null);
-                }}
-              >
-                Terminé
-              </SecondaryButton>
-            ) : (
-              <SecondaryButton
-                size="sm"
-                ariaLabel="Réordonner les exos"
-                onClick={() => {
-                  setReorder(true);
-                  setMoved(null);
-                  setOpen(null);
-                }}
-              >
-                Réordonner
-              </SecondaryButton>
-            )
-          ) : undefined
+          reorder ? (
+            <SecondaryButton
+              size="sm"
+              onClick={() => {
+                setReorder(false);
+                setMoved(null);
+              }}
+            >
+              Terminé
+            </SecondaryButton>
+          ) : (
+            <>
+              {rows.length > 1 && (
+                <SecondaryButton
+                  size="sm"
+                  ariaLabel="Réordonner les exos"
+                  onClick={() => {
+                    setReorder(true);
+                    setMoved(null);
+                    setOpen(null);
+                  }}
+                >
+                  Réordonner
+                </SecondaryButton>
+              )}
+              <IconButton
+                icon="more"
+                framed
+                label={menuLabel(
+                  menuItems.map((i) => i.key),
+                  seanceName,
+                )}
+                onClick={() => setMenuOpen(true)}
+              />
+            </>
+          )
         }
       />
+
+      {flash && <StatusLine flash={{ text: flash }} />}
 
       {empty ? (
         <EmptyState
@@ -773,59 +782,6 @@ export function SeanceEditorView({
         </>
       )}
 
-      {!reorder && (
-        <section className="mt-6 pb-4">
-          <SectionTitle>Séance</SectionTitle>
-          {pending === 'archive' ? (
-            <Confirm
-              destructive={unsaved}
-              keepLabel="Garder et continuer"
-              confirmLabel={unsaved ? 'Archiver sans les modifications' : 'Archiver la séance'}
-              busy={acting}
-              error={actionError}
-              onCancel={() => setPending(null)}
-              onConfirm={() => void act(actions.onArchive)}
-            >
-              <p className="font-medium">Archiver {seanceName} ?</p>
-              <p className="mt-1 text-muted">
-                Elle ne se choisit plus en salle. Son historique reste dans l’analyse.
-                {actions.isCurrentRoutine && ' Le plan de la routine courante change : un nouveau bloc commence.'}
-                {unsaved && ' Tes modifications non enregistrées sont abandonnées.'} Tu pourras la désarchiver.
-              </p>
-            </Confirm>
-          ) : pending === 'delete' ? (
-            <Confirm
-              destructive
-              keepLabel="Garder la séance"
-              confirmLabel="Supprimer la séance"
-              busy={acting}
-              error={actionError}
-              onCancel={() => setPending(null)}
-              onConfirm={() => void act(actions.onDelete)}
-            >
-              <p className="font-medium">Supprimer {seanceName} ?</p>
-              <p className="mt-1 text-muted">Jamais faite, elle n’a aucun historique. C’est définitif.</p>
-            </Confirm>
-          ) : (
-            <ul aria-label="Actions de la séance" className="pt-1">
-              <ActionRow label="Renommer" onClick={() => setRenaming(true)} />
-              {savedRows.length > 0 && (
-                <ActionRow
-                  label="Dupliquer"
-                  meta={`Copie indépendante de la version enregistrée, dans ${actions.routineName}, sans historique.`}
-                  onClick={() => setDuplicating(true)}
-                />
-              )}
-              {lifecycle.canArchive ? (
-                <ActionRow label="Archiver" meta="Déjà faite : elle s’archive, son historique reste entier." onClick={() => setPending('archive')} />
-              ) : lifecycle.canDelete ? (
-                <ActionRow label="Supprimer" meta="Jamais faite : rien à garder, elle se supprime." onClick={() => setPending('delete')} />
-              ) : null}
-            </ul>
-          )}
-        </section>
-      )}
-
       <CatalogSheet
         open={adding}
         catalogue={catalog}
@@ -851,34 +807,28 @@ export function SeanceEditorView({
 
       {leaveSheet}
 
-      <NameSheet
-        open={renaming}
-        title="Renommer la séance"
-        label="Nom de la séance"
-        initial={seanceName}
-        submitLabel="Renommer"
-        requireChange
-        onClose={() => setRenaming(false)}
-        onSubmit={async (name) => {
-          await actions.onRename(name);
-          setRenaming(false);
-        }}
-      />
-      <NameSheet
-        open={duplicating}
-        title={`Copier ${seanceName}`}
-        label="Nom de la copie"
-        initial={actions.copyName}
-        intro={`Copie de la version enregistrée, dans ${actions.routineName}. Les deux séances seront indépendantes ; la copie part sans Référence ni courbe tant qu’elle n’a pas été faite.${
-          unsaved ? ' Tes modifications en cours n’y sont pas.' : ''
-        }`}
-        submitLabel="Créer la copie"
-        busyLabel="Création…"
-        onClose={() => setDuplicating(false)}
-        onSubmit={async (name) => {
-          await actions.onDuplicate(name);
-        }}
-      />
+      {menuOpen && (
+        <SeanceActionsSheet
+          seanceName={seanceName}
+          routineName={actions.routineName}
+          copyName={actions.copyName}
+          items={menuItems}
+          inCurrentRoutine={actions.isCurrentRoutine}
+          unsaved={unsaved}
+          onClose={() => setMenuOpen(false)}
+          onRename={async (name) => {
+            await actions.onRename(name);
+            setMenuOpen(false);
+          }}
+          // Ouvre la copie par la garde de sortie : une saisie en cours la fait
+          // demander d'abord, et la garde ferme cette feuille.
+          onDuplicate={actions.onDuplicate}
+          // Archiver ou supprimer démonte l'éditeur (retour à la routine) : la
+          // garde et le blocage de rechargement tombent avec lui.
+          onArchive={actions.onArchive}
+          onDelete={actions.onDelete}
+        />
+      )}
     </Screen>
   );
 }
