@@ -157,12 +157,19 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
   // NOUVEAU contexte. Un rafraîchissement de la MÊME séance garde le contenu monté.
   const loadedSeanceRef = useRef<string | null>(null);
   // Hors ligne, rien n'est lancé (on attendait 7 s pour une erreur) : la phrase
-  // le dit, et le retour du réseau relance la lecture.
+  // le dit, et le retour du réseau relance la lecture. Seulement elle : une
+  // lecture déjà faite (même séance, même essai) ne se refait pas parce que le
+  // wifi a clignoté.
   const online = useOnline();
+  const ranFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!online) return;
+    const run = `${seanceId}:${reloadKey}`;
+    if (ranFor.current === run) return;
+    ranFor.current = run;
     let active = true;
+    let settled = false;
     if (loadedSeanceRef.current !== seanceId) setLoad({ phase: 'loading' });
 
     void (async () => {
@@ -187,15 +194,20 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
         if (!active) return;
         const notes = Object.fromEntries(noteEntries);
         loadedSeanceRef.current = seanceId;
+        settled = true;
         setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
+        settled = true;
         setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
     return () => {
       active = false;
+      // Lecture abandonnée en route (démontage, double montage du mode strict) :
+      // la suivante doit pouvoir repartir.
+      if (!settled) ranFor.current = null;
     };
   }, [seanceId, reloadKey, online]);
 

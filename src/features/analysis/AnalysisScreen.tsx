@@ -218,6 +218,20 @@ export function AnalysisScreen() {
       }
       if (journal.state.phase !== 'ready') return <Missing title="Séance" onBack={back} loading={journal.state.phase === 'loading'} />;
       const entry = journal.state.value.find((e) => e.executionId === view.id);
+      // Journal lu dans sa copie : une séance plus récente qu'elle arrive avec
+      // la relecture (en ligne), ou n'y est pas encore (hors ligne). Ni l'un ni
+      // l'autre n'est une séance supprimée.
+      if (!entry && journal.state.copy && journal.online) return <Missing title="Séance" onBack={back} loading />;
+      if (!entry && journal.state.copy) {
+        return (
+          <Page>
+            <ScreenHeader title="Séance" back={{ label: 'Retour', onClick: back }} />
+            <p role="status" className="px-5 py-6 text-[15px] leading-[1.45] text-muted">
+              Elle est plus récente que la copie du journal gardée sur cet appareil. Elle s’affichera avec le réseau.
+            </p>
+          </Page>
+        );
+      }
       if (!entry) return <Missing title="Séance introuvable" body="Elle n’est plus au journal : supprimée, ou toutes ses séries retirées." onBack={back} />;
       return (
         <Page>
