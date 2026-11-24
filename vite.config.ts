@@ -130,5 +130,9 @@ export default defineConfig({
     // sans cette exclusion, vitest globbe leurs *.test.ts et teste du code périmé /
     // double-compte. On garde les exclusions par défaut + .claude.
     exclude: [...configDefaults.exclude, '**/.claude/**'],
+    // Un `navigator.locks` par fil : celui de Node est partagé entre les threads
+    // du processus, et `--pool=threads` faisait se bloquer deux fichiers de test
+    // sur le même verrou de flush (cf. src/test/thread-locks.ts).
+    setupFiles: ['./src/test/thread-locks.ts'],
   },
 })
