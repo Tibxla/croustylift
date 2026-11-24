@@ -62,7 +62,6 @@ import {
   fateOf,
   fromLegacy,
   heldBy,
-  isSetWrite as isSetWriteOp,
   parseRecord,
   prune,
   refuse,
@@ -419,6 +418,13 @@ function activeVolatile(): { log: Transition[]; outdated: boolean } | null {
   return volatile.storage === localStorage ? volatile : null;
 }
 
+// Le plus grand numéro que cette page a vu au registre. Une estampille relevée
+// ici (lecture en vol, état de la séance, copie de lecture) vaut au plus ce
+// numéro : tout numéro pris ensuite doit lui être supérieur, même après une
+// purge forcée, une Déconnexion ou un enregistrement illisible mis de côté.
+// D'une page à l'autre, c'est l'horloge qui borne (cf. `Draft.next`).
+let highestSeq = 0;
+
 /** Met le blob fautif de côté et prévient. */
 function setAside(raw: string, key: string, reason: string): void {
   try {
@@ -481,8 +487,12 @@ function open(): { draft: Draft; outdated: boolean; legacy: number } {
   const { record, outdated } = readPersisted();
   const gap = activeVolatile();
   if (gap) replay(record, gap.log);
+  // Le compteur ne recule jamais sous les yeux de cette page, même si
+  // l'enregistrement a été purgé ou mis de côté entre-temps (cf. `highestSeq`).
+  record.seq = Math.max(record.seq, highestSeq);
   const draft = new Draft(record, Date.now);
   for (const entry of readLegacy()) admitLegacy(draft, entry);
+  highestSeq = Math.max(highestSeq, record.seq);
   return { draft, outdated, legacy: draft.log.length };
 }
 
@@ -559,6 +569,7 @@ function commit(draft: Draft, outdated: boolean): boolean {
 function transact<T>(change: (draft: Draft) => T, force = false): T {
   const { draft, outdated, legacy } = open();
   const result = change(draft);
+  highestSeq = Math.max(highestSeq, draft.record.seq);
   if (draft.log.length > legacy || force) commit(draft, outdated);
   return result;
 }
@@ -664,16 +675,6 @@ export function readOwnQueue(): OutboxOp[] {
 /** Nombre d'écritures en attente d'envoi (pilote l'indicateur de synchro). */
 export function pendingCount(): number {
   return readQueue().length;
-}
-
-/** L'op INSÈRE-t-elle une série (upsert complet), par opposition à une écriture partielle ? */
-export function isSetInsertion(op: OutboxOp): op is InsertSetOp & Sequenced {
-  return op.type === 'insertSet';
-}
-
-/** L'op écrit-elle une série, entière (`insertSet`) ou en partie (`patchSet`) ? */
-export function isSetWrite(op: OutboxOp): op is (InsertSetOp | PatchSetOp) & Sequenced {
-  return isSetWriteOp(op);
 }
 
 /**
@@ -922,14 +923,9 @@ export function enqueueAll(ops: readonly OutboxOp[]): string[] {
   });
 }
 
-/** Enfile une écriture (cf. `enqueueAll`) et rend son identité. */
-export function enqueueTracked(op: OutboxOp): string {
-  return enqueueAll([op])[0]!;
-}
-
-/** Enfile une écriture (cf. `enqueueAll`) et rend le nombre d'écritures en attente. */
+/** Enfile UNE écriture (cf. `enqueueAll`) et rend le nombre d'écritures en attente. */
 export function enqueue(op: OutboxOp): number {
-  enqueueTracked(op);
+  enqueueAll([op]);
   return pendingCount();
 }
 
