@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, retryRefused, type RefusedWrite } from '../features/capture/outbox';
 import { listExercisesForCapture } from '../features/capture/data';
+import { forgetAbandonedSets } from '../features/capture/state';
 import { flushOutbox } from '../features/capture/sync';
 import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
 import { abandonWarning, describeRefusal, fmtWhen, GESTURE_TEXT } from './refused-writes';
@@ -91,6 +92,8 @@ function RefusedList() {
     // saisies que le début d'une séance retenait, la correction d'une série.
     const done = await abandonRefused(entry.refusalId);
     if (done !== 'done') setOutcome({ id: entry.refusalId, text: GESTURE_TEXT[done] });
+    // Une série abandonnée quitte aussi le tableau de la Salle, tout de suite.
+    else forgetAbandonedSets([entry.op, ...entry.dependents]);
     setBusy(null);
     setConfirming(null);
     refresh();

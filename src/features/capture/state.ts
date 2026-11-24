@@ -197,6 +197,11 @@ export type CaptureAction =
       /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
       datedNotes?: Record<string, DatedNoteDraft>;
     }
+  // Des séries viennent d'être ABANDONNÉES dans la feuille des saisies refusées
+  // (`forgetAbandonedSets`) : la base ne les a jamais eues et ne les aura pas,
+  // elles quittent le tableau tout de suite, comme le ferait sa prochaine
+  // réponse. Les autres séries gardent leur rang.
+  | { type: 'forget-sets'; setIds: readonly string[] }
   // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
   | { type: 'edit-layout'; edit: LayoutEdit }
   // Réancre le chrono (ADR 0011) : pose `startedAt` (epoch ms fourni par le
@@ -871,6 +876,11 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'forget-sets': {
+      const progress = withoutSets(state.progress, action.setIds);
+      return progress === state.progress ? state : { ...state, progress };
+    }
+
     case 'edit-layout': {
       const { edit } = action;
       const started = edit.replaces && state.progress[edit.replaces]?.sets.length;
@@ -1086,6 +1096,71 @@ export function retryPersistCaptureState(): boolean {
   }, exerciseIds);
   if (written) forgetUnsaved();
   return written;
+}
+
+/** Le réalisé sans les séries `setIds` ; le même objet si aucune n'y figure. */
+function withoutSets<P extends { sets: unknown[]; setIds: readonly (string | null)[] }>(
+  progress: Record<string, P>,
+  setIds: readonly string[],
+): Record<string, P> {
+  const gone = new Set(setIds);
+  let next: Record<string, P> | null = null;
+  for (const [exerciseId, entry] of Object.entries(progress)) {
+    if (!Array.isArray(entry?.setIds) || !Array.isArray(entry.sets)) continue;
+    const stays = entry.setIds.map((id) => id === null || !gone.has(id));
+    if (stays.every(Boolean)) continue;
+    next ??= { ...progress };
+    next[exerciseId] = {
+      ...entry,
+      sets: entry.sets.filter((_, i) => stays[i] ?? true),
+      setIds: entry.setIds.filter((_, i) => stays[i]),
+    };
+  }
+  return next ?? progress;
+}
+
+/** Événement `window` : des séries abandonnées quittent le tableau monté (`detail` : leurs ids). */
+export const SETS_ABANDONED_EVENT = 'croustylift:sets-abandoned';
+
+/**
+ * Des écritures viennent d'être ABANDONNÉES dans la feuille des saisies
+ * refusées (`abandonRefused`, outbox.ts) : les séries dont l'insertion en fait
+ * partie n'existeront jamais en base. Le registre ne les porte plus ; l'état de
+ * capture, lui, les avait prises au moment du geste, et les gardait jusqu'à la
+ * prochaine réponse de la base : hors ligne, elles restaient au tableau. Elles
+ * sont retirées ici de tout état gardé par l'appareil (une écriture qui ne
+ * grandit pas : elle passe même stockage plein) et le tableau monté est
+ * prévenu (`SETS_ABANDONED_EVENT`, action `forget-sets`).
+ */
+export function forgetAbandonedSets(ops: readonly OutboxOp[]): void {
+  const setIds = ops.filter((op) => op.type === 'insertSet').map((op) => op.id);
+  if (setIds.length === 0) return;
+  const scrub = (raw: string): string | null => {
+    try {
+      const parsed = JSON.parse(raw) as { progress?: Record<string, ExerciseProgress> } | null;
+      if (!parsed || typeof parsed.progress !== 'object' || parsed.progress === null) return null;
+      const progress = withoutSets(parsed.progress, setIds);
+      return progress === parsed.progress ? null : JSON.stringify({ ...parsed, progress });
+    } catch {
+      return null; // Illisible : rien à y retirer.
+    }
+  };
+  if (unsaved !== null) unsaved = { ...unsaved, value: scrub(unsaved.value) ?? unsaved.value };
+  if (typeof localStorage !== 'undefined') {
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+        const next = scrub(localStorage.getItem(key) ?? '');
+        if (next !== null) localStorage.setItem(key, next);
+      }
+    } catch {
+      /* no-op : le tableau monté, lui, est prévenu juste après */
+    }
+  }
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(SETS_ABANDONED_EVENT, { detail: setIds }));
+  }
 }
 
 /**

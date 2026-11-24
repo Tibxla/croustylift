@@ -1,7 +1,7 @@
 // Tests unitaires du reducer de capture et de ses helpers (getProgress, hydratedState…).
 //
 // Pas de localStorage, pas de React : logique pure uniquement.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   captureReducer,
   getProgress,
@@ -20,6 +20,8 @@ import {
   reconcileDatedNotes,
   clearCaptureState,
   clearOwnCaptureState,
+  forgetAbandonedSets,
+  SETS_ABANDONED_EVENT,
   hydratedState,
   mergeProgress,
   loadPersisted,
@@ -1434,5 +1436,59 @@ describe('isPristine (état abandonnable sans rien perdre)', () => {
     let state = captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' });
     state = captureReducer(state, { type: 'back-to-picker' });
     expect(isPristine(state)).toBe(true);
+  });
+});
+
+describe('série abandonnée dans la feuille des saisies refusées (troisième tour, constat H)', () => {
+  const DATE = '2026-06-18';
+  const insertion = (id: string) =>
+    ({ type: 'insertSet', id, executionId: 'e', exerciseId: 'bench-press', setOrder: 1, weightKg: 80, reps: 8, rir: 2 }) as const;
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function threeSets(): CaptureState {
+    let state = mkState();
+    for (const setId of ['s1', 's2', 's3']) {
+      state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId, set: set1 });
+    }
+    return state;
+  }
+
+  it('le tableau monté la perd tout de suite, sans réponse de la base : les autres gardent leur rang', () => {
+    const state = captureReducer(threeSets(), { type: 'forget-sets', setIds: ['s2'] });
+
+    const progress = getProgress(state, 'bench-press');
+    expect(progress.setIds).toEqual(['s1', 's3']);
+    // Comme après une réponse de la base : rien n'est renuméroté ici.
+    expect(progress.sets.map((s) => s.order)).toEqual([1, 3]);
+  });
+
+  it('une série inconnue du tableau ne change rien', () => {
+    const state = threeSets();
+    expect(captureReducer(state, { type: 'forget-sets', setIds: ['ailleurs'] })).toBe(state);
+  });
+
+  it('l’état gardé par l’appareil la perd aussi : hors ligne, elle ne revient pas au remontage', () => {
+    persist(threeSets());
+
+    forgetAbandonedSets([insertion('s2'), { type: 'deleteSet', id: 's1' }]);
+
+    expect(getProgress(loadPersisted(upperA, DATE)!, 'bench-press').setIds).toEqual(['s1', 's3']);
+  });
+
+  it('prévient le tableau monté, avec les séries à retirer', () => {
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    const heard: unknown[] = [];
+    target.addEventListener(SETS_ABANDONED_EVENT, (event) => heard.push((event as CustomEvent).detail));
+
+    forgetAbandonedSets([insertion('s2')]);
+    forgetAbandonedSets([{ type: 'deleteSet', id: 's1' }]);
+
+    expect(heard).toEqual([['s2']]);
   });
 });
