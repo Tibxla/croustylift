@@ -1693,11 +1693,13 @@ function isMissingFunction(error: unknown): boolean {
  * étrangère), ce que la file montre comme une saisie refusée, jamais perdue en
  * silence.
  *
- * REPLI tant que la fonction n'est pas en base : la même vérification en trois
- * lectures, puis un delete borné aux exécutions ouvertes. Il penche vers
- * « on garde » (au moindre doute l'exécution reste), mais n'est pas atomique :
- * une série insérée entre la dernière lecture et le delete part en cascade.
- * La fenêtre est d'un aller-retour ; seule la migration la ferme.
+ * Tant que la fonction n'est pas en base, RIEN n'est supprimé : l'exécution
+ * reste (`kept`). Un repli en plusieurs lectures puis un delete ne serait pas
+ * atomique : une série acquittée par un autre appareil entre la dernière lecture
+ * et le delete partirait en cascade (relecture Codex du 24/11). Une exécution
+ * vide qui reste ouverte n'est qu'un désagrément (la prochaine ouverture
+ * l'adopte) ; une série effacée est une perte. La migration 0025 doit donc
+ * passer avant le client qui l'appelle (supabase/tests/ORDRE.md).
  */
 export async function deleteExecutionIfEmpty(id: string): Promise<ConditionalDeletion> {
   const rpc = supabase.rpc.bind(supabase) as unknown as (
@@ -1707,18 +1709,5 @@ export async function deleteExecutionIfEmpty(id: string): Promise<ConditionalDel
   const { data, error } = await rpc('delete_execution_if_empty', { p_execution_id: id });
   if (!error) return data === 'deleted' || data === 'absent' ? data : 'kept';
   if (!isMissingFunction(error)) throw error;
-
-  const execution = await supabase.from('executions').select('id, closed_at').eq('id', id).maybeSingle();
-  if (execution.error) throw execution.error;
-  if (!execution.data) return 'absent';
-  if (execution.data.closed_at !== null) return 'kept';
-  const sets = await supabase.from('performed_sets').select('id').eq('execution_id', id).limit(1);
-  if (sets.error) throw sets.error;
-  if ((sets.data?.length ?? 0) > 0) return 'kept';
-  const notes = await supabase.from('dated_notes').select('id').eq('execution_id', id).limit(1);
-  if (notes.error) throw notes.error;
-  if ((notes.data?.length ?? 0) > 0) return 'kept';
-  const removed = await supabase.from('executions').delete().eq('id', id).is('closed_at', null).select('id');
-  if (removed.error) throw removed.error;
-  return (removed.data?.length ?? 0) > 0 ? 'deleted' : 'absent';
+  return 'kept';
 }

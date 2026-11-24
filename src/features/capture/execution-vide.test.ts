@@ -85,48 +85,21 @@ describe('deleteExecutionIfEmpty, fonction en base', () => {
   });
 });
 
-describe('deleteExecutionIfEmpty, fonction pas encore en base : repli', () => {
+describe("deleteExecutionIfEmpty, fonction pas encore en base : rien n'est supprimé", () => {
   beforeEach(() => {
     server.rpcDeployed = false;
   });
 
-  it('exécution ouverte et vide : supprimée', async () => {
-    expect(await deleteExecutionIfEmpty('exec-1')).toBe('deleted');
-    expect(server.executions).toEqual([]);
-  });
-
-  it('une série en base : gardée, aucun delete envoyé', async () => {
-    server.sets = [{ id: 's1', execution_id: 'exec-1' }];
+  it('exécution ouverte et vide : gardée, aucun delete envoyé (un delete non atomique pourrait emporter une série acquittée ailleurs)', async () => {
     expect(await deleteExecutionIfEmpty('exec-1')).toBe('kept');
     expect(server.executions).toHaveLength(1);
     expect(server.log.some((line) => line.startsWith('delete:'))).toBe(false);
   });
 
-  it('une note datée en base : gardée', async () => {
-    server.notes = [{ id: 'n1', execution_id: 'exec-1' }];
+  it('une série acquittée par un autre appareil au même moment : elle reste, son exécution aussi', async () => {
+    server.sets = [{ id: 's1', execution_id: 'exec-1' }];
     expect(await deleteExecutionIfEmpty('exec-1')).toBe('kept');
     expect(server.executions).toHaveLength(1);
-  });
-
-  it('exécution close : gardée', async () => {
-    server.executions = [{ id: 'exec-1', closed_at: '2026-11-25T10:00:00Z' }];
-    expect(await deleteExecutionIfEmpty('exec-1')).toBe('kept');
-    expect(server.executions).toHaveLength(1);
-  });
-
-  it('exécution absente : sans effet (idempotent)', async () => {
-    server.executions = [];
-    expect(await deleteExecutionIfEmpty('exec-1')).toBe('absent');
-  });
-
-  it('close entre la lecture et le delete : le delete, borné aux ouvertes, ne la touche pas', async () => {
-    const real = server.log.push.bind(server.log);
-    server.log.push = (line: string) => {
-      // Juste avant le delete : un autre appareil range la séance.
-      if (line === 'select:dated_notes') server.executions[0]!.closed_at = '2026-11-25T10:00:00Z';
-      return real(line);
-    };
-    expect(await deleteExecutionIfEmpty('exec-1')).toBe('absent');
-    expect(server.executions).toHaveLength(1);
+    expect(server.sets).toHaveLength(1);
   });
 });
