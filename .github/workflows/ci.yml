@@ -1,7 +1,8 @@
-# CI : garde le code vert sur chaque push / PR. Le projet est déployé sur Vercel,
-# qui exécute `tsc -b && vite build` au déploiement (un typecheck cassé bloque le
-# déploiement) mais NE LANCE PAS les tests, d'où ce workflow : lint + tests +
-# build (qui inclut le typecheck) + budget de taille du bundle.
+# CI : garde le code vert sur chaque push / PR (lint + tests + build, qui inclut
+# le typecheck, + budget de taille du bundle). Sur `main`, le déploiement en
+# production part d'ici, APRÈS ce contrôle : le déploiement automatique de Vercel
+# est coupé pour `main` (`git.deploymentEnabled` dans vercel.json), une CI rouge
+# ne déploie donc rien.
 name: CI
 
 on:
@@ -38,3 +39,51 @@ jobs:
       - run: npm run build
       # Budget gzip par chunk (scripts/bundle-size.mjs).
       - run: npm run size
+
+  deploy:
+    # Production seulement depuis main, et seulement si `check` est vert. Sur une
+    # PR du dépôt, le même job tourne À BLANC (compilation et garde, sans déployer)
+    # pour valider la chaîne avant qu'elle ne touche la prod.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    needs: check
+    runs-on: ubuntu-latest
+    # Deux pushes rapprochés : le second attend, aucun déploiement en parallèle.
+    concurrency:
+      group: deploiement-production
+      cancel-in-progress: false
+    # Jeton Vercel limité au projet croustylift (un an, créé le 2026-11-24) ;
+    # la vraie config Supabase (variables publiques) est tirée de Vercel.
+    # Les deux valeurs Supabase sont PUBLIQUES (URL et clé publishable, embarquées
+    # dans le bundle) : variables GitHub, pas secrets. `vercel pull` ne les rend
+    # pas (le 24/11, une compilation sans elles a cassé la prod 5 minutes).
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx --yes vercel@66.6.0 pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - run: npx --yes vercel@66.6.0 build --prod --token="$VERCEL_TOKEN"
+      # Garde : la compilation doit embarquer la vraie adresse Supabase, sinon
+      # l'app plante au démarrage. Rien n'est déployé si elle manque.
+      - name: Garde de configuration
+        run: |
+          test -n "$VITE_SUPABASE_URL"
+          grep -rqF "$VITE_SUPABASE_URL" .vercel/output/static/assets/ || { echo "Adresse Supabase absente de la compilation"; exit 1; }
+          ! grep -rqF "dummy.supabase.co" .vercel/output/static/assets/
+      - if: github.event_name == 'push'
+        run: npx --yes vercel@66.6.0 deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+      # Contrôle après coup : la prod sert un bundle qui porte la vraie adresse.
+      - if: github.event_name == 'push'
+        name: Contrôle de la prod
+        run: |
+          sleep 10
+          bundle=$(curl -fsS https://croustylift.vercel.app/ | grep -oE '/assets/index-[^"]+\.js' | head -1)
+          curl -fsS "https://croustylift.vercel.app$bundle" | grep -qF "$VITE_SUPABASE_URL"
