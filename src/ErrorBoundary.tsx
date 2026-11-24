@@ -58,8 +58,11 @@ function RecoveryScreen({ error }: { error: Error }) {
   const goTo = useContext(SurfaceNavigationContext)
   const [refusal, setRefusal] = useState<Exclude<ManualReloadVerdict, 'reload'> | null>(null)
   const missingChunk = isChunkLoadError(error)
+  // Dans le shell, l'écran prend la place d'une surface (le shell porte déjà le
+  // <main>) ; hors du shell, il est la page entière.
+  const Frame = goTo ? 'div' : 'main'
   return (
-    <main className="min-h-screen bg-bg px-5 pt-6 text-ink">
+    <Frame className={goTo ? 'px-5 pt-6 text-ink' : 'min-h-screen bg-bg px-5 pt-6 text-ink'}>
       <p className="max-w-[40ch] text-[16px] leading-[1.45] text-ink">
         {missingChunk
           ? "Cet écran n'a pas pu se charger : l'app a été mise à jour, ou le réseau manque."
@@ -86,6 +89,6 @@ function RecoveryScreen({ error }: { error: Error }) {
           <SecondaryButton onClick={() => goTo('capture')}>Retour à la Salle</SecondaryButton>
         )}
       </div>
-    </main>
+    </Frame>
   )
 }
