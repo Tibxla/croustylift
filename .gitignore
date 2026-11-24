@@ -29,3 +29,6 @@ Thumbs.db
 .playwright-cli/
 .vercel
 supabase/.temp/
+
+# Notes de travail locales (passations), jamais versionnées
+tmp/
