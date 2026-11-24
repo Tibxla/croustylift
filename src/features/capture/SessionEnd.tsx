@@ -117,7 +117,7 @@ export function SessionEnd({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
+    <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-4 pt-3">
       {/* Retour à la capture */}
       <button
         type="button"
@@ -181,10 +181,9 @@ export function SessionEnd({
         </p>
       )}
 
-      {/* Actions fixes en bas (zone du pouce). Primaire = accent violet. Collée à
-          la nav : `pb-3`, sans `env(safe-area)` redondant (la nav réserve déjà la
-          safe-area en dessous). */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-3 pt-3 backdrop-blur-sm">
+      {/* Actions collées en bas (zone du pouce) : `sticky`, fond plein, encoche
+          basse comprise, au bas de l'écran même quand le récap est court. */}
+      <div className="sticky bottom-0 z-10 -mx-4 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
         <div className="mx-auto flex w-full max-w-md flex-col gap-2">
           <button
             type="button"

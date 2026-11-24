@@ -1289,7 +1289,7 @@ function CaptureBoard({
 
   if (phase === 'finishing') {
     return (
-      <div className="min-h-surface">
+      <div className="flex min-h-surface flex-col">
         <SyncBanner status={status} pending={pending} />
         <SessionEnd
           summary={summary}
@@ -1309,7 +1309,7 @@ function CaptureBoard({
   // retombe directement sur le picker / la capture vierge ci-dessous.
 
   return (
-    <div className="min-h-surface">
+    <div className="flex min-h-surface flex-col">
       <SyncBanner status={status} pending={pending} />
       {activeExercise ? (
         <CapturePanel
@@ -1545,9 +1545,10 @@ function CapturePanel({
         {announce}
       </p>
 
-      {/* Barre d'action primaire fixe — pouce, accent violet, 1 tap. Fond en dégradé
-          transparent→bg : le bouton « flotte » au-dessus du contenu qui défile. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 bg-[linear-gradient(180deg,transparent,var(--color-bg)_30%)] px-4 pb-3 pt-6">
+      {/* Barre d'action primaire collée en bas (zone du pouce, 1 tap) : `sticky`,
+          fond plein, encoche basse comprise. Jamais `position: fixed` : une barre
+          fixe se décroche sur iPhone quand WebKit se trompe de fenêtre. */}
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
         <div className="mx-auto w-full max-w-md">
           <button
             type="button"
@@ -1580,13 +1581,13 @@ function CapturePanel({
  * Barre d'action fixe du bas du sélecteur : UNIQUEMENT « Terminer la séance », dès
  * qu'au moins une série est loggée (`canFinish`). L'annulation a quitté cette barre
  * pour l'en-tête du sélecteur (« Annuler la séance », toujours visible, même séance
- * vide). Collée à la nav (`pb-3`, sans `env(safe-area)` redondant). Cachée tant
- * qu'aucune série n'est loggée (rien à terminer).
+ * vide). Collée en bas en `sticky`, encoche basse comprise. Cachée tant qu'aucune
+ * série n'est loggée (rien à terminer).
  */
 function FinishBar({ canFinish, onFinish }: { canFinish: boolean; onFinish: () => void }) {
   if (!canFinish) return null;
   return (
-    <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-10 border-t border-hair bg-bg/95 px-4 pb-3 pt-3 backdrop-blur-sm">
+    <div className="sticky bottom-0 z-10 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
       <div className="mx-auto w-full max-w-md">
         <button
           type="button"

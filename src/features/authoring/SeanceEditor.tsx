@@ -415,7 +415,7 @@ export function SeanceEditorView({
   }
 
   return (
-    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-40 pt-3">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pt-3">
       <BackButton label="Retour aux séances" onClick={requestBack} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
@@ -461,11 +461,10 @@ export function SeanceEditorView({
         </>
       )}
 
-      {/* Barre d'enregistrement fixée en bas (One Voice : seul accent fort de l'écran).
-          Ancrée sur `--nav-offset` (hauteur nav + safe-area), PAS `bottom-14` (=
-          hauteur nav SANS la safe-area) : sinon, sur appareil à encoche, le bas de
-          la barre passe sous la nav. */}
-      <div className="fixed inset-x-0 bottom-[var(--nav-offset)] z-20 border-t border-hair bg-bg/95 px-4 py-3 backdrop-blur-sm">
+      {/* Barre d'enregistrement collée en bas : `sticky`, fond plein, encoche basse
+          comprise. Elle porte aussi la confirmation de sortie (garde de sortie),
+          toujours visible quand on touche la navigation en haut. */}
+      <div className="sticky bottom-0 z-20 -mx-4 mt-auto bg-bg px-4 pt-3 pb-[calc(0.75rem+var(--safe-bottom))]">
         <div className="mx-auto w-full max-w-md">
           {/* UNE seule ligne pour ne pas voler la hauteur : « Ajouter » compact
               (pointillé, comme Capture) à gauche + « Enregistrer » qui prend le

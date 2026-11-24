@@ -328,7 +328,7 @@ export function ExerciseCapture({
   }, [reachedMax]);
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-32 pt-3">
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-4 pt-3">
       {/* Top bar : retour (carré) · repère « EXO N / M » · spacer symétrique. */}
       <div className="flex items-center justify-between">
         <button

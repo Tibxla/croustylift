@@ -150,7 +150,7 @@ export function ExercisePicker({
   const [catalog, setCatalog] = useState<CatalogTarget | null>(null);
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-28 pt-5">
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-4 pt-5">
       <header className="mb-5">
         <div className="flex items-start justify-between gap-3">
           <h2 className="min-w-0 text-[27px] font-semibold tracking-[-0.025em] text-ink">

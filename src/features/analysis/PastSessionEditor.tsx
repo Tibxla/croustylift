@@ -431,8 +431,8 @@ export function PastSessionEditor({
       </div>
 
       {/* Barre d'action fixe : enregistrer les corrections. L'éditeur couvre la
-          tab bar (modal z-30) donc on s'ancre tout en bas, pas sur --nav-offset,
-          en réservant la safe-area iOS comme les barres de la capture. */}
+          surface (modal z-30) donc on s'ancre tout en bas, en réservant la
+          safe-area iOS. */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-hair bg-bg pb-[var(--safe-bottom)]">
         <div className="mx-auto w-full max-w-md px-4 py-3">
           {save.phase === 'error' && (
