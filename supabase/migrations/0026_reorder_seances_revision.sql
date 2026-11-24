@@ -21,13 +21,31 @@
 --   - 22023 : nouvel ordre qui n'est pas une permutation de l'attendu (doublon,
 --     id nul ou en trop), ou aucune séance visible dans la routine (routine
 --     d'un autre compte : la RLS les cache).
+-- VERROU DE ROUTINE, commun au réordonnancement et à l'ajout : la ligne de la
+-- routine, `for no key update` (il n'empêche ni les clés étrangères qui la
+-- visent, ni les lectures). Les séances existantes, verrouillées seules, ne
+-- couvraient pas un ajout : validé entre le contrôle et l'écriture, il
+-- échappait au PT409, et sa position, calculée par le client (max + 1 d'une
+-- copie), pouvait tomber au milieu des rangs 0..n-1 posés ensuite.
+-- `seances_en_fin` (BEFORE INSERT, et BEFORE UPDATE au désarchivage) prend le
+-- même verrou, PUIS calcule la position : la séance ajoutée ou désarchivée va
+-- toujours en fin (max + 1 de la routine, 0 si vide), quelle que soit la
+-- position envoyée. Un ajout concurrent d'un réordonnancement attend donc sa
+-- fin et se place après lui ; un réordonnancement parti d'un ordre qui
+-- n'avait pas l'ajout est refusé (PT409). L'import (0024,
+-- `croustylift.import`) garde les positions du fichier.
+-- Ordre des verrous, sans cycle : routine, puis séances actives. Le
+-- désarchivage tient sa ligne (archivée) avant la routine, mais le
+-- réordonnancement ne verrouille que les séances actives.
+--
 -- Deux séances à la même position (données anciennes) s'acceptent dans les
 -- deux ordres : on vérifie que les positions ne DÉCROISSENT pas le long de
 -- l'ordre attendu, pas un ordre strict que le client ne peut pas connaître.
 -- Les positions posées sont 0..n-1, comme `reorder_seances`.
 --
 -- SECURITY INVOKER : la RLS de l'appelant s'applique. `reorder_seances` reste
--- en place : un client pas encore rechargé l'appelle toujours.
+-- en place : un client pas encore rechargé l'appelle toujours (sans contrôle
+-- de révision, comme aujourd'hui ; ses ajouts passent par le trigger).
 --
 -- Appel côté client : `supabase.rpc('reorder_seances_revision', { p_routine_id,
 -- p_expected_ids, p_seance_ids })` (`reorderSeances`,
@@ -41,9 +59,15 @@
 --
 --   select p.oid::regprocedure from pg_proc p
 --   where p.pronamespace = 'public'::regnamespace
---     and p.proname in ('reorder_seances', 'reorder_seances_revision');
+--     and p.proname in ('reorder_seances', 'reorder_seances_revision', 'seances_en_fin');
 --
--- RISQUE : nul tant que le client ne l'appelle pas. À appliquer AVANT de
+-- et aucun trigger `seances_en_fin` sur public.seances :
+--
+--   select tgname from pg_trigger where tgrelid = 'public.seances'::regclass and tgname = 'seances_en_fin';
+--
+-- RISQUE : faible. Le trigger change la position d'un AJOUT (toujours en fin,
+-- ce que le client demandait déjà) et d'un désarchivage (idem) ; la fonction
+-- n'agit que si le client l'appelle. À appliquer AVANT de
 -- déployer le client qui l'appelle (sans elle, ce client réordonne sans
 -- contrôle de révision, comme aujourd'hui).
 
@@ -81,8 +105,10 @@ begin
       using errcode = '22023';
   end if;
 
-  -- 2. Verrou : attend un réordonnancement en cours, bloque les suivants.
-  perform 1 from public.seances s where s.routine_id = p_routine_id for update;
+  -- 2. Verrous : la routine (commun avec l'ajout, cf. `seances_en_fin`), puis
+  --    ses séances actives. Attend un réordonnancement ou un ajout en cours.
+  perform 1 from public.routines r where r.id = p_routine_id for no key update;
+  perform 1 from public.seances s where s.routine_id = p_routine_id and s.archived_at is null for update;
   if not found then
     raise exception 'reorder_seances_revision : aucune séance de cette routine.'
       using errcode = '22023';
@@ -121,6 +147,36 @@ begin
   end if;
 end;
 $$;
+
+-- Ajout ou désarchivage d'une séance : en fin de routine, sous le verrou de la
+-- routine (cf. en-tête). Hors import : l'import garde les positions du fichier.
+create or replace function public.seances_en_fin()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if coalesce(current_setting('croustylift.import', true), '') = 'on' then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and not (old.archived_at is not null and new.archived_at is null) then
+    return new;
+  end if;
+  perform 1 from public.routines r where r.id = new.routine_id for no key update;
+  select coalesce(max(s.position) + 1, 0) into new.position
+    from public.seances s
+    where s.routine_id = new.routine_id and s.id <> new.id and s.archived_at is null;
+  return new;
+end;
+$$;
+
+revoke execute on function public.seances_en_fin() from public, anon;
+
+drop trigger if exists seances_en_fin on public.seances;
+create trigger seances_en_fin
+  before insert or update of archived_at on public.seances
+  for each row execute function public.seances_en_fin();
 
 revoke execute on function public.reorder_seances_revision(uuid, uuid[], uuid[]) from public, anon;
 grant execute on function public.reorder_seances_revision(uuid, uuid[], uuid[]) to authenticated, service_role;

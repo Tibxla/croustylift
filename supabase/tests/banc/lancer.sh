@@ -285,4 +285,47 @@ r=$(reordonne "$A" "'$PULL','$PUSH','$LEGS'" "'$PUSH','$PULL','$LEGS'")
 wait
 if echo "$r" | grep -q "l'ordre a changé" && [ "$(ordre)" = "Legs,Pull,Push" ]; then echo "OK    deux appareils en même temps : le second attend, puis est refusé"
 else echo "ECHEC course de réordonnancement : $r (ordre : $(ordre))"; exit 1; fi
+echo "== ajout de séance pendant un réordonnancement (0026)"
+commeA() { # commeA <instruction SQL> : une requête de l'API pour le compte A
+  docker exec -i "$NOM" psql -U postgres -q -A -t -v ON_ERROR_STOP=1 \
+    -c "set role authenticated" -c "set request.jwt.claim.sub = '$A'" -c "$1" 2>&1 || true
+}
+position() { docker exec -i "$NOM" psql -U postgres -A -t -c "select position from public.seances where id = '$1'"; }
+AJ1=a0000000-0000-0000-0000-0000000000b4
+AJ2=a0000000-0000-0000-0000-0000000000b5
+# Trois séances à la même position (données anciennes) : la copie du client
+# en déduit max + 1 = 1 pour un ajout.
+sql /dev/stdin <<SQL
+update public.seances set position = 0 where routine_id = '$R';
+SQL
+# Session 1 : réordonne (ordre affiché aux positions égales) et tient 3 s.
+sql /dev/stdin >/dev/null <<SQL &
+set role authenticated;
+set request.jwt.claim.sub = '$A';
+begin;
+select public.reorder_seances_revision('$R', array['$PUSH','$PULL','$LEGS']::uuid[], array['$LEGS','$PULL','$PUSH']::uuid[]);
+select pg_sleep(3);
+commit;
+SQL
+sleep 1
+# Session 2 : ajoute une séance à la position calculée par le client (1).
+r=$(commeA "insert into public.seances (id, owner_id, routine_id, name, position) values ('$AJ1', '$A', '$R', 'Ajoutée pendant', 1)")
+wait
+if [ "$(ordre)" = "Legs,Pull,Push,Ajoutée pendant" ] && [ "$(position "$AJ1")" = 3 ]; then
+  echo "OK    ajout pendant un réordonnancement : attend le verrou de la routine, puis se place en fin (position 3)"
+else echo "ECHEC ajout concurrent : $r (ordre : $(ordre), position $(position "$AJ1"))"; exit 1; fi
+sql /dev/stdin <<SQL
+delete from public.seances where id = '$AJ1';
+update public.seances set position = 0 where routine_id = '$R';
+SQL
+r=$(commeA "insert into public.seances (id, owner_id, routine_id, name, position) values ('$AJ2', '$A', '$R', 'Ajoutée ensuite', 0)")
+if [ "$(position "$AJ2")" = 1 ]; then echo "OK    trois séances en position 0 puis un ajout : la base le place en fin (1), quelle que soit la position envoyée"
+else echo "ECHEC ajout après trois positions égales : $r (position $(position "$AJ2"))"; exit 1; fi
+r=$(reordonne "$A" "'$PUSH','$PULL','$LEGS'" "'$LEGS','$PULL','$PUSH'")
+if echo "$r" | grep -q "l'ordre a changé" && [ "$(position "$AJ2")" = 1 ]; then echo "OK    réordonner depuis l'ordre d'avant l'ajout : refusé (PT409), l'ajout reste en fin"
+else echo "ECHEC réordonnancement qui ignore l'ajout : $r (position $(position "$AJ2"))"; exit 1; fi
+commeA "update public.seances set archived_at = now() where id = '$PUSH'" >/dev/null
+r=$(commeA "update public.seances set archived_at = null, position = 0 where id = '$PUSH'")
+if [ "$(position "$PUSH")" = 2 ]; then echo "OK    séance désarchivée : la base la place en fin (2), quelle que soit la position envoyée"
+else echo "ECHEC désarchivage : $r (position $(position "$PUSH"))"; exit 1; fi
 echo "== banc vert"

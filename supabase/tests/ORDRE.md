@@ -69,13 +69,13 @@ Toutes appliquées en prod : étape 1 le 2026-11-23 au soir (0024 le 24 au matin
 
 ## 0026 : réordonnancement sous révision
 
-`0026_reorder_seances_revision.sql` ajoute `reorder_seances_revision(p_routine_id, p_expected_ids, p_seance_ids)` : la base verrouille les séances de la routine, compare l'ordre courant à l'ordre affiché par le client, puis écrit, ou refuse (PT409, « l'ordre a changé depuis sa lecture ») sans rien toucher. Elle ferme la course où un appareil réécrivait toutes les positions depuis un ordre dépassé et annulait en silence un déplacement fait ailleurs. `reorder_seances` (0023) reste en base : l'ancien client l'appelle encore.
+`0026_reorder_seances_revision.sql` ajoute `reorder_seances_revision(p_routine_id, p_expected_ids, p_seance_ids)` : la base verrouille les séances de la routine, compare l'ordre courant à l'ordre affiché par le client, puis écrit, ou refuse (PT409, « l'ordre a changé depuis sa lecture ») sans rien toucher. Elle ferme la course où un appareil réécrivait toutes les positions depuis un ordre dépassé et annulait en silence un déplacement fait ailleurs. Elle pose aussi le trigger `seances_en_fin` : une séance ajoutée ou désarchivée va en fin de routine, position calculée par la base sous un verrou de la routine commun avec le réordonnancement (un ajout concurrent attend, puis se place après ; l'import garde ses positions). `reorder_seances` (0023) reste en base : l'ancien client l'appelle encore.
 
 Elle passe AVANT le déploiement du client qui l'appelle (`reorderSeances`, `src/features/authoring/data.ts`). Ce client marche aussi sans elle : la fonction absente (PGRST202), il revient à `reorder_seances`, sans contrôle de révision, comme le client d'avant.
 
-1. Contrôle préalable (en tête du fichier) : une seule ligne, `reorder_seances(uuid,uuid[])`.
+1. Contrôle préalable (en tête du fichier) : une seule ligne, `reorder_seances(uuid,uuid[])`, et aucun trigger `seances_en_fin`.
 2. Appliquer la migration (attente de verrou bornée à 5 s, rejouable).
 3. Test de contrôle `supabase/tests/0026_reorder_seances_revision.sql` : aucune ligne `ECHEC`.
 4. Déployer le client.
 
-Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé). PAS encore appliquée en prod.
+Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé ; ajout pendant un réordonnancement : attend puis va en fin ; trois séances en position 0 puis un ajout : en fin, et le réordonnancement d'avant l'ajout est refusé ; désarchivage en fin). PAS encore appliquée en prod.

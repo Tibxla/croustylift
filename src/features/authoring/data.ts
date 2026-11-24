@@ -546,6 +546,11 @@ export async function listSeances(routineId: string): Promise<SeanceRow[]> {
  * pour qu'elle ait toujours une version courante (cf. invariant ADR 0001).
  * Renvoie la séance créée.
  *
+ * La position envoyée n'est qu'une proposition, tirée d'une lecture qui peut
+ * dater : la base la recalcule en fin de routine sous le verrou de la routine,
+ * commun avec le réordonnancement (trigger `seances_en_fin`, migration 0026).
+ * Le client la calcule encore pour rester juste tant que 0026 n'est pas en base.
+ *
  * Pas de transaction client : si l'insert de la version échouait après la
  * séance, on aurait une séance sans version (template incomplet). On insère donc
  * la version juste après et on remonte l'erreur telle quelle le cas échéant.
@@ -627,6 +632,8 @@ export async function archiveSeance(id: string): Promise<void> {
  * Désarchive une séance : elle revient au plan, en fin de routine, et sa
  * Référence comme sa courbe reprennent. On la replace en dernière position :
  * pendant l'archivage, les séances actives ont pu être réordonnées sans elle.
+ * La base recalcule cette position sous le verrou de la routine (trigger
+ * `seances_en_fin`, migration 0026).
  */
 export async function unarchiveSeance(id: string): Promise<void> {
   return planWrite(async () => {
