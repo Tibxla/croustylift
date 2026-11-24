@@ -29,7 +29,7 @@ import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrde
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact, useCompactTight } from '../../ui';
 import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
@@ -342,6 +342,8 @@ export function ExerciseCapture({
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
+  // Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : un cran de plus.
+  const tight = useCompactTight();
   const hasNote =
     !isBlankNote(datedNote) || !isBlankNote(perExerciseNote) || !!(exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body));
   const draft: PerformedSet = { order: rank, weightKg, reps, rir, side: currentSide ?? undefined };
@@ -376,7 +378,9 @@ export function ExerciseCapture({
           className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
             compact
               ? exercise.name.length <= 18
-                ? 'text-[28px]'
+                ? tight
+                  ? 'text-[24px]'
+                  : 'text-[28px]'
                 : 'text-[22px] leading-[29px]'
               : exercise.name.length <= 18
                 ? 'text-[32px]'
@@ -476,7 +480,7 @@ export function ExerciseCapture({
           <WeightReadout value={weightKg} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
         </div>
 
-        <div className={compact ? 'mt-1' : 'mt-2'}>
+        <div className={tight ? 'mt-0.5' : compact ? 'mt-1' : 'mt-2'}>
           <Ruler
             key={stepKg}
             label="Poids"
@@ -494,7 +498,14 @@ export function ExerciseCapture({
         </div>
 
         {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
-        <dl className={`grid grid-cols-3 gap-3 px-5 ${compact ? 'pt-0.5' : ''}`}>
+        {/* Écran bas : une ligne, sans « kg » (le libellé nomme la mesure) ; le
+            milieu prend la place que les deux bords laissent, pour que « Écart
+            e1RM » et son chiffre ne touchent pas « Record » (360 px). */}
+        <dl
+          className={`grid gap-3 px-5 ${
+            compact ? `grid-cols-[auto_minmax(0,1fr)_auto] ${tight ? '' : 'pt-0.5'}` : 'grid-cols-3'
+          }`}
+        >
           <Measure
             compact={compact}
             label={livePerf?.label ?? 'e1RM'}
@@ -507,7 +518,7 @@ export function ExerciseCapture({
           </Measure>
           {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
               couleur ni ▲ (ADR 0010, draft-e1rm.ts). */}
-          <Measure compact={compact} label={`Écart ${gap?.measure ?? 'e1RM'}`}>
+          <Measure compact={compact} center label={`Écart ${gap?.measure ?? 'e1RM'}`}>
             {gap ? (
               <Figure value={gap.value} unit={gap.unit} compact={compact} />
             ) : (
@@ -609,6 +620,7 @@ function Measure({
   label,
   compact,
   right = false,
+  center = false,
   live = false,
   onLabel,
   labelHint,
@@ -617,6 +629,8 @@ function Measure({
   label: string;
   compact: boolean;
   right?: boolean;
+  /** Écran bas : centrée entre ses deux voisines. */
+  center?: boolean;
   live?: boolean;
   /** Le libellé se touche et ouvre la définition du mot (glossary-text.ts). */
   onLabel?: () => void;
@@ -624,7 +638,7 @@ function Measure({
   children: ReactNode;
 }) {
   return (
-    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : ''} min-w-0`}>
+    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : center && compact ? 'justify-center' : ''} min-w-0`}>
       <dt className="flex-none text-[13px] text-muted">
         {onLabel ? (
           <button
@@ -666,7 +680,7 @@ function Figure({ value, unit, compact, muted = false }: { value: string; unit: 
   return (
     <dd className={`tnum whitespace-nowrap font-medium leading-none tracking-[-0.01em] ${muted ? 'text-muted' : 'text-ink'} ${compact ? 'text-[17px]' : 'mt-1 text-[22px]'}`}>
       {value}
-      {unit && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
+      {unit && !(compact && unit === 'kg') && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
     </dd>
   );
 }
@@ -708,7 +722,7 @@ function RefValue({
   }
   return (
     <p className="flex items-baseline justify-between gap-3 text-[14px]">
-      <span className="text-muted">réf. série {rank}</span>
+      <span className="shrink-0 whitespace-nowrap text-muted">réf. série {rank}</span>
       <span className="tnum min-w-0 truncate font-medium text-ink">
         {values}
         {perf && <span className="font-normal text-muted"> · {perf}</span>}

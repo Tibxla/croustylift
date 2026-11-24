@@ -1560,7 +1560,7 @@ function CapturePanel({
           suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
           geste répété, toujours au même endroit, sans enfoncement. Rien ne change
           de place quand le minimum du plan est atteint (décision du 23/11). */}
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
         <div className={BAR_GRID}>
           <button
             type="button"
