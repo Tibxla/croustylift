@@ -17,7 +17,7 @@
 // confirmé : l'option sûre est le bouton (« Garder la séance »), la perte un
 // lien, sous une phrase qui dit ce qui part. Un exo ajouté ou remplacé compte
 // comme saisi.
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ExerciseRow } from './data';
 import type { Session, SessionExercise } from './fixtures';
 import type { CaptureState } from './state';
@@ -108,6 +108,12 @@ export function ExercisePicker({
   // Les options d'un exo pas fait : `done` = séries déjà faites (« Passer » disparaît).
   const [options, setOptions] = useState<{ exerciseId: string; name: string; done: number } | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // Fermetures stables : une feuille refocalise son titre quand `onClose`
+  // change ; un rendu du Sommaire (envoi acquitté) volerait sinon le focus du
+  // champ de recherche du catalogue.
+  const closeOptions = useCallback(() => setOptions(null), [setOptions]);
+  const closeConfirm = useCallback(() => setConfirmCancel(false), [setConfirmCancel]);
+  const closeCatalog = useCallback(() => setCatalog(null), [setCatalog]);
 
   const leave = () => {
     if (leaveKind === 'change') onLeaveSession();
@@ -210,7 +216,7 @@ export function ExercisePicker({
         </BottomBar>
       )}
 
-      <Sheet open={options !== null} title={options?.name ?? ''} onClose={() => setOptions(null)}>
+      <Sheet open={options !== null} title={options?.name ?? ''} onClose={closeOptions}>
         {options && (
           <div className="flex flex-col gap-2 px-5 pb-2">
             {options.done > 0 && (
@@ -250,7 +256,7 @@ export function ExercisePicker({
       <Sheet
         open={confirmCancel}
         title="Annuler la séance ?"
-        onClose={() => setConfirmCancel(false)}
+        onClose={closeConfirm}
         footer={
           <>
             <SecondaryButton onClick={() => setConfirmCancel(false)}>Garder la séance</SecondaryButton>
@@ -276,7 +282,7 @@ export function ExercisePicker({
         existingExerciseIds={session.exercises.map((e) => e.exerciseId)}
         loadCatalog={loadCatalog}
         loadCatalogExercise={loadCatalogExercise}
-        onClose={() => setCatalog(null)}
+        onClose={closeCatalog}
         onChosen={(exercise) => {
           if (catalog?.mode === 'swap') onSwapExercise(catalog.exerciseId, exercise);
           else onAddExercise(exercise);

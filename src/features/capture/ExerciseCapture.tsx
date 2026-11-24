@@ -316,9 +316,12 @@ export function ExerciseCapture({
   const { stepKg } = useReglages();
   // La ligne dont la feuille de correction est ouverte, ou null.
   const [editId, setEditId] = useState<string | null>(null);
-  // Stable : la feuille refocalise son titre quand `onClose` change, et tout
-  // rendu du parent (un envoi acquitté) volerait sinon le focus de la saisie.
+  // Fermetures stables : une feuille refocalise son titre quand `onClose`
+  // change, et tout rendu du parent (un envoi acquitté) volerait sinon le focus
+  // de la saisie (poids au clavier, note en cours de frappe).
   const closeEdit = useCallback(() => setEditId(null), [setEditId]);
+  const closeNotes = useCallback(() => setNotesOpen(false), [setNotesOpen]);
+  const closeRecap = useCallback(() => setRecapOpen(false), [setRecapOpen]);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
@@ -537,7 +540,7 @@ export function ExerciseCapture({
       <NotesSheet
         key={`notes-${exercise.exerciseId}`}
         open={notesOpen}
-        onClose={() => setNotesOpen(false)}
+        onClose={closeNotes}
         name={exercise.name}
         datedNote={datedNote}
         previous={exercise.previousDatedNote ?? null}
@@ -563,7 +566,7 @@ export function ExerciseCapture({
           setRecapOpen(false);
           onSommaire();
         }}
-        onClose={() => setRecapOpen(false)}
+        onClose={closeRecap}
       />
     </div>
   );
