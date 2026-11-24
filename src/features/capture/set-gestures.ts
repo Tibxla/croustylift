@@ -29,14 +29,17 @@
 // ne connaît pas : un onglet resté dessus s'arrête sur elle au lieu de la
 // rejouer en upsert complet (cf. `PatchSetOp`). L'op porte quand même la ligne
 // entière, pour reconstituer une série dont l'insertion a été refusée.
-//   - hors ligne, le log puis sa correction tiennent tous deux en file et
+//   - seules les colonnes CHANGÉES sont écrites (`cols`) : last-write-wins par
+//     colonne (ADR 0003), corriger le poids ici et les reps ailleurs garde les
+//     deux ;
+//   - hors ligne, le log puis sa correction attendent tous deux au registre et
 //     partent dans l'ordre, la dernière écriture gagne ;
-//   - une série dont l'insertion a été refusée par la base (quarantaine) est
-//     relevée par sa correction : le flush envoie alors la série ENTIÈRE,
-//     reconstituée du refus et de la correction, et lève le refus une fois
-//     l'écriture acquittée (outbox.ts, « Séries refusées, puis reprises ») ;
-//   - la Référence fusionnée (`applyPendingSets`) et la reprise
-//     (`applyQueuedSets`) remplacent déjà une série par son id.
+//   - une série dont l'insertion a été refusée par la base est relevée par sa
+//     correction : la passe envoie alors la série ENTIÈRE, reconstituée du
+//     refus et de la correction, et lève le refus une fois l'écriture
+//     acquittée (parenté et lignée, registry-record.ts) ;
+//   - la Référence et le tableau appliquent déjà une écriture locale par l'id
+//     de sa série (execution-reality.ts).
 // Les badges (battue, égalée, record) ne sont pas stockés : ils se recalculent
 // des séries (`computeSetBadges`, set-badges.ts), donc suivent la correction.
 // Unilatéral : chaque côté est une ligne, avec son id. Corriger un côté ne
@@ -63,8 +66,9 @@
 //
 // Réponse tardive de la base : une série corrigée, renumérotée ou supprimée ici
 // pendant le trajet d'une lecture garde son état local à l'arrivée de la
-// réponse, que ses écritures soient encore en file ou déjà acquittées
-// (`reconcileProgress` et le cas `reconcile-progress` du réducteur, state.ts).
+// réponse, que ses écritures attendent encore ou soient déjà acquittées : le
+// registre les garde, et le tableau les applique sur la réponse, colonne par
+// colonne (execution-reality.ts, cas `reconcile-progress` du réducteur).
 
 import type { PerformedSet } from '../../domain/types';
 import type { OutboxOp, PatchSetOp } from './outbox';

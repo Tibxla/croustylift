@@ -438,10 +438,10 @@ export function CaptureScreen() {
       // Mais la réponse tardive qui la concerne porte peut-être des séries
       // écrites ailleurs (autre appareil, journal) : ignorée, le rang suivant
       // doublait un rang déjà pris. Elle est donc remise au tableau monté, qui
-      // réconcilie son réalisé par identifiant sans se remonter (ni l'exo ouvert
-      // ni le brouillon ne bougent). `knownAtDeparture` : ce que l'état local
-      // portait au départ de la lecture, pour ne pas défaire ce que l'utilisateur
-      // a saisi ou annulé pendant le trajet.
+      // établit son réalisé sur elle sans se remonter (ni l'exo ouvert ni le
+      // brouillon ne bougent). Elle porte l'estampille de son départ : ce que
+      // l'utilisateur a saisi, corrigé ou annulé pendant le trajet est au
+      // registre et lui est appliqué par-dessus (execution-reality.ts).
       if (late && restored !== null) {
         const gen = loadGenRef.current;
         void late.then((lateToday) => {

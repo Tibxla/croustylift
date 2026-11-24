@@ -491,9 +491,9 @@ export async function loadSeanceForCapture(
  */
 export type PerformedSetWithExecutionRow = {
   /**
-   * Id de la LIGNE (UUID client, ADR 0003) : identité stable pour fusionner les
-   * écritures encore en attente (`applyPendingSets`). Absent des copies locales
-   * écrites avant ce champ — d'où la clé de repli `execution:order:side`.
+   * Id de la LIGNE (UUID client, ADR 0003) : identité stable par laquelle les
+   * écritures locales la visent (`exerciseRowsReality`). Absent des copies
+   * locales écrites avant ce champ : une telle ligne n'est visée par aucune écriture.
    */
   id?: string;
   weight_kg: number;
@@ -645,7 +645,7 @@ function fetchExerciseRows(exerciseId: string): Promise<PerformedSetWithExecutio
         // Tri par `id` seul, exigé par la pagination au curseur. L'ordre
         // chronologique des EXÉCUTIONS (performed_on puis created_at de
         // l'exécution, dont `lastReference` a besoin pour départager deux séances
-        // du même jour) est posé côté client par `applyPendingSets`, par où
+        // du même jour) est posé côté client par `exerciseRowsReality`, par où
         // passent toutes les lectures ; l'ordre des séries DANS une exécution, par
         // leur `set_order` (le domaine trie, il ne se fie pas à l'ordre des lignes).
         .order('id')
@@ -921,7 +921,7 @@ export async function loadPreviousDatedNotes(
  *     la version sous laquelle elle est née).
  * L'historique des exos (`exo-execs`) reste entier : les records all-time en
  * dérivent, le tronquer les fausserait. Si le stockage sature malgré tout, le
- * cache entier cède la place aux écritures (cf. outbox, `writeQueue`).
+ * cache entier cède la place aux écritures (cf. outbox, `commit`).
  */
 export function pruneCaptureCopies(keepVersionIds: readonly string[] = []): void {
   for (const key of cachedKeys(LAST_EXECUTION_PREFIX)) {

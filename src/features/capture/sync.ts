@@ -234,7 +234,7 @@ export async function flushOps(ops: OutboxOp[]): Promise<OpsFlushResult> {
 export function flushOutbox() {
   // Le lecteur de session ferme la porte aux écritures sans compte vérifié : sans
   // session, une requête part sous la clé publique et un `update`/`delete` est
-  // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
+  // « acquitté » sans avoir touché de ligne (cf. `runFlush`, outbox.ts).
   return flush(syncFns, sessionUserId).then((result) => {
     refreshTouchedHistory(result);
     return result;

@@ -9,7 +9,7 @@ import {
   abandonRefused,
   clearOwnQueue,
   heldCounts,
-  enqueueTracked,
+  enqueueAll,
   listRefused,
   retryRefused,
   storageFailing,
@@ -322,8 +322,8 @@ describe('flush (succès)', () => {
   });
 
   it('chaque op enfilée reçoit une identité unique, rendue à l’appelant', () => {
-    const a = enqueueTracked({ type: 'deleteSet', id: 's1' });
-    const b = enqueueTracked({ type: 'deleteSet', id: 's1' });
+    const [a] = enqueueAll([{ type: 'deleteSet', id: 's1' }]) as [string];
+    const [b] = enqueueAll([{ type: 'deleteSet', id: 's1' }]) as [string];
 
     expect(a).not.toBe(b);
     expect(readQueue().map((op) => op._uid)).toEqual([a, b]);
