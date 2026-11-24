@@ -358,7 +358,7 @@ function Facts({
         {facts.record && (
           <Row
             title={unit === 'reps' ? 'Record, reps effectives' : 'Record e1RM'}
-            meta={`${formatWeight(facts.record.set.weightKg)} kg × ${facts.record.set.reps} · RIR ${facts.record.set.rir}${
+            meta={`${facts.record.set.weightKg === 0 ? `${facts.record.set.reps} reps` : `${formatWeight(facts.record.set.weightKg)} kg × ${facts.record.set.reps}`} · RIR ${facts.record.set.rir}${
               facts.record.date ? `, ${formatDay(facts.record.date, year)}` : ''
             }`}
             value={fmtValue(facts.record.value)}
