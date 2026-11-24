@@ -110,6 +110,7 @@ import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { buildSummary, elapsedMinutesSince } from './summary';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
+import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
 
 type LoadState =
   | { phase: 'loading' }
@@ -1020,6 +1021,33 @@ function CaptureBoard({
     [],
   );
 
+  // Corriger ou supprimer une série quelconque de l'exo affiché (set-gestures.ts).
+  // Même enchaînement qu'un log : le geste se calcule sur la PROJECTION, l'action
+  // est dispatchée et la projection avancée du même pas, puis les écritures sont
+  // enfilées une à une, dans l'ordre rendu (suppressions d'abord, puis les
+  // renumérotations). Une écriture de série (upsert) exige l'exécution en base :
+  // elle y est dès qu'une série existe, ré-affirmée ici une fois par montage
+  // (insertion seule, le lancement ne bouge pas).
+  const applySetGesture = useCallback(
+    (gesture: SetGesture | null) => {
+      if (gesture === null) return;
+      dispatch(gesture.action);
+      stateRef.current = captureReducer(stateRef.current, gesture.action);
+      if (gesture.ops.some((op) => op.type === 'insertSet')) enqueueExecutionOnce();
+      for (const op of gesture.ops) enqueueAndFlush(op);
+    },
+    [enqueueExecutionOnce],
+  );
+  const handleCorrectSet = useCallback(
+    (exerciseId: string, setId: string, values: SetEntry) =>
+      applySetGesture(correctSet(stateRef.current, exerciseId, setId, values)),
+    [applySetGesture],
+  );
+  const handleDeleteSet = useCallback(
+    (exerciseId: string, setId: string) => applySetGesture(deleteSet(stateRef.current, exerciseId, setId)),
+    [applySetGesture],
+  );
+
   // Enregistre la NOTE DATÉE d'un exo (issue #26). L'id de ligne est stable :
   // réutilisé s'il existe déjà (édition en place), sinon généré une fois. On
   // enfile l'exécution AVANT la note (dépendance FK note->exécution, garantie
@@ -1247,6 +1275,8 @@ function CaptureBoard({
           onFinish={openFinish}
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
           onSaveExerciseNote={(body) => handleSaveExerciseNote(activeExercise.exerciseId, body)}
+          onCorrectSet={(setId, values) => handleCorrectSet(activeExercise.exerciseId, setId, values)}
+          onDeleteSet={(setId) => handleDeleteSet(activeExercise.exerciseId, setId)}
         />
       ) : (
         <>
@@ -1329,6 +1359,8 @@ function CapturePanel({
   onFinish,
   onSaveDatedNote,
   onSaveExerciseNote,
+  onCorrectSet,
+  onDeleteSet,
 }: {
   exercise: SessionExercise;
   progress: ExerciseProgress;
@@ -1352,6 +1384,8 @@ function CapturePanel({
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
+  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onDeleteSet: (setId: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre du bas puisse
   // logger. Pour un exo unilatéral, il porte aussi le côté CHOISI (issue #63) :
@@ -1423,6 +1457,14 @@ function CapturePanel({
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
         onSaveExerciseNote={onSaveExerciseNote}
+        onCorrectSet={(setId, values) => {
+          onCorrectSet(setId, values);
+          setAnnounce(`Série corrigée : ${values.weightKg} kilos, ${values.reps} répétitions, RIR ${values.rir}.`);
+        }}
+        onDeleteSet={(setId) => {
+          onDeleteSet(setId);
+          setAnnounce('Série supprimée.');
+        }}
       />
 
       <p className="sr-only" role="status" aria-live="assertive">

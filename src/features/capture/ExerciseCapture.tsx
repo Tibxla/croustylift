@@ -8,6 +8,12 @@
 // l'écart à la Référence et le record, puis reps et RIR en un tap. La barre du
 // bas (Sommaire, Annuler, Exo suivant, Logger) vit dans CaptureScreen.
 //
+// Toucher une case loggée de la bande ouvre la feuille de correction de CETTE
+// série (SetEditSheet) ; ses gestes (corriger, supprimer) remontent au parent,
+// qui les écrit. La feuille est rendue hors de la zone de saisie : ses
+// événements, qui remontent à travers le portail, ne marquent pas le brouillon
+// comme touché.
+//
 // Mesure du brouillon : un chiffre seul, jamais un verdict « battrait » (cf.
 // draft-e1rm.ts) : l'écart se lit sans signe ni couleur. Les statuts en signal
 // (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
@@ -33,6 +39,8 @@ import { WeightReadout } from './WeightReadout';
 import { computeSetBadges, computeSetBadgesBySide, summarizeBadges, type SetBadge } from './set-badges';
 import { formatE1rm, formatRange, formatWeight } from './format';
 import { roundWeightKg } from './stepper-utils';
+import { SetEditSheet } from './SetEditSheet';
+import type { SetEntry } from './set-gestures';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
@@ -60,6 +68,10 @@ interface ExerciseCaptureProps {
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo (issue #52), corps vidé = supprimée. */
   onSaveExerciseNote: (body: string) => void;
+  /** Corrige la série d'id `setId` (poids, reps, RIR). */
+  onCorrectSet: (setId: string, values: SetEntry) => void;
+  /** Supprime la série de la ligne d'id `setId` (les deux côtés en unilatéral). */
+  onDeleteSet: (setId: string) => void;
 }
 
 /** Plages des rangées de numéros en salle, élargies si la valeur en sort. */
@@ -99,6 +111,8 @@ export function ExerciseCapture({
   onDraftChange,
   onSaveDatedNote,
   onSaveExerciseNote,
+  onCorrectSet,
+  onDeleteSet,
 }: ExerciseCaptureProps) {
   const { prescription, reference, perExerciseNote } = exercise;
   const loggedCount = progress.sets.length;
@@ -300,6 +314,8 @@ export function ExerciseCapture({
   }, [reachedMax]);
 
   const { stepKg } = useReglages();
+  // La ligne dont la feuille de correction est ouverte, ou null.
+  const [editId, setEditId] = useState<string | null>(null);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
@@ -382,9 +398,17 @@ export function ExerciseCapture({
 
       <div className={compact ? 'mt-1' : 'mt-2'}>
         {unilateral ? (
-          <UniSetBand sets={progress.sets} badges={badges} draft={draft} side={currentSide ?? 'left'} plannedMax={prescription.sets.max} />
+          <UniSetBand
+            sets={progress.sets}
+            setIds={progress.setIds}
+            badges={badges}
+            draft={draft}
+            side={currentSide ?? 'left'}
+            plannedMax={prescription.sets.max}
+            onEdit={setEditId}
+          />
         ) : (
-          <SetBand sets={progress.sets} badges={badges} draft={draft} plannedMax={prescription.sets.max} />
+          <SetBand sets={progress.sets} setIds={progress.setIds} badges={badges} draft={draft} plannedMax={prescription.sets.max} onEdit={setEditId} />
         )}
       </div>
 
@@ -493,6 +517,20 @@ export function ExerciseCapture({
         </div>
       </div>
 
+      {editId !== null && progress.setIds.includes(editId) && (
+        <SetEditSheet
+          key={editId}
+          exercise={exercise}
+          progress={progress}
+          setId={editId}
+          onSave={(values) => onCorrectSet(editId, values)}
+          onDelete={() => {
+            onDeleteSet(editId);
+            setEditId(null);
+          }}
+          onClose={() => setEditId(null)}
+        />
+      )}
       <NotesSheet
         key={`notes-${exercise.exerciseId}`}
         open={notesOpen}

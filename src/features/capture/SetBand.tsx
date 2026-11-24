@@ -5,10 +5,14 @@
 // le brouillon en gris, soulignée d'un trait épais. Au-delà de 4 cases, la bande
 // défile et garde la série en cours en vue.
 //
-// Les cases se lisent, elles ne se touchent pas : corriger ou supprimer une
-// série quelconque est une capacité à venir (refonte E, lot 3). Annuler la
-// dernière série reste dans la barre du bas.
-import { useLayoutEffect, useRef } from 'react';
+// Une case loggée se touche : elle ouvre la feuille de correction de CETTE
+// série (SetEditSheet), visée par son id. Son poids est souligné d'un filet
+// gris (« ça se touche ») ; une case à faire ne se touche pas, une série sans id
+// (cache d'ancien format) non plus. Le bouton prend les marges de la case : la
+// hauteur de la bande ne bouge pas d'un pixel (la rangée RIR reste au-dessus de
+// la barre du pouce à 360×780). Pressée, la case prend le fond des filets, sans
+// enfoncement. Annuler la dernière série reste dans la barre du bas.
+import { useLayoutEffect, useRef, type MouseEvent } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
 import { pairSidesByOrder } from '../../domain/unilateral';
 import { Sign, Status, TONE, type Verdict } from '../../ui';
@@ -29,6 +33,11 @@ function badgeStatus(badge: SetBadge): { v: Verdict; word: string } | null {
 }
 
 const cell = (n: number) => `${formatWeight(n)}`;
+
+/** Une case loggée qui se touche : le bouton porte les marges de la case. */
+const CELL_BTN = 'block w-full min-w-0 pb-2 pr-2 text-left active:bg-line';
+/** Le poids d'une série loggée : souligné d'un filet gris, il se touche. */
+const EDITABLE = 'underline decoration-dim decoration-1 underline-offset-[5px]';
 
 /** La bande défile au-delà de 4 cases ; la série en cours reste en vue. */
 function useKeepInView(current: number, slots: number) {
@@ -55,14 +64,20 @@ function Underline({ state }: { state: 'current' | 'logged' | 'empty' }) {
 
 export function SetBand({
   sets,
+  setIds,
   badges,
   draft,
   plannedMax,
+  onEdit,
 }: {
   sets: PerformedSet[];
+  /** Ids des lignes, alignés sur `sets` (`null` : cache d'ancien format). */
+  setIds: (string | null)[];
   badges: SetBadge[];
   draft: Draft;
   plannedMax: number;
+  /** Ouvre la correction de la série d'id `setId`. */
+  onEdit: (setId: string) => void;
 }) {
   const slots = Math.max(plannedMax, sets.length + 1);
   const scroll = slots > 4;
@@ -79,8 +94,9 @@ export function SetBand({
           : isCurrent
             ? `Série ${rank} en cours, ${formatWeight(draft.weightKg)} × ${draft.reps} · RIR ${draft.rir}`
             : `Série ${rank}, à faire`;
-        return (
-          <li key={rank} aria-label={label} className="relative min-w-0 pb-2 pr-2" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+        const id = s ? (setIds[i] ?? null) : null;
+        const body = (
+          <>
             <span aria-hidden className="flex h-[18px] items-center gap-2 text-[13px]">
               <span className={`tnum ${isCurrent ? 'font-semibold text-ink' : 'text-faint'}`}>{rank}</span>
               {st && <Status v={st.v} word={st.word} />}
@@ -91,11 +107,22 @@ export function SetBand({
               aria-hidden
               className={`tnum mt-1 block whitespace-nowrap text-[16px] font-medium tracking-[-0.01em] ${s ? 'text-ink' : isCurrent ? 'text-muted' : 'text-faint'}`}
             >
-              {s ? cell(s.weightKg) : isCurrent ? cell(draft.weightKg) : '·'}
+              <span className={id ? EDITABLE : ''}>{s ? cell(s.weightKg) : isCurrent ? cell(draft.weightKg) : '·'}</span>
             </span>
             <span aria-hidden className={`tnum block whitespace-nowrap text-[13px] ${s ? 'text-muted' : 'text-faint'}`}>
               {s ? `×${s.reps} · RIR ${s.rir}` : isCurrent ? `×${draft.reps} · RIR ${draft.rir}` : ' '}
             </span>
+          </>
+        );
+        return (
+          <li key={rank} aria-label={id ? undefined : label} className={`relative min-w-0 ${id ? '' : 'pb-2 pr-2'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+            {id ? (
+              <button type="button" aria-label={`Corriger la série ${label.slice('Série '.length)}`} className={CELL_BTN} onClick={() => onEdit(id)}>
+                {body}
+              </button>
+            ) : (
+              body
+            )}
             <Underline state={isCurrent ? 'current' : s ? 'logged' : 'empty'} />
           </li>
         );
@@ -110,19 +137,28 @@ const SIDES: { side: Side; letter: string }[] = [
 ];
 
 /** Bande d'un exo unilatéral : chaque série tient sur deux demi-lignes, G puis
- *  D, valeurs et signe PAR CÔTÉ. Une série n'est complète qu'avec ses deux côtés. */
+ *  D, valeurs et signe PAR CÔTÉ. Une série n'est complète qu'avec ses deux côtés.
+ *  Une case loggée (complète ou à un côté) se touche en entier, 44 px au moins ;
+ *  le côté corrigé est la demi-ligne touchée (au clavier : le premier côté
+ *  saisi de la série). */
 export function UniSetBand({
   sets,
+  setIds,
   badges,
   draft,
   side,
   plannedMax,
+  onEdit,
 }: {
   sets: PerformedSet[];
+  /** Ids des lignes, alignés sur `sets` (`null` : cache d'ancien format). */
+  setIds: (string | null)[];
   badges: SetBadge[];
   draft: Draft;
   side: Side;
   plannedMax: number;
+  /** Ouvre la correction du côté de la ligne d'id `setId`. */
+  onEdit: (setId: string) => void;
 }) {
   const pairs = pairSidesByOrder(sets);
   const done = pairs.filter((p) => p.left !== null && p.right !== null).length;
@@ -130,6 +166,7 @@ export function UniSetBand({
   const scroll = slots > 4;
   const band = useKeepInView(done, slots);
   const badgeOf = (s: PerformedSet | null) => (s ? badgeStatus(badges[sets.indexOf(s)] ?? null) : null);
+  const idOf = (s: PerformedSet | null) => (s ? (setIds[sets.indexOf(s)] ?? null) : null);
   return (
     <ol ref={band} className={`flex px-5 ${scroll ? 'overflow-x-auto' : ''}`} style={{ scrollbarWidth: 'none' }} aria-label="Séries de cet exo, gauche et droite">
       {Array.from({ length: slots }, (_, i) => {
@@ -143,15 +180,40 @@ export function UniSetBand({
         const label = `Série ${rank}${isCurrent ? ' en cours' : ''}, ${parts
           .map(({ sd, s, st }) => `${sd === 'left' ? 'gauche' : 'droite'} ${s ? `${formatWeight(s.weightKg)} × ${s.reps}${st ? `, ${st.word}` : ''}` : 'à faire'}`)
           .join(', ')}`;
-        return (
-          <li key={rank} aria-label={label} className="relative min-w-0 pb-2 pr-2" style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+        // Les côtés loggés de la série qui portent un id : eux seuls se corrigent.
+        const editable = parts.flatMap(({ sd, s }) => {
+          const id = idOf(s);
+          return id && s ? [{ sd, id, set: s }] : [];
+        });
+        // Au clavier (aucun point touché) : le premier côté saisi de la série.
+        const firstId = idOf(sets.find((x) => editable.some((e) => e.set === x)) ?? null);
+        const pick = (e: MouseEvent<HTMLButtonElement>) => {
+          let id = firstId;
+          if (e.detail > 0) {
+            // La demi-ligne la plus proche du doigt, parmi les côtés loggés.
+            let best = Infinity;
+            for (const row of e.currentTarget.querySelectorAll<HTMLElement>('[data-side]')) {
+              const hit = editable.find((x) => x.sd === row.dataset.side);
+              if (!hit) continue;
+              const r = row.getBoundingClientRect();
+              const d = Math.abs(e.clientY - (r.top + r.bottom) / 2);
+              if (d < best) {
+                best = d;
+                id = hit.id;
+              }
+            }
+          }
+          if (id) onEdit(id);
+        };
+        const body = (
+          <>
             <span aria-hidden className="flex h-[18px] items-center gap-2 text-[13px]">
               <span className={`tnum ${isCurrent ? 'font-semibold text-ink' : 'text-faint'}`}>{rank}</span>
               {isCurrent && <span className="text-muted">en cours</span>}
               {!isCurrent && !p && i >= plannedMax && <span className="text-faint">en plus</span>}
             </span>
             {parts.map(({ sd, letter, s, st, live }) => (
-              <span key={sd} aria-hidden className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
+              <span key={sd} data-side={sd} aria-hidden className="mt-0.5 flex h-[19px] min-w-0 items-center gap-1 whitespace-nowrap">
                 <span className={`w-2.5 flex-none text-[13px] ${live ? 'font-semibold text-ink' : 'text-faint'}`}>{letter}</span>
                 {/* Jamais tronquée : un poids long (« 22,75×12 ») descend à 13 px. */}
                 <span
@@ -159,7 +221,7 @@ export function UniSetBand({
                     (s ?? (live ? draft : null)) && `${cell((s ?? draft).weightKg)}×${(s ?? draft).reps}`.length > 7 ? 'text-[13px]' : 'text-[14px]'
                   }`}
                 >
-                  {s ? `${cell(s.weightKg)}×${s.reps}` : live ? `${cell(draft.weightKg)}×${draft.reps}` : '·'}
+                  <span className={idOf(s) ? EDITABLE : ''}>{s ? `${cell(s.weightKg)}×${s.reps}` : live ? `${cell(draft.weightKg)}×${draft.reps}` : '·'}</span>
                 </span>
                 {st && (
                   <span className={TONE[st.v]}>
@@ -168,6 +230,17 @@ export function UniSetBand({
                 )}
               </span>
             ))}
+          </>
+        );
+        return (
+          <li key={rank} aria-label={firstId ? undefined : label} className={`relative min-w-0 ${firstId ? '' : 'pb-2 pr-2'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+            {firstId ? (
+              <button type="button" aria-label={`Corriger la série ${label.slice('Série '.length)}`} className={CELL_BTN} onClick={pick}>
+                {body}
+              </button>
+            ) : (
+              body
+            )}
             <Underline state={isCurrent ? 'current' : p ? 'logged' : 'empty'} />
           </li>
         );
