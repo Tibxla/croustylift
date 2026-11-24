@@ -4,22 +4,22 @@
 // La grande graduation, étiquetée, tombe sur un poids rond, choisi dans cet
 // ordre :
 //   1. le premier multiple de 5 kg que le pas atteint (5 kg pour un pas qui le
-//      divise, 10 kg pour un pas de 2, 15 kg pour 1,5 ou 0,75) ;
-//   2. sinon le premier multiple de 2,5 kg (17,5 kg n'en est un que trop loin
-//      pour 1,75), puis du kilo (7 kg pour 1,75, 9 kg pour 2,25) ;
-//   3. sinon chaque cran.
-// Chaque candidat doit tenir dans 15 kg : au-delà, deux étiquettes seraient à
-// plus de 170 px l'une de l'autre (la règle compte environ 11 px par kilo).
-// L'ancienne règle (`Math.round(5 / pas)` crans) mettait les étiquettes sur
-// 4,5 ; 9 ; 13,5 kg pour un pas de 1,5.
+//      divise, 10 kg pour un pas de 2) ;
+//   2. sinon le premier multiple de 2,5 kg (7,5 kg pour 1,5 ou 0,75), puis du
+//      kilo (7 kg pour 1,75, 9 kg pour 2,25) ;
+//   3. sinon chaque cran (3 kg pour un pas de 3, 4 kg pour 4).
+// Chaque candidat doit tenir dans 10 kg : plus loin, l'écran n'affiche que deux
+// étiquettes (15 kg pour un pas de 1,5 : 165 et 180 seulement sur 390 px ; la
+// règle compte environ 11 px par kilo). L'ancienne règle (`Math.round(5 / pas)`
+// crans) mettait les étiquettes sur 4,5 ; 9 ; 13,5 kg pour un pas de 1,5.
 //
 // La graduation moyenne, sans étiquette, coupe la grande en deux quand la
-// moitié tombe sur un cran (7,5 kg pour un pas de 1,5).
+// moitié tombe sur un cran (2,5 kg pour un pas de 1,25).
 
 /** Les poids ronds candidats, en centièmes de kg, du plus rond au moins rond. */
 const ROUND_BASES = [500, 250, 100];
 /** L'écart le plus grand entre deux grandes graduations, en centièmes de kg. */
-const MAX_MAJOR = 1500;
+const MAX_MAJOR = 1000;
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b);
