@@ -30,9 +30,9 @@ import { useSyncState } from './shell/useSyncState'
 import { SheetSlotContext, SyncBanner } from './ui'
 import { errorMessage } from './lib/error-message'
 
-// L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
-// PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
-// « zéro-friction ») : recharts n'est téléchargé qu'à l'ouverture de l'onglet.
+// L'Analyse (graphes, éditeur de séance passée) se charge en PARESSEUX pour
+// rester hors du chunk critique de la Capture (surface par défaut,
+// « zéro-friction ») : son code n'est téléchargé qu'à l'ouverture de l'onglet.
 //
 // Si le fichier du chunk est introuvable (build remplacé sous la page, cache vidé
 // par le système), la suite dépend de ce que fait l'utilisateur À CE MOMENT :

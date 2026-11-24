@@ -24,8 +24,7 @@ const BUDGETS = {
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
   // À la demande.
-  'AnalysisScreen.js': 18_500, // code de l'Analyse (mesuré : 17 518 ; le stepper hérité et MetricRow n'y servent plus qu'à l'éditeur de séance passée et y ont migré)
-  'recharts.js': 112_000, // recharts et ses dépendances, avec l'Analyse seulement (mesuré : 106 899)
+  'AnalysisScreen.js': 20_300, // code de l'Analyse (mesuré : 19 348 au lot 4 de la refonte E, graphe SVG maison et éditeur de séance passée au kit ; 17 518 avant)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 
