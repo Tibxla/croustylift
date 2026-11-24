@@ -201,6 +201,17 @@ describe('buildPrimaryCurve', () => {
     expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
     expect(curve[0]!.e1rm).toBeLessThan(estimateE1rm(32, 10, 2))
   })
+
+  it('unilatéral, 1ʳᵉ série saisie d’un seul côté : le point porte l’e1RM du côté présent', () => {
+    for (const side of ['left', 'right'] as const) {
+      const curve = buildPrimaryCurve(
+        [{ date: '2026-01-01', exerciseId: 'curl', sets: [{ weightKg: 28, reps: 10, rir: 2, order: 1, side }] }],
+        'curl',
+      )
+      expect(curve).toHaveLength(1)
+      expect(curve[0]!.e1rm).toBeCloseTo(estimateE1rm(28, 10, 2))
+    }
+  })
 })
 
 // Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23).

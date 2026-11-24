@@ -151,12 +151,11 @@ describe('firstSeriesWeakSet (le point de la courbe primaire)', () => {
     expect(firstSeriesWeakSet(sets)).toBe(sets[2])
   })
 
-  it('unilatéral incomplet (un seul côté loggé) : utilise le côté présent', () => {
-    const sets: PerformedSet[] = [
-      { weightKg: 28, reps: 10, rir: 2, order: 1, side: 'right' },
-    ]
-
-    expect(firstSeriesWeakSet(sets)).toBe(sets[0])
+  it('unilatéral incomplet (un seul côté loggé) : utilise le côté présent, gauche ou droite', () => {
+    for (const side of ['left', 'right'] as const) {
+      const sets: PerformedSet[] = [{ weightKg: 28, reps: 10, rir: 2, order: 1, side }]
+      expect(firstSeriesWeakSet(sets)).toBe(sets[0])
+    }
   })
 
   it('bilatéral : deux séries au même order (anomalie) départagent de façon déterministe (plus petit e1RM), stable', () => {

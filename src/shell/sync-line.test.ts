@@ -38,10 +38,9 @@ describe('syncLine', () => {
     expect(syncLine({ ...base, offline: true, refused: 1 })?.detail).toBe('les saisies restent sur cet appareil · 1 saisie refusée');
   });
 
-  it('stockage plein, file vide : l’avertissement reste (la séance en cours ne tient qu’en mémoire)', () => {
-    expect(syncLine({ ...base, unsaved: true })).toEqual({
-      title: 'Stockage plein',
-      detail: 'tes saisies ne sont pas gardées ici, laisse l’app ouverte',
-    });
+  it('stockage plein, en ligne, file vide ou non : l’avertissement prime (les saisies ne tiennent qu’en mémoire)', () => {
+    const full = { title: 'Stockage plein', detail: 'tes saisies ne sont pas gardées ici, laisse l’app ouverte' };
+    expect(syncLine({ ...base, unsaved: true })).toEqual(full);
+    expect(syncLine({ ...base, unsaved: true, pending: 2 })).toEqual(full);
   });
 });

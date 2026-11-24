@@ -48,6 +48,13 @@ describe('fin de séance : état des exos (ancien `buildSummary`)', () => {
     expect(buildSessionRecap(upperA, state).counts.fait).toBe(1);
   });
 
+  it('le nom de la séance, et un exo passé avant toute série compté à part', () => {
+    const state = captureReducer(mkState(), { type: 'skip-exercise', exerciseId: 'bench-press' });
+    const recap = buildSessionRecap(upperA, state);
+    expect(recap.sessionName).toBe('Upper A');
+    expect(recap.counts).toEqual({ fait: 0, 'en-cours': 0, passe: 1, 'pas-fait': upperA.exercises.length - 1 });
+  });
+
   it('un exo passé après avoir atteint son minimum reste compté passé, pas fait', () => {
     let state = mkState();
     for (const setId of ['s1', 's2', 's3']) state = log(state, 'bench-press', setId);
