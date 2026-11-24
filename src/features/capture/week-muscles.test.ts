@@ -17,6 +17,15 @@ const server = vi.hoisted(() => ({
 vi.mock('../../lib/supabase', () => ({
   supabase: {
     from: (table: string) => {
+      if (table === 'seances') {
+        const one = {
+          select: () => one,
+          eq: () => one,
+          maybeSingle: async () =>
+            server.offline ? Promise.reject(new TypeError('Failed to fetch')) : { data: { routines: { name: 'Ma routine' } }, error: null },
+        };
+        return one;
+      }
       if (table !== 'performed_sets') throw new Error(`table inattendue : ${table}`);
       const q = { filters: [] as [string, string, unknown][], after: null as string | null, limit: 0 };
       server.queries.push(q);
@@ -117,6 +126,7 @@ describe('loadWeekMuscles', () => {
     expect(week.seancesBefore).toEqual([{ name: 'Upper A', performedOn: '2026-11-23' }]);
     expect(week.planned?.seanceCount).toBe(2);
     expect(week.planned?.exercises.map((e) => e.primaryMuscles[0])).toEqual(['pectoraux', 'quadriceps']);
+    expect(week.routineName).toBe('Ma routine');
   });
 
   it('pagine au-delà du plafond de PostgREST : aucune série perdue', async () => {
@@ -132,6 +142,7 @@ describe('loadWeekMuscles', () => {
     expect(week.before).toBeNull();
     expect(week.seancesBefore).toEqual([]);
     expect(week.planned?.seanceCount).toBe(2);
+    expect(week.routineName).toBeNull();
   });
 
   it('séance hors de la routine courante : pas de prévu', async () => {

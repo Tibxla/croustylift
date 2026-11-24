@@ -383,7 +383,13 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
             : seances.length > 0
               ? `Avant : ${seances.map((s) => `${s.name} (${weekday(s.performedOn)})`).join(', ')}.`
               : 'Première de la semaine.',
-          week.planned === null ? 'Prévu de la routine indisponible.' : week.planned.seanceCount > 1 ? `Prévu : les ${week.planned.seanceCount} séances de la routine.` : 'Prévu : la séance de la routine.',
+          week.planned === null
+            ? 'Prévu de la routine indisponible.'
+            : week.routineName !== null
+              ? `Prévu : ${week.routineName}, ${plural(week.planned.seanceCount, 'séance')}.`
+              : week.planned.seanceCount > 1
+                ? `Prévu : les ${week.planned.seanceCount} séances de la routine.`
+                : 'Prévu : la séance de la routine.',
           'Sous 5 reps, une série compte en partie.',
         ].join(' ');
 

@@ -15,6 +15,8 @@
 //     `loadChosenSeance`, `loadSeanceForCapture`) : hors ligne, le cache chaud
 //     suffit. `null` si la séance en cours n'appartient plus à cette routine
 //     (routine changée depuis le lancement) : le prévu ne serait pas le sien.
+//   - le NOM de la routine, pour « Prévu : Ma routine, 3 séances. » : lecture
+//     réseau seule ; hors ligne il manque et l'écran garde sa phrase générique.
 //
 // N'importe rien de features/analysis : ce module est dans le chunk d'entrée,
 // avec la Capture. Les deux lectures sont indépendantes ; l'échec de l'une ne
@@ -41,6 +43,8 @@ export interface WeekMusclesInput {
   seancesBefore: WeekSeance[];
   /** Le prévu de la routine, `null` si indisponible. */
   planned: { exercises: PlannedExercise[]; seanceCount: number } | null;
+  /** Le nom de la routine de la séance, `null` s'il n'a pas pu être lu (hors ligne). */
+  routineName: string | null;
 }
 
 /** Le dimanche (jour ISO) de la semaine civile qui commence le lundi `mondayIso`. */
@@ -168,19 +172,28 @@ async function loadPlanned(seanceId: string): Promise<WeekMusclesInput['planned'
   };
 }
 
+/** Le nom de la routine de la séance `seanceId` (lecture réseau, sans copie). */
+async function loadRoutineName(seanceId: string): Promise<string | null> {
+  const { data, error } = await supabase.from('seances').select('routines ( name )').eq('id', seanceId).maybeSingle();
+  if (error) throw error;
+  return (data as { routines: { name: string } | null } | null)?.routines?.name ?? null;
+}
+
 /** Ce que la fin de séance de `seanceId` (exécution `currentExecutionId`, date adoptée `dateIso`) affiche de la semaine. */
 export async function loadWeekMuscles(params: {
   seanceId: string;
   dateIso: string;
   currentExecutionId: string;
 }): Promise<WeekMusclesInput> {
-  const [before, planned] = await Promise.allSettled([
+  const [before, planned, routineName] = await Promise.allSettled([
     loadBefore(params.dateIso, params.currentExecutionId),
     loadPlanned(params.seanceId),
+    loadRoutineName(params.seanceId),
   ]);
   return {
     before: before.status === 'fulfilled' ? before.value.before : null,
     seancesBefore: before.status === 'fulfilled' ? before.value.seancesBefore : [],
     planned: planned.status === 'fulfilled' ? planned.value : null,
+    routineName: routineName.status === 'fulfilled' ? routineName.value : null,
   };
 }
