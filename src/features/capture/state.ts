@@ -672,14 +672,22 @@ export function applyQueuedSets(
   for (const op of ops) {
     if (op.type === 'insertSet') {
       if (op.executionId !== executionId) continue;
-      const set: PerformedSet = {
-        weightKg: op.weightKg,
-        reps: op.reps,
-        rir: op.rir,
-        order: op.setOrder,
-        ...(op.side ? { side: op.side } : {}),
-      };
       const known = rows.get(op.id);
+      // Écriture partielle (correction, remontée de rang) : seulement sur une
+      // série déjà au tableau, et seulement ses colonnes. Elle n'en crée pas.
+      if (op.only !== undefined && !known) continue;
+      const set: PerformedSet =
+        op.only === 'values' && known
+          ? { ...known.set, weightKg: op.weightKg, reps: op.reps, rir: op.rir }
+          : op.only === 'rank' && known
+            ? { ...known.set, order: op.setOrder }
+            : {
+                weightKg: op.weightKg,
+                reps: op.reps,
+                rir: op.rir,
+                order: op.setOrder,
+                ...(op.side ? { side: op.side } : {}),
+              };
       if (known && known.exerciseId === op.exerciseId && sameSet(known.set, set)) continue;
       if (known) touched.add(known.exerciseId);
       rows.set(op.id, { exerciseId: op.exerciseId, set, id: op.id });

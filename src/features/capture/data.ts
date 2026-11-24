@@ -50,7 +50,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
+import { isSetInsertion, readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -591,6 +591,19 @@ export function applyPendingSets(
     switch (op.type) {
       case 'insertSet': {
         if (op.exerciseId !== exerciseId) break;
+        // Écriture partielle (correction, remontée de rang) : elle ne touche
+        // qu'une ligne déjà lue, et que ses colonnes ; elle n'en crée pas.
+        if (op.only !== undefined) {
+          const known = byKey.get(op.id);
+          if (!known) break;
+          byKey.set(
+            op.id,
+            op.only === 'values'
+              ? { ...known, weight_kg: op.weightKg, reps: op.reps, rir: op.rir }
+              : { ...known, set_order: op.setOrder },
+          );
+          break;
+        }
         const executions = context.get(op.executionId);
         if (!executions) break; // Sans date ni scope, la ligne ne dérive rien.
         byKey.set(op.id, {
@@ -1134,7 +1147,9 @@ export async function loadTodayExecution(
     const pending = [...pendingBefore, ...pendingAfter];
     return {
       ...withoutPendingDeletions(today, pending),
-      pendingSetIds: [...new Set(pending.filter((op) => op.type === 'insertSet').map((op) => op.id))],
+      // Les INSERTIONS seulement : une écriture partielle ne crée pas la ligne,
+      // elle ne justifie donc pas de garder une série que la base n'a pas.
+      pendingSetIds: [...new Set(pending.filter(isSetInsertion).map((op) => op.id))],
       // Les notes aussi se lisent aux deux bouts : un effacement acquitté
       // pendant le trajet (par cet onglet ou un autre) a vidé la file, et la
       // réponse porte encore la note.
@@ -1560,6 +1575,32 @@ export async function upsertSet(params: {
     { onConflict: 'id' },
   );
   if (error) throw error;
+}
+
+/**
+ * Écriture PARTIELLE d'une série existante, par son id (cf. `InsertSetOp.only`) :
+ * les valeurs seules (correction) ou le rang seul (remontée après une
+ * suppression). Un `update`, jamais un `upsert` : si la ligne n'existe plus,
+ * rien n'est écrit et rien n'est recréé. Idempotent. Rend le nombre de lignes
+ * touchées (cf. « LIGNES TOUCHÉES » plus bas) : 0 reste un succès, la série a
+ * été supprimée entre-temps.
+ */
+export async function patchSet(
+  params:
+    | { id: string; only: 'values'; weightKg: number; reps: number; rir: number }
+    | { id: string; only: 'rank'; setOrder: number },
+): Promise<number> {
+  const patch =
+    params.only === 'values'
+      ? { weight_kg: params.weightKg, reps: params.reps, rir: params.rir }
+      : { set_order: params.setOrder };
+  const { data, error } = await supabase
+    .from('performed_sets')
+    .update(patch)
+    .eq('id', params.id)
+    .select('id');
+  if (error) throw error;
+  return data?.length ?? 0;
 }
 
 /**

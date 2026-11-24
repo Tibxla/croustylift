@@ -82,6 +82,7 @@ import {
 } from './state';
 import {
   enqueue,
+  isSetInsertion,
   OUTBOX_CHANGED_EVENT,
   purgeByExecution,
   readOwnQueue,
@@ -470,7 +471,7 @@ export function CaptureScreen() {
             base: lateToday.progress,
             pendingSetIds: [
               ...lateToday.pendingSetIds,
-              ...queue.filter((op) => op.type === 'insertSet').map((op) => op.id),
+              ...queue.filter(isSetInsertion).map((op) => op.id),
             ],
             knownAtDeparture,
             // Avec ses valeurs : une série corrigée ici pendant le trajet garde

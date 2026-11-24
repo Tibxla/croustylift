@@ -123,7 +123,7 @@ describe('correctSet', () => {
   it('l’écriture est une réaffirmation de la ligne par son id (upsert), au même rang', () => {
     const gesture = correctSet(started(), BENCH, 's2', { weightKg: 77.5, reps: 9, rir: 2 });
     expect(gesture!.ops).toEqual([
-      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2 },
+      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2, only: 'values' },
     ]);
   });
 
@@ -140,7 +140,7 @@ describe('correctSet', () => {
     };
     const gesture = correctSet(state, 'curl', 'r1', { weightKg: 12, reps: 10, rir: 1 })!;
     expect(gesture.ops).toEqual([
-      { type: 'insertSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right' },
+      { type: 'insertSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right', only: 'values' },
     ]);
     expect(getProgress(captureReducer(state, gesture.action), 'curl').sets).toEqual([
       ps(12, 10, 2, 1, 'left'),
@@ -371,8 +371,8 @@ describe('deleteSet', () => {
     const gesture = deleteSet(started(), BENCH, 's1')!;
     expect(gesture.ops).toEqual([
       { type: 'deleteSet', id: 's1', exerciseIds: [BENCH] },
-      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 7, rir: 1 },
-      { type: 'insertSet', id: 's3', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 6, rir: 0 },
+      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 7, rir: 1, only: 'rank' },
+      { type: 'insertSet', id: 's3', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 6, rir: 0, only: 'rank' },
     ]);
   });
 
@@ -401,8 +401,8 @@ describe('deleteSet', () => {
     const gesture = deleteSet(state, 'curl', 'r1')!;
     expect(gesture.ops.filter((op) => op.type === 'deleteSet').map((op) => op.id)).toEqual(['l1', 'r1']);
     expect(gesture.ops.filter((op) => op.type === 'insertSet')).toEqual([
-      { type: 'insertSet', id: 'l2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'left' },
-      { type: 'insertSet', id: 'r2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'right' },
+      { type: 'insertSet', id: 'l2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'left', only: 'rank' },
+      { type: 'insertSet', id: 'r2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'right', only: 'rank' },
     ]);
     const next = captureReducer(state, gesture.action);
     expect(getProgress(next, 'curl').setIds).toEqual(['l2', 'r2']);

@@ -11,6 +11,7 @@ import {
   deleteExecutionById,
   deleteSetById,
   exercisesHoldingRows,
+  patchSet,
   refreshExerciseRows,
   updateExecution,
   upsertExecution,
@@ -124,6 +125,18 @@ export const syncFns: SyncFns = {
       startedAt: op.startedAt,
     }),
   insertSet: async (op) => {
+    // Écriture partielle (correction : valeurs seules ; remontée : rang seul) :
+    // un `update` qui ne recrée jamais la ligne (cf. `InsertSetOp.only`).
+    if (op.only !== undefined) {
+      await patchSet(
+        op.only === 'values'
+          ? { id: op.id, only: 'values', weightKg: op.weightKg, reps: op.reps, rir: op.rir }
+          : { id: op.id, only: 'rank', setOrder: op.setOrder },
+      );
+      touchedExercises.add(op.exerciseId);
+      ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
+      return;
+    }
     await upsertSet({
       id: op.id,
       executionId: op.executionId,

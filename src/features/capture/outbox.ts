@@ -45,7 +45,7 @@ export interface UpsertExecutionOp {
   startedAt?: string;
 }
 
-/** Insère une série loggée. Idempotent via upsert par id (rejouer = no-op). */
+/** Écrit une série : upsert complet par id, ou écriture partielle (cf. `only`). Idempotent. */
 export interface InsertSetOp {
   type: 'insertSet';
   id: string;
@@ -61,6 +61,24 @@ export interface InsertSetOp {
    * Absent (`undefined`) pour un exo bilatéral -> écrit `side` null en base.
    */
   side?: Side;
+  /**
+   * Écriture PARTIELLE d'une série qui existe déjà, au lieu de l'upsert complet :
+   *   - 'values' : seuls poids, reps et RIR sont écrits (correction d'une série) ;
+   *     son rang en base n'est pas touché ;
+   *   - 'rank' : seul le rang est écrit (remontée après une suppression) ; ses
+   *     valeurs en base ne sont pas touchées.
+   * Sans cela, deux gestes faits depuis deux onglets s'écrasaient : une remontée
+   * de rang réécrivait les valeurs d'avant une correction encore en file, une
+   * correction réécrivait le rang d'avant une remontée. Une écriture partielle
+   * ne crée jamais la ligne : si la série a été supprimée entre-temps, elle est
+   * sans effet (corriger ou renuméroter une série supprimée ne la ressuscite
+   * pas). L'op porte quand même la ligne ENTIÈRE, telle que l'émetteur la
+   * voyait : un onglet resté sur un bundle antérieur l'envoie en upsert complet
+   * (l'ancien comportement), et elle sert à reconstituer la série si son
+   * insertion d'origine a été refusée (cf. `flush`, quarantaine). Absent :
+   * upsert complet (log d'une série, éditeur de séance passée).
+   */
+  only?: 'values' | 'rank';
 }
 
 /** Supprime une série par son id (« annuler »). Idempotent (delete par id). */
@@ -301,6 +319,11 @@ let volatile: ({ storage: Storage } & VolatileGap) | null = null;
 /** Identité d'une op en file : son UUID d'enfilement, à défaut son contenu. */
 function opKey(op: OutboxOp): string {
   return op._uid ?? JSON.stringify(op);
+}
+
+/** L'op INSÈRE-t-elle une série (upsert complet), par opposition à une écriture partielle ? */
+export function isSetInsertion(op: OutboxOp): op is InsertSetOp & Sequenced {
+  return op.type === 'insertSet' && op.only === undefined;
 }
 
 /**
