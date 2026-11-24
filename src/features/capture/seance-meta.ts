@@ -22,6 +22,9 @@
 // dernière lue en base qu'on a supprimée, la date n'est plus sûre et la ligne
 // ne la dit pas.
 //
+// Une exécution acquittée compte encore jusqu'à la relecture de la méta (voir
+// « ACQUITTÉES, PAS ENCORE RELUES » plus bas).
+//
 // « Pas de copie ni de réseau » n'est pas « jamais faite » : sans donnée, la
 // ligne reste vide (sa hauteur est réservée, rien ne saute à l'arrivée).
 import { peekRead } from '../../lib/read-cache';
@@ -101,4 +104,62 @@ export function mergePendingExecutions(stored: StoredMap, ops: readonly OutboxOp
 /** La copie locale telle quelle (synchrone), pour le premier rendu. */
 export function peekSeancesMeta(): StoredMap {
   return peekRead<StoredMap>(SEANCES_META_KEY) ?? {};
+}
+
+
+// ACQUITTÉES, PAS ENCORE RELUES. Une exécution qui sort de la file (acquittée)
+// cessait aussitôt de compter : sa date (séance faite) disparaissait, et celle
+// d'une exécution SUPPRIMÉE reparaissait depuis la copie, jusqu'à la relecture.
+// Le réseau tombé juste après, la copie restait fausse, au remontage compris.
+// Les ops d'exécution acquittées sont donc gardées ici, dans le stockage, et
+// fusionnées comme celles de la file, jusqu'à ce qu'une lecture de la méta
+// partie APRÈS leur acquittement soit acceptée (seance-meta-load.ts) : la
+// génération d'acquittement de la copie, changée à chaque acquittement
+// (sync.ts, `markToRefresh`), écarte toute lecture partie avant.
+const ACKED_KEY = 'croustylift:salle-seances-meta:acquittees';
+/** Borne : quelques séances entre deux relectures, jamais davantage. */
+const ACKED_MAX = 50;
+
+/** Les ops d'exécution acquittées depuis la dernière relecture acceptée. */
+export function readAckedExecutions(): OutboxOp[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(ACKED_KEY) ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (op): op is OutboxOp =>
+        typeof op === 'object' &&
+        op !== null &&
+        typeof (op as { id?: unknown }).id === 'string' &&
+        ((op as OutboxOp).type === 'deleteExecution' ||
+          ((op as OutboxOp).type === 'upsertExecution' &&
+            typeof (op as { seanceVersionId?: unknown }).seanceVersionId === 'string' &&
+            typeof (op as { performedOn?: unknown }).performedOn === 'string')),
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Garde une exécution créée ou supprimée en base, le temps qu'une relecture l'apporte. */
+export function rememberAckedExecution(
+  op: { type: 'upsertExecution'; id: string; seanceVersionId: string; performedOn: string } | { type: 'deleteExecution'; id: string },
+): void {
+  if (typeof localStorage === 'undefined') return;
+  const kept = [...readAckedExecutions(), op].slice(-ACKED_MAX);
+  try {
+    localStorage.setItem(ACKED_KEY, JSON.stringify(kept));
+  } catch {
+    // Stockage plein : la ligne peut redire une date dépassée jusqu'à la relecture.
+  }
+}
+
+/** Une lecture partie après tous les acquittements gardés vient d'être acceptée. */
+export function clearAckedExecutions(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(ACKED_KEY);
+  } catch {
+    /* no-op */
+  }
 }

@@ -115,7 +115,7 @@ import { elapsedMinutesSince } from './summary';
 import { sommaireDetail } from './sommaire-detail';
 import { isDoubleTap, type LogStamp } from './log-guard';
 import { onQueueChanged } from './queue-changes';
-import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine } from './seance-meta';
+import { mergePendingExecutions, peekSeancesMeta, readAckedExecutions, seanceMetaLine } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
@@ -685,7 +685,10 @@ function SeancePicker({
       watch?.stop();
     };
   }, [idsKey]);
-  const meta = useMemo(() => mergePendingExecutions(stored, queue), [stored, queue]);
+  // La file, plus les exécutions acquittées qu'aucune relecture n'a encore
+  // apportées (seance-meta.ts) : relues à chaque changement de la file ou de la
+  // méta.
+  const meta = useMemo(() => mergePendingExecutions(stored, [...queue, ...readAckedExecutions()]), [stored, queue]);
   const today = todayIso();
   return (
     <div className="flex flex-1 flex-col">

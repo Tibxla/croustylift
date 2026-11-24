@@ -36,7 +36,8 @@ import {
   type SyncFns,
 } from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
-import { seedRead } from '../../lib/read-cache';
+import { markToRefresh, seedRead } from '../../lib/read-cache';
+import { rememberAckedExecution, SEANCES_META_KEY } from './seance-meta';
 import { REALISED_VIEWS, viewsAcknowledged } from '../../lib/dated-read';
 import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
@@ -123,18 +124,33 @@ function rememberExerciseNote(
 }
 
 /**
+ * Une exécution vient d'être créée ou supprimée EN BASE : la méta de « Quelle
+ * séance ? » la garde (seance-meta.ts) jusqu'à une relecture partie après cet
+ * instant, et toute lecture de la méta partie avant ne s'écrit plus
+ * (génération d'acquittement, read-cache).
+ */
+function ackedInMeta(
+  op: { type: 'upsertExecution'; id: string; seanceVersionId: string; performedOn: string } | { type: 'deleteExecution'; id: string },
+): void {
+  rememberAckedExecution(op);
+  markToRefresh([SEANCES_META_KEY]);
+}
+
+/**
  * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
  * toutes idempotentes par id (cf. data.ts). C'est l'unique point de couplage
  * entre l'outbox (logique pure) et Supabase.
  */
 export const syncFns: SyncFns = {
-  upsertExecution: (op) =>
-    upsertExecution({
+  upsertExecution: async (op) => {
+    await upsertExecution({
       id: op.id,
       seanceVersionId: op.seanceVersionId,
       performedOn: op.performedOn,
       startedAt: op.startedAt,
-    }),
+    });
+    ackedInMeta({ type: 'upsertExecution', id: op.id, seanceVersionId: op.seanceVersionId, performedOn: op.performedOn });
+  },
   // Écriture partielle (correction : valeurs seules ; remontée : rang seul) :
   // un `update` qui ne recrée jamais la ligne (cf. `PatchSetOp`, outbox.ts).
   patchSet: async (op) => {
@@ -213,6 +229,7 @@ export const syncFns: SyncFns = {
     await deleteExecutionById(op.id);
     touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
     realisedTouched = true;
+    ackedInMeta({ type: 'deleteExecution', id: op.id });
   },
   // Suppression conditionnelle (« Changer de séance ») : les copies locales ne
   // sont relues que si la base a réellement supprimé l'exécution.
@@ -221,6 +238,7 @@ export const syncFns: SyncFns = {
     if (outcome === 'deleted') {
       touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
       realisedTouched = true;
+      ackedInMeta({ type: 'deleteExecution', id: op.id });
     }
   },
 };

@@ -4,7 +4,7 @@
 // coûte que la ligne de méta.
 import { supabase } from '../../lib/supabase';
 import { cachedRead, onReadAccepted } from '../../lib/read-cache';
-import { peekSeancesMeta, SEANCES_META_KEY, type StoredMap } from './seance-meta';
+import { clearAckedExecutions, peekSeancesMeta, SEANCES_META_KEY, type StoredMap } from './seance-meta';
 
 /** Lecture réseau : versions, exos de la version courante, dernière exécution. */
 async function fetchSeancesMeta(seanceIds: readonly string[]): Promise<StoredMap> {
@@ -82,7 +82,11 @@ export function watchSeancesMeta(
 ): { stop: () => void; revalidate: () => void } {
   let alive = true;
   const off = onReadAccepted((key, value) => {
-    if (alive && key === SEANCES_META_KEY) onChange(value as StoredMap);
+    if (!alive || key !== SEANCES_META_KEY) return;
+    // Acceptée, la lecture est partie après tous les acquittements gardés
+    // (génération d'acquittement) : elle les porte, la mémoire peut partir.
+    clearAckedExecutions();
+    onChange(value as StoredMap);
   });
   const revalidate = () => {
     if (alive) void cachedRead(SEANCES_META_KEY, fetcher, { replay: false }).catch(() => {});
