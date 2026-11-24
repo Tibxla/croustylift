@@ -1,8 +1,8 @@
 // Coquille commune aux écrans d'entrée (Login, Mot de passe oublié, Réinitialisation).
 // Colonne centrée verticalement, padding latéral ~30px, marque optionnelle en haut,
-// titre / sous-titre, contenu, puis le footer mono « OFFLINE-FIRST · CHIFFRÉ » qui
-// rappelle la promesse local-first / chiffré (DESIGN.md). Centralisé pour que les
-// trois écrans partagent EXACTEMENT le même rythme et la même matière.
+// titre / sous-titre, puis le contenu. Plus de pied « OFFLINE-FIRST · CHIFFRÉ » :
+// il promettait un chiffrement que l'app ne démontre pas (registre U25). Centralisé
+// pour que les trois écrans partagent EXACTEMENT le même rythme et la même matière.
 import { useState, type ReactNode } from 'react'
 
 export function AuthShell({
@@ -11,7 +11,6 @@ export function AuthShell({
   titleSize = 32,
   subtitle,
   children,
-  footer = true,
   backLabel,
   onBack,
 }: {
@@ -21,7 +20,6 @@ export function AuthShell({
   titleSize?: number
   subtitle?: ReactNode
   children: ReactNode
-  footer?: boolean
   /** Libellé du bouton retour haut (ex. « Connexion ») ; rendu seulement si `onBack`. */
   backLabel?: string
   onBack?: () => void
@@ -63,11 +61,6 @@ export function AuthShell({
         )}
         <div className="mt-8">{children}</div>
       </div>
-      {footer && (
-        <p className="readout pb-7 pt-2 text-center text-xs tracking-[0.04em] text-ink-faint">
-          OFFLINE-FIRST · CHIFFRÉ
-        </p>
-      )}
     </main>
   )
 }
@@ -80,7 +73,7 @@ function PlaquetteMark() {
   return (
     <div
       aria-hidden="true"
-      className="mb-[30px] flex h-[62px] w-[62px] items-end justify-center gap-1 rounded-[18px] border border-hair-strong bg-surface pb-[15px]"
+      className="mb-[30px] flex h-[62px] w-[62px] items-end justify-center gap-1 rounded-block border border-hair-strong bg-surface pb-[15px]"
     >
       <span className="w-1.5 rounded-[3px] bg-ink-faint" style={{ height: 11 }} />
       <span className="w-1.5 rounded-[3px] bg-ink-muted" style={{ height: 18 }} />
@@ -92,7 +85,7 @@ function PlaquetteMark() {
   )
 }
 
-/** Label de champ : 12px, majuscules, ink-faint (signature des écrans d'entrée). */
+/** Libellé de champ : 15 px en casse de phrase, gris (jamais de surtitre en majuscules, DESIGN.md). */
 export function FieldLabel({
   htmlFor,
   children,
@@ -103,7 +96,7 @@ export function FieldLabel({
   return (
     <label
       htmlFor={htmlFor}
-      className="mb-2 block text-xs font-medium uppercase tracking-[0.04em] text-ink-faint"
+      className="mb-2 block text-[15px] font-medium text-muted"
     >
       {children}
     </label>

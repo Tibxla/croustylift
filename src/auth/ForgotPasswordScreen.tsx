@@ -45,7 +45,6 @@ export function ForgotPasswordScreen({ onBack }: Props) {
     return (
       <AuthShell
         mark={false}
-        footer={false}
         titleSize={30}
         title="E-mail envoyé."
         subtitle="Si un compte existe pour cette adresse, tu recevras un lien de réinitialisation."
@@ -64,7 +63,6 @@ export function ForgotPasswordScreen({ onBack }: Props) {
   return (
     <AuthShell
       mark={false}
-      footer={false}
       titleSize={30}
       backLabel="Connexion"
       onBack={onBack}

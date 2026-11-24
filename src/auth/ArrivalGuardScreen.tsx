@@ -27,7 +27,7 @@ export function ArrivalGuardScreen({
 }) {
   const [confirm, setConfirm] = useState(false)
   return (
-    <AuthShell mark={false} footer={false} titleSize={30} title="Des saisies attendent.">
+    <AuthShell mark={false} titleSize={30} title="Des saisies attendent.">
       <p className="text-sm leading-[1.5] text-ink">
         {arrivalGuardLabel({ held, heldEmail, arrivingEmail })}
       </p>

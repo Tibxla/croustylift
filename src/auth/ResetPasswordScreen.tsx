@@ -68,7 +68,6 @@ export function ResetPasswordScreen() {
     return (
       <AuthShell
         mark={false}
-        footer={false}
         titleSize={30}
         title="Mot de passe enregistré."
         subtitle="Tu es maintenant connecté."
@@ -81,7 +80,6 @@ export function ResetPasswordScreen() {
   return (
     <AuthShell
       mark={false}
-      footer={false}
       titleSize={30}
       title="Ton mot de passe."
       subtitle={`Choisis un mot de passe d’au moins ${MIN_PASSWORD_LENGTH} caractères.`}
