@@ -31,6 +31,7 @@ export function NumberRow({
   presc,
   refValue,
   onPick,
+  compact = false,
 }: {
   label: string;
   min: number;
@@ -39,6 +40,8 @@ export function NumberRow({
   presc: [number, number];
   refValue: number | null;
   onPick: (n: number) => void;
+  /** Écran bas : cases de 44 px au lieu de 48. */
+  compact?: boolean;
 }) {
   const row = useRef<HTMLDivElement>(null);
   const values = range0(min, max);
@@ -177,7 +180,7 @@ export function NumberRow({
                 pickedHere.current = true;
                 onPick(n);
               }}
-              className="relative h-12 flex-none select-none"
+              className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'}`}
               // 1/8 de la largeur de la rangée (le pourcentage se lit sur la boîte
               // de contenu, marges d'écran de 20 px déduites).
               style={{ flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}

@@ -34,6 +34,7 @@ export function Ruler({
   needle = 'var(--sig)',
   height = 62,
   animateTap = false,
+  compact = false,
 }: {
   steps: number;
   onChange: (s: number) => void;
@@ -53,7 +54,10 @@ export function Ruler({
   height?: number;
   /** Le toucher fait glisser la règle jusqu'au cran (190 ms) au lieu d'y sauter. */
   animateTap?: boolean;
+  /** Écran bas : graduations et aiguille plus courtes, étiquettes rapprochées. */
+  compact?: boolean;
 }) {
+  const tick = compact ? { major: 22, mid: 13, minor: 8, needle: 27, gap: 'mt-1' } : { major: 30, mid: 18, minor: 11, needle: 36, gap: 'mt-2' };
   const box = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; start: number; moved: boolean; last: number; trail: { x: number; t: number }[] } | null>(null);
@@ -206,17 +210,17 @@ export function Ruler({
                 className={color ? '' : major ? 'bg-muted' : 'bg-dim'}
                 style={{
                   width: color ? Math.max(2, pxPerStep - 2) : major ? 2 : 1,
-                  height: major ? 30 : mid ? 18 : 11,
+                  height: major ? tick.major : mid ? tick.mid : tick.minor,
                   background: color,
                 }}
               />
-              {major && majorLabel && <span className="tnum mt-2 whitespace-nowrap text-[13px] text-faint">{majorLabel(v)}</span>}
+              {major && majorLabel && <span className={`tnum ${tick.gap} whitespace-nowrap text-[13px] text-faint`}>{majorLabel(v)}</span>}
             </div>
           );
         })}
       </div>
       {/* L'aiguille, fixe au centre ; elle s'arrête au-dessus des étiquettes. */}
-      <div className="pointer-events-none absolute left-1/2 top-0 h-[36px] w-[3px] -translate-x-1/2" style={{ background: needle }} />
+      <div className="pointer-events-none absolute left-1/2 top-0 w-[3px] -translate-x-1/2" style={{ background: needle, height: tick.needle }} />
     </div>
   );
 }

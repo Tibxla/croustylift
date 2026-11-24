@@ -12,14 +12,14 @@
 // draft-e1rm.ts) : l'écart se lit sans signe ni couleur. Les statuts en signal
 // (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
 // À 0 kg, la mesure est en reps effectives (`perfReadout`, ADR 0013).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { comparePerformance, effectiveReps, isZeroLoad } from '../../domain/e1rm';
 import { isRepsRecord } from '../../domain/pr';
 import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt } from '../../domain/unilateral';
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, StateMark, Status } from '../../ui';
+import { IconButton, NumberRow, Ruler, StateMark, Status, useCompact } from '../../ui';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
@@ -313,6 +313,9 @@ export function ExerciseCapture({
   }, [reachedMax]);
 
   const { stepKg } = useReglages();
+  // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
+  // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
+  const compact = useCompact();
   const hasNote =
     !isBlankNote(datedNote) || !isBlankNote(perExerciseNote) || !!(exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body));
   const draft: PerformedSet = { order: completedSets + 1, weightKg, reps, rir, side: currentSide ?? undefined };
@@ -343,7 +346,15 @@ export function ExerciseCapture({
             barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
           className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
-            exercise.name.length <= 18 ? 'text-[32px]' : exercise.name.length <= 24 ? 'text-[28px]' : 'text-[22px] leading-[35px]'
+            compact
+              ? exercise.name.length <= 18
+                ? 'text-[28px]'
+                : 'text-[22px] leading-[29px]'
+              : exercise.name.length <= 18
+                ? 'text-[32px]'
+                : exercise.name.length <= 24
+                  ? 'text-[28px]'
+                  : 'text-[22px] leading-[35px]'
           }`}
         >
           {exercise.name}
@@ -382,7 +393,7 @@ export function ExerciseCapture({
         </div>
       </div>
 
-      <div className="mt-2">
+      <div className={compact ? 'mt-1' : 'mt-2'}>
         {unilateral ? (
           <UniSetBand sets={progress.sets} badges={badges} draft={draft} side={currentSide ?? 'left'} plannedMax={prescription.sets.max} />
         ) : (
@@ -420,7 +431,7 @@ export function ExerciseCapture({
             <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} compact />
           </div>
         ) : (
-          <div className="mt-2 px-5">
+          <div className={`px-5 ${compact ? 'mt-1' : 'mt-2'}`}>
             <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} />
           </div>
         )}
@@ -429,7 +440,7 @@ export function ExerciseCapture({
           <WeightReadout value={weightKg} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
         </div>
 
-        <div className="mt-2">
+        <div className={compact ? 'mt-1' : 'mt-2'}>
           <Ruler
             key={stepKg}
             label="Poids"
@@ -441,43 +452,34 @@ export function ExerciseCapture({
             majorLabel={(s) => formatWeight(s * stepKg)}
             format={(s) => `${formatWeight(roundWeightKg(s * stepKg))} kg`}
             onChange={(s) => setWeightKg(roundWeightKg(s * stepKg))}
-            height={56}
+            height={compact ? 44 : 56}
+            compact={compact}
           />
         </div>
 
-        <dl className="grid grid-cols-3 gap-3 px-5">
-          <div aria-live="polite">
-            <dt className="text-[13px] text-muted">{livePerf?.label ?? 'e1RM'}</dt>
-            <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">
-              {livePerf ? livePerf.value : '·'}
-              {livePerf?.unit && <span className="ml-1 text-[13px] font-normal text-faint">{livePerf.unit}</span>}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[13px] text-muted">Écart à la réf.</dt>
+        {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
+        <dl className={`grid grid-cols-3 gap-3 px-5 ${compact ? 'pt-0.5' : ''}`}>
+          <Measure compact={compact} label={livePerf?.label ?? 'e1RM'} live>
+            {livePerf ? <Figure value={livePerf.value} unit={livePerf.unit} compact={compact} /> : <Missing compact={compact}>·</Missing>}
+          </Measure>
+          <Measure compact={compact} label={compact ? 'Écart' : 'Écart à la réf.'}>
             {gap ? (
-              <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">
-                {gap.split(' ')[0]}
-                <span className="ml-1 text-[13px] font-normal text-faint">{gap.split(' ')[1]}</span>
-              </dd>
+              <Figure value={gap.split(' ')[0]!} unit={gap.split(' ')[1] ?? null} compact={compact} />
             ) : (
-              <dd className="mt-1 text-[16px] leading-[22px] text-muted">aucune réf.</dd>
+              <Missing compact={compact}>{compact ? 'sans réf.' : 'aucune réf.'}</Missing>
             )}
-          </div>
-          <div className="text-right">
-            <dt className="text-[13px] text-muted">{unilateral && currentSide ? `Record ${sideWord(currentSide)}` : 'Record'}</dt>
+          </Measure>
+          {/* Écran bas : « Record » seul, le côté se lit juste au-dessus (Gauche · Droite). */}
+          <Measure compact={compact} right label={unilateral && currentSide && !compact ? `Record ${sideWord(currentSide)}` : 'Record'}>
             {recordValue ? (
-              <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-muted">
-                {recordValue.value}
-                <span className="ml-1 text-[13px] font-normal text-faint">{recordValue.unit}</span>
-              </dd>
+              <Figure value={recordValue.value} unit={recordValue.unit} compact={compact} muted />
             ) : (
-              <dd className="mt-1 text-[16px] leading-[22px] text-muted">aucun</dd>
+              <Missing compact={compact}>aucun</Missing>
             )}
-          </div>
+          </Measure>
         </dl>
 
-        <div className="mt-2 flex flex-col gap-0.5">
+        <div className={`flex flex-col gap-0.5 ${compact ? 'mt-1' : 'mt-2'}`}>
           {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
           <NumberRow
             key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
@@ -488,6 +490,7 @@ export function ExerciseCapture({
             presc={[prescription.reps.min, prescription.reps.max]}
             refValue={refToBeat?.reps ?? null}
             onPick={setReps}
+            compact={compact}
           />
           <NumberRow
             key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
@@ -498,6 +501,7 @@ export function ExerciseCapture({
             presc={[prescription.rir.min, prescription.rir.max]}
             refValue={refToBeat?.rir ?? null}
             onPick={setRir}
+            compact={compact}
           />
         </div>
       </div>
@@ -536,6 +540,30 @@ export function ExerciseCapture({
       />
     </div>
   );
+}
+
+/** Une mesure sous la règle : son nom, puis le chiffre (sur la même ligne en
+ *  écran bas). */
+function Measure({ label, compact, right = false, live = false, children }: { label: string; compact: boolean; right?: boolean; live?: boolean; children: ReactNode }) {
+  return (
+    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : ''} min-w-0`}>
+      <dt className="flex-none text-[13px] text-muted">{label}</dt>
+      {children}
+    </div>
+  );
+}
+
+function Figure({ value, unit, compact, muted = false }: { value: string; unit: string | null; compact: boolean; muted?: boolean }) {
+  return (
+    <dd className={`tnum whitespace-nowrap font-medium leading-none tracking-[-0.01em] ${muted ? 'text-muted' : 'text-ink'} ${compact ? 'text-[17px]' : 'mt-1 text-[22px]'}`}>
+      {value}
+      {unit && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
+    </dd>
+  );
+}
+
+function Missing({ compact, children }: { compact: boolean; children: ReactNode }) {
+  return <dd className={`whitespace-nowrap text-muted ${compact ? 'text-[14px]' : 'mt-1 text-[16px] leading-[22px]'}`}>{children}</dd>;
 }
 
 /** La ligne de Référence de la série en cours : « réf. série 2 » et ses valeurs
