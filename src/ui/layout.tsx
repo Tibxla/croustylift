@@ -142,7 +142,10 @@ export function Row({
       )}
     </>
   );
-  const cls = 'flex min-h-14 min-w-0 flex-1 items-start gap-3 py-3 text-left';
+  // Un titre seul (ni méta ni valeur) se centre sur la ligne, à la hauteur du
+  // chevron ; sinon tout part du haut, pour les titres sur deux lignes.
+  const bare = !meta && value === undefined && valueMeta === undefined;
+  const cls = `flex min-h-14 min-w-0 flex-1 ${bare ? 'items-center' : 'items-start'} gap-3 py-3 text-left`;
   return (
     <li className="relative flex items-center gap-3 border-b border-line px-5">
       {onClick ? (
