@@ -142,6 +142,8 @@ interface Editing {
   set: EditableSet;
   /** Les ids de la série logique : 1 (bilatéral) ou 2 (gauche et droite). */
   logicalIds: string[];
+  /** Série ajoutée dans ce brouillon (pas encore en base) : ses valeurs sont reprises de la précédente. */
+  added: boolean;
 }
 
 export function PastSessionEditor({
@@ -646,6 +648,7 @@ function ExerciseSets({
                 rank: index + 1,
                 set,
                 logicalIds: [logical.both, logical.left, logical.right].filter((s): s is EditableSet => s !== null).map((s) => s.id),
+                added: !original.has(set.id),
               })
             }
           />
@@ -766,7 +769,7 @@ function SetSheet({
       ) : (
         <div className="pb-1">
           <p className="flex items-baseline justify-between gap-3 px-5 text-[14px]">
-            <span className="text-muted">loggée</span>
+            <span className="text-muted">{editing.added ? 'ajoutée, avant réglage' : 'loggée'}</span>
             <span className="tnum font-medium text-ink">{values(orig)}</span>
           </p>
           <WeightReadout value={v.weightKg} onChange={(kg) => setV((p) => ({ ...p, weightKg: roundWeightKg(kg) }))} />
@@ -791,7 +794,7 @@ function SetSheet({
               max={Math.max(REPS_ROW_MAX, v.reps, orig.reps)}
               value={v.reps}
               presc={[orig.reps, orig.reps]}
-              rangeWord="loggé"
+              rangeWord={editing.added ? 'avant' : 'loggé'}
               refValue={null}
               onPick={(n) => setV((p) => ({ ...p, reps: n }))}
             />
@@ -801,7 +804,7 @@ function SetSheet({
               max={Math.max(RIR_ROW_MAX, v.rir, orig.rir)}
               value={v.rir}
               presc={[orig.rir, orig.rir]}
-              rangeWord="loggé"
+              rangeWord={editing.added ? 'avant' : 'loggé'}
               refValue={null}
               onPick={(n) => setV((p) => ({ ...p, rir: n }))}
             />

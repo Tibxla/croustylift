@@ -66,7 +66,13 @@ export function E1rmChart({
   const accent = populated[0];
   const firstT = accent?.curve[0] ? dayToTime(accent.curve[0].date) : null;
   const startT = periodStart != null ? dayToTime(periodStart) : null;
-  const marker = startT !== null && firstT !== null && startT > firstT ? { x: startT, label: 'bloc' } : undefined;
+  // Le repère n'a de sens que DANS le tracé : après le premier point (sinon toute
+  // la courbe est dans le bloc) et avant la fin de l'axe (sinon rien n'est dedans).
+  const lastT = axis?.domain[1] ?? null;
+  const marker =
+    startT !== null && firstT !== null && lastT !== null && startT > firstT && startT <= lastT
+      ? { x: startT, label: 'bloc' }
+      : undefined;
 
   const chartSeries: ChartSeries[] = populated.map((s, i) => ({
     id: s.id,

@@ -229,7 +229,12 @@ export function Chart({
           aria-label={ariaLabel}
           tabIndex={onSelect ? 0 : undefined}
           onKeyDown={onKey}
-          onPointerDown={(e) => pick(e.clientX)}
+          onPointerDown={(e) => {
+            // Au doigt, le toucher parcourt la courbe sans donner le focus au
+            // graphe (pas de contour) ; le clavier garde son arrêt de tabulation.
+            if (e.pointerType !== 'mouse') e.preventDefault();
+            pick(e.clientX);
+          }}
           onPointerMove={(e) => {
             if (e.pointerType === 'mouse' || e.buttons) pick(e.clientX);
           }}
