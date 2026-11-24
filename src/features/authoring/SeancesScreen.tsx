@@ -231,7 +231,7 @@ function RoutinesContainer({
   if (load.phase === 'loading') {
     return (
       <Screen>
-        <ScreenHeader title="Routines" />
+        <ScreenHeader title="Séances" />
         <Loading label="Chargement des routines…" />
       </Screen>
     );
@@ -239,7 +239,7 @@ function RoutinesContainer({
   if (load.phase === 'error') {
     return (
       <Screen>
-        <ScreenHeader title="Routines" />
+        <ScreenHeader title="Séances" />
         <LoadError
           intro="Impossible de charger tes routines."
           message={load.message}
@@ -353,7 +353,8 @@ export function RoutinesView({
 
   return (
     <Screen bottom={<PrimaryButton onClick={() => setCreating(true)}>Créer une routine</PrimaryButton>}>
-      <ScreenHeader title="Routines" />
+      {/* Le titre est le mot de la navigation ; ce qu'on y range se dit dessous. */}
+      <ScreenHeader title="Séances" meta="Tes routines, et les séances de chacune" />
       {flash && <StatusLine flash={flash} onUnarchive={undo ? () => onUndoArchive(undo) : undefined} />}
       {live.length === 0 && archivedRoutines.length === 0 ? (
         <EmptyState
@@ -539,7 +540,7 @@ function RoutineContainer({
     };
   }, [reloadKey, routineId]);
 
-  const back = { label: 'Routines', onClick: () => onBack() };
+  const back = { label: 'Séances', onClick: () => onBack() };
   if (load.phase === 'loading') {
     return (
       <Screen>
@@ -784,7 +785,7 @@ export function RoutineView({
             {seanceCount(seances.length)}
           </>
         }
-        back={{ label: 'Routines', onClick: onBack }}
+        back={{ label: 'Séances', onClick: onBack }}
         action={
           archivedRoutine ? undefined : reorder ? (
             <SecondaryButton size="sm" onClick={toggleReorder} disabled={moving}>
