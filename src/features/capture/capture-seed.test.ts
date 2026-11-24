@@ -2,7 +2,7 @@
 // testable sans DOM (environment: 'node').
 
 import { describe, expect, it } from 'vitest';
-import { seedDraft, shouldReseedDraft, shouldReproposeSide } from './capture-seed';
+import { loggedSetsKey, seedDraft, shouldReseedDraft, shouldReproposeSide } from './capture-seed';
 import type { Prescription, PerformedSet } from '../../domain/types';
 
 const range = (min: number, max: number) => ({ min, max });
@@ -340,5 +340,26 @@ describe('shouldReproposeSide', () => {
   it('côté gardé, donc pas de faux geste : le brouillon touché n’est pas réamorcé', () => {
     // Le côté n'ayant pas bougé, le seul déclencheur restant est l'historique.
     expect(shouldReseedDraft('history', true)).toBe(false);
+  });
+});
+
+describe('loggedSetsKey (le préremplissage suit une correction)', () => {
+  it('8 reps loggées puis corrigées à 10 : la clé change, la série suivante propose 10', () => {
+    const logged: PerformedSet[] = [{ order: 1, weightKg: 60, reps: 8, rir: 2 }];
+    const corrected: PerformedSet[] = [{ order: 1, weightKg: 60, reps: 10, rir: 2 }];
+    // Même nombre de séries : seule une clé de contenu voit la correction.
+    expect(loggedSetsKey(corrected)).not.toBe(loggedSetsKey(logged));
+    expect(seedDraft({ prescription, reference: null, loggedSets: corrected }).reps).toBe(10);
+  });
+
+  it('un tableau neuf au même contenu garde la clé (pas de ré-amorçage à chaque rendu)', () => {
+    const a: PerformedSet[] = [{ order: 1, weightKg: 12, reps: 10, rir: 1, side: 'left' }];
+    expect(loggedSetsKey([...a.map((x) => ({ ...x }))])).toBe(loggedSetsKey(a));
+  });
+
+  it('le côté compte en unilatéral', () => {
+    expect(loggedSetsKey([{ order: 1, weightKg: 12, reps: 10, rir: 1, side: 'left' }])).not.toBe(
+      loggedSetsKey([{ order: 1, weightKg: 12, reps: 10, rir: 1, side: 'right' }]),
+    );
   });
 });

@@ -33,7 +33,7 @@ import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact, use
 import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
-import { seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
+import { loggedSetsKey, seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
 import { formatPerf, perfReadout } from './perf-readout';
 import { draftE1rm } from './draft-e1rm';
 import { ExerciseIndex, type IndexItem } from './ExerciseIndex';
@@ -219,7 +219,11 @@ export function ExerciseCapture({
   // on passe le côté CHOISI pour aligner le repère sur la bonne ligne G/D (série
   // logique + côté), au lieu de dériver avec les rangs doublés. Ré-amorcé au
   // changement d'exo, au log/annulation d'une série (loggedCount), ou au bascule
-  // de côté (currentSide), pour reproposer le repère du côté visé.
+  // de côté (currentSide), pour reproposer le repère du côté visé. Recalculé
+  // aussi quand le CONTENU des séries change (`loggedSetsKey`) : une correction
+  // ne change pas leur nombre. Ce recalcul seul est un changement d'historique,
+  // qui laisse en place un brouillon déjà touché (cf. l'effet plus bas).
+  const setsKey = loggedSetsKey(progress.sets);
   const seed = useMemo(
     () =>
       seedDraft({
@@ -234,7 +238,7 @@ export function ExerciseCapture({
     // La référence et son repli sont dans les dépendances : ils peuvent changer
     // sous l'écran (Référence suivie en direct, cf. CaptureScreen).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [exercise.exerciseId, loggedCount, currentSide, reference, exercise.fallbackReference],
+    [exercise.exerciseId, loggedCount, setsKey, currentSide, reference, exercise.fallbackReference],
   );
 
   const [weightKg, setWeightKg] = useState(seed.weightKg);

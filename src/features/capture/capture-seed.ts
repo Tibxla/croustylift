@@ -185,6 +185,17 @@ export function seedDraft({
  *     touché : dès la première interaction (tap, frappe, même non validée), ce
  *     que l'utilisateur règle ne bouge plus. Le repère affiché, lui, suit.
  */
+/**
+ * Clé du CONTENU des séries loggées, tel que `seedDraft` le lit (rang, côté,
+ * poids, reps, RIR). Le préremplissage se recalcule quand elle change : une
+ * correction remplace une série sans changer leur nombre, et la série suivante
+ * reprenait sinon les reps d'avant la correction. Stable d'un rendu à l'autre
+ * pour un même contenu (un tableau neuf ne ré-amorce rien).
+ */
+export function loggedSetsKey(sets: readonly PerformedSet[]): string {
+  return sets.map((s) => `${s.order}${s.side ?? ''}:${s.weightKg}:${s.reps}:${s.rir}`).join('|');
+}
+
 export function shouldReseedDraft(trigger: 'explicit' | 'history', touched: boolean): boolean {
   return trigger === 'explicit' || !touched;
 }
