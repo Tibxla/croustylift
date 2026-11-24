@@ -4,7 +4,7 @@
 // rapporte encore la séance supprimée. L'acquittement doit périmer la vue montée
 // et la faire relire ; un écran fermé, lui, n'est ni relu ni périmé (relu à son
 // ouverture, copie d'abord : cf. l'en-tête de dated-read).
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlushResult, OutboxOp } from './outbox';
 
 const { flushMock } = vi.hoisted(() => ({
@@ -34,9 +34,9 @@ vi.mock('../notes/data', () => ({
 }));
 
 import { flushOutbox, syncFns } from './sync';
-import { clearReadCache, peekFreshRead } from '../../lib/read-cache';
+import { clearReadCache, peekFreshRead, peekRead } from '../../lib/read-cache';
 import { saveLocalAccount } from '../../lib/local-account';
-import { JOURNAL_VIEW, loadDated, mountView } from '../../lib/dated-read';
+import { ACK_CHANNEL, closeAckChannel, JOURNAL_VIEW, loadDated, mountView, watchDated, type DatedState } from '../../lib/dated-read';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -79,8 +79,12 @@ beforeEach(() => {
   flushMock.mockReset();
 });
 
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+afterAll(() => closeAckChannel());
+
 describe('acquittement d’une écriture du réalisé', () => {
-  it('Journal monté, lecture arrivée avant le DELETE : la vue est périmée puis relue sur le réseau', async () => {
+  it('Journal monté, lecture arrivée avant le DELETE : la copie est marquée à rafraîchir, montrée d’abord, puis relue', async () => {
     // La relecture du retour réseau atteint la base AVANT le DELETE : elle
     // rapporte encore la séance et sème la copie.
     await loadDated(JOURNAL_VIEW, async () => ['exec-supprimee', 'exec-gardee'], { offline: false, now: () => 1000 });
@@ -91,14 +95,22 @@ describe('acquittement d’une écriture du réalisé', () => {
     await flushOutbox();
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    // Périmée : la relecture passe par le réseau, pas par la copie d'avant.
+    // Marquée à rafraîchir : plus tenue pour fraîche, mais gardée.
     expect(peekFreshRead(JOURNAL_VIEW)).toBeNull();
+    expect(peekRead(JOURNAL_VIEW)).not.toBeNull();
+    // La relecture montre la copie d'abord, puis la remplace.
+    const seen: DatedState<string[]>[] = [];
+    const stop = watchDated<string[]>(JOURNAL_VIEW, (s) => seen.push(s));
     const state = await loadDated(JOURNAL_VIEW, async () => ['exec-gardee'], { offline: false, now: () => 2000 });
-    expect(state).toEqual({ phase: 'ready', value: ['exec-gardee'], at: 2000, copy: false });
+    expect(state).toMatchObject({ phase: 'ready', copy: true, value: ['exec-supprimee', 'exec-gardee'] });
+    await settle();
+    expect(seen).toEqual([{ phase: 'ready', value: ['exec-gardee'], at: 2000, copy: false }]);
+    expect(peekFreshRead(JOURNAL_VIEW)).not.toBeNull();
+    stop();
     unmount();
   });
 
-  it('écran fermé : rien n’est relu ni périmé', async () => {
+  it('écran fermé : la copie est marquée à rafraîchir et gardée, rien n’est relu', async () => {
     await loadDated(JOURNAL_VIEW, async () => ['exec-supprimee'], { offline: false, now: () => 1000 });
     const refresh = vi.fn();
     mountView(JOURNAL_VIEW, refresh)();
@@ -107,7 +119,21 @@ describe('acquittement d’une écriture du réalisé', () => {
     await flushOutbox();
 
     expect(refresh).not.toHaveBeenCalled();
-    expect(peekFreshRead(JOURNAL_VIEW)).not.toBeNull();
+    expect(peekFreshRead(JOURNAL_VIEW)).toBeNull();
+    // Hors ligne, elle se montre encore.
+    await expect(loadDated(JOURNAL_VIEW, async () => [], { offline: true })).resolves.toMatchObject({ phase: 'ready', copy: true });
+  });
+
+  it('une lecture partie avant l’acquittement n’écrit plus la copie', async () => {
+    await loadDated(JOURNAL_VIEW, async () => ['exec-supprimee'], { offline: false, now: () => 1000 });
+    let answer: (v: string[]) => void = () => {};
+    const late = loadDated(JOURNAL_VIEW, () => new Promise<string[]>((ok) => (answer = ok)), { offline: false, now: () => 1500 });
+    acknowledging([DELETE]);
+    await flushOutbox();
+    answer(['exec-supprimee', 'lue avant le DELETE']);
+    await late;
+    await settle();
+    expect(peekRead<{ value: string[] }>(JOURNAL_VIEW)?.value).toEqual(['exec-supprimee']);
   });
 
   it('une passe sans écriture du réalisé ne relit pas le Journal monté', async () => {
@@ -116,6 +142,41 @@ describe('acquittement d’une écriture du réalisé', () => {
     flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 0 });
     await flushOutbox();
     expect(refresh).not.toHaveBeenCalled();
+    unmount();
+  });
+});
+
+describe('acquittement fait dans un autre onglet', () => {
+  it('le Journal monté ici est marqué, relu, et sa lecture en vol n’écrit plus la copie', async () => {
+    await loadDated(JOURNAL_VIEW, async () => ['exec-supprimee'], { offline: false, now: () => 1000 });
+    const refresh = vi.fn();
+    const unmount = mountView(JOURNAL_VIEW, refresh);
+    // Lecture de CET onglet, partie avant que l'autre acquitte le DELETE.
+    let answer: (v: string[]) => void = () => {};
+    const late = loadDated(JOURNAL_VIEW, () => new Promise<string[]>((ok) => (answer = ok)), { offline: false, now: () => 1500 });
+
+    const other = new BroadcastChannel(ACK_CHANNEL);
+    other.postMessage({ userId: 'user-1', prefixes: [JOURNAL_VIEW] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(peekFreshRead(JOURNAL_VIEW)).toBeNull();
+    answer(['exec-supprimee', 'lue avant le DELETE']);
+    await late;
+    await settle();
+    expect(peekRead<{ value: string[] }>(JOURNAL_VIEW)?.value).toEqual(['exec-supprimee']);
+    other.close();
+    unmount();
+  });
+
+  it('le message d’un autre compte est ignoré', async () => {
+    const refresh = vi.fn();
+    const unmount = mountView(JOURNAL_VIEW, refresh);
+    const other = new BroadcastChannel(ACK_CHANNEL);
+    other.postMessage({ userId: 'quelqu-un-d-autre', prefixes: [JOURNAL_VIEW] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(refresh).not.toHaveBeenCalled();
+    other.close();
     unmount();
   });
 });

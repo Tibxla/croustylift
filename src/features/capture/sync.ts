@@ -37,7 +37,7 @@ import {
 } from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
 import { seedRead } from '../../lib/read-cache';
-import { REALISED_VIEWS, refreshMountedViews } from '../../lib/dated-read';
+import { REALISED_VIEWS, viewsAcknowledged } from '../../lib/dated-read';
 import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
@@ -56,8 +56,9 @@ const touchedExercises = new Set<string>();
 // session (quelques dizaines d'ids), jamais persistée.
 const ackedSets = new Map<string, { exerciseId: string; executionId: string }>();
 // Une écriture du réalisé (série, séance supprimée, métriques de fin) a été
-// acquittée depuis la dernière passe : les vues montées de l'Analyse sont à
-// relire (`refreshMountedViews`, lib/dated-read).
+// acquittée depuis la dernière passe : les copies de l'Analyse sont à marquer
+// à rafraîchir, et à relire si elles sont montées, ici et dans les autres
+// onglets (`viewsAcknowledged`, lib/dated-read).
 let realisedTouched = false;
 
 /**
@@ -92,7 +93,7 @@ function touchDeleted(
 function refreshTouchedHistory(): void {
   if (realisedTouched) {
     realisedTouched = false;
-    refreshMountedViews(REALISED_VIEWS);
+    viewsAcknowledged(REALISED_VIEWS);
   }
   if (touchedExercises.size === 0) return;
   const target = [...touchedExercises];

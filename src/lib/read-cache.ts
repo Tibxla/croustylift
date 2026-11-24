@@ -57,6 +57,12 @@ interface Envelope {
    * n'est plus servie d'abord, seulement en secours quand le réseau ne répond pas.
    */
   stale?: true;
+  /**
+   * Copie À RAFRAÎCHIR (`markToRefresh`) : une écriture acquittée l'a rendue
+   * fausse, mais elle se montre encore d'abord (revalidée aussitôt), là où une
+   * copie périmée cède la place au réseau.
+   */
+  refresh?: true;
 }
 
 /** Registre mémoire des revalidations connues de cette session (clé → refetch). */
@@ -101,6 +107,8 @@ const invalidatedAt = new Map<string, number>();
  * qu'une valeur neuve s'écrit dans la copie.
  */
 const staleInMemory = new Set<string>();
+/** Même chose pour la marque « à rafraîchir » (`markToRefresh`). */
+const refreshInMemory = new Set<string>();
 
 /** La lecture `seq` de `storageKey` est-elle partie avant une invalidation de sa clé ? */
 function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
@@ -111,7 +119,7 @@ function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
 }
 
 /** Lit une entrée. `null` = absente ou illisible (jamais « valeur null »). */
-function readEntry<T>(key: string): { value: T; stale: boolean } | null {
+function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean } | null {
   if (typeof localStorage === 'undefined') return null;
   const raw = localStorage.getItem(key);
   if (!raw) return null;
@@ -123,7 +131,12 @@ function readEntry<T>(key: string): { value: T; stale: boolean } | null {
       (parsed as Envelope).v === 1 &&
       'value' in (parsed as Envelope)
     ) {
-      return { value: (parsed as Envelope).value as T, stale: (parsed as Envelope).stale === true || staleInMemory.has(key) };
+      const envelope = parsed as Envelope;
+      return {
+        value: envelope.value as T,
+        stale: envelope.stale === true || staleInMemory.has(key),
+        refresh: envelope.refresh === true || refreshInMemory.has(key),
+      };
     }
     return null;
   } catch {
@@ -142,6 +155,7 @@ function writeEntry(key: string, value: unknown): void {
     const after = JSON.stringify({ v: 1, value } satisfies Envelope);
     localStorage.setItem(key, after);
     staleInMemory.delete(key);
+    refreshInMemory.delete(key);
     if (before !== after) notifyWritten(key);
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
@@ -333,6 +347,34 @@ export function invalidateReads(prefixes: readonly string[]): void {
 }
 
 /**
+ * Marque À RAFRAÎCHIR les copies dont la clé commence par un des préfixes : une
+ * écriture vient d'être ACQUITTÉE (ici ou dans un autre onglet) et les rend
+ * fausses. Contrairement à `invalidateReads`, la copie se montre encore
+ * d'abord, puis sa revalidation la remplace ; elle n'est plus tenue pour
+ * fraîche (`peekFreshRead`). Les lectures de ces clés encore en vol sont
+ * parties avant l'acquittement : leur réponse n'écrit plus la copie. La marque
+ * est écrite dans la copie (stockage partagé par les onglets) ; stockage plein,
+ * elle est tenue en mémoire, et la copie n'est jamais retirée.
+ */
+export function markToRefresh(prefixes: readonly string[]): void {
+  const account = loadLocalAccount();
+  if (!account || typeof localStorage === 'undefined') return;
+  for (const prefix of prefixes) invalidatedAt.set(fullKey(account.userId, prefix), readSeq);
+  for (const prefix of prefixes) {
+    for (const key of cachedKeys(prefix)) {
+      const storageKey = fullKey(account.userId, key);
+      const entry = readEntry<unknown>(storageKey);
+      if (entry === null || entry.stale || entry.refresh) continue;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({ v: 1, value: entry.value, refresh: true } satisfies Envelope));
+      } catch {
+        refreshInMemory.add(storageKey);
+      }
+    }
+  }
+}
+
+/**
  * Relecture RÉSEAU d'une clé, qui remplace la copie locale (sous les gardes de
  * `guardedFetch`). Pour les copies qu'une écriture qui vient d'être acquittée a
  * rendues périmées. Ne jette jamais : en échec, la copie reste telle quelle.
@@ -390,7 +432,7 @@ export function peekFreshRead<T>(key: string): T | null {
   const account = loadLocalAccount();
   if (!account) return null;
   const entry = readEntry<T>(fullKey(account.userId, key));
-  return entry && !entry.stale ? entry.value : null;
+  return entry && !entry.stale && !entry.refresh ? entry.value : null;
 }
 
 /**
@@ -404,6 +446,7 @@ export function dropRead(key: string): void {
   const storageKey = fullKey(account.userId, key);
   revalidators.delete(storageKey);
   staleInMemory.delete(storageKey);
+  refreshInMemory.delete(storageKey);
   try {
     localStorage.removeItem(storageKey);
   } catch {
@@ -475,6 +518,7 @@ export function clearReadCache(): void {
   floor.clear();
   invalidatedAt.clear();
   staleInMemory.clear();
+  refreshInMemory.clear();
   purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {

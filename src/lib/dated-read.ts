@@ -26,18 +26,22 @@
 //     (`SEANCES_VIEWS`), celles de l'Analyse après la correction d'une séance.
 //     La lecture suivante repasse par le réseau, la copie ne sert qu'en secours.
 //   - exception à la règle du flush : quand une passe ACQUITTE une écriture
-//     du réalisé (séries, séances, métriques), les vues de l'Analyse lues par
-//     un écran MONTÉ sont périmées et relues (`refreshMountedViews`). Sans
-//     elle, la relecture que le retour du réseau lance en parallèle du flush
-//     pouvait atteindre la base avant un DELETE et garder la séance supprimée
-//     au Journal. Les vues sans écran monté ne bougent pas ;
+//     du réalisé (séries, séances, métriques), les copies de l'Analyse sont
+//     marquées à rafraîchir, écran monté ou non (`viewsAcknowledged`) : elles
+//     restent, se montrent d'abord, et leur revalidation les remplace ; une
+//     lecture partie avant l'acquittement n'écrit plus la copie, et les vues
+//     montées sont relues, dans cet onglet et dans les autres (BroadcastChannel).
+//     Sans elle, la relecture que le retour du réseau lance en parallèle du
+//     flush pouvait atteindre la base avant un DELETE et garder la séance
+//     supprimée au Journal ;
 //
 // Les clés commencent toutes par `VIEW_PREFIX` : une seule invalidation les
 // couvre, et l'éviction les sacrifie en premier quand le stockage est plein
 // (capture/cache-eviction : une copie se relit, pas une saisie). La valeur doit
 // survivre à JSON : des tableaux, jamais de `Set` ni de `Map`.
-import { cachedRead, invalidateReads, onReadAccepted, peekRead } from './read-cache';
+import { cachedRead, invalidateReads, markToRefresh, onReadAccepted, peekRead } from './read-cache';
 import { errorMessage } from './error-message';
+import { loadLocalAccount } from './local-account';
 
 /** Début de clé de toutes les copies d'écran au calme. */
 export const VIEW_PREFIX = 'vue:';
@@ -66,6 +70,7 @@ const mounted = new Map<string, Set<() => void>>();
  * repasser par « chargement »). Rend la fonction de démontage.
  */
 export function mountView(key: string, refresh: () => void): () => void {
+  ackBus();
   const set = mounted.get(key) ?? new Set();
   set.add(refresh);
   mounted.set(key, set);
@@ -75,20 +80,52 @@ export function mountView(key: string, refresh: () => void): () => void {
   };
 }
 
+/** Le canal qui porte les acquittements d'un onglet aux autres (`viewsAcknowledged`). */
+export const ACK_CHANNEL = 'croustylift:acquittements';
+let ackChannel: BroadcastChannel | null = null;
+
+/** Ouvre le canal à la première vue montée (ou au premier acquittement). */
+function ackBus(): BroadcastChannel | null {
+  if (ackChannel === null && typeof BroadcastChannel !== 'undefined') {
+    ackChannel = new BroadcastChannel(ACK_CHANNEL);
+    ackChannel.onmessage = (event: MessageEvent) => {
+      const data = event.data as { userId?: unknown; prefixes?: unknown } | null;
+      if (!Array.isArray(data?.prefixes) || data.userId !== loadLocalAccount()?.userId) return;
+      applyAck(data.prefixes.filter((p): p is string => typeof p === 'string'));
+    };
+    // Sous Node (tests), le canal ne retient pas le processus.
+    (ackChannel as { unref?: () => void }).unref?.();
+  }
+  return ackChannel;
+}
+
+/** Ferme le canal (tests : un canal ouvert survivrait au fichier). */
+export function closeAckChannel(): void {
+  ackChannel?.close();
+  ackChannel = null;
+}
+
+function applyAck(prefixes: readonly string[]): void {
+  markToRefresh(prefixes);
+  for (const [key, refreshers] of mounted) {
+    if (prefixes.some((p) => key.startsWith(p))) for (const refresh of [...refreshers]) refresh();
+  }
+}
+
 /**
- * Une écriture vient d'être ACQUITTÉE (flush, cf. capture/sync) : les vues
- * MONTÉES qu'elle fausse sont périmées, puis relues. Une lecture partie avant
- * l'acquittement (le retour du réseau relit le Journal en parallèle du flush)
- * a pu décrire la base d'avant : périmée, sa copie ne se montre plus d'abord,
- * et une réponse encore en vol ne l'écrit plus. Les vues sans écran monté ne
- * sont ni relues ni périmées : relues à l'ouverture de leur écran, copie
- * d'abord (cf. en-tête).
+ * Une écriture vient d'être ACQUITTÉE (flush, cf. capture/sync) : les copies
+ * qu'elle fausse sont marquées à rafraîchir, montées ou non (`markToRefresh` :
+ * gardées, montrées d'abord, revalidées), et les vues montées sont relues.
+ * Une lecture partie avant l'acquittement (le retour du réseau relit le Journal
+ * en parallèle du flush) a pu décrire la base d'avant : sa réponse n'écrit plus
+ * la copie. L'acquittement est aussi porté aux AUTRES onglets (BroadcastChannel)
+ * : le flush n'a lieu que dans l'onglet qui tient le verrou de la file, et le
+ * Journal d'un autre onglet doit être relu de même.
  */
-export function refreshMountedViews(prefixes: readonly string[]): void {
-  const keys = [...mounted.keys()].filter((key) => prefixes.some((p) => key.startsWith(p)));
-  if (keys.length === 0) return;
-  invalidateReads(keys);
-  for (const key of keys) for (const refresh of [...(mounted.get(key) ?? [])]) refresh();
+export function viewsAcknowledged(prefixes: readonly string[]): void {
+  applyAck(prefixes);
+  const userId = loadLocalAccount()?.userId;
+  if (userId) ackBus()?.postMessage({ userId, prefixes: [...prefixes] });
 }
 
 /** Une valeur et l'heure (ms) de la lecture réseau qui l'a produite. */
@@ -156,3 +193,4 @@ export function watchDated<T>(key: string, listener: (state: DatedState<T>) => v
 export function invalidateViews(prefixes: readonly string[]): void {
   invalidateReads(prefixes);
 }
+
