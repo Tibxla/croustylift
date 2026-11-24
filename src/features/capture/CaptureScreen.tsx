@@ -71,7 +71,7 @@ import {
   previousDayIso,
   openingState,
   resolveCaptureDate,
-  SETS_ABANDONED_EVENT,
+  onSetsAbandoned,
   shouldReanchorLaunch,
   todayIso,
   type DatedNoteDraft,
@@ -854,17 +854,18 @@ function CaptureBoard({
   );
   // Séries abandonnées dans la feuille des saisies refusées : elles quittent le
   // tableau tout de suite, sans attendre une réponse de la base (hors ligne,
-  // elle ne vient pas). Même pas que pour une réponse tardive.
-  useEffect(() => {
-    const onAbandoned = (event: Event) => {
-      const action = { type: 'forget-sets', setIds: (event as CustomEvent<string[]>).detail } as const;
-      dispatch(action);
-      stateRef.current = captureReducer(stateRef.current, action);
-      setRealityEpoch((n) => n + 1);
-    };
-    window.addEventListener(SETS_ABANDONED_EVENT, onAbandoned);
-    return () => window.removeEventListener(SETS_ABANDONED_EVENT, onAbandoned);
-  }, []);
+  // elle ne vient pas), que l'abandon vienne de cet onglet ou d'un autre. Même
+  // pas que pour une réponse tardive.
+  useEffect(
+    () =>
+      onSetsAbandoned((setIds) => {
+        const action = { type: 'forget-sets', setIds } as const;
+        dispatch(action);
+        stateRef.current = captureReducer(stateRef.current, action);
+        setRealityEpoch((n) => n + 1);
+      }),
+    [],
+  );
   // L'état courant, pour qui doit juger le tableau tel qu'il est (adoption
   // tardive) et non tel qu'il a pu être enregistré.
   useEffect(() => {

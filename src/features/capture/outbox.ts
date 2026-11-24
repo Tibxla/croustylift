@@ -114,6 +114,14 @@ export interface InsertSetOp {
    * Absent (`undefined`) pour un exo bilatéral -> écrit `side` null en base.
    */
   side?: Side;
+  /**
+   * La ligne EXISTAIT déjà quand l'écriture a été faite (série réécrite entière
+   * depuis le Journal, `diffSetsToOps`) : ce n'est pas sa création. Jamais
+   * envoyé en base. Sert à l'abandon d'un refus : une création abandonnée
+   * quitte le tableau de la Salle, une réécriture abandonnée laisse la série,
+   * qui existe toujours (`forgetAbandonedSets`, state.ts).
+   */
+  rewrites?: true;
 }
 
 /**

@@ -21,7 +21,8 @@ import {
   clearCaptureState,
   clearOwnCaptureState,
   forgetAbandonedSets,
-  SETS_ABANDONED_EVENT,
+  onSetsAbandoned,
+  SETS_ABANDONED_CHANNEL,
   hydratedState,
   mergeProgress,
   loadPersisted,
@@ -1480,15 +1481,49 @@ describe('série abandonnée dans la feuille des saisies refusées (troisième t
     expect(getProgress(loadPersisted(upperA, DATE)!, 'bench-press').setIds).toEqual(['s1', 's3']);
   });
 
-  it('prévient le tableau monté, avec les séries à retirer', () => {
-    const target = new EventTarget();
-    vi.stubGlobal('window', target);
-    const heard: unknown[] = [];
-    target.addEventListener(SETS_ABANDONED_EVENT, (event) => heard.push((event as CustomEvent).detail));
+  it('prévient le tableau monté de cet onglet, avec les séries à retirer', () => {
+    vi.stubGlobal('window', new EventTarget());
+    const heard: string[][] = [];
+    const off = onSetsAbandoned((setIds) => heard.push(setIds));
 
     forgetAbandonedSets([insertion('s2')]);
     forgetAbandonedSets([{ type: 'deleteSet', id: 's1' }]);
+    off();
+    forgetAbandonedSets([insertion('s3')]);
 
     expect(heard).toEqual([['s2']]);
+  });
+
+  it('prévient aussi les AUTRES onglets : leur tableau monté ne réécrit pas la série', async () => {
+    // Un autre onglet : pas la même fenêtre, le même canal.
+    const other = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    const heard = new Promise<unknown>((resolve) => (other.onmessage = (event) => resolve(event.data)));
+
+    forgetAbandonedSets([insertion('s2')]);
+
+    await expect(heard).resolves.toEqual(['s2']);
+    other.close();
+  });
+
+  it('ce qu’un autre onglet abandonne arrive au tableau monté ici', async () => {
+    const heard = new Promise<string[]>((resolve) => {
+      const off = onSetsAbandoned((setIds) => {
+        off();
+        resolve(setIds);
+      });
+    });
+    const other = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    other.postMessage(['s2']);
+
+    await expect(heard).resolves.toEqual(['s2']);
+    other.close();
+  });
+
+  it('une série du Journal RÉÉCRITE (elle existe en base) puis abandonnée reste au tableau', () => {
+    persist(threeSets());
+
+    forgetAbandonedSets([{ ...insertion('s2'), rewrites: true }]);
+
+    expect(getProgress(loadPersisted(upperA, DATE)!, 'bench-press').setIds).toEqual(['s1', 's2', 's3']);
   });
 });

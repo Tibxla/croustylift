@@ -277,6 +277,7 @@ describe('diffSetsToOps', () => {
       {
         type: 'insertSet',
         id: 's2',
+        rewrites: true,
         executionId: 'exec-1',
         exerciseId: 'bench-press',
         setOrder: 2,
@@ -295,6 +296,7 @@ describe('diffSetsToOps', () => {
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 's3',
+      rewrites: true,
       executionId: 'exec-1',
       exerciseId: 'bench-press',
       setOrder: 2,
@@ -327,6 +329,7 @@ describe('diffSetsToOps', () => {
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 's1',
+      rewrites: true,
       executionId: 'exec-1',
       exerciseId: 'bench-press',
       setOrder: 1,
@@ -447,6 +450,7 @@ describe('diffSetsToOps (unilatéral)', () => {
       {
         type: 'insertSet',
         id: 'l1',
+        rewrites: true,
         executionId: 'exec-1',
         exerciseId: 'db-curl',
         setOrder: 1,
@@ -470,6 +474,7 @@ describe('diffSetsToOps (unilatéral)', () => {
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 'l2',
+      rewrites: true,
       executionId: 'exec-1',
       exerciseId: 'db-curl',
       setOrder: 1,
@@ -481,6 +486,7 @@ describe('diffSetsToOps (unilatéral)', () => {
     expect(ops).toContainEqual<InsertSetOp>({
       type: 'insertSet',
       id: 'r2',
+      rewrites: true,
       executionId: 'exec-1',
       exerciseId: 'db-curl',
       setOrder: 1,

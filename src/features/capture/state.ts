@@ -1119,21 +1119,46 @@ function withoutSets<P extends { sets: unknown[]; setIds: readonly (string | nul
   return next ?? progress;
 }
 
-/** Événement `window` : des séries abandonnées quittent le tableau monté (`detail` : leurs ids). */
-export const SETS_ABANDONED_EVENT = 'croustylift:sets-abandoned';
+/** Canal par lequel les tableaux montés, dans cet onglet et dans les autres, apprennent un abandon. */
+export const SETS_ABANDONED_CHANNEL = 'croustylift:sets-abandoned';
+
+/**
+ * S'abonne aux séries abandonnées (`forgetAbandonedSets`), d'où qu'elles
+ * viennent : cet onglet (événement `window`) ou un autre (`BroadcastChannel`).
+ * Un tableau monté dans un autre onglet gardait la série en mémoire, et son
+ * prochain geste la réécrivait dans l'état gardé par l'appareil. Rend la
+ * fonction de désabonnement.
+ */
+export function onSetsAbandoned(listener: (setIds: string[]) => void): () => void {
+  const hear = (ids: unknown) => {
+    if (Array.isArray(ids)) listener(ids.filter((id): id is string => typeof id === 'string'));
+  };
+  const onEvent = (event: Event) => hear((event as CustomEvent).detail);
+  const local = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
+  if (local) window.addEventListener(SETS_ABANDONED_CHANNEL, onEvent);
+  const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+  if (channel) channel.onmessage = (event) => hear(event.data);
+  return () => {
+    if (local) window.removeEventListener(SETS_ABANDONED_CHANNEL, onEvent);
+    channel?.close();
+  };
+}
 
 /**
  * Des écritures viennent d'être ABANDONNÉES dans la feuille des saisies
- * refusées (`abandonRefused`, outbox.ts) : les séries dont l'insertion en fait
+ * refusées (`abandonRefused`, outbox.ts) : les séries dont la CRÉATION en fait
  * partie n'existeront jamais en base. Le registre ne les porte plus ; l'état de
  * capture, lui, les avait prises au moment du geste, et les gardait jusqu'à la
  * prochaine réponse de la base : hors ligne, elles restaient au tableau. Elles
  * sont retirées ici de tout état gardé par l'appareil (une écriture qui ne
- * grandit pas : elle passe même stockage plein) et le tableau monté est
- * prévenu (`SETS_ABANDONED_EVENT`, action `forget-sets`).
+ * grandit pas : elle passe même stockage plein) et les tableaux montés sont
+ * prévenus, dans tous les onglets (`onSetsAbandoned`, action `forget-sets`).
+ *
+ * Une série RÉÉCRITE (`rewrites` : elle existait avant l'écriture abandonnée,
+ * édition depuis le Journal) n'est pas retirée : elle est toujours en base.
  */
 export function forgetAbandonedSets(ops: readonly OutboxOp[]): void {
-  const setIds = ops.filter((op) => op.type === 'insertSet').map((op) => op.id);
+  const setIds = ops.flatMap((op) => (op.type === 'insertSet' && !op.rewrites ? [op.id] : []));
   if (setIds.length === 0) return;
   const scrub = (raw: string): string | null => {
     try {
@@ -1155,11 +1180,17 @@ export function forgetAbandonedSets(ops: readonly OutboxOp[]): void {
         if (next !== null) localStorage.setItem(key, next);
       }
     } catch {
-      /* no-op : le tableau monté, lui, est prévenu juste après */
+      /* no-op : les tableaux montés, eux, sont prévenus juste après */
     }
   }
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent(SETS_ABANDONED_EVENT, { detail: setIds }));
+    window.dispatchEvent(new CustomEvent(SETS_ABANDONED_CHANNEL, { detail: setIds }));
+  }
+  if (typeof BroadcastChannel !== 'undefined') {
+    // Un message posté avant la fermeture est quand même remis.
+    const channel = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    channel.postMessage(setIds);
+    channel.close();
   }
 }
 
