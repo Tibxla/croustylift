@@ -86,7 +86,10 @@ export function Rule({ inset = true, strong = false }: { inset?: boolean; strong
   return <hr className={`border-0 ${strong ? 'h-[2px] bg-muted' : 'h-px bg-line'} ${inset ? 'mx-5' : ''}`} />;
 }
 
-/** Ligne de liste : titre, méta dessous, valeur à droite, chevron si `onClick`.
+/** Ligne de liste : titre, méta dessous, valeur à droite, chevron si `onClick`
+ *  (« ouvrir »). `chevron={false}` : le toucher ne mène nulle part (il ajoute,
+ *  par exemple) ; `mark` pose alors à sa place une icône décorative qui dit le
+ *  geste, DANS la zone touchable.
  *  Le titre passe à la ligne plutôt que d'être coupé : deux noms d'exo proches
  *  doivent rester distincts (registre U3). `trailing` : une action à part (lien
  *  « Remplacer »), hors de la zone touchable de la ligne (jamais de bouton dans
@@ -102,6 +105,8 @@ export function Row({
   current,
   muted,
   ariaLabel,
+  chevron = true,
+  mark,
 }: {
   title: ReactNode;
   meta?: ReactNode;
@@ -116,6 +121,10 @@ export function Row({
   /** Ligne éteinte (passée, archivée) : titre en gris. */
   muted?: boolean;
   ariaLabel?: string;
+  /** false : pas de chevron « ouvrir ». */
+  chevron?: boolean;
+  /** Icône décorative à la place du chevron (`chevron={false}`). */
+  mark?: ReactNode;
 }) {
   const body = (
     <>
@@ -132,9 +141,9 @@ export function Row({
           {valueMeta && <span className="mt-0.5 block text-[14px] text-muted">{valueMeta}</span>}
         </span>
       )}
-      {onClick && (
-        <span className="flex-none self-center text-faint">
-          <Chevron />
+      {onClick && (chevron || mark) && (
+        <span aria-hidden className="flex-none self-center text-faint">
+          {chevron ? <Chevron /> : mark}
         </span>
       )}
     </>

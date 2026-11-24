@@ -74,7 +74,7 @@ import { menuLabel, seanceMenu } from './object-actions';
 import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
 import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
-import { NoteSheet } from '../notes/NoteSheet';
+import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
 import {
   Alert,
   Choice,
@@ -833,7 +833,7 @@ export function SeanceEditorView({
           note={notes[noteRow.exerciseId] ?? ''}
           draft={noteDrafts[noteRow.exerciseId] ?? notes[noteRow.exerciseId] ?? ''}
           onDraft={(body) => setNoteDrafts((prev) => ({ ...prev, [noteRow.exerciseId]: body }))}
-          hint="Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle s’enregistre à part, sans créer de version."
+          hint={NOTE_HINT}
           onSave={(body) => saveNote(noteRow.exerciseId, body)}
           onClose={() => setNoteFor(null)}
         />
@@ -936,7 +936,11 @@ function ItemBlock({
             ) : (
               <p className="text-[15px] text-muted">Aucune.</p>
             )}
-            {noteUnsaved && <p className="mt-1 text-[14px] font-medium text-ink">Une modification de la note n’est pas enregistrée.</p>}
+            {noteUnsaved && (
+              <TextLink className="mt-1" onClick={onNote}>
+                Reprendre la note non enregistrée
+              </TextLink>
+            )}
           </div>
           <div className="mt-3 flex border-t border-line px-5 pt-3">
             <SecondaryButton size="sm" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
@@ -1118,6 +1122,10 @@ function CatalogSheet({
                   </>
                 }
                 value={c.personal ? <span className="text-[14px] font-normal text-muted">perso</span> : undefined}
+                // Le toucher ajoute sans quitter la feuille : un +, pas un chevron « ouvrir ».
+                chevron={false}
+                mark={<Icon name="plus" />}
+                ariaLabel={`Ajouter ${c.name} à la séance`}
                 onClick={() => {
                   // La recherche se vide pour le suivant ; le filtre par muscle
                   // reste (on ajoute souvent plusieurs exos du même muscle).
