@@ -15,7 +15,7 @@
 // et les faits viennent des exécutions de l'exo, relues à l'ouverture
 // (`loadExerciseExecutions`) : `ExerciseAnalysis` n'a que des points.
 import { useEffect, useState } from 'react';
-import { List, Row, ScreenHeader, SecondaryButton, SectionTitle, Status, TextLink, Icon } from '../../ui';
+import { Icon, List, Row, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, TextLink } from '../../ui';
 import type { ExerciseExecution } from '../../domain/types';
 import { liftedKg } from '../../domain/lifted';
 import { errorMessage } from '../../lib/error-message';
@@ -39,12 +39,15 @@ export function ExercisePage({
   onBack,
   onCompare,
   onOpenSession,
+  loadExecutions = loadExerciseExecutions,
 }: {
   analysis: ExerciseAnalysis;
   onBack: () => void;
   onCompare: () => void;
   /** Ouvre une séance du journal, par id d'exécution. */
   onOpenSession: (executionId: string) => void;
+  /** La lecture des exécutions de l'exo ; un banc de captures y branche ses données. */
+  loadExecutions?: (exerciseId: string) => Promise<{ executions: ExerciseExecution[] }>;
 }) {
   const { exerciseId, name, seanceCurves, unit } = analysis;
   const year = new Date().getFullYear();
@@ -58,7 +61,7 @@ export function ExercisePage({
   const multi = seanceCurves.length > 1;
   const axis = cardTimeAxis(shown);
   const total = seanceCurves.reduce((n, sc) => n + sc.curve.length, 0);
-  const execs = useExecutions(exerciseId);
+  const execs = useExecutions(exerciseId, loadExecutions);
 
   function toggle(key: string) {
     const next = toggleHidden(hidden, key, allKeys);
@@ -85,7 +88,7 @@ export function ExercisePage({
   const valueText = (s: ChartSel) => {
     const c = shown.find((sc) => curveKey(sc.seanceId) === s.series);
     const p = c?.curve[s.index];
-    return p && c ? `${Math.round(p.e1rm)} ${unit}, ${formatDay(p.date, year)}${multi ? `, ${c.label}` : ''}` : '';
+    return p && c ? `${fmtValue(p.e1rm)} ${unit}, ${formatDay(p.date, year)}${multi ? `, ${c.label}` : ''}` : '';
   };
 
   return (
@@ -106,7 +109,7 @@ export function ExercisePage({
             <div className="flex items-end justify-between gap-4">
               <p className="flex items-baseline gap-2" aria-live="polite">
                 <span className="tnum text-[56px] font-[650] leading-none tracking-[-0.045em] text-ink">
-                  {Math.round(point.e1rm)}
+                  {fmtValue(point.e1rm)}
                 </span>
                 <span className="text-[22px] font-medium text-muted">{unit}</span>
               </p>
@@ -167,7 +170,6 @@ export function ExercisePage({
             date={formatDay(point.date, year)}
             exec={exec}
             phase={execs.phase}
-            error={execs.phase === 'error' ? execs.message : null}
             unit={unit}
             onOpenSession={onOpenSession}
           />
@@ -250,11 +252,14 @@ function Legend({
 type ExecLoad = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; executions: ExerciseExecution[] };
 
 /** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`). */
-function useExecutions(exerciseId: string): ExecLoad {
+function useExecutions(
+  exerciseId: string,
+  load: (exerciseId: string) => Promise<{ executions: ExerciseExecution[] }>,
+): ExecLoad {
   const [state, setState] = useState<ExecLoad>({ phase: 'loading' });
   useEffect(() => {
     let active = true;
-    loadExerciseExecutions(exerciseId).then(
+    load(exerciseId).then(
       ({ executions }) => {
         if (active) setState({ phase: 'ready', executions });
       },
@@ -265,7 +270,7 @@ function useExecutions(exerciseId: string): ExecLoad {
     return () => {
       active = false;
     };
-  }, [exerciseId]);
+  }, [exerciseId, load]);
   return state;
 }
 
@@ -276,14 +281,12 @@ function PointSets({
   date,
   exec,
   phase,
-  error,
   unit,
   onOpenSession,
 }: {
   date: string;
   exec: ExerciseExecution | undefined;
   phase: ExecLoad['phase'];
-  error: string | null;
   unit: ExerciseAnalysis['unit'];
   onOpenSession: (executionId: string) => void;
 }) {
@@ -299,7 +302,7 @@ function PointSets({
         </p>
       ) : !exec ? (
         <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
-          {error ? `Séries indisponibles : ${error}` : 'Séries introuvables pour ce point.'}
+          {phase === 'error' ? 'Séries indisponibles pour l’instant.' : 'Séries introuvables pour ce point.'}
         </p>
       ) : (
         <>
@@ -372,7 +375,14 @@ function Facts({
           <Row
             title={`Depuis la 1ʳᵉ ${lead.seanceName}`}
             meta={`${sessionsLabel(lead.curve.length)} depuis le ${formatDay(first.date, year)}`}
-            value={<Status v={delta > 0 ? 'up' : delta === 0 ? 'eq' : 'down'} size={12} word={signed(delta)} />}
+            // Un écart depuis le départ n'est ni une série battue, ni un record, ni
+            // une pente : blanc cassé, avec son signe et son chiffre.
+            value={
+              <span className="inline-flex items-center gap-1 text-ink">
+                <Sign v={delta > 0 ? 'up' : delta === 0 ? 'eq' : 'down'} size={12} />
+                {signed(delta)}
+              </span>
+            }
           />
         )}
       </List>
