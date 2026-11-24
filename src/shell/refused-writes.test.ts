@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RefusedWrite } from '../features/capture/outbox';
-import { describeRefusal, fmtDay, fmtWhen, refusalReason } from './refused-writes';
+import { dependentsOf, describeRefusal, fmtDay, fmtWhen, refusalReason } from './refused-writes';
 
 const at = '2026-11-24T13:05:00.000Z';
 const lookup = { exerciseName: (id: string) => (id === 'ex1' ? 'Développé couché' : undefined) };
@@ -46,7 +46,7 @@ describe('saisies refusées lues par un humain', () => {
     ];
     const whats = ops.map((op) => describeRefusal(entry(op), lookup).what);
     expect(whats).toEqual([
-      'Séance du 24 nov.',
+      'Début de la séance du 24 nov.',
       'Suppression d’une série · Développé couché',
       'Fin de séance',
       'Note de séance · Développé couché',
@@ -60,17 +60,32 @@ describe('saisies refusées lues par un humain', () => {
     expect(describeRefusal(entry(ops[3]!), lookup).detail).toBe('Épaule sensible');
   });
 
-  it('la raison passe par les messages français de l’app', () => {
-    expect(refusalReason(entry({ type: 'deleteExecution', id: 'x' }))).toMatch(/^Enregistrement refusé : une valeur sort des limites/);
-    expect(
-      refusalReason(entry({ type: 'deleteExecution', id: 'x' }, '42501 : new row violates row-level security policy for table "sets"')),
-    ).toMatch(/^Action refusée/);
-    expect(refusalReason(entry({ type: 'deleteExecution', id: 'x' }, 'P0001 : La routine courante ne s’archive pas.'))).toBe(
-      'La routine courante ne s’archive pas.',
+  it('la raison dit si renvoyer peut servir, sans code ni consigne impossible', () => {
+    const op = { type: 'deleteExecution', id: 'x' } as const;
+    for (const code of ['23514', '22003', '22001', '23502']) {
+      expect(refusalReason(entry(op, `${code} : new row violates something`))).toBe(
+        'Une valeur dépasse ce que le serveur accepte : la renvoyer échouera encore. Abandonne-la et ressaisis-la.',
+      );
+    }
+    expect(refusalReason(entry(op, '23503 : insert or update on table "sets" violates foreign key constraint "x"'))).toBe(
+      'Elle visait un élément supprimé depuis un autre appareil. Abandonne-la.',
     );
-    expect(refusalReason(entry({ type: 'insertSet', id: 's', executionId: 'x', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, 'dépend de l\'exécution x, en quarantaine'))).toMatch(
-      /^La séance dont elle dépend/,
-    );
+    expect(refusalReason(entry(op, '42501 : new row violates row-level security policy for table "sets"'))).toMatch(/^Action refusée/);
+    // Un motif écrit par un trigger, en français, passe tel quel, même sous un code de valeur.
+    expect(refusalReason(entry(op, '23514 : La routine courante ne s’archive pas.'))).toBe('La routine courante ne s’archive pas.');
+    expect(refusalReason(entry(op, '42P01 : relation "x" does not exist'))).toBe('Le serveur l’a refusée sans dire pourquoi.');
+    expect(refusalReason(entry(op, ''))).toBe('Le serveur l’a refusée sans dire pourquoi.');
+  });
+
+  it('une saisie retenue par sa séance ne se renvoie pas seule et part avec elle', () => {
+    const exec = entry({ type: 'upsertExecution', id: 'x1', seanceVersionId: 'v', performedOn: '2026-11-24' }, '23503 : fk');
+    const set = { ...entry({ type: 'insertSet', id: 's', executionId: 'x1', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x1, en quarantaine"), refusalId: 'r2' };
+    const other = { ...entry({ type: 'insertSet', id: 't', executionId: 'x2', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x2, en quarantaine"), refusalId: 'r3' };
+    const t = describeRefusal(set, lookup);
+    expect(t.reason).toBe('Elle repart avec sa séance.');
+    expect(t.retryable).toBe(false);
+    expect(dependentsOf(exec, [exec, set, other])).toEqual([set]);
+    expect(dependentsOf(set, [exec, set])).toEqual([]);
   });
 
   it('une création de séance dépassée ne se renvoie pas', () => {

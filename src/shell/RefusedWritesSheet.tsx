@@ -13,7 +13,7 @@ import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, readQueue, retryRefu
 import { listExercisesForCapture } from '../features/capture/data';
 import { flushOutbox } from '../features/capture/sync';
 import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
-import { describeRefusal, fmtWhen } from './refused-writes';
+import { dependentsOf, describeRefusal, fmtWhen } from './refused-writes';
 
 type Outcome = { id: string; text: string };
 
@@ -95,6 +95,9 @@ function RefusedList() {
 
   function abandon(entry: RefusedWrite) {
     setOutcome(null);
+    // Le début d'une séance emporte les saisies qu'il retenait : sans lui, elles
+    // ne peuvent plus partir. Elles d'abord, lui ensuite.
+    for (const dep of dependentsOf(entry, listRefused())) abandonRefused(dep.refusalId);
     if (!abandonRefused(entry.refusalId)) {
       const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
       setOutcome({
@@ -134,6 +137,7 @@ function RefusedList() {
           <ul aria-label="Saisies refusées" className="border-t border-line">
             {entries.map((entry) => {
               const t = describeRefusal(entry, lookup);
+              const deps = dependentsOf(entry, entries).length;
               const when = fmtWhen(entry.at);
               return (
                 <li key={entry.refusalId} className="border-b border-line px-5 py-3">
@@ -154,7 +158,10 @@ function RefusedList() {
                       onConfirm={() => abandon(entry)}
                     >
                       <p className="font-medium">Abandonner cette saisie ?</p>
-                      <p className="mt-1 text-muted">Elle ne sera jamais envoyée et quittera cet appareil.</p>
+                      <p className="mt-1 text-muted">
+                        Elle ne sera jamais envoyée et quittera cet appareil.
+                        {deps > 0 && ` ${deps > 1 ? `Les ${deps} saisies qui en dépendent partent` : 'La saisie qui en dépend part'} avec elle.`}
+                      </p>
                     </Confirm>
                   ) : (
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">

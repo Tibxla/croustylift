@@ -31,6 +31,8 @@ const pairs = [
   ...INKS.flatMap((ink) =>
     BACKGROUNDS.map((bg) => ({ fg: tokens[ink.name], bg: tokens[bg], label: `${ink.name} / ${bg}`, required: ink.required })),
   ),
+  // Feuille des saisies refusées : la date « Refusée le … » (14 px, gris discret) sur le fond levé.
+  { fg: tokens.faint, bg: tokens.raise, label: 'date de refus / raise', required: true },
   // Bouton principal : libellé noir et ligne secondaire sur le blanc cassé, libellé pressé sur le gris.
   { fg: tokens.bg, bg: tokens.ink, label: 'bg / ink', required: true },
   { fg: tokens['on-ink'], bg: tokens.ink, label: 'on-ink / ink', required: true },

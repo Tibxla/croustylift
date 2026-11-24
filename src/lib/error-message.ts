@@ -49,12 +49,12 @@ export function networkErrorMessage(message: string): string | null {
 
 /** Les messages intégrés les plus courants, par SQLSTATE ou code PostgREST. */
 const BUILT_IN: Record<string, string> = {
-  '22P02': 'La base a refusé une donnée mal formée. Recharge l’écran ; si l’erreur revient, signale-la.',
-  '22001': 'Texte trop long pour la base.',
-  '22003': 'Valeur hors des limites acceptées par la base.',
-  '23502': 'Une valeur obligatoire manque : la base a refusé l’enregistrement.',
+  '22P02': 'Le serveur a refusé une donnée mal formée. Recharge l’écran ; si l’erreur revient, signale-la.',
+  '22001': 'Texte trop long pour le serveur.',
+  '22003': 'Valeur hors des limites acceptées par le serveur.',
+  '23502': 'Une valeur obligatoire manque : le serveur a refusé l’enregistrement.',
   '23505': 'Cet élément existe déjà.',
-  '57014': 'La base a mis trop de temps à répondre. Réessaie.',
+  '57014': 'Le serveur a mis trop de temps à répondre. Réessaie.',
   PGRST116: 'Élément introuvable : il a peut-être été supprimé.',
 }
 
@@ -69,7 +69,7 @@ export function builtInErrorMessage(err: unknown): string | null {
   const { code, message } = err as { code?: unknown; message?: unknown }
   if (typeof code !== 'string' || code === '' || typeof message !== 'string') return null
   if (!/^([a-z]|JSON )/.test(message)) return null
-  return BUILT_IN[code] ?? `La base a refusé la demande (code ${code}). Réessaie ; si l’erreur revient, signale-la.`
+  return BUILT_IN[code] ?? `Le serveur a refusé la demande (code ${code}). Réessaie ; si l’erreur revient, signale-la.`
 }
 
 /** Le message brut d'une erreur attrapée, qu'elle soit une `Error` ou un objet PostgREST. */

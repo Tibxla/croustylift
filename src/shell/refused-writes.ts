@@ -49,18 +49,47 @@ function kg(n: number): string {
   return String(Math.round(n * 100) / 100).replace('.', ',');
 }
 
-/** La raison stockée, en français. */
+/** Refus d'une valeur : la renvoyer telle quelle échouera à l'identique. */
+const VALUE_REFUSALS = new Set(['23514', '22003', '22001', '23502']);
+const SILENT = 'Le serveur l’a refusée sans dire pourquoi.';
+/** Message intégré de Postgres ou PostgREST (anglais), par opposition au motif
+ *  français écrit par un trigger, qui passe tel quel (cf. lib/error-message). */
+const isBuiltIn = (message: string) => /^([a-z]|JSON )/.test(message);
+
+/**
+ * La raison stockée, en français, et propre à cette feuille : elle ne dit
+ * jamais de corriger ou de recharger, ce que la feuille ne permet pas. Elle dit
+ * si renvoyer peut servir, sinon d'abandonner. Le code SQLSTATE ne s'affiche
+ * pas (il reste dans le relevé de diagnostic).
+ */
 export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'op'>): string {
   if (entry.superseded) return 'La séance a été créée depuis : ce refus n’a plus d’effet.';
   const reason = entry.reason ?? '';
-  if (reason.startsWith('dépend de l')) return 'La séance dont elle dépend a été refusée : elle attend avec elle.';
+  if (isDependent(entry)) return 'Elle repart avec sa séance.';
   const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(reason);
   if (m) {
-    const [, code, message] = m;
-    const text = errorMessage({ code, message });
-    return text.trim() === '' ? `Refus du serveur (code ${code}).` : text;
+    const [, code = '', message = ''] = m;
+    if (isBuiltIn(message) && VALUE_REFUSALS.has(code)) {
+      return 'Une valeur dépasse ce que le serveur accepte : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
+    }
+    if (isBuiltIn(message) && code === '23503') return 'Elle visait un élément supprimé depuis un autre appareil. Abandonne-la.';
+    const text = errorMessage({ code, message }).trim();
+    if (text === '' || /\(code [0-9A-Z]+\)/.test(text)) return SILENT;
+    return text;
   }
-  return reason.trim() === '' ? 'Refus du serveur, sans motif donné.' : reason;
+  return reason.trim() === '' ? SILENT : reason;
+}
+
+/** Retenue seulement parce que la création de sa séance a été refusée. */
+export function isDependent(entry: Pick<RefusedWrite, 'reason'>): boolean {
+  return (entry.reason ?? '').startsWith('dépend de l');
+}
+
+/** Les saisies retenues par la création refusée de cette séance (même exécution). */
+export function dependentsOf(execution: RefusedWrite, entries: readonly RefusedWrite[]): RefusedWrite[] {
+  if (execution.op.type !== 'upsertExecution') return [];
+  const id = execution.op.id;
+  return entries.filter((e) => e !== execution && isDependent(e) && e.reason.includes(id));
 }
 
 /** Une note tronquée pour la liste. */
@@ -77,10 +106,10 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
     return name ? `${head} · ${name}` : head;
   };
   const reason = refusalReason(entry);
-  const base = { reason, retryable: !entry.superseded };
+  const base = { reason, retryable: !entry.superseded && !isDependent(entry) };
   switch (op.type) {
     case 'upsertExecution':
-      return { ...base, what: `Séance du ${fmtDay(op.performedOn)}`, detail: 'son ouverture' };
+      return { ...base, what: `Début de la séance du ${fmtDay(op.performedOn)}`, detail: 'sans lui, ses séries ne peuvent pas partir' };
     case 'insertSet': {
       const side = op.side === 'left' ? ' · gauche' : op.side === 'right' ? ' · droite' : '';
       const values = `${kg(op.weightKg)} kg × ${op.reps} · RIR ${op.rir}${side}`;
