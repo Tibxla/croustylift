@@ -76,7 +76,7 @@ describe('tokens de src/index.css', () => {
   const tokens = parseHexTokens(read('../src/index.css'))
   const presets = JSON.parse(read('../src/settings/signal-presets.json'))
 
-  it.each(['ink', 'muted', 'faint'].flatMap((ink) => ['bg', 'raise', 'surface-2'].map((bg) => [ink, bg])))(
+  it.each(['ink', 'muted', 'faint'].flatMap((ink) => ['bg', 'raise'].map((bg) => [ink, bg])))(
     '%s sur %s : 4,5:1 au moins',
     (ink, bg) => {
       expect(hexContrast(tokens[ink], tokens[bg])).toBeGreaterThanOrEqual(4.5)

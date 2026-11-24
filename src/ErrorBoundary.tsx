@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { isChunkLoadError } from './pwa/update'
+import { PrimaryButton } from './ui'
 
 interface Props {
   children: ReactNode
@@ -43,22 +44,16 @@ export class ErrorBoundary extends Component<Props, State> {
     // on le dit, et on rassure sur ce qui est déjà saisi.
     const missingChunk = isChunkLoadError(this.state.error)
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center text-ink">
-        <p className="text-sm text-ink-muted">
+      <main className="min-h-screen bg-bg px-5 pt-6 text-ink">
+        <p className="max-w-[40ch] text-[16px] leading-[1.45] text-ink">
           {missingChunk
             ? "Cet écran n'a pas pu se charger : l'app a été mise à jour, ou le réseau manque. Tes saisies restent sur l'appareil, recharger suffit."
             : "Quelque chose a planté à l'affichage."}
         </p>
-        <p className="readout max-w-full break-words text-xs text-warn">
-          {this.state.error.message}
-        </p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Recharger l'app
-        </button>
+        <p className="mt-2 max-w-full break-words text-[14px] text-faint">{this.state.error.message}</p>
+        <div className="mt-5 flex">
+          <PrimaryButton onClick={() => window.location.reload()}>Recharger l'app</PrimaryButton>
+        </div>
       </main>
     )
   }

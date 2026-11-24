@@ -27,7 +27,7 @@ import { SurfaceNav } from './shell/SurfaceNav'
 import { SurfaceNavigationContext } from './shell/navigation'
 import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
-import { SheetSlotContext, SyncBanner } from './ui'
+import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
 import { RefusedWritesContext, refusedAction } from './shell/refused-context'
 import { RefusedWritesSheet } from './shell/RefusedWritesSheet'
 import { errorMessage } from './lib/error-message'
@@ -272,16 +272,12 @@ function AuthenticatedApp({
 
   if (check.phase === 'error') {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center text-ink">
-        <p className="text-base font-medium text-ink">Impossible de charger ton compte.</p>
-        <p className="readout max-w-full break-words text-xs text-ink-faint">{check.message}</p>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="btn btn-primary h-11 rounded-xl px-5 text-sm"
-        >
-          Réessayer
-        </button>
+      <main className="min-h-screen bg-bg text-ink">
+        <LoadError
+          intro="Impossible de charger ton compte."
+          message={check.message}
+          onRetry={() => setReloadKey((k) => k + 1)}
+        />
       </main>
     )
   }
@@ -348,13 +344,10 @@ function AuthenticatedApp({
 }
 
 function FullScreenSpinner({ label }: { label: string }) {
+  // Une phrase plutôt qu'une toupie (kit E, `Loading`).
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg text-ink">
-      <div
-        className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-accent"
-        role="status"
-        aria-label={label}
-      />
+    <main className="min-h-screen bg-bg text-ink">
+      <Loading label={`${label}…`} />
     </main>
   )
 }

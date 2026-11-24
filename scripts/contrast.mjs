@@ -2,9 +2,8 @@
 // Contrastes WCAG des tokens de couleur (src/index.css) : `npm run contrast`.
 //
 // C'est la preuve chiffrée des ratios cités dans DESIGN.md et dans index.css.
-// Chaque encre est mesurée sur les fonds où du texte se pose (bg, raise, et le
-// palier de sélection hérité surface-2), puis le texte du bouton principal sur
-// son blanc cassé, et chaque couleur de signal prédéfinie
+// Chaque encre est mesurée sur les fonds où du texte se pose (bg, raise), puis
+// le texte du bouton principal sur son blanc cassé, et chaque couleur de signal prédéfinie
 // (src/settings/signal-presets.json) sur le fond et sur les feuilles.
 //
 // Seuil : 4,5:1 (AA, texte courant). Les paires marquées « exigé » font échouer
@@ -21,7 +20,7 @@ const read = (path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)
 const tokens = parseHexTokens(read('../src/index.css'))
 const presets = JSON.parse(read('../src/settings/signal-presets.json'))
 
-const BACKGROUNDS = ['bg', 'raise', 'surface-2']
+const BACKGROUNDS = ['bg', 'raise']
 const INKS = [
   { name: 'ink', required: true },
   { name: 'muted', required: true },

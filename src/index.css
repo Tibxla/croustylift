@@ -35,35 +35,6 @@
   /* Courbes (DESIGN.md, Mouvement) : enfoncement et élan, tiroir des feuilles. */
   --ease-press: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-
-  /*
-    Pont des écrans hérités (DESIGN.md, « Écrans hérités »). Les écrans pas
-    encore refaits écrivent `bg-surface`, `text-ink-muted`, `border-hair`,
-    `text-accent-ink`, `text-good`, `rounded-2xl`... Ces noms restent, sur les
-    valeurs de E : l'ancien accent violet devient le blanc cassé (le signal n'est
-    jamais un bouton ni une sélection), le vert « cible tenue » et l'ambre des
-    erreurs deviennent le blanc cassé (statut porté par le mot et le signe), les
-    grands rayons tombent à 6 px. À retirer quand plus aucun écran ne s'en sert ;
-    aucun nouvel usage.
-  */
-  --color-surface: #1a1815;      /* = raise */
-  --color-surface-2: #24211d;    /* palier de sélection : faint y tient 4,8:1 */
-  --color-hair: #3a3733;         /* = line */
-  --color-hair-strong: #6b6761;  /* = dim, carte clé */
-  --color-hairline: #3a3733;     /* = line */
-  --color-ink-muted: #b5b0a9;    /* = muted */
-  --color-ink-faint: #8f8c85;    /* = faint */
-  --color-accent: #f4f0e7;       /* = ink */
-  --color-accent-strong: #f4f0e7;
-  --color-accent-ink: #f4f0e7;
-  --color-accent-soft: #24211d;  /* = surface-2 */
-  --color-on-accent: #100e0c;    /* texte sur un aplat blanc cassé */
-  --color-good: #f4f0e7;
-  --color-warn: #f4f0e7;
-  --radius-lg: 6px;
-  --radius-xl: 6px;
-  --radius-2xl: 6px;
-  --radius-3xl: 6px;
 }
 
 /* Le signal suit `--sig` partout où il est relu (Réglages le change en direct). */
@@ -275,91 +246,11 @@ input:-webkit-autofill:active {
 }
 
 /*
-  Pont des écrans hérités : les classes que les écrans pas encore refaits
-  écrivent encore (`.btn-primary`, `.panel`, `.field`...), redessinées sur E.
-  Plates (aucune ombre, aucun halo, aucun dégradé), rayon de 6 px, enfoncement
-  au toucher. Le kit (src/ui/) ne s'en sert pas ; à retirer avec le dernier écran
-  qui les emploie.
+  Reste du pont des écrans hérités : `.field`, que le choix d'exo de la Salle
+  (features/capture/ExercisePicker.tsx) écrit encore. Le kit a son propre champ
+  (src/ui/fields.tsx) ; à retirer quand ce choix y passera.
 */
 @layer components {
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    border-radius: var(--radius-block);
-    font-weight: 600;
-    line-height: 1.1;
-    user-select: none;
-    -webkit-user-select: none;
-    transition: transform 140ms var(--ease-press);
-  }
-  .btn:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-  .btn:disabled {
-    cursor: not-allowed;
-  }
-
-  /* Principal : bloc blanc cassé plein, texte noir. */
-  .btn-primary {
-    color: var(--color-bg);
-    background-color: var(--color-ink);
-    border: 0;
-  }
-  .btn-primary:active:not(:disabled) {
-    background-color: var(--color-muted);
-  }
-  .btn-primary:disabled {
-    color: var(--color-muted);
-    background-color: var(--color-line);
-  }
-
-  /* Secondaire : contour blanc cassé de 1,5 px sur fond levé. */
-  .btn-secondary {
-    color: var(--color-ink);
-    background-color: var(--color-raise);
-    border: 1.5px solid var(--color-ink);
-  }
-  .btn-secondary:active:not(:disabled) {
-    background-color: var(--color-line);
-  }
-  .btn-secondary:disabled {
-    color: var(--color-faint);
-    background-color: transparent;
-    border-color: var(--color-line);
-  }
-
-  /* Texte seul. */
-  .btn-ghost {
-    color: var(--color-muted);
-    background-color: transparent;
-  }
-  .btn-ghost:active:not(:disabled) {
-    color: var(--color-ink);
-  }
-
-  /* Conteneurs : fond levé et filet, sans ombre. `.surface-card` est l'alias
-     historique de `.panel`. */
-  .panel,
-  .surface-card,
-  .surface-raised {
-    background-color: var(--color-raise);
-    border: 1px solid var(--color-line);
-  }
-  .panel-key {
-    border-color: var(--color-dim);
-  }
-  .surface-interactive {
-    background-color: var(--color-raise);
-    border: 1px solid var(--color-line);
-  }
-  .surface-interactive:active {
-    background-color: var(--color-line);
-  }
-
-  /* Champ : fond levé, filet en gris repère ; au focus, le contour global
-     (`:focus-visible`) est le seul indicateur. */
   .field {
     background-color: var(--color-raise);
     color: var(--color-ink);
