@@ -232,17 +232,17 @@ describe('exo saisi à 0 kg : la Référence se juge aux reps effectives', () =>
 // Record de l'instrument montre le record d'e1RM : le mot dit lequel.
 describe('badgeStatus et recordWord : le mot suit le type de record', () => {
   it('record d’e1RM, ou e1RM et charge ensemble : « record »', () => {
-    expect(badgeStatus({ axis: 'record', record: 'e1rm' })).toEqual({ v: 'up', word: 'record' });
-    expect(badgeStatus({ axis: 'record', record: 'both' })).toEqual({ v: 'up', word: 'record' });
+    expect(badgeStatus({ axis: 'record', record: 'e1rm' })).toEqual({ v: 'up', word: 'record', short: 'record' });
+    expect(badgeStatus({ axis: 'record', record: 'both' })).toEqual({ v: 'up', word: 'record', short: 'record' });
   });
 
-  it('record de charge seule : « record charge »', () => {
-    expect(badgeStatus({ axis: 'record', record: 'weight-reps' })).toEqual({ v: 'up', word: 'record charge' });
+  it('record de charge seule : « record charge », « charge » dans une case de la bande', () => {
+    expect(badgeStatus({ axis: 'record', record: 'weight-reps' })).toEqual({ v: 'up', word: 'record charge', short: 'charge' });
   });
 
   it('battue, égalée, rien', () => {
-    expect(badgeStatus({ axis: 'reference', verdict: 'battu' })).toEqual({ v: 'up', word: 'battue' });
-    expect(badgeStatus({ axis: 'reference', verdict: 'egalise' })).toEqual({ v: 'eq', word: 'égalée' });
+    expect(badgeStatus({ axis: 'reference', verdict: 'battu' })).toEqual({ v: 'up', word: 'battue', short: 'battue' });
+    expect(badgeStatus({ axis: 'reference', verdict: 'egalise' })).toEqual({ v: 'eq', word: 'égalée', short: 'égalée' });
     expect(badgeStatus(null)).toBeNull();
   });
 

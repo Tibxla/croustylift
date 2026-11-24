@@ -396,13 +396,27 @@ export function ExerciseCapture({
             <button
               type="button"
               onClick={() => setRecapOpen(true)}
-              aria-label={`Bilan de l’exo, ${completedSets} série${completedSets > 1 ? 's' : ''} : voir le récap`}
+              aria-label={`Bilan de l’exo, ${completedSets} série${completedSets > 1 ? 's' : ''}${verdicts.record > 0 ? `, ${recordWord(badges)}` : ''} : voir le récap`}
               className="-my-3 flex min-h-11 min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap"
             >
               <StateMark state="done" size={15} className="font-medium text-ink underline decoration-dim decoration-1 underline-offset-[5px]">
                 fait · {completedSets} série{completedSets > 1 ? 's' : ''}
               </StateMark>
-              {verdicts.record > 0 && <Status v="up" word={recordWord(badges)} />}
+              {verdicts.record > 0 &&
+                (recordWord(badges) === 'record charge' ? (
+                  // Sous 340 px, « fait · 3 séries ▲ record charge » ne tient
+                  // pas : « ▲ charge », comme dans la bande ; le nom lu le dit.
+                  <>
+                    <span className="contents [@media(max-width:339px)]:hidden">
+                      <Status v="up" word="record charge" />
+                    </span>
+                    <span className="hidden [@media(max-width:339px)]:contents">
+                      <Status v="up" word="charge" />
+                    </span>
+                  </>
+                ) : (
+                  <Status v="up" word="record" />
+                ))}
               {verdicts.record === 0 && verdicts.battu > 0 && <Status v="up" word={`${verdicts.battu} battue${verdicts.battu > 1 ? 's' : ''}`} />}
               {verdicts.record === 0 && verdicts.battu === 0 && verdicts.egalise > 0 && (
                 <Status v="eq" word={`${verdicts.egalise} égalée${verdicts.egalise > 1 ? 's' : ''}`} />

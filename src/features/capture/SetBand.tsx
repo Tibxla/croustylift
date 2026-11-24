@@ -110,7 +110,7 @@ export function SetBand({
           <>
             <span aria-hidden className={HEAD}>
               <span className={`tnum ${isCurrent ? 'font-semibold text-ink' : 'text-faint'}`}>{rank}</span>
-              {st && <Status v={st.v} word={st.word} size={10} />}
+              {st && <Status v={st.v} word={st.short} size={10} />}
               {!s && isCurrent && <span className={NOW_WORD}>en cours</span>}
               {!s && !isCurrent && i >= plannedMax && <span className="text-faint">en plus</span>}
             </span>

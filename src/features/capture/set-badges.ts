@@ -100,11 +100,16 @@ function recordKindWord(kind: RecordKind): 'record' | 'record charge' {
 }
 
 /** Le statut d'une série en signe + mot, un seul pour la bande, la feuille de
- *  correction et le bilan : record (signal), battue (signal), égalée. */
-export function badgeStatus(badge: SetBadge): { v: 'up' | 'eq'; word: string } | null {
+ *  correction et le bilan : record (signal), battue (signal), égalée. `short` :
+ *  le mot dans une case de la bande (66 à 92 px), où « record charge » ne tient
+ *  pas : « charge » seul, le nom lu garde le mot entier. */
+export function badgeStatus(badge: SetBadge): { v: 'up' | 'eq'; word: string; short: string } | null {
   if (!badge) return null;
-  if (badge.axis === 'record') return { v: 'up', word: recordKindWord(badge.record) };
-  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
+  if (badge.axis === 'record') {
+    const word = recordKindWord(badge.record);
+    return { v: 'up', word, short: word === 'record charge' ? 'charge' : word };
+  }
+  return badge.verdict === 'battu' ? { v: 'up', word: 'battue', short: 'battue' } : { v: 'eq', word: 'égalée', short: 'égalée' };
 }
 
 /** Le mot d'un groupe de records (bilan de l'exo, récap) : « record charge »
