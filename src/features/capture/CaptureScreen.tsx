@@ -113,6 +113,7 @@ import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
 import { sommaireDetail } from './sommaire-detail';
+import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine, watchSeancesMeta } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
@@ -642,9 +643,10 @@ export function CaptureScreen() {
 
 /**
  * « Quelle séance ? » à l'arrivée en Salle, parmi les séances de la routine
- * courante. N'apparaît que si la routine en a au moins deux (une seule est
- * chargée direct ; aucune affiche l'état vide). Une ligne par séance, dans
- * l'ordre de la routine ; le nom suffit, rien d'inventé autour.
+ * courante. Une ligne par séance, dans l'ordre de la routine : son nom, et
+ * dessous quand elle a été faite pour la dernière fois et combien d'exos elle
+ * compte (seance-meta.ts), pour ne pas lancer la mauvaise d'une routine A/B. La
+ * liste s'affiche sans attendre cette méta : sa ligne est réservée.
  */
 function SeancePicker({
   seances,
@@ -654,13 +656,33 @@ function SeancePicker({
   onPick: (seance: SeanceChoice) => void;
 }) {
   const go = useGoToSurface();
+  const idsKey = seances.map((s) => s.id).join(',');
+  const [stored, setStored] = useState(peekSeancesMeta);
+  const [queue, setQueue] = useState(readOwnQueue);
+  useEffect(() => {
+    const onQueue = () => setQueue(readOwnQueue());
+    window.addEventListener(OUTBOX_CHANGED_EVENT, onQueue);
+    const off = watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+    return () => {
+      window.removeEventListener(OUTBOX_CHANGED_EVENT, onQueue);
+      off();
+    };
+  }, [idsKey]);
+  const meta = useMemo(() => mergePendingExecutions(stored, queue), [stored, queue]);
+  const today = todayIso();
   return (
     <div className="flex flex-1 flex-col">
       <SalleSync />
       <ScreenHeader title="Quelle séance ?" meta="Parmi celles de ta routine courante." />
       <List label="Séances de la routine courante">
         {seances.map((seance) => (
-          <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
+          <Row
+            key={seance.id}
+            title={seance.name}
+            // Espace insécable tant que rien n'est connu : la hauteur est tenue.
+            meta={seanceMetaLine(meta[seance.id] ?? null, today) ?? '\u00a0'}
+            onClick={() => onPick(seance)}
+          />
         ))}
       </List>
       {/* La question, puis le chemin sur sa propre ligne : la même mise en
