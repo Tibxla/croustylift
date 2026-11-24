@@ -1137,17 +1137,23 @@ export async function loadTodayExecution(
     const today = await fetchTodayExecution(seanceId, date, localExecutionId);
     if (today === null) return null;
     const pendingAfter = readOwnQueue();
-    const retired =
-      isExecutionRetiredInQueue(today.executionId, pendingBefore) ||
-      isExecutionRetiredInQueue(today.executionId, pendingAfter);
-    if (retired) return null;
     // Même décalage pour une SÉRIE annulée : elle a quitté l'état local dès le
     // geste, son `deleteSet` attend peut-être encore, et la base la porte
     // toujours. Rendue telle quelle, elle revenait à l'écran au remontage (la
     // fusion garde la liste la plus longue) et faussait le rang de la suivante.
     const pending = [...pendingBefore, ...pendingAfter];
+    const visible = withoutPendingDeletions(today, pending);
+    // Ce que la base garde face à une suppression conditionnelle (« Changer de
+    // séance ») : une série ou une note acquittée d'ailleurs, et pas annulée ici.
+    const carriesEntries =
+      Object.values(visible.progress).some((p) => p.sets.length > 0) ||
+      Object.keys(visible.datedNotes).length > 0;
+    const retired =
+      isExecutionRetiredInQueue(today.executionId, pendingBefore, carriesEntries) ||
+      isExecutionRetiredInQueue(today.executionId, pendingAfter, carriesEntries);
+    if (retired) return null;
     return {
-      ...withoutPendingDeletions(today, pending),
+      ...visible,
       // Les INSERTIONS seulement : une écriture partielle ne crée pas la ligne,
       // elle ne justifie donc pas de garder une série que la base n'a pas.
       pendingSetIds: [...new Set(pending.filter(isSetInsertion).map((op) => op.id))],
@@ -1257,14 +1263,27 @@ function withoutDeletedNotes(today: TodayExecution, pendingOps: readonly OutboxO
  * (`updateExecution` portant un `closedAt`) ou une suppression (`deleteExecution`,
  * posée par l'Annulation comme par le journal) qui la vise ? Une correction de
  * métriques sans clôture, ou une op visant une autre exécution, ne compte pas.
+ *
+ * La suppression CONDITIONNELLE de « Changer de séance » (`deleteExecutionIfEmpty`)
+ * la retire aussi, tant qu'elle est vide : la base la supprimera. Adoptée, elle
+ * rouvrait la séance quittée sur un réseau lent avec son ancienne heure de début,
+ * et la durée comptait le temps passé ailleurs. Si la lecture lui montre une
+ * série ou une note (`carriesEntries`, arrivée d'un autre onglet ou d'un autre
+ * appareil), la base la gardera : elle reste adoptée, pour ne pas ouvrir une
+ * seconde exécution à côté de celle qui porte ces saisies. Une saisie acquittée
+ * ailleurs APRÈS la lecture n'est pas vue : l'exécution gardée reste alors
+ * ouverte à côté de la nouvelle (classe résiduelle du multi-appareil, ADR 0003).
  */
 export function isExecutionRetiredInQueue(
   executionId: string,
   pendingOps: readonly OutboxOp[],
+  /** La lecture montre-t-elle une série ou une note de cette exécution ? */
+  carriesEntries = false,
 ): boolean {
   return pendingOps.some((op) => {
     if (op.id !== executionId) return false;
     if (op.type === 'deleteExecution') return true;
+    if (op.type === 'deleteExecutionIfEmpty') return !carriesEntries;
     return op.type === 'updateExecution' && typeof op.closedAt === 'string';
   });
 }
