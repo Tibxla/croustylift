@@ -148,7 +148,7 @@ function readEntry<T>(key: string): { value: T; stale: boolean; stamp: number | 
 
 /**
  * Écrit une entrée (dégrade en silence si quota plein / mode privé), puis
- * prévient les abonnés (`onReadWritten`) si le CONTENU a changé.
+ * prévient les abonnés (`onReadWritten`) si le CONTENU ou l'estampille a changé.
  */
 function writeEntry(key: string, value: unknown, stamp: number | null = null): void {
   if (typeof localStorage === 'undefined') return;
@@ -156,9 +156,18 @@ function writeEntry(key: string, value: unknown, stamp: number | null = null): v
     const before = readEntry<unknown>(key);
     const after = JSON.stringify({ v: 1, value, ...(stamp !== null ? { stamp } : {}) } satisfies Envelope);
     localStorage.setItem(key, after);
-    // Seul un CONTENU qui change prévient les abonnés : une copie relue à
-    // l'identique, sous une estampille plus récente, ne fait bouger aucun écran.
-    if (before === null || before.stale || JSON.stringify(before.value) !== JSON.stringify(value)) {
+    // Un CONTENU qui change prévient les abonnés ; une copie relue à
+    // l'identique sous la même estampille ne fait bouger aucun écran. Sous une
+    // AUTRE estampille, elle prévient aussi : l'estampille ne change que si une
+    // écriture locale a été enfilée ou acquittée entre les deux lectures, et ce
+    // que le lecteur ajoute à la copie (`writesSince`) n'est alors plus le même
+    // (une correction acquittée entre-temps, que la base ne porte plus).
+    if (
+      before === null ||
+      before.stale ||
+      before.stamp !== stamp ||
+      JSON.stringify(before.value) !== JSON.stringify(value)
+    ) {
       notifyWritten(key);
     }
   } catch {

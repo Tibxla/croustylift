@@ -53,6 +53,7 @@ import { loadLocalAccount } from '../../lib/local-account';
 import { writeMakingRoom } from './cache-eviction';
 import {
   ACKED_MAX,
+  ACKED_RETENTION_MS,
   Draft,
   abandon,
   acknowledge,
@@ -872,6 +873,8 @@ function absorb(): void {
   settleLegacy(null, null, false);
   const opened = open();
   if (opened.outdated) return;
+  // Les écritures acquittées qui ont passé leur rétention partent ici.
+  opened.draft.drop([...passedRetention(opened.draft.record.entries)]);
   if (opened.draft.log.length > 0 || activeDeferred().length > 0 || activeVolatile() !== null) commit(opened);
   else settleLegacy(opened.legacyRead, opened.draft.record, true);
 }
@@ -1079,12 +1082,39 @@ export function writesSince(stamp: ReadStamp | null | undefined): LocalWrite[] {
   // Une écriture acquittée depuis plus longtemps que sa rétention n'est plus
   // appliquée, même si rien ne l'a encore retirée du registre : elle masquerait
   // sans borne une correction venue d'un autre appareil.
-  const now = Date.now();
-  return view()
-    .entries.filter(
-      (e) => isOwn(e) && (e.fate !== 'acked' || (stamp != null && (e.ack ?? 0) > stamp && !isExpired(e, now))),
-    )
+  const entries = view().entries;
+  const stale = passedRetention(entries);
+  // Et elle quitte le registre pour de bon, sous le verrou, sans attendre le
+  // prochain acquittement : tenue pour passée, elle ne doit pas redevenir
+  // applicable (horloge reculée puis revenue à l'heure).
+  if (stale.size > 0) persistSoon(true);
+  return entries
+    .filter((e) => isOwn(e) && (e.fate !== 'acked' || (stamp != null && (e.ack ?? 0) > stamp && !stale.has(e.uid))))
     .map((e) => ({ uid: e.uid, n: e.n, op: e.op, fate: e.fate }));
+}
+
+// Ce que cette page sait de l'âge des écritures acquittées, par identité :
+// l'instant où elle les a vues pour la première fois sur son horloge MONOTONE
+// (`performance.now()`, que rien ne recule), ou `true` dès qu'elle les a tenues
+// pour passées. L'heure de l'appareil, elle, peut bouger dans les deux sens.
+let ackedSeen = new Map<string, number | true>();
+
+/** Les écritures acquittées de `entries` qui ont passé leur rétention (cf. `isExpired`), une fois pour toutes. */
+function passedRetention(entries: readonly Entry[]): Set<string> {
+  const now = Date.now();
+  const mono = typeof performance === 'undefined' ? null : performance.now();
+  const next = new Map<string, number | true>();
+  const stale = new Set<string>();
+  for (const e of entries) {
+    if (e.fate !== 'acked') continue;
+    const seen = ackedSeen.get(e.uid) ?? mono ?? 0;
+    const passed =
+      seen === true || isExpired(e, now) || (mono !== null && mono - seen > ACKED_RETENTION_MS);
+    next.set(e.uid, passed ? true : seen);
+    if (passed) stale.add(e.uid);
+  }
+  ackedSeen = next;
+  return stale;
 }
 
 /**

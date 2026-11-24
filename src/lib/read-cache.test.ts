@@ -11,6 +11,7 @@ import {
   invalidateReads,
   networkFirstRead,
   onReadWritten,
+  setReadStamper,
   refreshRead,
   revalidateReadCache,
   seedRead,
@@ -488,6 +489,27 @@ describe('onReadWritten', () => {
 
     expect(written).toEqual([]);
     off();
+  });
+
+  it('relue à l’identique sous une AUTRE estampille : prévient, ce que les écritures locales y ajoutent a pu changer', async () => {
+    let seq = 10;
+    setReadStamper(() => seq);
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    // Même estampille (aucune écriture locale entre les deux lectures) : rien.
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+    expect(written).toEqual([]);
+    // Une écriture locale a été enfilée ou acquittée entre-temps.
+    seq = 11;
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+    setReadStamper(null);
   });
 
   it('une réponse supplantée (non écrite) ne prévient pas : l’écran ne recule pas', async () => {

@@ -196,6 +196,12 @@ describe('la base fait foi, plus les écritures locales qu’elle ne contient pa
     expect(progress.curl?.sets.map((s) => `${s.order}${s.side}:${s.weightKg}`)).toEqual(['1left:80', '2right:80', '2right:20']);
   });
 
+  it('suppression de l’exécution REFUSÉE par la base : le tableau garde ses séries (elle attend un geste dans la feuille)', async () => {
+    enqueue({ type: 'deleteExecution', id: EXEC });
+    await flush(new Proxy({}, { get: () => async () => Promise.reject(Object.assign(new Error('rejet'), { code: '42501' })) }) as SyncFns);
+    expect(rows(arrive(readStamp(), read(['s1', ps(1)])))).toEqual(['s1@1:80x8']);
+  });
+
   it('une série sans id (cache d’un très ancien format) reste en place : aucune écriture ne la vise', () => {
     enqueue(insert('s2', 2));
     expect(arrive(null, read([null, ps(1)])).bench?.setIds).toEqual([null, 's2']);
@@ -313,6 +319,18 @@ describe('la Référence : lignes d’historique d’un exo (ADR 0014)', () => {
   });
   const pending = (...ops: OutboxOp[]): LocalWrite[] => ops.map((op, i) => ({ uid: `u${i}`, n: i + 1, op, fate: 'pending' }));
   const creation: OutboxOp = { type: 'upsertExecution', id: EXEC, seanceVersionId: 'v2', performedOn: '2026-11-24', startedAt: '2026-11-24T18:00:00Z' };
+
+  it('suppression d’exécution REFUSÉE par la base : la séance existe toujours, ses lignes restent', () => {
+    const copy = [row('a', 1), row('b', 2)];
+    const refused: LocalWrite[] = [{ uid: 'u', n: 1, op: { type: 'deleteExecution', id: 'exec-old' }, fate: 'refused' }];
+    expect(exerciseRowsReality(copy, refused, 'bench')).toEqual(copy);
+  });
+
+  it('exécution supprimée ici : ses lignes d’une ancienne copie, sans id, partent aussi', () => {
+    const copy = [row(undefined, 1), row(undefined, 1, { execution_id: 'exec-autre' })];
+    const out = exerciseRowsReality(copy, pending({ type: 'deleteExecution', id: 'exec-old' }), 'bench');
+    expect(out.map((r) => r.execution_id)).toEqual(['exec-autre']);
+  });
 
   it('rien de local : les lignes lues passent telles quelles', () => {
     const copy = [row('a', 1)];

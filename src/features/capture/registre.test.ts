@@ -1267,3 +1267,23 @@ describe('relecture entière : un refus de création dépassé ne tient plus rie
     expect(readQueue().map((op) => op.id)).toEqual(['s2']);
   });
 });
+
+describe('relecture entière : une écriture acquittée tenue pour passée le reste', () => {
+  it('horloge reculée puis revenue à l’heure : l’écriture ne redevient pas applicable, et quitte le registre', async () => {
+    let now = Date.now() + 5_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stamp = readStamp();
+    enqueue(insert('s1'));
+    await flush(base().fns);
+    expect(writesSince(stamp)).toHaveLength(1);
+
+    now -= 60 * 60 * 1000;
+    expect(writesSince(stamp)).toEqual([]);
+    // L'horloge rattrape l'heure de l'acquittement.
+    now += 60 * 60 * 1000 + 1000;
+
+    expect(writesSince(stamp)).toEqual([]);
+    await registrySettled();
+    await vi.waitFor(() => expect(storedWrites()).toEqual([]));
+  });
+});

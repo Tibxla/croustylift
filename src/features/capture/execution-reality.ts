@@ -20,6 +20,9 @@
 //   - une remontée de rang (`only: 'rank'`) ne pose que le rang, un changement
 //     de côté (`only: 'side'`) que le côté ;
 //   - une suppression retire la ligne, celle d'une exécution toutes ses lignes.
+//     Sauf une suppression d'exécution que la base a REFUSÉE : la séance et ses
+//     séries existent toujours, elle attend un geste dans la feuille des
+//     saisies refusées (même règle qu'`isExecutionRetired`, data.ts).
 // Une ligne corrigée ailleurs (la lecture porte son nouveau poids) et
 // renumérotée ici garde donc les deux. Une écriture partielle ne crée jamais de
 // ligne : corriger une série supprimée ne la ressuscite pas.
@@ -34,7 +37,7 @@
 // les écritures.
 import type { PerformedSet, Side } from '../../domain/types';
 import type { PerformedSetWithExecutionRow } from './data';
-import type { LocalWrite, OutboxOp } from './outbox';
+import type { LocalWrite } from './outbox';
 import type { DatedNoteDraft, ExerciseProgress } from './state';
 
 /** Une ligne de série, sous la forme commune aux lecteurs. */
@@ -66,7 +69,8 @@ function sameLine(a: SetLine | undefined, b: SetLine | undefined): boolean {
  * `accepts` borne les insertions à ce que le lecteur regarde (une exécution,
  * un exo).
  */
-function applyWrite(lines: Map<string, SetLine>, op: OutboxOp, accepts: (line: SetLine) => boolean): void {
+function applyWrite(lines: Map<string, SetLine>, write: LocalWrite, accepts: (line: SetLine) => boolean): void {
+  const { op } = write;
   switch (op.type) {
     case 'insertSet': {
       const line: SetLine = {
@@ -104,6 +108,7 @@ function applyWrite(lines: Map<string, SetLine>, op: OutboxOp, accepts: (line: S
       lines.delete(op.id);
       return;
     case 'deleteExecution': {
+      if (write.fate === 'refused') return;
       for (const [id, line] of [...lines]) {
         if (line.executionId === op.id) lines.delete(id);
       }
@@ -161,7 +166,7 @@ export function executionReality(input: {
     });
   }
   const before = new Map(lines);
-  for (const write of writes) applyWrite(lines, write.op, (line) => line.executionId === executionId);
+  for (const write of writes) applyWrite(lines, write, (line) => line.executionId === executionId);
   // Les exos dont une ligne diffère AU BOUT du compte : rejouer des écritures
   // que la lecture contenait déjà ne touche rien.
   const touched = new Set<string>();
@@ -313,12 +318,17 @@ export function exerciseRowsReality(
     });
   }
   const before = new Map(lines);
-  for (const { op } of writes) {
+  // Les exécutions supprimées ici (suppression en attente ou acquittée depuis
+  // la lecture) : une ligne sans id ne peut être visée par aucune écriture de
+  // série, mais elle porte son exécution, et part avec elle.
+  const deleted = new Set<string>();
+  for (const write of writes) {
     // Sans date ni version, la ligne ne dérive rien.
-    applyWrite(lines, op, (line) => line.exerciseId === exerciseId && context.has(line.executionId));
+    applyWrite(lines, write, (line) => line.exerciseId === exerciseId && context.has(line.executionId));
+    if (write.op.type === 'deleteExecution' && write.fate !== 'refused') deleted.add(write.op.id);
   }
 
-  const out: PerformedSetWithExecutionRow[] = [...untouchable];
+  const out: PerformedSetWithExecutionRow[] = untouchable.filter((row) => !deleted.has(row.execution_id));
   for (const [id, line] of lines) {
     const row = original.get(id);
     // Inchangée au bout du compte : la ligne lue elle-même.
