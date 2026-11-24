@@ -58,6 +58,7 @@ import { menuLabel, routineMenu, seanceMenu } from './object-actions';
 import { requestLeave } from './seance-dirty';
 import { errorMessage } from '../../lib/error-message';
 import { exoCount, seanceCount } from './seance-format';
+import { reorderLock } from './reorder-lock';
 import { NameSheet, ReorderRow, RoutineActionsSheet, SeanceActionsSheet, StatusLine, type PlanFlash } from './seances-ui';
 import {
   ActionNote,
@@ -583,6 +584,7 @@ function RoutineContainer({
       catalog={data.catalog}
       copyAt={showDate ? state.at : null}
       online={online}
+      orderVerified={!state.copy}
       flash={flash}
       onBack={() => onBack()}
       onEdit={(seance) => onEdit(seance, ctxOf(seance))}
@@ -639,6 +641,7 @@ export function RoutineView({
   catalog,
   copyAt = null,
   online = true,
+  orderVerified = true,
   flash,
   onBack,
   onEdit,
@@ -668,6 +671,8 @@ export function RoutineView({
   /** La page montrée est une copie locale de cette heure-là (hors ligne). */
   copyAt?: number | null;
   online?: boolean;
+  /** L'ordre affiché vient d'une lecture réseau, pas d'une copie encore à revalider (reorder-lock). */
+  orderVerified?: boolean;
   flash: PlanFlash | null;
   onBack: () => void;
   onEdit: (seance: SeanceRow) => void;
@@ -710,6 +715,7 @@ export function RoutineView({
   const seanceItems = (s: SeanceRow) =>
     seanceMenu({ executed: executedSeanceIds.has(s.id), inCurrentRoutine: isCurrent, hasExercises: (exerciseCountOf(s.id) ?? 0) > 0 });
   const status = archivedRoutine ? 'archivée' : isCurrent ? 'routine courante' : null;
+  const lock = reorderLock({ moving, verified: orderVerified, online });
   const undo = flash?.unarchive;
 
   async function run(action: () => Promise<void>) {
@@ -840,7 +846,7 @@ export function RoutineView({
                   first={i === 0}
                   last={i === seances.length - 1}
                   moved={moved === s.id}
-                  disabled={moving}
+                  disabled={lock.disabled}
                   onMove={(d) => void move(i, d)}
                 />
               ) : (
@@ -869,6 +875,11 @@ export function RoutineView({
               ),
             )}
           </List>
+          {reorder && lock.note && (
+            <p role="status" className="px-5 pt-3 text-[14px] leading-[1.45] text-muted">
+              {lock.note}
+            </p>
+          )}
           {reorder && error && <FieldError className="mx-5">{error}</FieldError>}
         </>
       )}
