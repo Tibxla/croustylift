@@ -27,8 +27,8 @@
 -- exécutions.
 --
 -- Appel côté client : `supabase.rpc('delete_execution_if_empty', { p_execution_id })`
--- (`deleteExecutionIfEmpty`, src/features/capture/data.ts, qui garde un repli
--- non atomique tant que cette fonction n'est pas en base).
+-- (`deleteExecutionIfEmpty`, src/features/capture/data.ts, qui ne supprime
+-- rien et garde l'exécution tant que cette fonction n'est pas en base).
 --
 -- Rejouable (`create or replace`). Aucune donnée touchée.
 --
@@ -39,7 +39,8 @@
 --   where p.pronamespace = 'public'::regnamespace and p.proname = 'delete_execution_if_empty';
 --
 -- RISQUE : nul tant que le client ne l'appelle pas. Compatible avec le client
--- en place ; le client qui l'appelle marche aussi sans elle (repli).
+-- en place ; le client qui l'appelle marche aussi sans elle, mais ne
+-- supprime alors aucune exécution vide (elle reste au Journal).
 
 begin;
 
