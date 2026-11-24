@@ -19,12 +19,19 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 95_000, // code de l'app (mesuré : 93 000 au lot 5 de la refonte E, +3 300 sur le lot 4 : Séances, Exos, connexion, écran des saisies refusées et champs du kit ; 89 700 au lot 4 ; 86 613 au lot 3 : correction et suppression d'une série, Sommaire, fin de séance enrichie et lecture de la semaine ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
+  'index.js': 77_500, // code de l'app (mesuré : 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
   // À la demande.
   'AnalysisScreen.js': 23_100, // code de l'Analyse (mesuré : 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
+  'SeancesScreen.js': 11_400, // routines, page d'une routine, éditeur de séance (mesuré : 10 783 au lot 5)
+  'ReglagesScreen.js': 5_700, // (mesuré : 5 420 au lot 5)
+  'ExercisesScreen.js': 4_900, // (mesuré : 4 645 au lot 5)
+  'RefusedWritesSheet.js': 2_900, // écran des saisies refusées (mesuré : 2 735 au lot 5)
+  'ExerciseForm.js': 1_950, // formulaire d'exo, partagé par Exos et l'éditeur de séance (mesuré : 1 829)
+  'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
+  'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 

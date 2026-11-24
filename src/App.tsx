@@ -1,16 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type ComponentType, type LazyExoticComponent } from 'react'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
-import { SeancesScreen } from './features/authoring/SeancesScreen'
-import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
 import { requestLeave } from './features/authoring/seance-dirty'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
-import { ReglagesScreen } from './features/settings/ReglagesScreen'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
 import { blockReloads, unblockReloads } from './pwa/blockers'
@@ -29,51 +26,79 @@ import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
 import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
 import { RefusedWritesContext, refusedAction } from './shell/refused-context'
-import { RefusedWritesSheet } from './shell/RefusedWritesSheet'
 import { errorMessage } from './lib/error-message'
 
-// L'Analyse (graphes, éditeur de séance passée) se charge en PARESSEUX pour
-// rester hors du chunk critique de la Capture (surface par défaut,
-// « zéro-friction ») : son code n'est téléchargé qu'à l'ouverture de l'onglet.
+// Seule la Salle (surface par défaut, « zéro-friction ») est dans le chunk
+// critique. L'Analyse, Séances (éditeur compris), Exos, Réglages et l'écran des
+// saisies refusées se chargent en PARESSEUX : leur code n'est téléchargé qu'à
+// l'ouverture (et préchargé quand une mise à jour s'annonce, voir plus bas).
 //
-// Si le fichier du chunk est introuvable (build remplacé sous la page, cache vidé
-// par le système), la suite dépend de ce que fait l'utilisateur À CE MOMENT :
-// - il est encore sur l'Analyse et un rechargement est permis : on recharge une
-//   fois pour retrouver un shell et des chunks cohérents, et on rouvre l'Analyse
-//   (la promesse reste en suspens, le Suspense tient jusqu'au rechargement) ;
+// Si le fichier d'un chunk de surface est introuvable (build remplacé sous la
+// page, cache vidé par le système), la suite dépend de ce que fait
+// l'utilisateur À CE MOMENT :
+// - il est encore sur la surface et un rechargement est permis : on recharge une
+//   fois pour retrouver un shell et des chunks cohérents, et on rouvre la même
+//   surface (la promesse reste en suspens, le Suspense tient jusqu'au
+//   rechargement) ;
 // - sa demande est périmée (il a quitté l'onglet, ou s'est déconnecté) : on ne
 //   recharge pas sous ses pieds, et on oublie l'échec (`React.lazy` le
 //   garderait) pour retenter s'il y revient ;
 // - sinon (hors ligne, séance en cours, déjà tenté) : l'erreur remonte à la
 //   frontière d'erreur, qui l'explique.
-const importAnalysis = () => import('./features/analysis/AnalysisScreen')
 
-/**
- * La demande d'import de l'Analyse en cours : ouverte quand l'import démarre,
- * périmée par AuthenticatedApp dès que l'utilisateur quitte l'onglet ou que
- * l'app authentifiée est démontée.
- */
-const analysisRequests = new ImportRequests()
-
-function createAnalysisScreen() {
-  return lazy(() => {
-    const request = analysisRequests.begin()
-    return importAnalysis()
-      .then((m) => ({ default: m.AnalysisScreen }))
-      .catch((err: unknown) => {
-        const action = recoverFromChunkFailure('analysis', analysisRequests.isActive(request))
-        if (action === 'reload') return new Promise<never>(() => {})
-        if (action === 'ignore') AnalysisScreen = createAnalysisScreen()
-        throw err
-      })
-  })
+/** Un écran chargé à la demande, et la demande d'import en cours (ouverte quand
+ *  l'import démarre, périmée dès que l'utilisateur quitte l'onglet ou que l'app
+ *  authentifiée est démontée). */
+interface LazyScreen<P> {
+  Component: LazyExoticComponent<ComponentType<P>>
+  requests: ImportRequests
+  preload: () => void
 }
-let AnalysisScreen = createAnalysisScreen()
 
-// Une mise à jour s'annonce : le chunk de l'Analyse est chargé en mémoire tant
+function lazySurface<P extends object>(
+  surface: SurfaceName,
+  load: () => Promise<ComponentType<P>>,
+): LazyScreen<P> {
+  const requests = new ImportRequests()
+  const create = (): LazyExoticComponent<ComponentType<P>> =>
+    lazy(() => {
+      const request = requests.begin()
+      return load()
+        .then((Component) => ({ default: Component }))
+        .catch((err: unknown) => {
+          const action = recoverFromChunkFailure(surface, requests.isActive(request))
+          if (action === 'reload') return new Promise<never>(() => {})
+          if (action === 'ignore') screen.Component = create()
+          throw err
+        })
+    })
+  const screen: LazyScreen<P> = {
+    Component: create(),
+    requests,
+    preload: () => void load().catch(() => {}),
+  }
+  return screen
+}
+
+const lazyScreens = {
+  analysis: lazySurface('analysis', () => import('./features/analysis/AnalysisScreen').then((m) => m.AnalysisScreen)),
+  seances: lazySurface('seances', () => import('./features/authoring/SeancesScreen').then((m) => m.SeancesScreen)),
+  exercises: lazySurface('exercises', () => import('./features/exercises/ExercisesScreen').then((m) => m.ExercisesScreen)),
+  reglages: lazySurface('reglages', () => import('./features/settings/ReglagesScreen').then((m) => m.ReglagesScreen)),
+} as const
+
+// L'écran des saisies refusées est une feuille, pas une surface : un échec de
+// chargement ne recharge rien, il s'oublie pour être retenté à la prochaine
+// ouverture (la frontière d'erreur autour de la feuille rend la main).
+const importRefused = () => import('./shell/RefusedWritesSheet')
+const createRefusedSheet = () => lazy(() => importRefused().then((m) => ({ default: m.RefusedWritesSheet })))
+let RefusedWritesSheet = createRefusedSheet()
+
+// Une mise à jour s'annonce : les chunks paresseux sont chargés en mémoire tant
 // que l'ancien précache existe encore (voir `setLazyChunkPreloader`).
 setLazyChunkPreloader(() => {
-  void importAnalysis().catch(() => {})
+  for (const screen of Object.values(lazyScreens)) screen.preload()
+  void importRefused().catch(() => {})
 })
 
 type Surface = SurfaceName
@@ -178,11 +203,12 @@ function AuthenticatedApp({
   // Après un rechargement décidé par l'app (mise à jour, chunk introuvable), on
   // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
   const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
-  // La demande d'import de l'Analyse ne vaut que tant que cet écran la porte :
-  // elle est périmée au départ de l'onglet et au démontage (déconnexion).
+  // La demande d'import d'un écran paresseux ne vaut que tant que l'onglet le
+  // porte : elle est périmée au départ de l'onglet et au démontage (déconnexion).
   useEffect(() => {
-    if (surface !== 'analysis') return
-    return () => analysisRequests.invalidate()
+    if (surface === 'capture') return
+    const screen = lazyScreens[surface]
+    return () => screen.requests.invalidate()
   }, [surface])
   // Le seul chemin d'une surface à l'autre, pour la navigation comme pour tout
   // écran (shell/navigation.ts) : garde de sortie d'abord (modifications non
@@ -266,6 +292,12 @@ function AuthenticatedApp({
     return () => window.removeEventListener('online', flushAndRevalidate)
   }, [])
 
+  const { analysis, seances, exercises, reglages } = lazyScreens
+  const AnalysisScreen = analysis.Component
+  const SeancesScreen = seances.Component
+  const ExercisesScreen = exercises.Component
+  const ReglagesScreen = reglages.Component
+
   if (check.phase === 'checking') {
     return <FullScreenSpinner label="Chargement" />
   }
@@ -331,7 +363,22 @@ function AuthenticatedApp({
               </Suspense>
             </ErrorBoundary>
           </div>
-          <RefusedWritesSheet open={refusedOpen} onClose={() => setRefusedOpen(false)} />
+          {/* Montée à la première ouverture seulement : son chunk n'est demandé
+              qu'à ce moment. Un échec de chargement ne casse pas l'app (frontière
+              sans repli visible) et se retente à la prochaine ouverture. */}
+          {refusedOpen && (
+            <ErrorBoundary
+              fallback={null}
+              onError={() => {
+                RefusedWritesSheet = createRefusedSheet()
+                setRefusedOpen(false)
+              }}
+            >
+              <Suspense fallback={null}>
+                <RefusedWritesSheet open onClose={() => setRefusedOpen(false)} />
+              </Suspense>
+            </ErrorBoundary>
+          )}
         </SheetSlotContext.Provider>
         </RefusedWritesContext.Provider>
       </SurfaceNavigationContext.Provider>
