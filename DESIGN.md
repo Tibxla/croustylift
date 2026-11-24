@@ -269,7 +269,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Feuille basse
 
-- **Saisies refusées** : quand le serveur refuse des saisies, la ligne de synchro porte à son bout « N refusées », souligné ; toute la ligne ouvre la feuille des saisies refusées (aussi depuis Réglages, Données). Chaque saisie dit quoi, quand et pourquoi, avec « Renvoyer » et « Abandonner » (confirmé).
+- **Saisies refusées** : quand le serveur refuse des saisies, la ligne de synchro le dit en titre (« 2 saisies refusées ») et porte à son bout « Voir », souligné (« N refusées » quand la ligne dit autre chose d'abord, hors ligne ou envoi en cours) ; toute la ligne ouvre la feuille des saisies refusées (aussi depuis Réglages, Données). Chaque saisie dit quoi, quand et pourquoi, avec « Renvoyer » et « Abandonner » (confirmé).
 - **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête (le titre passe à la ligne, jamais coupé ; sa première ligne au niveau de « Fermer »), défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.
 
 ### Mouvement
