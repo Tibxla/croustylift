@@ -19,7 +19,7 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 77_500, // code de l'app, tenu par le chargement à la demande (mesuré : 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
+  'index.js': 82_000, // code de l'app, tenu par le chargement à la demande (mesuré : 78 100 après les lots UX et UI de l'audit du 24/11, reps reprises, garde du double toucher, copies datées ; 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 7_500, // (mesuré : 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)
@@ -32,6 +32,7 @@ const BUDGETS = {
   'NoteSheet.js': 2_100, // formulaire d'exo et feuille de note, partagés par Exos et l'éditeur de séance (mesuré : 1 998 au nettoyage du code mort, note sortie du formulaire ; 2 139 avant ; 1 792 pour le formulaire seul, alors chunk ExerciseForm.js)
   'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
   'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
+  'seance-meta-load.js': 900, // « dernière fois mardi » de « Quelle séance ? », lu à part (mesuré : 800)
   'use-dated-load.js': 600, // copies datées des écrans au calme, partagées par Séances et l'Analyse (mesuré : 525)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
