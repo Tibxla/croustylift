@@ -63,4 +63,4 @@ Une PWA restée ouverte ou hors ligne garde l'ancien code et, dans sa file, des 
 
 Toutes appliquées en prod : étape 1 le 2026-11-23 au soir (0024 le 24 au matin), client déployé le 2026-11-24, étape 4 le 2026-11-24, chaque fois avec contrôle préalable vide et test de contrôle sans `ECHEC`. La table `exercise_overrides` de la prod venait d'une version antérieure de 0007 (policies `_own`, index et trigger absents) : 0015 la réaligne avant tout. L'étape 3 n'a pas attendu une confirmation appareil par appareil : 0016, 0021 et 0022 ne gênent que l'inscription et l'import de l'ancien client, 0018 ne pouvait refuser qu'une seconde note du même couple, envoyée en quarantaine et renvoyable.
 
-`0025_delete_execution_if_empty.sql` est postérieure à ce déploiement : passée au banc local, **pas encore appliquée en prod** au 2026-11-24.
+`0025_delete_execution_if_empty.sql` est postérieure à ce déploiement : passée au banc local, appliquée en prod le 2026-11-24 vers 17 h (contrôle préalable vide, test de contrôle sans `ECHEC`), AVANT la fusion du client de la refonte E qui l'appelle.
