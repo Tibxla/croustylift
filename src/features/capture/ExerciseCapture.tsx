@@ -376,12 +376,13 @@ export function ExerciseCapture({
             barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
           className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
-            compact
-              ? exercise.name.length <= 18
-                ? tight
-                  ? 'text-[24px]'
-                  : 'text-[28px]'
-                : 'text-[22px] leading-[29px]'
+            tight
+              ? // Écran très bas : tout nom au cran de 22 px, sur sa propre hauteur.
+                'text-[22px]'
+              : compact
+                ? exercise.name.length <= 18
+                  ? 'text-[28px]'
+                  : 'text-[22px] leading-[29px]'
               : exercise.name.length <= 18
                 ? 'text-[32px]'
                 : exercise.name.length <= 24
