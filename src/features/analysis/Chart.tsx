@@ -86,6 +86,7 @@ export function Chart({
   xDomain,
   yFormat = defaultYFormat,
   yTarget = 4,
+  yFromZero = false,
   marker,
   cursorX,
   ariaLabel,
@@ -101,6 +102,8 @@ export function Chart({
   yFormat?: (v: number) => string;
   /** Nombre de graduations Y visé. */
   yTarget?: number;
+  /** Axe Y depuis zéro plutôt que serré sur les données (séries 2+). */
+  yFromZero?: boolean;
   /** Repère vertical pointillé (début du bloc), avec un mot court en tête. */
   marker?: { x: number; label?: string };
   /** Curseur à cette abscisse sans point choisi ici (graphe lié à un autre). */
@@ -126,7 +129,7 @@ export function Chart({
     const all = series.flatMap((s) => s.points);
     if (all.length === 0 || width === 0) return null;
     const ys = all.map((p) => p.y);
-    const minY = Math.min(...ys);
+    const minY = yFromZero ? Math.min(0, ...ys) : Math.min(...ys);
     const maxY = Math.max(...ys);
     const span = Math.max(maxY - minY, Math.abs(maxY) * 0.04, 1);
     const step = niceStep(span, yTarget);
@@ -152,7 +155,7 @@ export function Chart({
       x1 === x0 ? (plot.left + plot.right) / 2 : plot.left + ((v - x0) / (x1 - x0)) * (plot.right - plot.left);
     const y = (v: number) => plot.bottom - ((v - lo) / (hi - lo)) * (plot.bottom - plot.top);
     return { x, y, yTicks, labels, plot };
-  }, [series, width, height, yTarget, yFormat, xDomain, marker?.label]);
+  }, [series, width, height, yTarget, yFromZero, yFormat, xDomain, marker?.label]);
 
   // Étiquettes X : on écarte celles qui chevaucheraient la précédente gardée, et
   // on retient la première et la dernière dans le cadre.

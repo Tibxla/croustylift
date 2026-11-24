@@ -3,8 +3,9 @@
 // SUBORDONNÉ à la courbe héros : plus bas, trait gris fin, jamais le signal (un
 // repère n'est pas un « mieux que la dernière fois »). Même axe temps que la
 // courbe du dessus (`cardTimeAxis`), et son curseur suit le point choisi
-// au-dessus : la même date tombe à la même abscisse. Son axe Y est le sien, et
-// libellé (une moyenne de séries 2+ est plus basse que la 1ʳᵉ série).
+// au-dessus : la même date tombe à la même abscisse. Son axe Y est le sien,
+// libellé, et part de zéro (échelle validée le 2026-11-23, commit cc7e91e) :
+// un repère de fatigue, pas une loupe sur ses variations.
 import type { CurveUnit, E1rmPoint } from '../../domain/types';
 import { Chart } from './Chart';
 import { dayToTime, timeTick, type TimeAxis } from './chart-time';
@@ -29,6 +30,7 @@ export function SecondaryChart({
       series={[{ id: 'series-2', tone: 'muted', points: curve.map((p) => ({ x: dayToTime(p.date), y: p.e1rm })) }]}
       height={128}
       yTarget={2}
+      yFromZero
       xDomain={axis?.domain}
       xTicks={(axis?.ticks ?? []).map((t) => ({ x: t, label: timeTick(t) }))}
       yFormat={(v) => String(Math.round(v))}
