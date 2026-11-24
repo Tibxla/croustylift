@@ -19,7 +19,7 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 91_000, // code de l'app (mesuré : 86 613, refonte E lot 3 : correction et suppression d'une série, Sommaire, fin de séance enrichie et lecture de la semaine ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
+  'index.js': 95_000, // code de l'app (mesuré : 93 000 au lot 5 de la refonte E, +3 300 sur le lot 4 : Séances, Exos, connexion, écran des saisies refusées et champs du kit ; 89 700 au lot 4 ; 86 613 au lot 3 : correction et suppression d'une série, Sommaire, fin de séance enrichie et lecture de la semaine ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 9_000, // (mesuré : 8 426 au lot 2 ; 8 629 au lot 1, 9 110 avant E)
