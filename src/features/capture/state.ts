@@ -133,6 +133,15 @@ export type CaptureAction =
   // pour que l'état local et l'op d'outbox partagent EXACTEMENT le même id.
   | { type: 'log-set'; exerciseId: string; setId: string; set: Omit<PerformedSet, 'order'> }
   | { type: 'undo-last-set'; exerciseId: string }
+  // Corrige une série déjà loggée, où qu'elle soit dans l'exo : seules ses
+  // valeurs changent (id, rang et côté restent). Construite par `correctSet`
+  // (set-gestures.ts), qui borne les valeurs et rend l'écriture à enfiler.
+  | {
+      type: 'correct-set';
+      exerciseId: string;
+      setId: string;
+      values: Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
+    }
   // Note datée d'un exo (issue #26). `noteId` = UUID client de la ligne
   // `dated_notes`, fourni par le caller pour que l'état et l'op d'outbox visent
   // la même ligne. Un `body` vide est conservé tel quel dans l'état ; c'est la
@@ -148,6 +157,13 @@ export type CaptureAction =
       base: Record<string, HydratedProgress>;
       pendingSetIds: string[];
       knownAtDeparture: string[];
+      /**
+       * Le réalisé local tel qu'il était au DÉPART de la lecture, valeurs
+       * comprises. Une série que l'utilisateur a corrigée (ou renumérotée)
+       * pendant le trajet garde sa valeur locale, même si l'écriture a déjà été
+       * acquittée et ne figure plus dans aucun relevé de la file.
+       */
+      departure?: Record<string, ExerciseProgress>;
       /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
       datedNotes?: Record<string, DatedNoteDraft>;
       /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
@@ -757,14 +773,46 @@ export function reconcileDatedNotes(
 export function reconcileProgress(
   local: Record<string, ExerciseProgress>,
   base: Record<string, HydratedProgress>,
-  options: { pendingSetIds: readonly string[]; knownAtDeparture?: readonly string[] | null },
+  options: {
+    pendingSetIds: readonly string[];
+    knownAtDeparture?: readonly string[] | null;
+    /**
+     * Le réalisé local au départ de la lecture, valeurs comprises. Une série
+     * dont la valeur locale DIFFÈRE de celle du départ a été corrigée (ou
+     * renumérotée) ici pendant le trajet : la réponse, partie avant, porte sa
+     * valeur d'avant, et l'écriture a pu être acquittée entre-temps (aucun
+     * relevé de la file ne la montre plus). La valeur locale est gardée. Une
+     * série inchangée depuis le départ suit la base, qui a pu être corrigée
+     * ailleurs.
+     */
+    departure?: Record<string, ExerciseProgress> | null;
+  },
 ): Record<string, ExerciseProgress> {
   const pending = new Set(options.pendingSetIds);
   const known = options.knownAtDeparture ? new Set(options.knownAtDeparture) : null;
   const localIds = new Set<string>();
+  const localById = new Map<string, PerformedSet>();
   for (const p of Object.values(local)) {
-    for (const id of p.setIds) if (id !== null) localIds.add(id);
+    p.setIds.forEach((id, i) => {
+      if (id === null) return;
+      localIds.add(id);
+      const set = p.sets[i];
+      if (set) localById.set(id, set);
+    });
   }
+  const departureById = new Map<string, PerformedSet>();
+  for (const p of Object.values(options.departure ?? {})) {
+    p.setIds.forEach((id, i) => {
+      const set = p.sets[i];
+      if (id !== null && set) departureById.set(id, set);
+    });
+  }
+  /** La série locale `id` a-t-elle changé de valeur depuis le départ de la lecture ? */
+  const editedSinceDeparture = (id: string): PerformedSet | null => {
+    const before = departureById.get(id);
+    const now = localById.get(id);
+    return before && now && !sameSet(before, now) ? now : null;
+  };
 
   const out: Record<string, ExerciseProgress> = {};
   for (const exerciseId of new Set([...Object.keys(local), ...Object.keys(base)])) {
@@ -780,7 +828,8 @@ export function reconcileProgress(
       baseIds.add(id);
       // Annulée ici pendant le trajet de la lecture : elle ne revient pas.
       if (known?.has(id) && !localIds.has(id)) return;
-      sets.push(set);
+      // Corrigée ici pendant le trajet : sa valeur locale prime.
+      sets.push(editedSinceDeparture(id) ?? set);
       setIds.push(id);
     });
 
@@ -888,6 +937,19 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'correct-set': {
+      const prev = getProgress(state, action.exerciseId);
+      const index = prev.setIds.indexOf(action.setId);
+      const current = index === -1 ? undefined : prev.sets[index];
+      if (current === undefined) return state;
+      const sets = prev.sets.slice();
+      sets[index] = { ...current, ...action.values };
+      return {
+        ...state,
+        progress: { ...state.progress, [action.exerciseId]: { ...prev, sets } },
+      };
+    }
+
     case 'skip-exercise': {
       const prev = getProgress(state, action.exerciseId);
       return {
@@ -919,6 +981,7 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       const reconciled = reconcileProgress(state.progress, action.base, {
         pendingSetIds: action.pendingSetIds,
         knownAtDeparture: action.knownAtDeparture,
+        departure: action.departure,
       });
       return {
         ...state,

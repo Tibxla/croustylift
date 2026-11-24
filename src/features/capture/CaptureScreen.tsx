@@ -473,6 +473,9 @@ export function CaptureScreen() {
               ...queue.filter((op) => op.type === 'insertSet').map((op) => op.id),
             ],
             knownAtDeparture,
+            // Avec ses valeurs : une série corrigée ici pendant le trajet garde
+            // sa valeur locale (cf. `reconcileProgress`).
+            departure: restored.progress,
             // Les notes datées aussi : une note écrite ailleurs (autre appareil,
             // ancien client) que l'état local ignore est adoptée ; une note
             // locale ou en attente d'envoi n'est jamais touchée. Les écritures
