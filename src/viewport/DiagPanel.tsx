@@ -9,7 +9,9 @@ import {
 
 /**
  * Relevé de diagnostic des barres du bas (registre R4), masqué par défaut. Il
- * s'ouvre par un appui long sur la barre d'onglets, ou par `?diag=1` dans l'URL.
+ * s'ouvre par un appui long (1,5 s) sur la ligne de navigation en haut de
+ * l'écran (shell/SurfaceNav.tsx), par « Relevé d'affichage » dans Réglages, ou
+ * par `?diag=1` dans l'URL.
  *
  * Il sert quand les barres se décrochent sur l'iPhone : les valeurs affichées et
  * le journal des incidents disent laquelle des causes possibles est en jeu, et

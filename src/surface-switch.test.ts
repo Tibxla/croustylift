@@ -65,4 +65,23 @@ describe('switchSurface', () => {
     expect(asked).toBe(false)
     expect(calls).toEqual(['show:seances'])
   })
+
+  it('vers les Réglages : la garde de sortie passe d’abord, puis rechargement et onglet', () => {
+    const { calls, fx } = effects()
+    let accept: (() => void) | null = null
+    setLeaveGuard((proceed) => {
+      accept = proceed
+    })
+    switchSurface('reglages', 'seances', fx)
+    expect(calls).toEqual([])
+    setLeaveGuard(null)
+    accept!()
+    expect(calls).toEqual(['reload:surface-change:reglages', 'show:reglages'])
+  })
+
+  it('depuis les Réglages vers la Salle : la demande de rechargement vise la Salle', () => {
+    const { calls, fx } = effects()
+    switchSurface('capture', 'reglages', fx)
+    expect(calls).toEqual(['reload:surface-change:capture', 'show:capture'])
+  })
 })

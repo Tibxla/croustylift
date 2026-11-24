@@ -217,9 +217,11 @@ export function buildDiagText(): string {
     `champ focalisé : ${focused && focused !== document.body ? focused.tagName.toLowerCase() : 'aucun'}`,
     `anomalie actuelle : ${anomaly ?? 'aucune'}`,
     '',
-    'Barres fixes (haut, bas, écart au bas de fenêtre) :',
+    'Navigation et barres collées ou fixes (haut, bas, écart au bas de fenêtre) :',
   ]
-  const bars = [...document.querySelectorAll<HTMLElement>('#root nav, #root .fixed')].filter(
+  // Les barres du bas sont collées en `sticky` depuis la refonte E ; les feuilles
+  // et éditeurs plein écran hérités restent en `fixed`.
+  const bars = [...document.querySelectorAll<HTMLElement>('#root nav, #root .fixed, #root .sticky')].filter(
     (el) => !el.closest('[data-diag-panel]') && el.getBoundingClientRect().height < s.innerHeight / 2,
   )
   if (bars.length === 0) lines.push('  aucune à l’écran')
