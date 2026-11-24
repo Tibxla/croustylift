@@ -18,6 +18,7 @@ import {
 } from './outbox';
 import { computeSetBadges } from './set-badges';
 import { correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
+import { deletionPreview } from './set-ranks';
 import {
   captureReducer,
   getProgress,
@@ -400,6 +401,27 @@ describe('logicalSetRows (les lignes d’une série logique)', () => {
     const odd = [ps(12, 10, 2, 1, 'left'), ps(12, 11, 2, 1, 'left'), ps(12, 10, 2, 1, 'right')];
     expect(logicalSetRows(odd, 0)).toEqual([0]);
     expect(logicalSetRows(odd, 2)).toEqual([2]);
+  });
+});
+
+// Ce que la confirmation de suppression annonce : elle lit la même règle que le
+// geste, sinon elle promettait « gauche et droite » ou « les suivantes
+// remontent » quand rien de tel n'arrive.
+describe('deletionPreview (ce que dit la confirmation)', () => {
+  it('paire unilatérale : les deux côtés partent, les suivantes remontent', () => {
+    const uni = [ps(12, 10, 2, 1, 'left'), ps(12, 10, 2, 1, 'right'), ps(12, 9, 2, 2, 'left'), ps(12, 9, 2, 2, 'right')];
+    expect(deletionPreview(uni, 0)).toEqual({ bothSides: true, movedRanks: 1 });
+  });
+
+  it('unilatéral ambigu : un seul côté part, le rang reste occupé, rien ne remonte', () => {
+    const odd = [ps(12, 10, 2, 1, 'left'), ps(12, 11, 2, 1, 'left'), ps(12, 10, 2, 1, 'right'), ps(12, 9, 2, 2, 'left')];
+    expect(deletionPreview(odd, 1)).toEqual({ bothSides: false, movedRanks: 0 });
+  });
+
+  it('deux lignes bilatérales au même rang : rien ne remonte', () => {
+    const twin = [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(82.5, 7, 1, 2), ps(80, 6, 0, 3)];
+    expect(deletionPreview(twin, 1)).toEqual({ bothSides: false, movedRanks: 0 });
+    expect(deletionPreview(twin, 0)).toEqual({ bothSides: false, movedRanks: 2 });
   });
 });
 

@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { effectiveReps, isZeroLoad } from '../../domain/e1rm';
 import { isRepsRecord } from '../../domain/pr';
-import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, targetSlotForSide } from '../../domain/unilateral';
+import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrder, targetSlotForSide } from '../../domain/unilateral';
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
@@ -346,7 +346,11 @@ export function ExerciseCapture({
   // étiquetée environ tous les 5 kg, une moyenne à mi-chemin si elle tombe juste.
   const majorEvery = Math.max(1, Math.round(5 / stepKg));
   const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
-  const doneSides = unilateral ? sidesDoneAt(progress.sets, currentSetOrder(progress.sets)) : [];
+  // Les côtés déjà faits de la série en cours, et sa place (ce que dit le
+  // sélecteur : « faite pour la série n ») ; pas `rank`, qui suit le côté choisi.
+  const currentOrder = currentSetOrder(progress.sets);
+  const doneSides = unilateral ? sidesDoneAt(progress.sets, currentOrder) : [];
+  const doneRank = slotOfOrder(progress.sets, currentOrder) + 1;
 
   return (
     <div className="pt-1">
@@ -437,7 +441,7 @@ export function ExerciseCapture({
                     type="button"
                     role="radio"
                     aria-checked={sel}
-                    aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${rank}` : ''}`}
+                    aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
                     onClick={() => chooseSide(sd)}
                     className={`h-11 flex-none px-2.5 text-[17px] ${
                       sel ? 'font-semibold text-ink underline decoration-[3px] underline-offset-[8px]' : done ? 'text-faint' : 'text-muted active:text-ink'

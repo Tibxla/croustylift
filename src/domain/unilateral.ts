@@ -218,8 +218,16 @@ export function nextOrderForSide(sets: PerformedSet[], side: Side): number {
  * séries sans aucune paire. Positionnelle : un trou de rang ne décale rien. Pur.
  */
 export function targetSlotForSide(sets: PerformedSet[], side: Side): number {
+  return slotOfOrder(sets, nextOrderForSide(sets, side))
+}
+
+/**
+ * La PLACE (0 = la 1ʳᵉ) de la série de rang `order` parmi les séries présentes
+ * rangées par `order` ; celle qui suit la dernière si aucune ne porte ce rang.
+ * Positionnelle, comme la bande. Pur.
+ */
+export function slotOfOrder(sets: PerformedSet[], order: number): number {
   const pairs = pairSidesByOrder(sets)
-  const order = nextOrderForSide(sets, side)
   const at = pairs.findIndex((pair) => pair.order === order)
   return at === -1 ? pairs.length : at
 }

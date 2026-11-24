@@ -70,3 +70,21 @@ export function ranksAfterDeletion<T extends Pick<PerformedSet, 'order'>>(
   if (kept.some((set) => set.order === deletedOrder)) return kept;
   return kept.map((set) => (set.order > deletedOrder ? { ...set, order: set.order - 1 } : set));
 }
+
+/**
+ * Ce qu'emporterait la suppression de la série de la ligne `index`, tel que la
+ * confirmation l'annonce : les deux côtés partent-ils (`bothSides`), et combien
+ * de séries suivantes changent de rang (`movedRanks`, en séries : une paire
+ * compte une fois). Lit la même règle que le geste. Pur.
+ */
+export function deletionPreview<T extends Pick<PerformedSet, 'order' | 'side'>>(
+  sets: readonly T[],
+  index: number,
+  policy: RankPolicy = RANK_POLICY_AFTER_DELETION,
+): { bothSides: boolean; movedRanks: number } {
+  const removed = logicalSetRows(sets, index);
+  const kept = sets.filter((_, i) => !removed.includes(i));
+  const after = ranksAfterDeletion(sets, removed, policy);
+  const moved = new Set(kept.filter((set, i) => after[i]?.order !== set.order).map((set) => set.order));
+  return { bothSides: removed.length === 2, movedRanks: moved.size };
+}

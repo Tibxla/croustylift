@@ -9,20 +9,22 @@
 // écrire). « Supprimer la série » en lien, confirmé : l'option sûre est le
 // bouton (« Garder la série »), la suppression un lien qui dit ce qui part et
 // que les suivantes remontent d'un rang (ADR 0024). En unilatéral, on corrige le
-// côté touché, et la suppression retire la série entière, gauche et droite.
+// côté touché, et la suppression retire la série entière, gauche et droite,
+// quand elles forment une paire sans ambiguïté (sinon le côté touché seul). Le
+// message suit la règle du geste (`deletionPreview`, set-ranks.ts).
 //
 // La série est visée par son id, jamais par sa place : si elle disparaît pendant
 // que la feuille est ouverte (réponse tardive de la base), le parent ne la monte
 // plus. Montée par clé (id de la ligne) : ses valeurs repartent de la série.
 import { useMemo, useState } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
-import { pairSidesByOrder } from '../../domain/unilateral';
 import { useReglages } from '../../settings/reglages';
 import { NumberRow, PrimaryButton, Ruler, SecondaryButton, Sheet, Status, TextLink } from '../../ui';
 import type { SessionExercise } from './fixtures';
 import { formatWeight } from './format';
 import { computeSetBadges, computeSetBadgesBySide, type SetBadge } from './set-badges';
-import { RANK_POLICY_AFTER_DELETION, type SetEntry } from './set-gestures';
+import type { SetEntry } from './set-gestures';
+import { deletionPreview } from './set-ranks';
 import type { ExerciseProgress } from './state';
 import { roundWeightKg } from './stepper-utils';
 import { WeightReadout } from './WeightReadout';
@@ -55,7 +57,7 @@ export function SetEditSheet({
   setId: string;
   /** Enregistre les nouvelles valeurs de la ligne (le parent ne fait rien si rien ne change). */
   onSave: (values: SetEntry) => void;
-  /** Supprime la série de cette ligne (les deux côtés en unilatéral). */
+  /** Supprime la série de cette ligne (les deux côtés d'une paire unilatérale). */
   onDelete: () => void;
   onClose: () => void;
 }) {
@@ -89,21 +91,21 @@ export function SetEditSheet({
     return badgeWord(badges[index] ?? null);
   }, [progress.sets, index, v, unilateral, exercise.reference, exercise.personalRecord, exercise.personalRecordBySide]);
 
-  // Ce que la suppression emporte : la série logique (ses deux côtés) et le
-  // nombre de séries suivantes qui remontent.
-  const pair = unilateral ? pairSidesByOrder(progress.sets).find((p) => (p.left ?? p.right)?.order === orig.order) ?? null : null;
-  const later = new Set(progress.sets.filter((s) => s.order > orig.order).map((s) => s.order)).size;
+  // Ce que la suppression emporte, selon la règle du geste (`deletionPreview`) :
+  // ses deux côtés seulement pour une paire sans ambiguïté, et les suivantes ne
+  // remontent que si le rang se vide.
+  const { bothSides, movedRanks: later } = deletionPreview(progress.sets, index);
   const what = side ? `Série ${rank}, ${sideWord(side)}` : `Série ${rank}`;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
   const majorEvery = Math.max(1, Math.round(5 / stepKg));
   const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
 
   const gone =
-    pair?.left && pair.right
+    bothSides
       ? `La série ${rank} sera supprimée, gauche et droite.`
       : `La série ${rank} (${side ? `${sideWord(side)}, ` : ''}${values(orig)}) sera supprimée.`;
   const moves =
-    RANK_POLICY_AFTER_DELETION === 'compact' && later > 0
+    later > 0
       ? ` ${later > 1 ? `Les ${later} suivantes remontent` : 'La suivante remonte'} d’un rang.`
       : '';
 

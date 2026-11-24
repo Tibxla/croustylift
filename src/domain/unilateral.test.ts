@@ -12,6 +12,7 @@ import {
   nextOrderForSide,
   loggedSetEquivalents,
   targetSlotForSide,
+  slotOfOrder,
 } from './unilateral'
 import { estimateE1rm } from './e1rm'
 import type { PerformedSet } from './types'
@@ -385,5 +386,22 @@ describe('targetSlotForSide', () => {
 
   it('un trou de rang ne décale rien : la place suit l’ordre des séries présentes', () => {
     expect(targetSlotForSide([L(1), R(1), L(3)], 'right')).toBe(1)
+  })
+})
+
+describe('slotOfOrder', () => {
+  const L = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'left' })
+  const R = (order: number): PerformedSet => ({ order, weightKg: 12, reps: 10, rir: 2, side: 'right' })
+
+  it('la place d’un rang parmi les séries présentes, la suivante s’il est absent', () => {
+    expect(slotOfOrder([], 1)).toBe(0)
+    expect(slotOfOrder([L(1), R(1), L(2)], 2)).toBe(1)
+    expect(slotOfOrder([L(1), R(1), L(3)], 3)).toBe(1)
+    expect(slotOfOrder([L(1), R(1)], 2)).toBe(1)
+  })
+
+  it('la série en cours de trois gauches de suite est la 3e, quel que soit le côté choisi', () => {
+    const lefts = [L(1), L(2), L(3)]
+    expect(slotOfOrder(lefts, currentSetOrder(lefts))).toBe(2)
   })
 })

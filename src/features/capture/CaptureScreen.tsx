@@ -1487,10 +1487,10 @@ function CapturePanel({
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
-        `Série ${completedSets + 1}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
+        `Série ${rank}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, completedSets, currentSide],
+    [onLog, rank, currentSide],
   );
 
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
