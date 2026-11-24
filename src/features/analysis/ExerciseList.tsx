@@ -26,11 +26,14 @@ const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
 export function ExerciseList({
   analyses,
   plan,
+  routineName,
   onOpen,
 }: {
   analyses: ExerciseAnalysis[];
   /** Les exos du plan de la routine courante, dans l'ordre ; vide sans routine. */
   plan: string[];
+  /** Nom de la routine courante ; `null` (hors ligne) : « Ta routine ». */
+  routineName: string | null;
   onOpen: (exerciseId: string) => void;
 }) {
   const year = new Date().getFullYear();
@@ -48,13 +51,15 @@ export function ExerciseList({
       <section aria-label="Synthèse" className="px-5 pb-1 pt-5">
         {judged > 0 ? (
           <p className="text-[22px] font-medium leading-[1.35] tracking-[-0.01em] text-ink">
-            {scoped ? 'Ta routine' : 'Tes exos'} :{' '}
+            {scoped ? (routineName ?? 'Ta routine') : 'Tes exos'} :{' '}
             <Status v="up" size={13} word={`${up} ${verb(up, 'monte', 'montent')}`} />,{' '}
             <Status v="eq" size={13} word={`${eq} ${verb(eq, 'stagne', 'stagnent')}`} />,{' '}
             <Status v="down" size={13} word={`${down} ${verb(down, 'recule', 'reculent')}`} />.
           </p>
         ) : (
-          <p className="text-[22px] font-medium leading-[1.35] tracking-[-0.01em] text-ink">Pas encore de pente sur ce bloc.</p>
+          <p className="text-[22px] font-medium leading-[1.35] tracking-[-0.01em] text-ink">
+            {scoped ? (routineName ?? 'Ta routine') : 'Tes exos'} : pas encore de pente sur ce bloc.
+          </p>
         )}
         {(summary.thin.length > 0 || summary.notYet > 0) && (
           <p className="mt-2 max-w-[42ch] text-[15px] leading-[1.45] text-muted">

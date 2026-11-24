@@ -19,6 +19,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { Choice, EmptyState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
 import { useGoToSurface } from '../../shell/navigation';
 import { errorMessage } from '../../lib/error-message';
+import { getCurrentRoutineId, listRoutines } from '../authoring/data';
+import { resolveCaptureRoutineId } from '../capture/data';
 import { loadAnalyses, loadPlanExerciseOrder, loadRawLog, loadSessionMetrics, type ExerciseAnalysis } from './data';
 import type { SessionMetricPoint } from './session-metrics';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
@@ -49,14 +51,39 @@ interface Overview {
   metrics: SessionMetricPoint[];
   /** Exos du plan de la routine courante (la synthèse ne lit qu'eux). */
   plan: string[];
+  /** Nom de la routine courante, `null` s'il n'a pas pu être lu (hors ligne). */
+  routineName: string | null;
 }
 
-// Les courbes, les mesures de séance et le plan courant, lus ensemble. Le plan
-// est relu à part (`loadPlanExerciseOrder`, que `loadAnalyses` lit aussi pour
-// ordonner) : la couche de données ne dit pas quels exos sont au plan.
+/**
+ * Le nom de la routine courante, résolue comme le plan qu'ordonne
+ * `loadPlanExerciseOrder` (activation la plus récente parmi les routines non
+ * archivées, cf. `resolveCaptureRoutineId`) : la phrase nomme la routine dont
+ * elle compte les exos.
+ */
+async function loadCurrentRoutineName(): Promise<string | null> {
+  const [currentId, routines] = await Promise.all([getCurrentRoutineId(), listRoutines()]);
+  const active = routines.filter((r) => r.archived_at === null);
+  const id = resolveCaptureRoutineId(
+    currentId,
+    active.map((r) => r.id),
+  );
+  return active.find((r) => r.id === id)?.name ?? null;
+}
+
+// Les courbes, les mesures de séance, le plan courant et le nom de sa routine,
+// lus ensemble. Le plan est relu à part (`loadPlanExerciseOrder`, que
+// `loadAnalyses` lit aussi pour ordonner) : la couche de données ne dit pas
+// quels exos sont au plan, ni le nom de la routine.
 const loadOverview = async (): Promise<Overview> => {
-  const [analyses, metrics, plan] = await Promise.all([loadAnalyses(), loadSessionMetrics(), loadPlanExerciseOrder()]);
-  return { analyses, metrics, plan };
+  const [analyses, metrics, plan, routineName] = await Promise.all([
+    loadAnalyses(),
+    loadSessionMetrics(),
+    loadPlanExerciseOrder(),
+    // Le nom n'est qu'un mot de la phrase : sans lui, elle dit « Ta routine ».
+    loadCurrentRoutineName().catch(() => null),
+  ]);
+  return { analyses, metrics, plan, routineName };
 };
 
 /**
@@ -156,7 +183,7 @@ export function AnalysisScreen() {
     );
   }
 
-  const { analyses, metrics, plan } = overview.state.value;
+  const { analyses, metrics, plan, routineName } = overview.state.value;
 
   switch (view.page) {
     case 'exo':
@@ -235,7 +262,7 @@ export function AnalysisScreen() {
             <Choice label="Vue de l’analyse" options={TABS} value={tab} onChange={chooseTab} wrap={false} />
           </div>
           {tab === 'exos' ? (
-            <ExerciseList analyses={analyses} plan={plan} onOpen={(id) => push({ page: 'exo', id })} />
+            <ExerciseList analyses={analyses} plan={plan} routineName={routineName} onOpen={(id) => push({ page: 'exo', id })} />
           ) : journal.state.phase === 'loading' ? (
             <p role="status" className="px-5 py-6 text-[15px] text-muted">
               Chargement du journal…
