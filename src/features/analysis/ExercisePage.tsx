@@ -33,6 +33,7 @@ import { formatDay, rateCaption, sessionsLabel } from './rate-period';
 import { SecondaryChart } from './SecondaryChart';
 import { SlopeStatus } from './SlopeStatus';
 import { WordsHelp } from './WordsHelp';
+import { useOnline } from '../../lib/use-dated-load';
 import { measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label';
 
 export function ExercisePage({
@@ -253,15 +254,23 @@ function Legend({
   );
 }
 
-type ExecLoad = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; executions: ExerciseExecution[] };
+type ExecLoad =
+  | { phase: 'loading' }
+  | { phase: 'offline' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; executions: ExerciseExecution[] };
 
-/** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`). */
+/** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`).
+ *  Hors ligne, rien n'est lancé (on attendait 7 s pour rien) ; le retour du
+ *  réseau relance la lecture. */
 function useExecutions(
   exerciseId: string,
   load: (exerciseId: string) => Promise<{ executions: ExerciseExecution[] }>,
 ): ExecLoad {
   const [state, setState] = useState<ExecLoad>({ phase: 'loading' });
+  const online = useOnline();
   useEffect(() => {
+    if (!online) return;
     let active = true;
     load(exerciseId).then(
       ({ executions }) => {
@@ -274,8 +283,8 @@ function useExecutions(
     return () => {
       active = false;
     };
-  }, [exerciseId, load]);
-  return state;
+  }, [exerciseId, load, online]);
+  return !online && state.phase !== 'ready' ? { phase: 'offline' } : state;
 }
 
 const sideWord = (s: 'left' | 'right') => (s === 'left' ? 'gauche' : 'droite');
@@ -311,6 +320,10 @@ function PointSets({
       {phase === 'loading' ? (
         <p role="status" className="border-t border-line px-5 py-3 text-[15px] text-muted">
           Chargement des séries…
+        </p>
+      ) : phase === 'offline' ? (
+        <p role="status" className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+          Les séries se lisent avec le réseau. La courbe, elle, est là.
         </p>
       ) : !exec ? (
         <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">

@@ -75,6 +75,7 @@ import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from '
 import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
+import { useOnline } from '../../lib/use-dated-load';
 import {
   Alert,
   Choice,
@@ -84,6 +85,7 @@ import {
   List,
   LoadError,
   Loading,
+  OfflineState,
   PrimaryButton,
   Row,
   Screen,
@@ -154,8 +156,12 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
   // Dernière séance réellement chargée : on n'affiche le chargement que pour un
   // NOUVEAU contexte. Un rafraîchissement de la MÊME séance garde le contenu monté.
   const loadedSeanceRef = useRef<string | null>(null);
+  // Hors ligne, rien n'est lancé (on attendait 7 s pour une erreur) : la phrase
+  // le dit, et le retour du réseau relance la lecture.
+  const online = useOnline();
 
   useEffect(() => {
+    if (!online) return;
     let active = true;
     if (loadedSeanceRef.current !== seanceId) setLoad({ phase: 'loading' });
 
@@ -191,13 +197,15 @@ export function SeanceEditor({ seanceId, seanceName, onBack, flash = null, ...ac
     return () => {
       active = false;
     };
-  }, [seanceId, reloadKey]);
+  }, [seanceId, reloadKey, online]);
 
   if (load.phase === 'loading' || load.phase === 'error') {
     return (
       <Screen>
         <ScreenHeader title={seanceName} back={{ label: actions.routineName, onClick: onBack }} />
-        {load.phase === 'loading' ? (
+        {!online ? (
+          <OfflineState surface="Une séance" />
+        ) : load.phase === 'loading' ? (
           <Loading label="Chargement de la séance…" />
         ) : (
           <LoadError
