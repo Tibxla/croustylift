@@ -80,6 +80,19 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
   return reason.trim() === '' ? SILENT : reason;
 }
 
+/**
+ * Renvoyer telle quelle peut-il aboutir ? Non pour une création de séance
+ * dépassée, une saisie retenue par sa séance (elle repart avec elle), une valeur
+ * refusée ou un élément lié supprimé : le serveur refuserait à l'identique.
+ */
+export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): boolean {
+  if (entry.superseded || isDependent(entry)) return false;
+  const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(entry.reason ?? '');
+  if (!m) return true;
+  const [, code = '', message = ''] = m;
+  return !(isBuiltIn(message) && (VALUE_REFUSALS.has(code) || code === '23503'));
+}
+
 /** Retenue seulement parce que la création de sa séance a été refusée. */
 export function isDependent(entry: Pick<RefusedWrite, 'reason'>): boolean {
   return (entry.reason ?? '').startsWith('dépend de l');
@@ -106,7 +119,7 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
     return name ? `${head} · ${name}` : head;
   };
   const reason = refusalReason(entry);
-  const base = { reason, retryable: !entry.superseded && !isDependent(entry) };
+  const base = { reason, retryable: canRetry(entry) };
   switch (op.type) {
     case 'upsertExecution':
       return { ...base, what: `Début de la séance du ${fmtDay(op.performedOn)}`, detail: 'sans lui, ses séries ne peuvent pas partir' };

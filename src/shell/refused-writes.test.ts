@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RefusedWrite } from '../features/capture/outbox';
-import { dependentsOf, describeRefusal, fmtDay, fmtWhen, refusalReason } from './refused-writes';
+import { canRetry, dependentsOf, describeRefusal, fmtDay, fmtWhen, refusalReason } from './refused-writes';
 
 const at = '2026-11-24T13:05:00.000Z';
 const lookup = { exerciseName: (id: string) => (id === 'ex1' ? 'Développé couché' : undefined) };
@@ -20,7 +20,11 @@ describe('saisies refusées lues par un humain', () => {
     );
     expect(t.what).toBe('Série 3 · Développé couché');
     expect(t.detail).toBe('82,5 kg × 8 · RIR 2');
-    expect(t.retryable).toBe(true);
+    // Valeur refusée : la renvoyer échouerait à l'identique.
+    expect(t.retryable).toBe(false);
+    expect(canRetry({ reason: '42501 : new row violates row-level security policy' })).toBe(true);
+    expect(canRetry({ reason: '23503 : insert violates foreign key constraint "x"' })).toBe(false);
+    expect(canRetry({ reason: '23514 : La routine courante ne s’archive pas.' })).toBe(true);
   });
 
   it('un exo inconnu sur l’appareil ne laisse pas de nom vide', () => {
