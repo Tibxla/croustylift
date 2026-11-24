@@ -512,6 +512,28 @@ describe('onReadWritten', () => {
     setReadStamper(null);
   });
 
+  it('copie réécrite par un AUTRE onglet (événement storage) : les abonnés d’ici sont prévenus', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+    const storageEvent = (key: string | null, newValue: string | null) =>
+      target.dispatchEvent(Object.assign(new Event('storage'), { key, newValue }));
+
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', '{"v":1,"value":["a"],"stamp":11}');
+    // Ni une autre clé, ni la copie d'un autre compte, ni une purge.
+    storageEvent('croustylift:registre', '{}');
+    storageEvent('croustylift:readcache:user-2:exo-execs:e1', '{"v":1,"value":["z"]}');
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', null);
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', '{"v":1,"value":["b"]}');
+    expect(written).toEqual(['exo-execs:e1']);
+    vi.unstubAllGlobals();
+  });
+
   it('une réponse supplantée (non écrite) ne prévient pas : l’écran ne recule pas', async () => {
     await cachedRead('exo-execs:e1', async () => ['a', 'supprimée']);
     let answer!: (value: string[]) => void;

@@ -90,10 +90,11 @@ function RefusedList() {
     setBusy(entry.refusalId);
     // Ce qui dépend d'elle part avec elle, d'un seul tenant (registre) : les
     // saisies que le début d'une séance retenait, la correction d'une série.
-    const done = await abandonRefused(entry.refusalId);
+    // Une série abandonnée quitte aussi le tableau de la Salle, tout de suite :
+    // celles qui sont RÉELLEMENT parties, que le registre rend sous le verrou
+    // (la liste affichée a pu changer pendant l'attente).
+    const done = await abandonRefused(entry.refusalId, forgetAbandonedSets);
     if (done !== 'done') setOutcome({ id: entry.refusalId, text: GESTURE_TEXT[done] });
-    // Une série abandonnée quitte aussi le tableau de la Salle, tout de suite.
-    else forgetAbandonedSets([entry.op, ...entry.dependents]);
     setBusy(null);
     setConfirming(null);
     refresh();

@@ -1482,16 +1482,16 @@ describe('série abandonnée dans la feuille des saisies refusées (troisième t
   });
 
   it('prévient le tableau monté de cet onglet, avec les séries à retirer', () => {
-    vi.stubGlobal('window', new EventTarget());
     const heard: string[][] = [];
     const off = onSetsAbandoned((setIds) => heard.push(setIds));
+    heard.length = 0; // celles d'avant l'abonnement, remises d'entrée
 
-    forgetAbandonedSets([insertion('s2')]);
+    forgetAbandonedSets([insertion('ici-1')]);
     forgetAbandonedSets([{ type: 'deleteSet', id: 's1' }]);
     off();
-    forgetAbandonedSets([insertion('s3')]);
+    forgetAbandonedSets([insertion('ici-2')]);
 
-    expect(heard).toEqual([['s2']]);
+    expect(heard).toEqual([['ici-1']]);
   });
 
   it('prévient aussi les AUTRES onglets : leur tableau monté ne réécrit pas la série', async () => {
@@ -1506,17 +1506,23 @@ describe('série abandonnée dans la feuille des saisies refusées (troisième t
   });
 
   it('ce qu’un autre onglet abandonne arrive au tableau monté ici', async () => {
-    const heard = new Promise<string[]>((resolve) => {
-      const off = onSetsAbandoned((setIds) => {
-        off();
-        resolve(setIds);
-      });
-    });
+    const heard: string[] = [];
+    const off = onSetsAbandoned((setIds) => heard.push(...setIds));
     const other = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
-    other.postMessage(['s2']);
+    other.postMessage(['ailleurs-1']);
 
-    await expect(heard).resolves.toEqual(['s2']);
+    await vi.waitFor(() => expect(heard).toContain('ailleurs-1'));
+    off();
     other.close();
+  });
+
+  it('un tableau qui se monte APRÈS l’abandon (son état lu juste avant) l’apprend en s’abonnant', () => {
+    forgetAbandonedSets([insertion('tardive')]);
+
+    const heard: string[][] = [];
+    onSetsAbandoned((setIds) => heard.push(setIds))();
+
+    expect(heard.flat()).toContain('tardive');
   });
 
   it('une série du Journal RÉÉCRITE (elle existe en base) puis abandonnée reste au tableau', () => {

@@ -166,6 +166,15 @@ describe('correctSet', () => {
 
     expect(gesture.ops[0]).toMatchObject({ weightKg: 77.5, reps: 10, rir: 1, cols: ['weightKg'] });
     expect(getProgress(captureReducer(state, gesture.action), BENCH).sets[1]).toEqual(ps(77.5, 10, 1, 2));
+    // Une colonne non réglée reste telle quelle au tableau aussi, même hors des
+    // bornes de la saisie (1 000 reps, valide en base).
+    const huge: CaptureState = {
+      ...started(),
+      progress: { [BENCH]: { sets: [ps(80, 1000, 2, 1)], setIds: ['s1'], skipped: false } },
+    };
+    const onHuge = correctSet(huge, BENCH, 's1', { weightKg: 82.5 })!;
+    expect(getProgress(captureReducer(huge, onHuge.action), BENCH).sets[0]).toEqual(ps(82.5, 1000, 2, 1));
+    expect(onHuge.ops[0]).toMatchObject({ reps: 1000, cols: ['weightKg'] });
     // Rien de réglé, ou réglé à la valeur déjà là : aucun geste.
     expect(correctSet(state, BENCH, 's2', {})).toBeNull();
     expect(correctSet(state, BENCH, 's2', { reps: 10 })).toBeNull();

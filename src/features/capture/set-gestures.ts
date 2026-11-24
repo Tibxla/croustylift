@@ -133,11 +133,19 @@ export function correctSet(
   const index = progress.setIds.indexOf(setId);
   const current = index === -1 ? undefined : progress.sets[index];
   if (current === undefined) return null;
-  const next = boundSetValues({
+  const bounded = boundSetValues({
     weightKg: values.weightKg ?? current.weightKg,
     reps: values.reps ?? current.reps,
     rir: values.rir ?? current.rir,
   });
+  // Seules les colonnes RÉGLÉES sont bornées et posées, au tableau comme en
+  // base : une colonne intacte garde sa valeur, même hors des bornes de la
+  // saisie (elle vient de la base, qui l'accepte).
+  const next = {
+    weightKg: values.weightKg === undefined ? current.weightKg : bounded.weightKg,
+    reps: values.reps === undefined ? current.reps : bounded.reps,
+    rir: values.rir === undefined ? current.rir : bounded.rir,
+  };
   // Seules les colonnes CHANGÉES sont écrites (last-write-wins par colonne,
   // ADR 0003) : corriger le poids ici et les reps sur un autre appareil garde
   // les deux.

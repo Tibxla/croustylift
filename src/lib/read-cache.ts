@@ -200,8 +200,22 @@ function notifyWritten(storageKey: string): void {
  */
 export function onReadWritten(listener: (key: string) => void): () => void {
   writeListeners.add(listener);
+  // Une copie réécrite par un AUTRE onglet (événement `storage`, que le
+  // navigateur n'envoie qu'aux autres) prévient aussi : sans cela, la Référence
+  // montée ici gardait sa valeur d'avant, et une relecture faite ensuite d'ici
+  // trouvait la copie déjà à jour, donc ne prévenait personne non plus.
+  const fromOtherTab = (event: Event) => {
+    const { key, newValue } = event as StorageEvent;
+    const account = loadLocalAccount();
+    if (!account || typeof key !== 'string' || newValue === null) return;
+    const scope = fullKey(account.userId, '');
+    if (key.startsWith(scope)) listener(key.slice(scope.length));
+  };
+  const tabs = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
+  if (tabs) window.addEventListener('storage', fromOtherTab);
   return () => {
     writeListeners.delete(listener);
+    if (tabs) window.removeEventListener('storage', fromOtherTab);
   };
 }
 

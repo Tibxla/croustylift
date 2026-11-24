@@ -202,6 +202,13 @@ describe('la base fait foi, plus les écritures locales qu’elle ne contient pa
     expect(rows(arrive(readStamp(), read(['s1', ps(1)])))).toEqual(['s1@1:80x8']);
   });
 
+  it('exécution supprimée ici : ses séries sans id (cache d’un très ancien format) quittent le tableau aussi', () => {
+    enqueue({ type: 'deleteExecution', id: EXEC });
+    expect(arrive(readStamp(), read([null, ps(1)], ['s2', ps(2)]))).toEqual({});
+    // Sur un exo qu'aucune autre écriture ne touche non plus.
+    expect(arrive(readStamp(), read([null, ps(1)]))).toEqual({});
+  });
+
   it('une série sans id (cache d’un très ancien format) reste en place : aucune écriture ne la vise', () => {
     enqueue(insert('s2', 2));
     expect(arrive(null, read([null, ps(1)])).bench?.setIds).toEqual([null, 's2']);

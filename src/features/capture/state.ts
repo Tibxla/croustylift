@@ -983,6 +983,8 @@ function normalizeLayout(raw: unknown): { layout?: LayoutEdit[] } {
 /** Charge l'exécution persistée pour cette séance/jour, ou null si rien/invalide. */
 export function loadPersisted(session: Session, date: string): CaptureState | null {
   if (typeof localStorage === 'undefined') return null;
+  // À partir d'ici, un abandon fait dans un autre onglet concerne cette page.
+  listenToOtherTabs();
   try {
     const raw = localStorage.getItem(storageKey(session.id, date));
     if (!raw) return null;
@@ -1119,28 +1121,47 @@ function withoutSets<P extends { sets: unknown[]; setIds: readonly (string | nul
   return next ?? progress;
 }
 
-/** Canal par lequel les tableaux montés, dans cet onglet et dans les autres, apprennent un abandon. */
+/** Canal par lequel les autres onglets apprennent un abandon. */
 export const SETS_ABANDONED_CHANNEL = 'croustylift:sets-abandoned';
+
+// Les séries abandonnées depuis que cette page est ouverte, ici ou dans un
+// autre onglet, et ceux qui veulent le savoir. Retenues : un tableau qui lit
+// son état AVANT l'abandon et ne se monte qu'après l'apprend en s'abonnant.
+const abandonedSets = new Set<string>();
+const abandonListeners = new Set<(setIds: string[]) => void>();
+let abandonChannel: BroadcastChannel | null = null;
+
+function announceAbandoned(ids: unknown): void {
+  if (!Array.isArray(ids)) return;
+  const setIds = ids.filter((id): id is string => typeof id === 'string');
+  for (const id of setIds) abandonedSets.add(id);
+  for (const listener of [...abandonListeners]) listener(setIds);
+}
+
+/** Ouvre, une fois, l'écoute des abandons faits dans les autres onglets. */
+function listenToOtherTabs(): BroadcastChannel | null {
+  if (abandonChannel === null && typeof BroadcastChannel !== 'undefined') {
+    abandonChannel = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    abandonChannel.onmessage = (event) => announceAbandoned(event.data);
+    // Hors navigateur (tests), ce canal ne doit pas retenir le processus.
+    (abandonChannel as unknown as { unref?: () => void }).unref?.();
+  }
+  return abandonChannel;
+}
 
 /**
  * S'abonne aux séries abandonnées (`forgetAbandonedSets`), d'où qu'elles
- * viennent : cet onglet (événement `window`) ou un autre (`BroadcastChannel`).
- * Un tableau monté dans un autre onglet gardait la série en mémoire, et son
- * prochain geste la réécrivait dans l'état gardé par l'appareil. Rend la
- * fonction de désabonnement.
+ * viennent : cet onglet ou un autre. Un tableau monté dans un autre onglet
+ * gardait la série en mémoire, et son prochain geste la réécrivait dans l'état
+ * gardé par l'appareil. `listener` reçoit d'abord celles déjà abandonnées
+ * depuis l'ouverture de la page. Rend la fonction de désabonnement.
  */
 export function onSetsAbandoned(listener: (setIds: string[]) => void): () => void {
-  const hear = (ids: unknown) => {
-    if (Array.isArray(ids)) listener(ids.filter((id): id is string => typeof id === 'string'));
-  };
-  const onEvent = (event: Event) => hear((event as CustomEvent).detail);
-  const local = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
-  if (local) window.addEventListener(SETS_ABANDONED_CHANNEL, onEvent);
-  const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(SETS_ABANDONED_CHANNEL);
-  if (channel) channel.onmessage = (event) => hear(event.data);
+  listenToOtherTabs();
+  abandonListeners.add(listener);
+  if (abandonedSets.size > 0) listener([...abandonedSets]);
   return () => {
-    if (local) window.removeEventListener(SETS_ABANDONED_CHANNEL, onEvent);
-    channel?.close();
+    abandonListeners.delete(listener);
   };
 }
 
@@ -1183,15 +1204,8 @@ export function forgetAbandonedSets(ops: readonly OutboxOp[]): void {
       /* no-op : les tableaux montés, eux, sont prévenus juste après */
     }
   }
-  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent(SETS_ABANDONED_CHANNEL, { detail: setIds }));
-  }
-  if (typeof BroadcastChannel !== 'undefined') {
-    // Un message posté avant la fermeture est quand même remis.
-    const channel = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
-    channel.postMessage(setIds);
-    channel.close();
-  }
+  announceAbandoned(setIds);
+  listenToOtherTabs()?.postMessage(setIds);
 }
 
 /**

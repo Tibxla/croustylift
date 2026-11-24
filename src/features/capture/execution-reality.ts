@@ -167,6 +167,12 @@ export function executionReality(input: {
   }
   const before = new Map(lines);
   for (const write of writes) applyWrite(lines, write, (line) => line.executionId === executionId);
+  // L'exécution supprimée ici emporte aussi ses séries SANS id, qu'aucune
+  // écriture de série ne peut viser (même exception pour une suppression refusée).
+  const wiped = writes.some(
+    ({ op, fate }) => op.type === 'deleteExecution' && op.id === executionId && fate !== 'refused',
+  );
+  const hasNoId = (entry: ReadProgress | undefined) => entry?.setIds.some((id) => (id ?? null) === null) ?? false;
   // Les exos dont une ligne diffère AU BOUT du compte : rejouer des écritures
   // que la lecture contenait déjà ne touche rien.
   const touched = new Set<string>();
@@ -176,6 +182,9 @@ export function executionReality(input: {
     if (sameLine(was, now)) continue;
     if (was) touched.add(was.exerciseId);
     if (now) touched.add(now.exerciseId);
+  }
+  if (wiped) {
+    for (const [exerciseId, entry] of Object.entries(read)) if (hasNoId(entry)) touched.add(exerciseId);
   }
 
   const out: Record<string, ExerciseProgress> = {};
@@ -191,7 +200,7 @@ export function executionReality(input: {
     const rows: { set: PerformedSet; id: string | null }[] = [];
     // Les séries sans id de la lecture, hors de portée des écritures.
     entry?.sets.forEach((set, index) => {
-      if ((entry.setIds[index] ?? null) === null) rows.push({ set, id: null });
+      if (!wiped && (entry.setIds[index] ?? null) === null) rows.push({ set, id: null });
     });
     for (const [id, line] of lines) {
       if (line.exerciseId !== exerciseId) continue;
