@@ -349,6 +349,7 @@ export function SeanceEditorView({
   const [pending, setPending] = useState<Pending>(null);
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
 
   // Après un ajout, l'exo neuf s'ouvre et vient en haut de l'écran. Saut sec,
   // jamais de défilement doux forcé (registre U36, « Réduire les animations »).
@@ -461,6 +462,37 @@ export function SeanceEditorView({
     }
   }
 
+  /**
+   * « Enregistrer et quitter » depuis la garde de sortie : exactement le chemin
+   * du bouton Enregistrer (une nouvelle version seulement si le plan a changé,
+   * aucune sinon), puis les notes en brouillon, PUIS la navigation demandée. Un
+   * échec garde l'éditeur ouvert, l'erreur au-dessus du bouton.
+   */
+  async function saveAndLeave() {
+    const leave = pendingLeave;
+    if (!leave) return;
+    if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
+    setLeaving(true);
+    try {
+      if (dirty) {
+        setSave(SAVE_BUSY);
+        await onSave(rows);
+        setSavedRows(rows);
+        setSave(SAVE_DONE);
+      }
+      for (const id of noteDraftExerciseIds(notes, noteDrafts, rows.map((r) => r.exerciseId))) {
+        await saveNote(id, noteDrafts[id] ?? '');
+      }
+      setPendingLeave(null);
+      leaveNow(leave);
+    } catch (err) {
+      setPendingLeave(null);
+      setSave(saveFailed(errorMessage(err)));
+    } finally {
+      setLeaving(false);
+    }
+  }
+
   async function act(action: () => Promise<void>) {
     setActing(true);
     setActionError(null);
@@ -498,23 +530,36 @@ export function SeanceEditorView({
   const leaveSheet = (
     <Sheet
       open={pendingLeave !== null && prompt !== null}
-      title={prompt?.label ?? ''}
-      onClose={resumeEditing}
+      title={prompt?.title ?? ''}
+      onClose={leaving ? () => {} : resumeEditing}
       footer={
         <>
-          <PrimaryButton onClick={resumeEditing}>Continuer l’édition</PrimaryButton>
+          <PrimaryButton
+            onClick={() => void saveAndLeave()}
+            disabled={leaving || (dirty && empty)}
+            over={dirty && actions.isCurrentRoutine ? 'Un nouveau bloc commence' : undefined}
+          >
+            {leaving ? 'Enregistrement…' : dirty && empty ? 'Ajoute au moins un exo' : 'Enregistrer et quitter'}
+          </PrimaryButton>
+          <SecondaryButton onClick={resumeEditing} disabled={leaving}>
+            Continuer l’édition
+          </SecondaryButton>
           <TextLink
             tone="muted"
             className="self-start"
-            onClick={() => {
-              const leave = pendingLeave;
-              setPendingLeave(null);
-              // La garde tombe avec l'écran ; on la retire tout de suite pour que
-              // la sortie confirmée ne repasse pas par elle. Le blocage de
-              // rechargement aussi : la saisie est abandonnée, et un changement
-              // d'onglet peut recharger dans la foulée.
-              if (leave) leaveNow(leave);
-            }}
+            onClick={
+              leaving
+                ? undefined
+                : () => {
+                    const leave = pendingLeave;
+                    setPendingLeave(null);
+                    // La garde tombe avec l'écran ; on la retire tout de suite pour que
+                    // la sortie confirmée ne repasse pas par elle. Le blocage de
+                    // rechargement aussi : la saisie est abandonnée, et un changement
+                    // d'onglet peut recharger dans la foulée.
+                    if (leave) leaveNow(leave);
+                  }
+            }
           >
             Quitter sans enregistrer
           </TextLink>
@@ -522,10 +567,9 @@ export function SeanceEditorView({
       }
     >
       {prompt && (
-        <div role="alert" className="px-5 pb-2">
-          <p className="text-[16px] font-semibold leading-[1.35] text-ink">{prompt.title}</p>
-          <p className="mt-1 text-[15px] leading-[1.45] text-muted">{prompt.detail}</p>
-        </div>
+        <p role="alert" className="px-5 pb-2 text-[15px] leading-[1.45] text-muted">
+          {prompt.detail}
+        </p>
       )}
     </Sheet>
   );
@@ -607,16 +651,17 @@ export function SeanceEditorView({
                 Terminé
               </SecondaryButton>
             ) : (
-              <IconButton
-                icon="reorder"
-                framed
-                label="Réordonner les exos"
+              <SecondaryButton
+                size="sm"
+                ariaLabel="Réordonner les exos"
                 onClick={() => {
                   setReorder(true);
                   setMoved(null);
                   setOpen(null);
                 }}
-              />
+              >
+                Réordonner
+              </SecondaryButton>
             )
           ) : undefined
         }

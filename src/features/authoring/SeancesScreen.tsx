@@ -55,7 +55,6 @@ import {
   Disclosure,
   EmptyState,
   FieldError,
-  IconButton,
   List,
   LoadError,
   Loading,
@@ -589,11 +588,25 @@ export function RoutineView({
                 Terminé
               </SecondaryButton>
             ) : (
-              <IconButton icon="reorder" framed label="Réordonner les séances" onClick={toggleReorder} />
+              <SecondaryButton size="sm" onClick={toggleReorder} ariaLabel="Réordonner les séances">
+                Réordonner
+              </SecondaryButton>
             )
           ) : undefined
         }
       />
+
+      {archivedRoutine && (
+        <div className="pb-2">
+          <ul>
+            <ActionNote>Archivée : ses séances se consultent seulement. Désarchive-la pour les modifier.</ActionNote>
+          </ul>
+          <div className="px-5">
+            <TextLink onClick={busy ? undefined : () => void run(onUnarchive)}>{busy ? 'Un instant…' : 'Désarchiver'}</TextLink>
+          </div>
+          {error && <FieldError className="mx-5">{error}</FieldError>}
+        </div>
+      )}
 
       {seances.length === 0 ? (
         <EmptyState
@@ -672,7 +685,7 @@ export function RoutineView({
         </Disclosure>
       )}
 
-      {!reorder && (
+      {!reorder && !archivedRoutine && (
         <section className="mt-6 pb-4">
           <SectionTitle>Routine</SectionTitle>
           {pending === 'archive' ? (
@@ -708,7 +721,7 @@ export function RoutineView({
             <>
               <ul aria-label="Actions de la routine" className="pt-1">
                 <ActionRow label="Renommer" onClick={() => setRenaming(true)} disabled={busy} />
-                {!isCurrent && !archivedRoutine && (
+                {!isCurrent && (
                   <ActionRow
                     label={busy ? 'Un instant…' : 'Définir comme routine courante'}
                     disabled={busy}
@@ -716,14 +729,7 @@ export function RoutineView({
                     onClick={() => void run(onSetCurrent)}
                   />
                 )}
-                {actions.canUnarchive ? (
-                  <ActionRow
-                    label={busy ? 'Un instant…' : 'Désarchiver'}
-                    disabled={busy}
-                    meta="Elle revient dans ta liste. Sa Référence et ses courbes reprennent où elles s’étaient arrêtées."
-                    onClick={() => void run(onUnarchive)}
-                  />
-                ) : isCurrent ? (
+                {isCurrent ? (
                   <ActionNote>La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.</ActionNote>
                 ) : actions.canArchive ? (
                   <ActionRow label="Archiver" meta="Déjà faite : elle s’archive, son historique reste entier." onClick={() => setPending('archive')} />
