@@ -29,16 +29,27 @@ describe('saisies refusées lues par un humain', () => {
 
   it('un exo inconnu sur l’appareil ne laisse pas de nom vide', () => {
     const t = describeRefusal(
-      entry({ type: 'insertSet', id: 's', executionId: 'x', exerciseId: 'autre', setOrder: 1, weightKg: 0, reps: 10, rir: 0, side: 'left', only: 'values' }),
+      entry({ type: 'patchSet', id: 's', executionId: 'x', exerciseId: 'autre', setOrder: 1, weightKg: 0, reps: 10, rir: 0, side: 'left', only: 'values' }),
       lookup,
     );
     expect(t.what).toBe('Série 1');
     expect(t.detail).toBe('correction · 0 kg × 10 · RIR 0 · gauche');
   });
 
+  it('une remontée de rang refusée le dit', () => {
+    const t = describeRefusal(
+      entry({ type: 'patchSet', id: 's', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 80, reps: 8, rir: 1, only: 'rank' }),
+      lookup,
+    );
+    expect(t.what).toBe('Série 2 · Développé couché');
+    expect(t.detail).toBe('nouveau rang · 80 kg × 8 · RIR 1');
+  });
+
   it('chaque type d’écriture a sa phrase', () => {
     const ops: RefusedWrite['op'][] = [
       { type: 'upsertExecution', id: 'x', seanceVersionId: 'v', performedOn: '2026-11-24' },
+      { type: 'insertSet', id: 's', executionId: 'x', exerciseId: 'ex1', setOrder: 3, weightKg: 80, reps: 8, rir: 2 },
+      { type: 'patchSet', id: 's', executionId: 'x', exerciseId: 'ex1', setOrder: 3, weightKg: 80, reps: 8, rir: 2, only: 'values' },
       { type: 'deleteSet', id: 's', exerciseIds: ['ex1'] },
       { type: 'updateExecution', id: 'x', closedAt: at, durationMin: 52 },
       { type: 'upsertDatedNote', id: 'n', executionId: 'x', exerciseId: 'ex1', body: 'Épaule  sensible' },
@@ -51,6 +62,8 @@ describe('saisies refusées lues par un humain', () => {
     const whats = ops.map((op) => describeRefusal(entry(op), lookup).what);
     expect(whats).toEqual([
       'Début de la séance du 24 nov.',
+      'Série 3 · Développé couché',
+      'Série 3 · Développé couché',
       'Suppression d’une série · Développé couché',
       'Fin de séance',
       'Note de séance · Développé couché',
@@ -60,8 +73,8 @@ describe('saisies refusées lues par un humain', () => {
       'Suppression d’une séance',
       'Retrait d’une séance vide',
     ]);
-    expect(describeRefusal(entry(ops[2]!), lookup).detail).toBe('séance rangée · durée 52 min');
-    expect(describeRefusal(entry(ops[3]!), lookup).detail).toBe('Épaule sensible');
+    expect(describeRefusal(entry(ops[4]!), lookup).detail).toBe('séance rangée · durée 52 min');
+    expect(describeRefusal(entry(ops[5]!), lookup).detail).toBe('Épaule sensible');
   });
 
   it('la raison dit si renvoyer peut servir, sans code ni consigne impossible', () => {

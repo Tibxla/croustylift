@@ -88,6 +88,14 @@ function fakeBase() {
       sent.push(`upsert:${op.id}:${op.weightKg}x${op.reps}@${op.setOrder}`);
       rows.set(op.id, { setOrder: op.setOrder, weightKg: op.weightKg, reps: op.reps, rir: op.rir, side: op.side });
     },
+    // Écriture partielle : un `update`, jamais une création (cf. `patchSet`, data.ts).
+    patchSet: async (op: { id: string; only: 'values' | 'rank'; setOrder: number; weightKg: number; reps: number; rir: number }) => {
+      sent.push(`patch:${op.id}:${op.only === 'values' ? `${op.weightKg}x${op.reps}` : `@${op.setOrder}`}`);
+      const known = rows.get(op.id);
+      if (!known) return;
+      if (op.only === 'values') Object.assign(known, { weightKg: op.weightKg, reps: op.reps, rir: op.rir });
+      else known.setOrder = op.setOrder;
+    },
     deleteSet: async (op: { id: string }) => {
       sent.push(`delete:${op.id}`);
       rows.delete(op.id);
@@ -125,7 +133,7 @@ describe('correctSet', () => {
   it('l’écriture est une réaffirmation de la ligne par son id (upsert), au même rang', () => {
     const gesture = correctSet(started(), BENCH, 's2', { weightKg: 77.5, reps: 9, rir: 2 });
     expect(gesture!.ops).toEqual([
-      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2, only: 'values' },
+      { type: 'patchSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2, only: 'values' },
     ]);
   });
 
@@ -142,7 +150,7 @@ describe('correctSet', () => {
     };
     const gesture = correctSet(state, 'curl', 'r1', { weightKg: 12, reps: 10, rir: 1 })!;
     expect(gesture.ops).toEqual([
-      { type: 'insertSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right', only: 'values' },
+      { type: 'patchSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right', only: 'values' },
     ]);
     expect(getProgress(captureReducer(state, gesture.action), 'curl').sets).toEqual([
       ps(12, 10, 2, 1, 'left'),
@@ -215,7 +223,7 @@ describe('correctSet et la file d’écritures', () => {
 
     const base = fakeBase();
     await flush(base.fns);
-    expect(base.sent).toEqual(['upsert:s1:80x8@1', 'upsert:s1:85x6@1']);
+    expect(base.sent).toEqual(['upsert:s1:80x8@1', 'patch:s1:85x6']);
     expect(base.rows.get('s1')).toMatchObject({ weightKg: 85, reps: 6, rir: 1, setOrder: 1 });
     expect(readQueue()).toEqual([]);
   });
@@ -225,8 +233,9 @@ describe('correctSet et la file d’écritures', () => {
     const second = play(first, correctSet(first, BENCH, 's1', { weightKg: 82.5, reps: 7, rir: 1 })!);
     expect(getProgress(second, BENCH).sets[0]).toEqual(ps(82.5, 7, 1, 1));
     const base = fakeBase();
+    base.rows.set('s1', { setOrder: 1, weightKg: 80, reps: 8, rir: 2 });
     await flush(base.fns);
-    expect(base.rows.get('s1')).toMatchObject({ weightKg: 82.5, reps: 7 });
+    expect(base.rows.get('s1')).toMatchObject({ weightKg: 82.5, reps: 7, setOrder: 1 });
   });
 
   it('l’insertion d’origine refusée par la base (quarantaine) est relevée par la correction', async () => {
@@ -375,8 +384,8 @@ describe('deleteSet', () => {
     const gesture = deleteSet(started(), BENCH, 's1')!;
     expect(gesture.ops).toEqual([
       { type: 'deleteSet', id: 's1', exerciseIds: [BENCH] },
-      { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 7, rir: 1, only: 'rank' },
-      { type: 'insertSet', id: 's3', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 6, rir: 0, only: 'rank' },
+      { type: 'patchSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 7, rir: 1, only: 'rank' },
+      { type: 'patchSet', id: 's3', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 6, rir: 0, only: 'rank' },
     ]);
   });
 
@@ -404,9 +413,9 @@ describe('deleteSet', () => {
     };
     const gesture = deleteSet(state, 'curl', 'r1')!;
     expect(gesture.ops.filter((op) => op.type === 'deleteSet').map((op) => op.id)).toEqual(['l1', 'r1']);
-    expect(gesture.ops.filter((op) => op.type === 'insertSet')).toEqual([
-      { type: 'insertSet', id: 'l2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'left', only: 'rank' },
-      { type: 'insertSet', id: 'r2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'right', only: 'rank' },
+    expect(gesture.ops.filter((op) => op.type === 'patchSet')).toEqual([
+      { type: 'patchSet', id: 'l2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'left', only: 'rank' },
+      { type: 'patchSet', id: 'r2', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 9, rir: 1, side: 'right', only: 'rank' },
     ]);
     const next = captureReducer(state, gesture.action);
     expect(getProgress(next, 'curl').setIds).toEqual(['l2', 'r2']);
@@ -455,7 +464,7 @@ describe('deleteSet', () => {
     expect([...base.rows.entries()].map(([id, row]) => `${id}@${row.setOrder}`)).toEqual(['s1@1', 's3@2']);
     // La suppression est partie AVANT la renumérotation : à aucun moment deux
     // séries gardées ne partagent un rang.
-    expect(base.sent.indexOf('delete:s2')).toBeLessThan(base.sent.indexOf('upsert:s3:80x6@2'));
+    expect(base.sent.indexOf('delete:s2')).toBeLessThan(base.sent.indexOf('patch:s3:@2'));
   });
 
   it('la série supprimée avait été refusée par la base : plus rien en quarantaine pour elle', async () => {
@@ -697,10 +706,10 @@ describe('gestes sur les séries sous stockage plein', () => {
     expect(storageFailing()).toBe(true);
     expect(localStorage.getItem('croustylift:outbox')).toBeNull();
     expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
-      'insertSet:s3',
+      'patchSet:s3',
       'deleteSet:s1',
-      'insertSet:s2',
-      'insertSet:s3',
+      'patchSet:s2',
+      'patchSet:s3',
     ]);
 
     await flush(base.fns);
@@ -710,7 +719,7 @@ describe('gestes sur les séries sous stockage plein', () => {
       's3:82.5x6@2',
     ]);
     // La suppression est partie avant les réécritures de rang.
-    expect(base.sent.indexOf('delete:s1')).toBeLessThan(base.sent.indexOf('upsert:s2:80x7@1'));
+    expect(base.sent.indexOf('delete:s1')).toBeLessThan(base.sent.indexOf('patch:s2:@1'));
     expect(getProgress(state, BENCH).sets).toEqual([ps(80, 7, 1, 1), ps(82.5, 6, 0, 2)]);
   });
 });

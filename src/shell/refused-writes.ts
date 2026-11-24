@@ -123,10 +123,11 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
   switch (op.type) {
     case 'upsertExecution':
       return { ...base, what: `Début de la séance du ${fmtDay(op.performedOn)}`, detail: 'sans lui, ses séries ne peuvent pas partir' };
-    case 'insertSet': {
+    case 'insertSet':
+    case 'patchSet': {
       const side = op.side === 'left' ? ' · gauche' : op.side === 'right' ? ' · droite' : '';
       const values = `${kg(op.weightKg)} kg × ${op.reps} · RIR ${op.rir}${side}`;
-      const kind = op.only === 'values' ? 'correction' : op.only === 'rank' ? 'nouveau rang' : null;
+      const kind = op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : 'nouveau rang';
       return { ...base, what: withExo(`Série ${op.setOrder}`, op.exerciseId), detail: kind ? `${kind} · ${values}` : values };
     }
     case 'deleteSet':

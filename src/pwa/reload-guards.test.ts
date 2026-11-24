@@ -76,6 +76,7 @@ function syncFns(failing: string[] = []): SyncFns {
   return {
     upsertExecution: run,
     insertSet: run,
+    patchSet: run,
     deleteSet: run,
     updateExecution: run,
     upsertDatedNote: run,

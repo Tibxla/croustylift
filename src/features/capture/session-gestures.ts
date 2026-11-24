@@ -88,7 +88,7 @@ export function enteredElsewhere(state: CaptureState, pendingOps: readonly Outbo
   for (const note of Object.values(state.datedNotes)) known.add(note.id);
   const waiting = new Set<string>();
   for (const op of pendingOps) {
-    if (op.type === 'insertSet' && op.executionId === state.executionId) waiting.add(op.id);
+    if ((op.type === 'insertSet' || op.type === 'patchSet') && op.executionId === state.executionId) waiting.add(op.id);
     else if (op.type === 'upsertDatedNote' && op.executionId === state.executionId) {
       if (isBlankNote(op.body)) waiting.delete(op.id);
       else waiting.add(op.id);

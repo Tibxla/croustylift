@@ -9,7 +9,7 @@
 // `abandonRefused`), intouchée. Elles ne voient que les saisies du compte
 // reconnu.
 import { useCallback, useEffect, useState } from 'react';
-import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, readQueue, retryRefused, type RefusedWrite } from '../features/capture/outbox';
+import { abandonRefused, isSetWrite, listRefused, OUTBOX_CHANGED_EVENT, readQueue, retryRefused, type RefusedWrite } from '../features/capture/outbox';
 import { listExercisesForCapture } from '../features/capture/data';
 import { flushOutbox } from '../features/capture/sync';
 import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
@@ -65,7 +65,7 @@ function RefusedList() {
       // la série à partir de ce refus, rien à renvoyer. Sinon, le stockage.
       // Elle n'est plus là : réglée depuis un autre onglet.
       const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
-      const queued = entry.op.type === 'insertSet' && readQueue().some((op) => op.type === 'insertSet' && op.id === entry.op.id);
+      const queued = isSetWrite(entry.op) && readQueue().some((op) => isSetWrite(op) && op.id === entry.op.id);
       setOutcome({
         id: entry.refusalId,
         text: !stillThere

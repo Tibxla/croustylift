@@ -54,6 +54,7 @@ function recorder(insertSet?: (op: OutboxOp) => Promise<void>): { fns: SyncFns; 
   const fns = {
     upsertExecution: ok,
     insertSet: insertSet ?? ok,
+    patchSet: ok,
     deleteSet: ok,
     updateExecution: ok,
     upsertDatedNote: ok,

@@ -205,7 +205,7 @@ describe('quota atteint au milieu d’un geste', () => {
     capOutbox(JSON.stringify([gesture.ops[0]]).length + 200);
     enqueueAll(gesture.ops);
     expect(persisted()).toEqual([]);
-    expect(readQueue().map((op) => op.type)).toEqual(['deleteSet', 'insertSet', 'insertSet']);
+    expect(readQueue().map((op) => op.type)).toEqual(['deleteSet', 'patchSet', 'patchSet']);
     expect(hasUnpersistedOps()).toBe(true);
     vi.restoreAllMocks();
   });
@@ -221,7 +221,7 @@ describe('quota atteint au milieu d’un geste', () => {
 
   it('assez de place : le geste entier est écrit d’un coup, dans l’ordre', async () => {
     enqueueAll(deleteSet(tab(), BENCH, 's1')!.ops);
-    expect(persisted()).toEqual(['deleteSet:s1', 'insertSet:s2:rank', 'insertSet:s3:rank']);
+    expect(persisted()).toEqual(['deleteSet:s1', 'patchSet:s2:rank', 'patchSet:s3:rank']);
     await flush(syncFns);
     expect(base()).toEqual(['s2:80kg@1', 's3:80kg@2']);
   });

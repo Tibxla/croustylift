@@ -1044,7 +1044,7 @@ function CaptureBoard({
       if (gesture === null) return;
       dispatch(gesture.action);
       stateRef.current = captureReducer(stateRef.current, gesture.action);
-      if (gesture.ops.some((op) => op.type === 'insertSet')) enqueueExecutionOnce();
+      if (gesture.ops.some((op) => op.type === 'insertSet' || op.type === 'patchSet')) enqueueExecutionOnce();
       enqueueGestureAndFlush(gesture.ops);
     },
     [enqueueExecutionOnce],

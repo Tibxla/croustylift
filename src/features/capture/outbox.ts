@@ -45,7 +45,7 @@ export interface UpsertExecutionOp {
   startedAt?: string;
 }
 
-/** Écrit une série : upsert complet par id, ou écriture partielle (cf. `only`). Idempotent. */
+/** Écrit une série ENTIÈRE : upsert complet par id. Idempotent. */
 export interface InsertSetOp {
   type: 'insertSet';
   id: string;
@@ -61,24 +61,44 @@ export interface InsertSetOp {
    * Absent (`undefined`) pour un exo bilatéral -> écrit `side` null en base.
    */
   side?: Side;
-  /**
-   * Écriture PARTIELLE d'une série qui existe déjà, au lieu de l'upsert complet :
-   *   - 'values' : seuls poids, reps et RIR sont écrits (correction d'une série) ;
-   *     son rang en base n'est pas touché ;
-   *   - 'rank' : seul le rang est écrit (remontée après une suppression) ; ses
-   *     valeurs en base ne sont pas touchées.
-   * Sans cela, deux gestes faits depuis deux onglets s'écrasaient : une remontée
-   * de rang réécrivait les valeurs d'avant une correction encore en file, une
-   * correction réécrivait le rang d'avant une remontée. Une écriture partielle
-   * ne crée jamais la ligne : si la série a été supprimée entre-temps, elle est
-   * sans effet (corriger ou renuméroter une série supprimée ne la ressuscite
-   * pas). L'op porte quand même la ligne ENTIÈRE, telle que l'émetteur la
-   * voyait : un onglet resté sur un bundle antérieur l'envoie en upsert complet
-   * (l'ancien comportement), et elle sert à reconstituer la série si son
-   * insertion d'origine a été refusée (cf. `flush`, quarantaine). Absent :
-   * upsert complet (log d'une série, éditeur de séance passée).
-   */
-  only?: 'values' | 'rank';
+}
+
+/**
+ * Écriture PARTIELLE d'une série qui existe déjà, au lieu de l'upsert complet :
+ *   - `only: 'values'` : seuls poids, reps et RIR sont écrits (correction d'une
+ *     série) ; son rang en base n'est pas touché ;
+ *   - `only: 'rank'` : seul le rang est écrit (remontée après une suppression) ;
+ *     ses valeurs en base ne sont pas touchées.
+ * Sans cela, deux gestes faits depuis deux onglets s'écrasaient : une remontée
+ * de rang réécrivait les valeurs d'avant une correction encore en file, une
+ * correction réécrivait le rang d'avant une remontée. Une écriture partielle
+ * ne crée jamais la ligne : si la série a été supprimée entre-temps, elle est
+ * sans effet (corriger ou renuméroter une série supprimée ne la ressuscite
+ * pas). L'op porte quand même la ligne ENTIÈRE, telle que l'émetteur la
+ * voyait : elle sert à reconstituer la série si son insertion d'origine a été
+ * refusée (cf. `flush`, quarantaine).
+ *
+ * UN TYPE À PART, et non une `insertSet` marquée : la file est commune aux
+ * onglets, et un onglet resté sur un bundle antérieur (celui de main) ne
+ * connaît pas `only`. Il rejouait la ligne entière en upsert et pouvait remettre
+ * S2 à 80 kg après une correction à 90 kg faite ailleurs. Ce type, il ne sait
+ * pas le jouer : sa passe s'ARRÊTE dessus (op de type inconnu, ni quarantaine
+ * ni retrait), la file attend que l'onglet se mette à jour. Un blocage vaut
+ * mieux qu'un écrasement silencieux. La forme d'avant (une `insertSet` avec
+ * `only`), restée dans une file ou une quarantaine, est convertie à la lecture
+ * (`upgradeLegacyOp`).
+ */
+export interface PatchSetOp {
+  type: 'patchSet';
+  id: string;
+  executionId: string;
+  exerciseId: string;
+  setOrder: number;
+  weightKg: number;
+  reps: number;
+  rir: number;
+  side?: Side;
+  only: 'values' | 'rank';
 }
 
 /** Supprime une série par son id (« annuler »). Idempotent (delete par id). */
@@ -250,6 +270,7 @@ type Sequenced = { _seq?: number; _owner?: string; _uid?: string; _at?: number }
 export type OutboxOp = (
   | UpsertExecutionOp
   | InsertSetOp
+  | PatchSetOp
   | DeleteSetOp
   | UpdateExecutionOp
   | UpsertDatedNoteOp
@@ -269,6 +290,7 @@ export type OutboxOp = (
 export interface SyncFns {
   upsertExecution: (op: UpsertExecutionOp) => Promise<void>;
   insertSet: (op: InsertSetOp) => Promise<void>;
+  patchSet: (op: PatchSetOp) => Promise<void>;
   deleteSet: (op: DeleteSetOp) => Promise<void>;
   updateExecution: (op: UpdateExecutionOp) => Promise<void>;
   upsertDatedNote: (op: UpsertDatedNoteOp) => Promise<void>;
@@ -347,7 +369,28 @@ function opKey(op: OutboxOp): string {
 
 /** L'op INSÈRE-t-elle une série (upsert complet), par opposition à une écriture partielle ? */
 export function isSetInsertion(op: OutboxOp): op is InsertSetOp & Sequenced {
-  return op.type === 'insertSet' && op.only === undefined;
+  return op.type === 'insertSet';
+}
+
+/** L'op écrit-elle une série, entière (`insertSet`) ou en partie (`patchSet`) ? */
+export function isSetWrite(op: OutboxOp): op is (InsertSetOp | PatchSetOp) & Sequenced {
+  return op.type === 'insertSet' || op.type === 'patchSet';
+}
+
+/**
+ * Convertit une op de la forme d'avant `patchSet` : une `insertSet` marquée
+ * `only` (écriture partielle), qu'un build antérieur de la branche a pu laisser
+ * en file ou en quarantaine. Elle devient le `patchSet` équivalent, mêmes
+ * champs et même identité d'enfilement. Toute autre op est rendue telle quelle.
+ * Appliquée à chaque lecture du stockage (file, quarantaine) : le reste du
+ * module ne voit jamais la forme d'avant, et la prochaine écriture de la file
+ * la remplace sur l'appareil. Pur.
+ */
+export function upgradeLegacyOp(op: OutboxOp): OutboxOp {
+  if (op.type !== 'insertSet') return op;
+  const only = (op as { only?: unknown }).only;
+  if (only !== 'values' && only !== 'rank') return op;
+  return { ...op, type: 'patchSet', only };
 }
 
 /**
@@ -412,7 +455,7 @@ function readPersistedQueue(): OutboxOp[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as OutboxOp[];
+    if (Array.isArray(parsed)) return (parsed as OutboxOp[]).map(upgradeLegacyOp);
     quarantineBlob(raw, 'forme invalide (pas un tableau)');
     return [];
   } catch {
@@ -700,7 +743,12 @@ export function readQuarantine(): QuarantinedOp[] {
   if (typeof localStorage === 'undefined') return [];
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(QUARANTINE_KEY) ?? '[]');
-    return Array.isArray(parsed) ? (parsed as QuarantinedOp[]) : [];
+    return Array.isArray(parsed)
+      ? (parsed as QuarantinedOp[]).map((q) => {
+          const op = upgradeLegacyOp(q.op);
+          return op === q.op ? q : { ...q, op };
+        })
+      : [];
   } catch {
     return [];
   }
@@ -787,6 +835,7 @@ export function isPermanentRejection(err: unknown): boolean {
 function requiredExecution(op: OutboxOp): string | null {
   switch (op.type) {
     case 'insertSet':
+    case 'patchSet':
     case 'upsertDatedNote':
       return op.executionId;
     case 'updateExecution':
@@ -872,7 +921,7 @@ function moveToQuarantine(op: OutboxOp, reason: string, stored: OutboxOp = op): 
       stored === op
         ? readQuarantine()
         : readQuarantine().filter(
-            (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+            (q) => !(isSetWrite(q.op) && q.op.id === op.id && q.op._owner === op._owner),
           );
     localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...others, entry]));
   } catch {
@@ -915,13 +964,13 @@ function refusedInsertOf(op: OutboxOp): QuarantinedOp | null {
  * les champs du refus, les valeurs ou le rang de l'écriture partielle par-dessus.
  */
 function effectiveOp(op: OutboxOp, refused: QuarantinedOp | null): OutboxOp {
-  if (op.type !== 'insertSet' || op.only === undefined || refused === null) return op;
+  if (op.type !== 'patchSet' || refused === null) return op;
   if (refused.op.type !== 'insertSet') return op;
-  const { only: _only, ...patch } = op;
+  const { only, ...patch } = op;
   const base = refused.op;
-  return op.only === 'values'
-    ? { ...patch, setOrder: base.setOrder, side: base.side }
-    : { ...patch, weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
+  return only === 'values'
+    ? { ...patch, type: 'insertSet', setOrder: base.setOrder, side: base.side }
+    : { ...patch, type: 'insertSet', weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
 }
 
 /**
@@ -931,7 +980,7 @@ function effectiveOp(op: OutboxOp, refused: QuarantinedOp | null): OutboxOp {
  * refus pour reconstituer la série (règle 1).
  */
 function supersededInQueue(op: OutboxOp): boolean {
-  if (op.type !== 'insertSet') return false;
+  if (!isSetWrite(op)) return false;
   const queue = readQueue();
   const at = indexInQueue(queue, op);
   return queue.slice(at + 1).some(
@@ -945,7 +994,7 @@ function supersededInQueue(op: OutboxOp): boolean {
 /** La file porte-t-elle une écriture de la série `setId` pour ce compte ? */
 function setWriteQueued(setId: string, owner: string | undefined): boolean {
   return readQueue().some(
-    (op) => (op.type === 'insertSet' || op.type === 'deleteSet') && op.id === setId && op._owner === owner,
+    (op) => (isSetWrite(op) || op.type === 'deleteSet') && op.id === setId && op._owner === owner,
   );
 }
 
@@ -953,7 +1002,7 @@ function setWriteQueued(setId: string, owner: string | undefined): boolean {
 function liftRefusedSetWrites(op: OutboxOp): void {
   const quarantine = readQuarantine();
   const kept = quarantine.filter(
-    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+    (q) => !(isSetWrite(q.op) && q.op.id === op.id && q.op._owner === op._owner),
   );
   if (kept.length !== quarantine.length) writeQuarantine(kept);
 }
@@ -1025,7 +1074,7 @@ export function retryRefused(refusalId: string): boolean {
   // reconstituera la série à partir de ce refus) : renvoyer l'ancienne saisie
   // la ferait repartir APRÈS elle, et la dernière écriture gagne. La file s'en
   // charge ; rien à renvoyer.
-  if (target.op.type === 'insertSet' && setWriteQueued(target.op.id, target.op._owner)) return false;
+  if (isSetWrite(target.op) && setWriteQueued(target.op.id, target.op._owner)) return false;
   const leaves = (q: QuarantinedOp): boolean =>
     q === target ||
     (target.op.type === 'upsertExecution' &&
@@ -1118,6 +1167,7 @@ function belongsToExecution(op: OutboxOp, executionId: string): boolean {
     case 'updateExecution':
       return op.id === executionId;
     case 'insertSet':
+    case 'patchSet':
     case 'upsertDatedNote':
       return op.executionId === executionId;
     default:
@@ -1253,6 +1303,8 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.upsertExecution(stripSeq(op));
     case 'insertSet':
       return fns.insertSet(stripSeq(op));
+    case 'patchSet':
+      return fns.patchSet(stripSeq(op));
     case 'deleteSet':
       return fns.deleteSet(stripSeq(op));
     case 'updateExecution':
@@ -1485,7 +1537,7 @@ async function runFlushOnce(
     }
     // Écriture partielle d'une série dont l'insertion a été refusée : c'est la
     // série entière qui part (cf. « Séries refusées, puis reprises »).
-    const sent = effectiveOp(op, op.type === 'insertSet' && op.only ? refusedInsertOf(op) : null);
+    const sent = effectiveOp(op, op.type === 'patchSet' ? refusedInsertOf(op) : null);
     try {
       await runOp(sent, fns);
     } catch (err) {
@@ -1549,7 +1601,7 @@ async function runFlushOnce(
     if (removal === 'unwritable') return { flushed, drained: false };
     // La série vient d'être écrite entière, ou supprimée, en base : un ancien
     // refus de son insertion n'a plus d'objet. Levé ICI, à l'acquittement.
-    if ((sent.type === 'insertSet' && sent.only === undefined) || sent.type === 'deleteSet') {
+    if (sent.type === 'insertSet' || sent.type === 'deleteSet') {
       liftRefusedSetWrites(op);
     }
     if (removal === 'removed') flushed += 1;

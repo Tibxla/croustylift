@@ -42,6 +42,7 @@ function fakeBase() {
       if (!executions.has(op.executionId)) throw { code: '23503', message: 'clé étrangère' };
       sets.set(op.id, op.executionId);
     },
+    patchSet: ok,
     deleteSet: async (op: { id: string }) => void sets.delete(op.id),
     updateExecution: ok,
     upsertDatedNote: ok,

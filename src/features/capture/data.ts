@@ -50,7 +50,7 @@ import {
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
 import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { isSetInsertion, readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
+import { isSetInsertion, isSetWrite, readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -589,21 +589,22 @@ export function applyPendingSets(
 
   for (const op of ops) {
     switch (op.type) {
-      case 'insertSet': {
+      case 'patchSet': {
         if (op.exerciseId !== exerciseId) break;
         // Écriture partielle (correction, remontée de rang) : elle ne touche
         // qu'une ligne déjà lue, et que ses colonnes ; elle n'en crée pas.
-        if (op.only !== undefined) {
-          const known = byKey.get(op.id);
-          if (!known) break;
-          byKey.set(
-            op.id,
-            op.only === 'values'
-              ? { ...known, weight_kg: op.weightKg, reps: op.reps, rir: op.rir }
-              : { ...known, set_order: op.setOrder },
-          );
-          break;
-        }
+        const known = byKey.get(op.id);
+        if (!known) break;
+        byKey.set(
+          op.id,
+          op.only === 'values'
+            ? { ...known, weight_kg: op.weightKg, reps: op.reps, rir: op.rir }
+            : { ...known, set_order: op.setOrder },
+        );
+        break;
+      }
+      case 'insertSet': {
+        if (op.exerciseId !== exerciseId) break;
         const executions = context.get(op.executionId);
         if (!executions) break; // Sans date ni scope, la ligne ne dérive rien.
         byKey.set(op.id, {
@@ -1155,7 +1156,7 @@ export async function loadTodayExecution(
       // réponse porte encore la note.
       pendingNoteKeys: [...new Set(pendingDatedNoteKeys(pending, today.executionId))],
       pendingSetOps: unionOfQueueReads(pendingBefore, pendingAfter).filter(
-        (op) => op.type === 'insertSet' || op.type === 'deleteSet',
+        (op) => isSetWrite(op) || op.type === 'deleteSet',
       ),
     };
   } catch {
@@ -1578,7 +1579,7 @@ export async function upsertSet(params: {
 }
 
 /**
- * Écriture PARTIELLE d'une série existante, par son id (cf. `InsertSetOp.only`) :
+ * Écriture PARTIELLE d'une série existante, par son id (cf. `PatchSetOp`, outbox.ts) :
  * les valeurs seules (correction) ou le rang seul (remontée après une
  * suppression). Un `update`, jamais un `upsert` : si la ligne n'existe plus,
  * rien n'est écrit et rien n'est recréé. Idempotent. Rend le nombre de lignes

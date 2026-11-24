@@ -20,14 +20,15 @@
 // peut garder la suppression sans la remontée des rangs. L'exécution doit avoir été enfilée avant (`enqueueExecutionOnce`),
 // ce qui est acquis dès qu'une série existe.
 //
-// CORRIGER UNE SÉRIE (`correctSet`). Il n'y a pas de type d'op « mise à jour » :
-// la correction est une op `insertSet` de MÊME id, marquée `only: 'values'`
-// (outbox.ts). En base, seuls poids, reps et RIR sont écrits, par un `update` :
-// le rang n'est pas touché, et une série supprimée entre-temps n'est pas
-// recréée. Deux gestes faits depuis deux onglets (corriger S2 ici, supprimer S1
-// là, donc remonter S2) ne s'écrasent ainsi dans aucun ordre. L'op porte quand
-// même la ligne entière, pour un onglet resté sur un bundle antérieur (upsert
-// complet) et pour reconstituer une série dont l'insertion a été refusée.
+// CORRIGER UNE SÉRIE (`correctSet`). La correction est une écriture partielle
+// de MÊME id, `patchSet` avec `only: 'values'` (outbox.ts). En base, seuls
+// poids, reps et RIR sont écrits, par un `update` : le rang n'est pas touché,
+// et une série supprimée entre-temps n'est pas recréée. Deux gestes faits
+// depuis deux onglets (corriger S2 ici, supprimer S1 là, donc remonter S2) ne
+// s'écrasent ainsi dans aucun ordre. Un type d'op à part, que le bundle de main
+// ne connaît pas : un onglet resté dessus s'arrête sur elle au lieu de la
+// rejouer en upsert complet (cf. `PatchSetOp`). L'op porte quand même la ligne
+// entière, pour reconstituer une série dont l'insertion a été refusée.
 //   - hors ligne, le log puis sa correction tiennent tous deux en file et
 //     partent dans l'ordre, la dernière écriture gagne ;
 //   - une série dont l'insertion a été refusée par la base (quarantaine) est
@@ -47,7 +48,7 @@
 // suivantes suivent LA règle de `ranksAfterDeletion` (set-ranks.ts : remontée
 // par défaut, ADR 0024 proposé ; une constante à changer pour laisser un trou).
 // Écritures, dans cet ordre : un `deleteSet` par ligne supprimée, PUIS un
-// `insertSet` marqué `only: 'rank'` par ligne dont le rang a changé (seul le
+// `patchSet` avec `only: 'rank'` par ligne dont le rang a changé (seul le
 // rang est écrit, jamais les valeurs). Suppressions d'abord,
 // comme dans l'éditeur de séance passée : le flush peut s'interrompre entre
 // deux ops, et aucune série gardée ne doit partager un rang avec celle qui s'en
@@ -62,7 +63,7 @@
 // (`reconcileProgress` et le cas `reconcile-progress` du réducteur, state.ts).
 
 import type { PerformedSet } from '../../domain/types';
-import type { InsertSetOp, OutboxOp } from './outbox';
+import type { InsertSetOp, OutboxOp, PatchSetOp } from './outbox';
 import { RANK_POLICY_AFTER_DELETION, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
 import { getProgress, type CaptureAction, type CaptureState } from './state';
@@ -77,19 +78,26 @@ export interface SetGesture {
 export type SetEntry = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
 /**
- * L'op qui écrit la série `set` d'id `id`. Sans `only` : upsert complet. Avec
- * `only` : écriture partielle d'une série existante (cf. `InsertSetOp.only`,
- * outbox.ts), les valeurs seules ou le rang seul.
+ * L'op qui écrit la série `set` d'id `id`. Sans `only` : upsert complet
+ * (`insertSet`). Avec `only` : écriture partielle d'une série existante
+ * (`patchSet`, outbox.ts), les valeurs seules ou le rang seul.
  */
+export function writeSetOp(state: CaptureState, exerciseId: string, id: string, set: PerformedSet): InsertSetOp;
+export function writeSetOp(
+  state: CaptureState,
+  exerciseId: string,
+  id: string,
+  set: PerformedSet,
+  only: 'values' | 'rank',
+): PatchSetOp;
 export function writeSetOp(
   state: CaptureState,
   exerciseId: string,
   id: string,
   set: PerformedSet,
   only?: 'values' | 'rank',
-): InsertSetOp {
-  return {
-    type: 'insertSet',
+): InsertSetOp | PatchSetOp {
+  const row = {
     id,
     executionId: state.executionId,
     exerciseId,
@@ -98,8 +106,8 @@ export function writeSetOp(
     reps: set.reps,
     rir: set.rir,
     ...(set.side ? { side: set.side } : {}),
-    ...(only ? { only } : {}),
   };
+  return only ? { type: 'patchSet', ...row, only } : { type: 'insertSet', ...row };
 }
 
 /**
