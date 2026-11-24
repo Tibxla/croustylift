@@ -15,9 +15,9 @@
 import { useLayoutEffect, useRef, type MouseEvent } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
 import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
-import { Sign, Status, TONE, type Verdict } from '../../ui';
+import { Sign, Status, TONE } from '../../ui';
 import { formatWeight } from './format';
-import type { SetBadge } from './set-badges';
+import { badgeStatus, type SetBadge } from './set-badges';
 
 interface Draft {
   weightKg: number;
@@ -25,12 +25,6 @@ interface Draft {
   rir: number;
 }
 
-/** Le statut d'une série, en signe + mot : record ou battue (signal), égalée. */
-function badgeStatus(badge: SetBadge): { v: Verdict; word: string } | null {
-  if (!badge) return null;
-  if (badge.axis === 'record') return { v: 'up', word: 'record' };
-  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
-}
 
 const cell = (n: number) => `${formatWeight(n)}`;
 

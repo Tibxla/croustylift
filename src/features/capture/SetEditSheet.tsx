@@ -22,7 +22,7 @@ import { useReglages } from '../../settings/reglages';
 import { NumberRow, PrimaryButton, Ruler, SecondaryButton, Sheet, Status, TextLink } from '../../ui';
 import type { SessionExercise } from './fixtures';
 import { formatWeight } from './format';
-import { computeSetBadges, computeSetBadgesBySide, type SetBadge } from './set-badges';
+import { badgeStatus, computeSetBadges, computeSetBadgesBySide } from './set-badges';
 import type { SetEntry } from './set-gestures';
 import { deletionPreview } from './set-ranks';
 import type { ExerciseProgress } from './state';
@@ -37,12 +37,6 @@ const RULER_MAX_KG = 500;
 const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
 const values = (s: SetEntry) => `${formatWeight(s.weightKg)} × ${s.reps} · RIR ${s.rir}`;
 
-/** Le badge d'une série en signe + mot, ou `null` (aucun). */
-function badgeWord(badge: SetBadge): { v: 'up' | 'eq'; word: string } | null {
-  if (!badge) return null;
-  if (badge.axis === 'record') return { v: 'up', word: 'record' };
-  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
-}
 
 export function SetEditSheet({
   exercise,
@@ -89,7 +83,7 @@ export function SetEditSheet({
           },
         )
       : computeSetBadges(sets, exercise.reference ?? null, exercise.personalRecord ?? null);
-    return badgeWord(badges[index] ?? null);
+    return badgeStatus(badges[index] ?? null);
   }, [progress.sets, index, v, unilateral, exercise.reference, exercise.personalRecord, exercise.personalRecordBySide]);
 
   // Ce que la suppression emporte, selon la règle du geste (`deletionPreview`) :

@@ -7,12 +7,13 @@
 import type { PerformedSet } from '../../domain/types';
 import { PrimaryButton, SecondaryButton, Sheet, Status } from '../../ui';
 import { formatRange, formatSetCount } from './format';
-import { summarizeBadges, type SetBadge, type VerdictCounts } from './set-badges';
+import { recordWord, summarizeBadges, type SetBadge, type VerdictCounts } from './set-badges';
 
 /** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé. */
-function Verdicts({ counts }: { counts: VerdictCounts }) {
+function Verdicts({ counts, record }: { counts: VerdictCounts; record: 'record' | 'record charge' }) {
+  const [noun, kind] = record === 'record charge' ? ['record', ' charge'] : ['record', ''];
   const parts = [
-    counts.record > 0 && <Status key="r" v="up" word={`${counts.record} record${counts.record > 1 ? 's' : ''}`} />,
+    counts.record > 0 && <Status key="r" v="up" word={`${counts.record} ${noun}${counts.record > 1 ? 's' : ''}${kind}`} />,
     counts.battu > 0 && <Status key="b" v="up" word={`${counts.battu} battue${counts.battu > 1 ? 's' : ''}`} />,
     counts.egalise > 0 && <Status key="e" v="eq" word={`${counts.egalise} égalée${counts.egalise > 1 ? 's' : ''}`} />,
   ].filter(Boolean);
@@ -77,14 +78,14 @@ export function ExerciseRecapSheet({
           ) : unilateral ? (
             <div className="flex flex-col gap-1">
               <p className="flex flex-wrap items-center gap-x-2">
-                <span className="font-medium text-ink">Gauche</span> <Verdicts counts={summary.left} />
+                <span className="font-medium text-ink">Gauche</span> <Verdicts counts={summary.left} record={recordWord(badges.filter((_, i) => sets[i]?.side === 'left'))} />
               </p>
               <p className="flex flex-wrap items-center gap-x-2">
-                <span className="font-medium text-ink">Droite</span> <Verdicts counts={summary.right} />
+                <span className="font-medium text-ink">Droite</span> <Verdicts counts={summary.right} record={recordWord(badges.filter((_, i) => sets[i]?.side === 'right'))} />
               </p>
             </div>
           ) : (
-            <Verdicts counts={summary.total} />
+            <Verdicts counts={summary.total} record={recordWord(badges)} />
           )}
         </div>
       </div>

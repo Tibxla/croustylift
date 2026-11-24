@@ -88,6 +88,32 @@ export function summarizeBadges(sets: PerformedSet[], badges: SetBadge[]): Badge
   return summary;
 }
 
+/**
+ * Le mot d'un record selon son type : « record charge » pour un record de charge
+ * seule (`weight-reps`), « record » pour un record d'e1RM (seul ou avec la
+ * charge). La case « Record » de l'instrument montre le record d'e1RM : un
+ * « ▲ record » posé sur une série qui ne bat que la charge laissait croire à une
+ * erreur de l'app.
+ */
+function recordKindWord(kind: RecordKind): 'record' | 'record charge' {
+  return kind === 'weight-reps' ? 'record charge' : 'record';
+}
+
+/** Le statut d'une série en signe + mot, un seul pour la bande, la feuille de
+ *  correction et le bilan : record (signal), battue (signal), égalée. */
+export function badgeStatus(badge: SetBadge): { v: 'up' | 'eq'; word: string } | null {
+  if (!badge) return null;
+  if (badge.axis === 'record') return { v: 'up', word: recordKindWord(badge.record) };
+  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
+}
+
+/** Le mot d'un groupe de records (bilan de l'exo, récap) : « record charge »
+ *  seulement quand TOUS ses records sont de charge seule. */
+export function recordWord(badges: readonly SetBadge[]): 'record' | 'record charge' {
+  const kinds = badges.flatMap((b) => (b?.axis === 'record' ? [b.record] : []));
+  return kinds.length > 0 && kinds.every((k) => k === 'weight-reps') ? 'record charge' : 'record';
+}
+
 /** Combine les deux axes en un seul badge, priorité Record > battu > égalisé. */
 function combine(record: RecordKind | null, ref: RefVerdict): SetBadge {
   if (record) return { axis: 'record', record };

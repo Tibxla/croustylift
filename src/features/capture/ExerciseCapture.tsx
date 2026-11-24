@@ -36,7 +36,7 @@ import { ExerciseRecapSheet } from './ExerciseRecapSheet';
 import { NotesSheet } from './NotesSheet';
 import { SetBand, UniSetBand } from './SetBand';
 import { WeightReadout } from './WeightReadout';
-import { computeSetBadges, computeSetBadgesBySide, summarizeBadges, type SetBadge } from './set-badges';
+import { computeSetBadges, computeSetBadgesBySide, recordWord, summarizeBadges, type SetBadge } from './set-badges';
 import { formatE1rm, formatRange, formatWeight } from './format';
 import { roundWeightKg } from './stepper-utils';
 import { SetEditSheet } from './SetEditSheet';
@@ -389,7 +389,7 @@ export function ExerciseCapture({
               <StateMark state="done" size={15} className="font-medium text-ink underline decoration-dim decoration-1 underline-offset-[5px]">
                 fait · {completedSets} série{completedSets > 1 ? 's' : ''}
               </StateMark>
-              {verdicts.record > 0 && <Status v="up" word="record" />}
+              {verdicts.record > 0 && <Status v="up" word={recordWord(badges)} />}
               {verdicts.record === 0 && verdicts.battu > 0 && <Status v="up" word={`${verdicts.battu} battue${verdicts.battu > 1 ? 's' : ''}`} />}
               {verdicts.record === 0 && verdicts.battu === 0 && verdicts.egalise > 0 && (
                 <Status v="eq" word={`${verdicts.egalise} égalée${verdicts.egalise > 1 ? 's' : ''}`} />
