@@ -1297,6 +1297,7 @@ function CaptureBoard({
           today={today}
           week={week}
           dateIso={date}
+          startedAt={state.startedAt}
           durationMin={durationMin}
           onSave={handleFinish}
           onBack={() => setPhase('capture')}

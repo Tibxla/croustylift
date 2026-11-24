@@ -23,6 +23,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { errorMessage } from '../../lib/error-message';
 import type { PerformedExercise } from '../../domain/set-count';
 import { weekStartIso } from '../../domain/week';
+import { useSyncState } from '../../shell/useSyncState';
 import {
   IconButton,
   List,
@@ -68,6 +69,8 @@ interface SessionEndProps {
   week: WeekMusclesInput | null;
   /** Date adoptée de la séance (jour ISO). */
   dateIso: string;
+  /** Lancement de la séance (ms, ADR 0011) : la plage horaire de « Séance rangée ». */
+  startedAt: number;
   /** Durée du chrono (min), du lancement à l'ouverture de la fin ; `null` si non mesurable. */
   durationMin: number | null;
   /** Enregistre les métriques (peut échouer côté réseau ; le parent gère le retry). */
@@ -110,7 +113,7 @@ function recordValue(r: RecapRecord): string {
 const STATUS_WORD: Record<ExerciseStatus, string> = { fait: 'fait', 'en-cours': 'en cours', passe: 'passé', 'pas-fait': 'pas fait' };
 const STATUS_MARK: Record<ExerciseStatus, ExoState> = { fait: 'done', 'en-cours': 'partial', passe: 'skipped', 'pas-fait': 'todo' };
 
-export function SessionEnd({ recap, today, week, dateIso, durationMin, onSave, onBack, onNewSession }: SessionEndProps) {
+export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin, onSave, onBack, onNewSession }: SessionEndProps) {
   const [duration, setDuration] = useState<number | null>(durationMin);
   const [durOpen, setDurOpen] = useState(false);
   const [bpmOn, setBpmOn] = useState(false);
@@ -132,7 +135,7 @@ export function SessionEnd({ recap, today, week, dateIso, durationMin, onSave, o
     }
   }
 
-  if (saved) return <SessionDone recap={recap} dateIso={dateIso} values={saved} onNewSession={onNewSession} />;
+  if (saved) return <SessionDone recap={recap} dateIso={dateIso} startedAt={startedAt} values={saved} onNewSession={onNewSession} />;
 
   const started = recap.counts['en-cours'];
   const measure = [duration !== null ? fmtDur(duration) : null, bpmOn ? `${bpm} bpm` : null].filter(Boolean).join(' · ');
@@ -471,20 +474,51 @@ function MuscleLine({ r, scale, planKnown }: { r: WeekMuscleRow; scale: number; 
 
 // --- Séance rangée -------------------------------------------------------------
 
+/** Une heure en français : « 18 h 02 ». */
+const clock = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getHours()} h ${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+/** La plage horaire de la séance : « 18 h 02 à 19 h 10 », ou « lancée à 18 h 02 »
+ *  quand la durée n'est pas connue ou nulle. */
+function timeSpan(startedAt: number, durationMin: number | undefined): string | null {
+  if (!Number.isFinite(startedAt)) return null;
+  if (!durationMin) return `lancée à ${clock(startedAt)}`;
+  return `${clock(startedAt)} à ${clock(startedAt + durationMin * 60_000)}`;
+}
+
+/** Où en est la séance rangée : dans le journal, en cours d'envoi, ou gardée sur
+ *  l'appareil hors ligne (la Clôture part avec la file, rien à faire). */
+function savedLine(sync: { offline: boolean; pending: number }): string {
+  const entries = `${sync.pending} saisie${sync.pending > 1 ? 's' : ''}`;
+  if (sync.offline) {
+    return sync.pending > 0
+      ? `Gardée sur cet appareil, avec ${entries} en attente. Tout part au retour du réseau, rien à faire.`
+      : 'Gardée sur cet appareil. Elle part au retour du réseau, rien à faire.';
+  }
+  if (sync.pending > 0) return `${entries} en cours d’envoi.`;
+  return 'Elle est dans le journal, avec la durée et le récap.';
+}
+
 function SessionDone({
   recap,
   dateIso,
+  startedAt,
   values,
   onNewSession,
 }: {
   recap: SessionRecap;
   dateIso: string;
+  startedAt: number;
   values: SessionEndValues;
   onNewSession: () => void;
 }) {
+  const sync = useSyncState();
+  const span = timeSpan(startedAt, values.durationMin);
   return (
     <Screen bottom={<PrimaryButton onClick={onNewSession}>Nouvelle séance</PrimaryButton>}>
-      <ScreenHeader title="Séance rangée" meta={`${recap.sessionName} · ${fmtDay(dateIso)}`} />
+      <ScreenHeader title="Séance rangée" meta={`${recap.sessionName} · ${fmtDay(dateIso)}${span ? `, ${span}` : ''}`} />
       <dl className="border-t border-line">
         {values.durationMin !== undefined && <Fact label="Durée" value={fmtDur(values.durationMin)} />}
         <Fact
@@ -498,6 +532,9 @@ function SessionDone({
           <RecordFact key={`${r.exerciseId}-${r.axis}-${r.side ?? ''}`} r={r} />
         ))}
       </dl>
+      <p role="status" className="px-5 pt-5 text-[15px] leading-[1.45] text-muted">
+        {savedLine(sync)}
+      </p>
     </Screen>
   );
 }
