@@ -127,9 +127,13 @@ export function correctSet(
   if (next.weightKg === current.weightKg && next.reps === current.reps && next.rir === current.rir) {
     return null;
   }
+  // Seules les colonnes CHANGÉES sont écrites (last-write-wins par colonne,
+  // ADR 0003) : corriger le poids ici et les reps sur un autre appareil garde
+  // les deux.
+  const cols = (['weightKg', 'reps', 'rir'] as const).filter((col) => next[col] !== current[col]);
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
-    ops: [writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values')],
+    ops: [{ ...writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values'), cols }],
   };
 }
 

@@ -14,11 +14,15 @@ import {
   enqueueAll,
   flush,
   listRefused,
+  readStamp,
   retryRefused,
+  writesSince,
   type OutboxOp,
+  type ReadStamp,
   type SyncFns,
 } from './outbox';
-import { captureReducer, type CaptureState, type ExerciseProgress } from './state';
+import { correctSet, deleteSet, type SetGesture } from './set-gestures';
+import { captureReducer, type CaptureState, type ExerciseProgress, type HydratedProgress } from './state';
 
 // --- Stockage, dont l'écriture peut être refusée (quota plein) ----------------
 
@@ -140,7 +144,7 @@ const refusalOf = (type: OutboxOp['type'], id: string) =>
 // --- Résiduels de la quarantaine ----------------------------------------------
 
 describe('résiduel 2 : renvoyer une séance refusée ne ressuscite pas une série supprimée depuis', () => {
-  it.fails('la série supprimée hors ligne reste supprimée après le renvoi de sa séance', async () => {
+  it('la série supprimée hors ligne reste supprimée après le renvoi de sa séance', async () => {
     // La base refuse la création de la séance : sa série est retenue avec elle.
     let executionRefused = true;
     const base = fakeBase((op) => (op.type === 'upsertExecution' && executionRefused ? '23503' : null));
@@ -161,7 +165,7 @@ describe('résiduel 2 : renvoyer une séance refusée ne ressuscite pas une sér
 });
 
 describe('résiduel 3 : un stockage plein à l’acquittement d’une suppression ne rend pas l’insertion renvoyable', () => {
-  it.fails('l’insertion refusée d’une série supprimée ne peut plus repartir', async () => {
+  it('l’insertion refusée d’une série supprimée ne peut plus repartir', async () => {
     let refusing = true;
     const base = fakeBase((op) => (op.type === 'insertSet' && refusing ? '23514' : null));
     enqueueAll([execOp(), insertOp('S1', 1)]);
@@ -184,7 +188,7 @@ describe('résiduel 3 : un stockage plein à l’acquittement d’une suppressio
 });
 
 describe('résiduel 6 (client) : un refus se range même quand le stockage est plein', () => {
-  it.fails('la saisie refusée est listée et la suivante part quand même', async () => {
+  it('la saisie refusée est listée et la suivante part quand même', async () => {
     const base = fakeBase((op) => (op.type === 'insertSet' && op.id === 'S1' ? '23514' : null));
     enqueueAll([execOp(), insertOp('S1', 1), insertOp('S2', 2)]);
 
@@ -197,7 +201,7 @@ describe('résiduel 6 (client) : un refus se range même quand le stockage est p
 });
 
 describe('résiduel 7 : abandonner un refus emporte la correction qui en dépendait', () => {
-  it.fails('la correction ne part pas seule, sans ligne à corriger', async () => {
+  it('la correction ne part pas seule, sans ligne à corriger', async () => {
     const base = fakeBase((op) => (op.type === 'insertSet' ? '23514' : null));
     enqueueAll([execOp(), insertOp('S3', 3, 9999)]);
     await flush(base.fns);
@@ -243,76 +247,57 @@ const boardRows = (state: CaptureState) =>
     set.weightKg,
   ]);
 
-describe('résiduel 4 : une correction locale ne masque pas une suppression en file venue du Journal', () => {
-  it.fails('la série supprimée au Journal quitte le tableau, même corrigée ici pendant la lecture', () => {
-    // t : la lecture part, le tableau porte S1 à 80 kg.
-    const departure = boardWith([['S1', 1, 80]]);
-    // t+1 : S1 est corrigée ici (82,5 kg).
-    const corrected = captureReducer(departure, {
-      type: 'correct-set',
-      exerciseId: 'bench',
-      setId: 'S1',
-      values: { weightKg: 82.5, reps: 8, rir: 2 },
-    });
-    // t+2 : S1 est supprimée depuis le Journal (autre onglet), la suppression attend.
-    const deletion: OutboxOp = { type: 'deleteSet', id: 'S1', exerciseIds: ['bench'] };
-    // t+3 : la réponse arrive, partie avant tout cela : la base porte encore S1.
-    const after = captureReducer(corrected, {
-      type: 'reconcile-progress',
-      base: { bench: { sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }], setIds: ['S1'] } },
-      pendingSetIds: [],
-      knownAtDeparture: ['S1'],
-      departure: departure.progress,
-      queuedOps: [correctionOp('S1', 1, 82.5), deletion],
-    });
+/** Un geste de la Salle : le réducteur avance, ses écritures entrent au registre d'un seul tenant. */
+function play(state: CaptureState, gesture: SetGesture | null): CaptureState {
+  if (gesture === null) throw new Error('geste sans effet');
+  enqueueAll(gesture.ops);
+  return captureReducer(state, gesture.action);
+}
 
-    expect(boardRows(after)).toEqual([]);
+/** La réponse d'une lecture partie à `stamp` arrive sur le tableau monté. */
+function answer(state: CaptureState, stamp: ReadStamp, base: Record<string, HydratedProgress>): CaptureState {
+  return captureReducer(state, { type: 'reconcile-progress', base, writes: writesSince(stamp), asOf: readStamp() });
+}
+
+const baseRow = (weightKg: number, order: number) => ({ weightKg, reps: 8, rir: 2, order });
+
+describe('résiduel 4 : une correction locale ne masque pas une suppression en attente venue du Journal', () => {
+  it('la série supprimée au Journal quitte le tableau, même corrigée ici pendant la lecture', () => {
+    // t : la lecture part, le tableau porte S1 à 80 kg.
+    let board = boardWith([['S1', 1, 80]]);
+    const stamp = readStamp();
+    // t+1 : S1 est corrigée ici (82,5 kg).
+    board = play(board, correctSet(board, 'bench', 'S1', { weightKg: 82.5, reps: 8, rir: 2 }));
+    // t+2 : S1 est supprimée depuis le Journal (autre onglet), la suppression attend.
+    enqueue({ type: 'deleteSet', id: 'S1', exerciseIds: ['bench'] });
+    // t+3 : la réponse arrive, partie avant tout cela : la base porte encore S1.
+    board = answer(board, stamp, { bench: { sets: [baseRow(80, 1)], setIds: ['S1'] } });
+
+    expect(boardRows(board)).toEqual([]);
   });
 });
 
 describe('résiduel 8 : une remontée de rang locale ne masque pas une correction reçue de la base', () => {
-  it.fails('le rang local et la valeur de la base tiennent ensemble, colonne par colonne', () => {
+  it('le rang local et la valeur de la base tiennent ensemble, colonne par colonne', async () => {
+    const base = fakeBase();
     // t : la lecture part, le tableau porte S1 et S2 à 80 kg.
-    const departure = boardWith([
+    let board = boardWith([
       ['S1', 1, 80],
       ['S2', 2, 80],
     ]);
-    // t+1 : S1 est supprimée ici, S2 remonte au rang 1.
-    const moved = captureReducer(departure, { type: 'delete-set', exerciseId: 'bench', setId: 'S1' });
-    expect(boardRows(moved)).toEqual([['S2', 1, 80]]);
+    const stamp = readStamp();
+    // t+1 : S1 est supprimée ici, S2 remonte au rang 1 ; les deux écritures
+    // sont acquittées pendant le trajet de la lecture.
+    board = play(board, deleteSet(board, 'bench', 'S1'));
+    expect(boardRows(board)).toEqual([['S2', 1, 80]]);
+    await flush(base.fns);
     // t+2 : la réponse arrive. S2 a été corrigée ailleurs (90 kg) avant le départ
-    // de la lecture, que cet appareil n'avait pas encore vue.
-    const after = captureReducer(moved, {
-      type: 'reconcile-progress',
-      base: {
-        bench: {
-          sets: [
-            { weightKg: 80, reps: 8, rir: 2, order: 1 },
-            { weightKg: 90, reps: 8, rir: 2, order: 2 },
-          ],
-          setIds: ['S1', 'S2'],
-        },
-      },
-      pendingSetIds: [],
-      knownAtDeparture: ['S1', 'S2'],
-      departure: departure.progress,
-      queuedOps: [
-        { type: 'deleteSet', id: 'S1', exerciseIds: ['bench'] },
-        {
-          type: 'patchSet',
-          id: 'S2',
-          executionId: 'exec-1',
-          exerciseId: 'bench',
-          setOrder: 1,
-          weightKg: 80,
-          reps: 8,
-          rir: 2,
-          only: 'rank',
-        },
-      ],
+    // de la lecture, ce que cet appareil n'avait pas encore vu.
+    board = answer(board, stamp, {
+      bench: { sets: [baseRow(80, 1), baseRow(90, 2)], setIds: ['S1', 'S2'] },
     });
 
     // Le rang vient d'ici, le poids vient de la base.
-    expect(boardRows(after)).toEqual([['S2', 1, 90]]);
+    expect(boardRows(board)).toEqual([['S2', 1, 90]]);
   });
 });

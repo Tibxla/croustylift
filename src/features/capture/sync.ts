@@ -1,8 +1,8 @@
 // Câblage outbox -> Supabase, partagé par la capture du jour et l'édition d'une
 // séance passée (issue #38).
 //
-// Le SEUL chemin d'écriture du réalisé est l'outbox (FIFO, idempotent par id,
-// cf. ADR 0003) + les fonctions de `data.ts`. Ce module expose ce câblage
+// Le SEUL chemin d'écriture du réalisé est le registre d'écritures (outbox.ts,
+// idempotent par id, cf. ADR 0003) + les fonctions de `data.ts`. Ce module expose ce câblage
 // (op -> fonction de sync) et un helper pour enfiler puis flusher un lot d'ops,
 // pour que l'éditeur de séance passée n'invente PAS un second chemin : il
 // produit des `OutboxOp` (via past-session-edit) et les passe à `flushOps`,
@@ -26,11 +26,10 @@ import {
   deleteExerciseNoteByExercise,
 } from '../notes/data';
 import {
-  enqueueTracked,
+  enqueueAll,
+  fatesOf,
   flush,
   setFlushRetryRunner,
-  pendingAmong,
-  refusedAmong,
   type FlushResult,
   type OutboxOp,
   type SyncFns,
@@ -39,56 +38,42 @@ import { sessionUserId } from '../../lib/session-identity';
 import { seedRead } from '../../lib/read-cache';
 import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
-// Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
-// depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
-// chaque fonction de sync le note ici après son succès, et `flushOutbox` relit
-// les copies locales concernées une fois la passe finie. Les ops d'exécution
-// (`upsertExecution`, `updateExecution`) n'y figurent pas : la copie ne porte
-// ni clôture ni métriques de fin, et la date d'une exécution ne change jamais
-// après coup (elle arrive avec ses premières séries, qui déclenchent la relecture).
-const touchedExercises = new Set<string>();
-// Les séries acquittées PAR CETTE SESSION : de quel exo et de quelle exécution.
-// Une suppression ne porte que l'id de sa ligne ; on retrouve ses exos dans les
-// copies qui la CONTIENNENT (`exercisesHoldingRows`), mais une série tout juste
-// acquittée peut ne pas y être encore (sa relecture est en vol, et sa réponse
-// la ramènerait après coup) : cette mémoire désigne alors son exo. Bornée à la
-// session (quelques dizaines d'ids), jamais persistée.
-const ackedSets = new Map<string, { exerciseId: string; executionId: string }>();
-
-/**
- * Une suppression vient d'être acquittée : marque à relire les seuls exos
- * concernés (copies qui contiennent la ligne, plus la mémoire de session). Les
- * autres copies ne sont ni relues ni marquées d'un seuil : la réponse tardive
- * d'un exo sans rapport reste valide.
- */
-function touchDeleted(
-  deleted: { setIds: string[]; executionIds: string[] },
-  named: readonly string[] = [],
-): void {
-  // Les exos que l'émetteur de l'op a nommés (`exerciseIds`) : la ligne peut
-  // n'être dans aucune copie ni dans la mémoire de session (série faite
-  // ailleurs, copie en retard) alors qu'une revalidation partie avant la
-  // suppression la ramènerait. Le seuil posé par la relecture l'en empêche.
-  for (const exerciseId of named) touchedExercises.add(exerciseId);
-  for (const exerciseId of exercisesHoldingRows(deleted)) touchedExercises.add(exerciseId);
-  for (const [setId, acked] of ackedSets) {
-    if (deleted.setIds.includes(setId) || deleted.executionIds.includes(acked.executionId)) {
-      touchedExercises.add(acked.exerciseId);
-      ackedSets.delete(setId);
-    }
-  }
-}
-
 /**
  * Relit en fond les copies d'historique que la passe vient de rendre périmées
- * (cf. `refreshExerciseRows`). Sans attendre : la capture ne dépend pas du
- * retour de cette lecture, et un échec réseau laisse simplement la copie.
+ * (cf. `refreshExerciseRows`, ADR 0020). La passe DIT ce qu'elle a acquitté
+ * (`FlushResult.settled`) : les exos d'une série écrite, et pour une suppression
+ * ceux que l'émetteur a nommés ou que le registre retient encore pour cette
+ * série ou cette exécution (`touches`). S'y ajoutent les copies qui CONTIENNENT
+ * la ligne supprimée (`exercisesHoldingRows`) : la série a pu être faite
+ * ailleurs, ou acquittée depuis plus longtemps que le registre ne la garde.
+ * Les autres copies ne sont ni relues ni marquées d'un seuil : la réponse
+ * tardive d'un exo sans rapport reste valide. Les écritures d'exécution
+ * (création, clôture, métriques) ne touchent aucune copie.
+ *
+ * Sans attendre : la capture ne dépend pas du retour de cette lecture, et un
+ * échec réseau laisse simplement la copie. Une passe partagée par plusieurs
+ * appelants (flush mémoïsé) n'est relue qu'une fois.
  */
-function refreshTouchedHistory(): void {
-  if (touchedExercises.size === 0) return;
-  const target = [...touchedExercises];
-  touchedExercises.clear();
-  void refreshExerciseRows(target);
+const refreshed = new WeakSet<FlushResult>();
+function refreshTouchedHistory(result: FlushResult): void {
+  if (refreshed.has(result)) return;
+  refreshed.add(result);
+  const touched = new Set<string>();
+  const deleted = { setIds: [] as string[], executionIds: [] as string[] };
+  for (const write of result.settled) {
+    if (write.fate !== 'acked') continue;
+    for (const exerciseId of write.touches) touched.add(exerciseId);
+    // Suppression conditionnelle que la base n'a pas faite : rien n'a changé.
+    if (write.noEffect) continue;
+    if (write.op.type === 'deleteSet') deleted.setIds.push(write.op.id);
+    else if (write.op.type === 'deleteExecution' || write.op.type === 'deleteExecutionIfEmpty') {
+      deleted.executionIds.push(write.op.id);
+    }
+  }
+  if (deleted.setIds.length > 0 || deleted.executionIds.length > 0) {
+    for (const exerciseId of exercisesHoldingRows(deleted)) touched.add(exerciseId);
+  }
+  if (touched.size > 0) void refreshExerciseRows([...touched]);
 }
 
 /**
@@ -130,11 +115,9 @@ export const syncFns: SyncFns = {
   patchSet: async (op) => {
     await patchSet(
       op.only === 'values'
-        ? { id: op.id, only: 'values', weightKg: op.weightKg, reps: op.reps, rir: op.rir }
+        ? { id: op.id, only: 'values', weightKg: op.weightKg, reps: op.reps, rir: op.rir, cols: op.cols }
         : { id: op.id, only: 'rank', setOrder: op.setOrder },
     );
-    touchedExercises.add(op.exerciseId);
-    ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
   },
   insertSet: async (op) => {
     await upsertSet({
@@ -149,12 +132,9 @@ export const syncFns: SyncFns = {
       // `side` à null et dé-apparier G/D quand on édite une exécution passée.
       side: op.side,
     });
-    touchedExercises.add(op.exerciseId);
-    ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
   },
   deleteSet: async (op) => {
     await deleteSetById(op.id);
-    touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
   },
   updateExecution: async (op) => {
     // Le nombre de lignes touchées n'est pas un critère d'échec (cf. data.ts,
@@ -196,54 +176,46 @@ export const syncFns: SyncFns = {
   },
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
-    touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
   },
-  // Suppression conditionnelle (« Changer de séance ») : les copies locales ne
-  // sont relues que si la base a réellement supprimé l'exécution.
-  deleteExecutionIfEmpty: async (op) => {
-    const outcome = await deleteExecutionIfEmpty(op.id);
-    if (outcome === 'deleted') touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
-  },
+  // Suppression conditionnelle (« Changer de séance ») : la passe apprend si la
+  // base a réellement supprimé l'exécution, et ne relit les copies que dans ce cas.
+  deleteExecutionIfEmpty: (op) => deleteExecutionIfEmpty(op.id),
 };
 
 /** Ce qu'il advient d'un lot d'ops soumis par `flushOps`. */
 export interface OpsFlushResult extends FlushResult {
-  /** De NOS ops, celles qui attendent encore en file (réseau, session). */
+  /** De NOS écritures, celles qui attendent encore (réseau, session). */
   pending: number;
-  /** De NOS ops, celles que la base a refusées (quarantaine) : elles ne partiront pas. */
+  /** De NOS écritures, celles que la base a refusées ou retient : elles ne partiront pas seules. */
   refused: number;
 }
 
 /**
- * Enfile un lot d'ops (dans l'ordre) puis tente un flush immédiat. Les ops sont
- * durables dès l'enqueue (localStorage) : même si le flush échoue (offline),
- * elles remonteront au prochain flush, comme la capture du jour.
+ * Enfile un lot d'écritures, d'un seul tenant et dans l'ordre, puis tente un
+ * envoi immédiat. Elles sont durables dès l'enfilement : même si l'envoi échoue
+ * (hors ligne), elles remonteront au prochain, comme la capture du jour.
  *
- * Le résultat ne compte QUE NOS ops, retrouvées par leur identité d'enfilement
- * (`_uid`), PAS le `remaining` GLOBAL du `FlushResult` (BUG M4). Pourquoi :
- * `flush` est mémoïsé (un seul flush à la fois, cf. outbox). Si une passe est
- * déjà en vol, `flush(syncFns)` renvoie SA promesse, dont le `remaining` reflète
- * l'état AU LANCEMENT de cette passe, avant qu'on enfile nos ops. Il pourrait
- * donc valoir `0` alors que NOS ops dorment encore en file (faux succès →
- * l'éditeur de séance se fermerait à tort).
+ * Le résultat ne compte QUE NOS écritures, par le SORT que le registre leur
+ * donne (`fatesOf`), PAS par le `remaining` GLOBAL de la passe (BUG M4) : le
+ * flush est mémoïsé, et une passe déjà en vol rend un résultat d'avant notre
+ * enfilement. `pending` et `refused` sont rendus À PART : une correction que la
+ * base a refusée n'est pas une correction qui attend le réseau. `remaining`
+ * reste leur somme (rien de nous n'est en base tant qu'il n'est pas nul).
  *
- * `pending` et `refused` sont rendus À PART : une correction que la base a
- * refusée n'est pas une correction qui attend le réseau, et l'écran ne doit pas
- * dire « pas de réseau » pour elle. `remaining` reste leur somme (rien de nous
- * n'est en base tant qu'il n'est pas nul). L'identité d'enfilement est un UUID :
- * avant, nos ops refusées se repéraient par leur POSITION dans la quarantaine, et
- * une purge faite par un autre onglet pendant la passe pouvait faire passer une
- * correction refusée pour une sauvegarde réussie.
- * `flushed` reste celui de la passe (best-effort, purement indicatif).
+ * Une écriture refusée puis ÉCARTÉE au profit d'une plus récente de la même
+ * série a le sort de sa remplaçante : tant que celle-ci attend, la nôtre
+ * n'est pas sauvegardée. Avant, elle n'était plus ni en file ni en quarantaine,
+ * et l'éditeur de séance passée annonçait une sauvegarde.
  */
 export async function flushOps(ops: OutboxOp[]): Promise<OpsFlushResult> {
-  const ours = ops.map((op) => enqueueTracked(op));
-  // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
-  // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
-  const { flushed } = await flushOutbox();
-  const pending = pendingAmong(ours);
-  const refused = refusedAmong(ours);
-  return { remaining: pending + refused, pending, refused, flushed };
+  const ours = enqueueAll(ops);
+  // On attend la passe (la nôtre ou une déjà en vol) pour laisser le temps à nos
+  // écritures d'être tentées, mais on ne se fie pas à son `remaining` global.
+  const { flushed, settled } = await flushOutbox();
+  const fates = fatesOf(ours);
+  const pending = fates.filter((fate) => fate === 'pending').length;
+  const refused = fates.filter((fate) => fate === 'refused').length;
+  return { remaining: pending + refused, pending, refused, flushed, settled };
 }
 
 /**
@@ -263,7 +235,10 @@ export function flushOutbox() {
   // Le lecteur de session ferme la porte aux écritures sans compte vérifié : sans
   // session, une requête part sous la clé publique et un `update`/`delete` est
   // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
-  return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
+  return flush(syncFns, sessionUserId).then((result) => {
+    refreshTouchedHistory(result);
+    return result;
+  });
 }
 
 // Un essai reprogrammé après un verrou occupé (cf. outbox) passe par le flush de

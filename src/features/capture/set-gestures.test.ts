@@ -4,30 +4,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
 import { estimateE1rm } from '../../domain/e1rm';
 import { upperA } from './fixtures';
-import { applyPendingSets } from './data';
+import { exerciseRowsReality } from './execution-reality';
 import {
   clearQueue,
   enqueue,
+  enqueueAll,
   flush,
-  readQuarantine,
+  listRefused,
   readQueue,
+  readStamp,
   storageFailing,
+  writesSince,
   type InsertSetOp,
   type OutboxOp,
+  type ReadStamp,
   type SyncFns,
 } from './outbox';
+import { REGISTRY_KEY } from '../../test/registry';
 import { computeSetBadges } from './set-badges';
 import { correctSet, deleteSet, logicalSetRows, ranksAfterDeletion } from './set-gestures';
 import { deletionPreview } from './set-ranks';
 import {
   captureReducer,
   getProgress,
-  mutationMark,
   initialState,
   loadPersisted,
   persist,
-  reconcileProgress,
   type CaptureState,
+  type HydratedProgress,
 } from './state';
 
 vi.mock('../../lib/supabase', () => ({ supabase: {} }));
@@ -74,8 +78,16 @@ function started(): CaptureState {
 
 /** Applique un geste comme le fera l'écran : action au réducteur, ops en file. */
 function play(state: CaptureState, gesture: { action: Parameters<typeof captureReducer>[1]; ops: OutboxOp[] }) {
-  gesture.ops.forEach((op) => enqueue(op));
+  enqueueAll(gesture.ops);
   return captureReducer(state, gesture.action);
+}
+
+/**
+ * La réponse d'une lecture de la base, partie à l'estampille `stamp`, arrive sur
+ * le tableau monté : il y applique les écritures locales qu'elle ne contient pas.
+ */
+function answer(state: CaptureState, stamp: ReadStamp, base: Record<string, HydratedProgress>): CaptureState {
+  return captureReducer(state, { type: 'reconcile-progress', base, writes: writesSince(stamp), asOf: readStamp() });
 }
 
 /** Fausse base : applique les écritures de séries, note l'ordre d'arrivée. */
@@ -131,11 +143,14 @@ describe('correctSet', () => {
     expect(getProgress(next, BENCH).setIds).toEqual(['s1', 's2', 's3']);
   });
 
-  it('l’écriture est une réaffirmation de la ligne par son id (upsert), au même rang', () => {
+  it('l’écriture est partielle, par l’id de la ligne, et ne nomme que les colonnes changées', () => {
+    // s2 valait 80 × 7 @ 1 : poids, reps et RIR changent tous les trois.
     const gesture = correctSet(started(), BENCH, 's2', { weightKg: 77.5, reps: 9, rir: 2 });
     expect(gesture!.ops).toEqual([
-      { type: 'patchSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2, only: 'values' },
+      { type: 'patchSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 77.5, reps: 9, rir: 2, only: 'values', cols: ['weightKg', 'reps', 'rir'] },
     ]);
+    // Seules les reps changent : l'écriture ne touchera pas le poids en base.
+    expect(correctSet(started(), BENCH, 's2', { weightKg: 80, reps: 9, rir: 1 })!.ops[0]).toMatchObject({ cols: ['reps'] });
   });
 
   it('unilatéral : un seul côté est corrigé, l’autre et le rang ne bougent pas', () => {
@@ -151,7 +166,7 @@ describe('correctSet', () => {
     };
     const gesture = correctSet(state, 'curl', 'r1', { weightKg: 12, reps: 10, rir: 1 })!;
     expect(gesture.ops).toEqual([
-      { type: 'patchSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right', only: 'values' },
+      { type: 'patchSet', id: 'r1', executionId: 'exec-1', exerciseId: 'curl', setOrder: 1, weightKg: 12, reps: 10, rir: 1, side: 'right', only: 'values', cols: ['reps', 'rir'] },
     ]);
     expect(getProgress(captureReducer(state, gesture.action), 'curl').sets).toEqual([
       ps(12, 10, 2, 1, 'left'),
@@ -248,18 +263,18 @@ describe('correctSet et la file d’écritures', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await flush(refusing.fns);
-    expect(readQuarantine().map((q) => q.op.id)).toEqual(['s1']);
+    expect(listRefused().map((q) => q.op.id)).toEqual(['s1']);
 
     // La correction remplace l'écriture refusée, mais le refus n'est levé qu'une
     // fois la correction ACQUITTÉE : d'ici là il reste la seule copie durable.
     play(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!);
-    expect(readQuarantine().map((q) => q.op.id)).toEqual(['s1']);
+    expect(listRefused().map((q) => q.op.id)).toEqual(['s1']);
     const base = fakeBase();
     await flush(base.fns);
     expect(base.rows.get('s1')).toMatchObject({ weightKg: 85 });
     // Plus rien en quarantaine pour cette série (« renvoyer » réécrirait
     // l'ancienne valeur, et la Déconnexion resterait retenue pour rien).
-    expect(readQuarantine()).toEqual([]);
+    expect(listRefused()).toEqual([]);
   });
 });
 
@@ -296,8 +311,8 @@ describe('correctSet, Référence et badges', () => {
         executions: { performed_on: DATE, created_at: '2026-11-25T18:00:00Z', seance_version_id: 'v1' },
       },
     ];
-    const gesture = correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!;
-    const merged = applyPendingSets(rows, gesture.ops, BENCH);
+    play(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!);
+    const merged = exerciseRowsReality(rows, writesSince(null), BENCH);
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ id: 's1', weight_kg: 85, reps: 6, rir: 1, set_order: 1 });
   });
@@ -306,45 +321,41 @@ describe('correctSet, Référence et badges', () => {
 describe('correction et réponse tardive de la base', () => {
   const base = { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2), ps(80, 6, 0, 3)], setIds: ['s1', 's2', 's3'] } };
 
-  it('correction encore en file à l’arrivée : rejouée sur la réponse', () => {
-    const state = started();
-    const gesture = correctSet(state, BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!;
-    const corrected = captureReducer(state, gesture.action);
-    const next = captureReducer(corrected, {
-      type: 'reconcile-progress',
-      base,
-      pendingSetIds: ['s1'],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      queuedOps: gesture.ops,
-    });
+  it('correction encore en attente à l’arrivée : appliquée sur la réponse', () => {
+    const stamp = readStamp();
+    const corrected = play(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!);
+    const next = answer(corrected, stamp, base);
     expect(getProgress(next, BENCH).sets[0]).toEqual(ps(85, 6, 1, 1));
   });
 
-  it('correction faite PUIS acquittée pendant le trajet (file vide à l’arrivée) : la réponse, partie avant, ne la défait pas', () => {
-    const departure = started().progress;
-    const corrected = captureReducer(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!.action);
-    const next = captureReducer(corrected, {
-      type: 'reconcile-progress',
-      base,
-      pendingSetIds: [],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-      queuedOps: [],
-    });
+  it('correction faite PUIS acquittée pendant le trajet : la réponse, partie avant, ne la défait pas', async () => {
+    const stamp = readStamp();
+    const corrected = play(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!);
+    await flush(fakeBase().fns);
+    expect(readQueue()).toEqual([]);
+    const next = answer(corrected, stamp, base);
     expect(getProgress(next, BENCH).sets[0]).toEqual(ps(85, 6, 1, 1));
     // Les séries non touchées pendant le trajet suivent toujours la base.
     expect(getProgress(next, BENCH).sets[1]).toEqual(ps(80, 7, 1, 2));
   });
 
-  it('série inchangée depuis le départ : la base fait foi (correction venue d’un autre appareil)', () => {
-    const departure = started().progress;
+  it('série sans écriture locale depuis le départ : la base fait foi (correction venue d’un autre appareil)', () => {
     const elsewhere = { [BENCH]: { sets: [ps(90, 5, 1, 1), ps(80, 7, 1, 2), ps(80, 6, 0, 3)], setIds: ['s1', 's2', 's3'] } };
-    const progress = reconcileProgress(started().progress, elsewhere, {
-      pendingSetIds: [],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-    });
-    expect(progress[BENCH]?.sets[0]).toEqual(ps(90, 5, 1, 1));
+    const next = answer(started(), readStamp(), elsewhere);
+    expect(getProgress(next, BENCH).sets[0]).toEqual(ps(90, 5, 1, 1));
+  });
+
+  it('colonne par colonne : le poids corrigé ici et les reps corrigées ailleurs tiennent ensemble', async () => {
+    const stamp = readStamp();
+    // Ici : seul le poids de s1 change (80 -> 85). L'écriture ne porte que lui.
+    const gesture = correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 8, rir: 2 })!;
+    expect(gesture.ops).toMatchObject([{ type: 'patchSet', only: 'values', cols: ['weightKg'] }]);
+    const corrected = play(started(), gesture);
+    await flush(fakeBase().fns);
+    // Ailleurs, avant le départ de la lecture : les reps de s1 sont passées à 10.
+    const elsewhere = { [BENCH]: { sets: [ps(80, 10, 2, 1), ps(80, 7, 1, 2), ps(80, 6, 0, 3)], setIds: ['s1', 's2', 's3'] } };
+    const next = answer(corrected, stamp, elsewhere);
+    expect(getProgress(next, BENCH).sets[0]).toEqual(ps(85, 10, 2, 1));
   });
 });
 
@@ -604,10 +615,10 @@ describe('deleteSet', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await flush(refusing.fns);
-    expect(readQuarantine()).toHaveLength(1);
+    expect(listRefused()).toHaveLength(1);
     play(started(), deleteSet(started(), BENCH, 's3')!);
     await flush(fakeBase().fns);
-    expect(readQuarantine()).toEqual([]);
+    expect(listRefused()).toEqual([]);
   });
 
   it('badges recalculés : la série remontée se compare à la référence de son nouveau rang', () => {
@@ -634,171 +645,139 @@ describe('suppression et réponse tardive de la base', () => {
     rir: 2,
   });
 
-  it('suppression et renumérotation ACQUITTÉES pendant le trajet : la réponse ne ramène ni la série ni les anciens rangs', () => {
-    const departure = started().progress;
-    const after = captureReducer(started(), deleteSet(started(), BENCH, 's1')!.action);
-    const next = captureReducer(after, {
-      type: 'reconcile-progress',
-      base,
-      pendingSetIds: [],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-      queuedOps: [],
-    });
+  it('suppression et renumérotation ACQUITTÉES pendant le trajet : la réponse ne ramène ni la série ni les anciens rangs', async () => {
+    const stamp = readStamp();
+    const after = play(started(), deleteSet(started(), BENCH, 's1')!);
+    await flush(fakeBase().fns);
+    const next = answer(after, stamp, base);
     expect(getProgress(next, BENCH).setIds).toEqual(['s2', 's3']);
     expect(getProgress(next, BENCH).sets.map((s) => s.order)).toEqual([1, 2]);
   });
 
-  it('série annulée pendant le trajet alors que son insertion était en file au départ : elle ne ressuscite pas', () => {
+  it('série annulée pendant le trajet alors que son insertion attendait au départ : elle ne ressuscite pas', async () => {
     // L'insertion de s3 attendait au départ de la lecture ; s3 est supprimée
     // pendant le trajet, insertion et suppression acquittées avant le retour.
-    const departure = started().progress;
-    const after = captureReducer(started(), deleteSet(started(), BENCH, 's3')!.action);
-    const next = captureReducer(after, {
-      type: 'reconcile-progress',
-      base: { [BENCH]: { sets: base[BENCH].sets.slice(0, 2), setIds: ['s1', 's2'] } },
-      pendingSetIds: ['s3'],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-      queuedOps: [insert('s3', 3, 6)],
-    });
+    enqueue(insert('s3', 3, 6));
+    const stamp = readStamp();
+    const after = play(started(), deleteSet(started(), BENCH, 's3')!);
+    await flush(fakeBase().fns);
+    const next = answer(after, stamp, { [BENCH]: { sets: base[BENCH].sets.slice(0, 2), setIds: ['s1', 's2'] } });
     expect(getProgress(next, BENCH).setIds).toEqual(['s1', 's2']);
   });
 
-  it('une ancienne écriture relevée au départ ne défait pas une renumérotation faite depuis', () => {
-    const departure = started().progress;
-    const after = captureReducer(started(), deleteSet(started(), BENCH, 's1')!.action);
-    const next = captureReducer(after, {
-      type: 'reconcile-progress',
-      base,
-      pendingSetIds: ['s2'],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-      // s2 était en file au départ, à son ancien rang 2.
-      queuedOps: [insert('s2', 2, 7)],
-    });
+  it('une écriture plus ancienne, encore en attente au départ, ne défait pas une renumérotation faite depuis', () => {
+    // s2 attendait au départ, à son ancien rang 2.
+    enqueue(insert('s2', 2, 7));
+    const stamp = readStamp();
+    const after = play(started(), deleteSet(started(), BENCH, 's1')!);
+    const next = answer(after, stamp, base);
     expect(getProgress(next, BENCH).sets.map((s) => s.order)).toEqual([1, 2]);
     expect(getProgress(next, BENCH).setIds).toEqual(['s2', 's3']);
   });
 
-  it('une écriture venue d’ailleurs sur une série NON touchée ici reste rejouée (Journal, autre onglet)', () => {
-    const departure = started().progress;
-    const next = captureReducer(started(), {
-      type: 'reconcile-progress',
-      base,
-      pendingSetIds: ['s2'],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure,
-      queuedOps: [{ ...insert('s2', 2, 7), weightKg: 85, rir: 1 }],
-    });
+  it('une écriture venue d’ailleurs (Journal, autre onglet) est appliquée sur la réponse', () => {
+    const stamp = readStamp();
+    enqueue({ ...insert('s2', 2, 7), weightKg: 85, rir: 1 });
+    const next = answer(started(), stamp, base);
     expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
   });
 });
 
 // La réponse d'une lecture lente est livrée APRÈS que le serveur a acquitté des
-// gestes faits pendant son trajet : aucun relevé de la file ne les montre plus,
-// et l'état du départ ne connaît pas une série née entre-temps. Le tableau suit
-// donc lui-même ses mutations locales, par id, suppressions comprises.
+// gestes faits pendant son trajet. Le registre garde ces écritures acquittées :
+// la réponse, figée à son départ, ne les porte pas, et le tableau les applique.
 describe('réponse livrée après l’acquittement de gestes faits pendant son trajet', () => {
   /** Au départ de la lecture : une seule série. */
   const atDeparture = (): CaptureState => ({
     ...started(),
     progress: { [BENCH]: { sets: [ps(80, 8, 2, 1)], setIds: ['s1'], skipped: false } },
   });
-  const logS2 = (state: CaptureState) =>
-    captureReducer(state, { type: 'log-set', exerciseId: BENCH, setId: 's2', set: { weightKg: 80, reps: 7, rir: 1 } });
-  /** La réponse : la lecture a vu S2 (insérée pendant son trajet), telle que loggée. */
-  const late = (departure: CaptureState) => ({
-    type: 'reconcile-progress' as const,
-    base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } },
-    pendingSetIds: [],
-    knownAtDeparture: ['s1'],
-    departure: departure.progress,
-    queuedOps: [],
+  /** Logge S2 comme l'écran : la série entre au réducteur et son insertion au registre. */
+  const logS2 = (state: CaptureState) => {
+    enqueue({ type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 7, rir: 1 });
+    return captureReducer(state, { type: 'log-set', exerciseId: BENCH, setId: 's2', set: { weightKg: 80, reps: 7, rir: 1 } });
+  };
+  /** La réponse : la base a vu S2 (insérée pendant le trajet), telle que loggée. */
+  const withS2 = { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } };
+  const acked = () => flush(fakeBase().fns);
+
+  it('série née pendant le trajet, puis SUPPRIMÉE et acquittée : la réponse, qui la porte, ne la ressuscite pas', async () => {
+    const stamp = readStamp();
+    let state = logS2(atDeparture());
+    state = play(state, deleteSet(state, BENCH, 's2')!);
+    await acked();
+    expect(getProgress(answer(state, stamp, withS2), BENCH).setIds).toEqual(['s1']);
   });
 
-  it('série née pendant le trajet, puis SUPPRIMÉE et acquittée : la réponse, qui la porte, ne la ressuscite pas', () => {
+  it('pareil pour « Annuler la série » juste après le log', async () => {
+    const stamp = readStamp();
     let state = logS2(atDeparture());
-    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
-    const next = captureReducer(state, late(atDeparture()));
-    expect(getProgress(next, BENCH).setIds).toEqual(['s1']);
-  });
-
-  it('pareil pour « Annuler la série » juste après le log', () => {
-    let state = logS2(atDeparture());
+    enqueue({ type: 'deleteSet', id: 's2', exerciseIds: [BENCH] });
     state = captureReducer(state, { type: 'undo-last-set', exerciseId: BENCH });
-    expect(getProgress(captureReducer(state, late(atDeparture())), BENCH).setIds).toEqual(['s1']);
+    await acked();
+    expect(getProgress(answer(state, stamp, withS2), BENCH).setIds).toEqual(['s1']);
   });
 
-  it('série née pendant le trajet, puis CORRIGÉE et acquittée : la réponse, qui porte l’ancienne valeur, ne masque pas la correction', () => {
+  it('série née pendant le trajet, puis CORRIGÉE et acquittée : la réponse, qui porte l’ancienne valeur, ne masque pas la correction', async () => {
+    const stamp = readStamp();
     let state = logS2(atDeparture());
-    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
-    const next = captureReducer(state, late(atDeparture()));
-    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
+    state = play(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!);
+    await acked();
+    expect(getProgress(answer(state, stamp, withS2), BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
   });
 
-  it('remontée de rang acquittée pendant le trajet : les rangs locaux tiennent, la série supprimée ne revient pas', () => {
+  it('remontée de rang acquittée pendant le trajet : les rangs locaux tiennent, la série supprimée ne revient pas', async () => {
+    const stamp = readStamp();
     let state = logS2(atDeparture());
-    state = captureReducer(state, deleteSet(state, BENCH, 's1')!.action);
-    const next = captureReducer(state, late(atDeparture()));
+    state = play(state, deleteSet(state, BENCH, 's1')!);
+    await acked();
+    const next = answer(state, stamp, withS2);
     expect(getProgress(next, BENCH).setIds).toEqual(['s2']);
     expect(getProgress(next, BENCH).sets[0]).toEqual(ps(80, 7, 1, 1));
   });
 
-  it('une ancienne écriture relevée dans la file ne rejoue pas une série supprimée ou corrigée ici', () => {
-    let state = logS2(atDeparture());
-    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
-    const stale = { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 7, rir: 1 } as const;
-    const next = captureReducer(state, { ...late(atDeparture()), queuedOps: [stale] });
-    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
-  });
-
   it('série corrigée ici mais supprimée ailleurs (le Journal) : la réponse ne la porte pas, elle sort', () => {
-    // Une correction n'écrit que des valeurs : en base, elle n'a rien recréé.
-    let state = started();
-    state = captureReducer(state, correctSet(state, BENCH, 's3', { weightKg: 85, reps: 6, rir: 0 })!.action);
-    const next = captureReducer(state, {
-      type: 'reconcile-progress',
-      base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } },
-      pendingSetIds: [],
-      knownAtDeparture: ['s1', 's2', 's3'],
-      departure: started().progress,
-      queuedOps: [],
-    });
+    // Une correction n'écrit que des valeurs : elle ne crée pas la ligne.
+    const stamp = readStamp();
+    const state = play(started(), correctSet(started(), BENCH, 's3', { weightKg: 85, reps: 6, rir: 0 })!);
+    const next = answer(state, stamp, { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } });
     expect(getProgress(next, BENCH).setIds).toEqual(['s1', 's2']);
   });
 
-  it('correction faite AVANT le départ d’une lecture neuve : la base, recorrigée ailleurs depuis, fait foi', () => {
+  it('correction acquittée AVANT le départ d’une lecture neuve : la base, recorrigée ailleurs depuis, fait foi', async () => {
     let state = logS2(atDeparture());
-    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
-    // La lecture part maintenant : elle relève le compteur et l'état courant.
-    const next = captureReducer(state, {
-      type: 'reconcile-progress',
-      base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(90, 7, 1, 2)], setIds: ['s1', 's2'] } },
-      pendingSetIds: [],
-      knownAtDeparture: ['s1', 's2'],
-      departure: state.progress,
-      departureMark: mutationMark(state),
-      queuedOps: [],
-    });
+    state = play(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!);
+    await acked();
+    // La lecture part maintenant : tout ce qui précède est déjà en base.
+    const stamp = readStamp();
+    const next = answer(state, stamp, { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(90, 7, 1, 2)], setIds: ['s1', 's2'] } });
     expect(getProgress(next, BENCH).sets[1]).toEqual(ps(90, 7, 1, 2));
   });
 
-  it('série supprimée APRÈS le relevé d’une lecture neuve : elle ne revient pas', () => {
+  it('enfilée AVANT le départ, acquittée APRÈS : la réponse ne la porte pas, elle est appliquée', async () => {
     let state = logS2(atDeparture());
-    const mark = mutationMark(state);
-    const departure = state.progress;
-    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
-    const next = captureReducer(state, { ...late(atDeparture()), departure, departureMark: mark, knownAtDeparture: ['s1', 's2'] });
-    expect(getProgress(next, BENCH).setIds).toEqual(['s1']);
+    state = play(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!);
+    const stamp = readStamp();
+    await acked();
+    // La réponse, figée au départ, ne connaît ni S2 ni sa correction.
+    const next = answer(state, stamp, { [BENCH]: { sets: [ps(80, 8, 2, 1)], setIds: ['s1'] } });
+    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
   });
 
-  it('le suivi ne survit pas au rechargement : un état relu repart sans mutation locale', () => {
+  it('série supprimée APRÈS le départ d’une lecture neuve : elle ne revient pas', async () => {
     let state = logS2(atDeparture());
-    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
-    expect(Object.keys(state.sinceLoad?.removed ?? {})).toEqual(['s2']);
+    await acked();
+    const stamp = readStamp();
+    state = play(state, deleteSet(state, BENCH, 's2')!);
+    await acked();
+    expect(getProgress(answer(state, stamp, withS2), BENCH).setIds).toEqual(['s1']);
+  });
+
+  it('l’estampille du réalisé survit au rechargement : l’état relu sait ce qu’il contient déjà', () => {
+    const state = answer(started(), readStamp(), { [BENCH]: { sets: [ps(80, 8, 2, 1)], setIds: ['s1'] } });
+    expect(typeof state.asOf).toBe('number');
     persist(state);
-    expect(loadPersisted(upperA, DATE)!.sinceLoad).toBeUndefined();
+    expect(loadPersisted(upperA, DATE)!.asOf).toBe(state.asOf);
   });
 });
 
@@ -814,7 +793,7 @@ describe('gestes sur les séries sous stockage plein', () => {
     }
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
@@ -822,7 +801,7 @@ describe('gestes sur les séries sous stockage plein', () => {
     state = play(state, correctSet(state, BENCH, 's3', { weightKg: 82.5, reps: 6, rir: 0 })!);
     state = play(state, deleteSet(state, BENCH, 's1')!);
     expect(storageFailing()).toBe(true);
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(localStorage.getItem(REGISTRY_KEY)).toBeNull();
     expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
       'patchSet:s3',
       'deleteSet:s1',

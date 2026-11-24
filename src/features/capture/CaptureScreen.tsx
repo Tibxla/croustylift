@@ -47,7 +47,6 @@ import {
 } from './session-edit';
 import {
   datedNoteOutboxOp,
-  pendingDatedNoteKeys,
   exerciseNoteOutboxOp,
 } from '../notes/data';
 import { datedNoteId } from '../notes/dated-note-id';
@@ -62,7 +61,6 @@ import {
   isExecutionStarted,
   isResumable,
   loadPersisted,
-  mergeProgress,
   newId,
   nextSetOrder,
   pendingSide,
@@ -71,9 +69,7 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
-  applyQueuedSets,
-  reconcileProgress,
-  withReconciledProgress,
+  openingState,
   resolveCaptureDate,
   shouldReanchorLaunch,
   todayIso,
@@ -83,13 +79,13 @@ import {
 import {
   enqueue,
   enqueueAll,
-  isSetInsertion,
   OUTBOX_CHANGED_EVENT,
   purgeByExecution,
-  readOwnQueue,
   readQueue,
-  unionOfQueueReads,
+  readStamp,
+  writesSince,
   type OutboxOp,
+  type ReadStamp,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -180,19 +176,13 @@ interface CaptureInit {
   datedNotes: Record<string, DatedNoteDraft>;
   restored: CaptureState | null;
   /**
-   * Non nul quand la base a RÉPONDU pour l'exécution que tient l'état local : le
-   * réalisé se réconcilie alors par identifiant (la base fait foi, plus les
-   * séries dont l'insertion attend, listées ici) au lieu de la fusion par
-   * longueur, qui n'est que le repli sans réponse (cf. `reconcileProgress`).
+   * L'estampille de la lecture de la base (`TodayExecution.stamp`) quand elle a
+   * RÉPONDU pour l'exécution adoptée : `progress` et `datedNotes` sont alors
+   * cette lecture, et le tableau y applique les écritures locales qu'elle ne
+   * contient pas (execution-reality.ts). `null` : la base n'a pas répondu, ou
+   * rien n'existe encore ; l'état local, s'il y en a un, tient lieu de lecture.
    */
-  pendingSetIds: string[] | null;
-  /**
-   * La file d'écritures du compte, lue à l'ouverture : ses écritures de séries
-   * pour cette exécution sont appliquées au réalisé final (`applyQueuedSets`),
-   * que la base ait répondu ou non. Une série ajoutée depuis le Journal et pas
-   * encore envoyée entre ainsi dans le tableau, et son rang est pris.
-   */
-  queuedOps: OutboxOp[];
+  readStamp: ReadStamp | null;
 }
 
 /**
@@ -230,7 +220,7 @@ export function CaptureScreen() {
   // Elle GARDE la réponse arrivée avant le montage du tableau (le chargement
   // continue après la borne de 3 s), étiquetée par génération de chargement et
   // par exécution, jusqu'à ce que ce tableau-là vienne la prendre.
-  const [lateBox] = useState(() => createLateMailbox<ReconcileAction>());
+  const [lateBox] = useState(() => createLateMailbox<TodayExecution>());
   // L'état courant du tableau monté, lu à la demande (adoption tardive, cf.
   // `canAdoptLateExecution`). Posé par le tableau à son montage, retiré au
   // démontage.
@@ -385,14 +375,10 @@ export function CaptureScreen() {
         progress: today?.progress ?? {},
         datedNotes: today?.datedNotes ?? {},
         restored,
-        pendingSetIds:
-          today && restored && today.executionId === restored.executionId
-            ? today.pendingSetIds
-            : null,
-        // Avec celles que la lecture du jour a relevées à ses deux bouts : une
-        // écriture acquittée pendant son trajet n'est plus en file, et la
-        // réponse, partie avant, ne la porte pas.
-        queuedOps: unionOfQueueReads(today?.pendingSetOps ?? [], readOwnQueue()),
+        // La base a répondu pour l'exécution adoptée : sa lecture fait foi. Si
+        // l'état local tient une AUTRE exécution, c'est lui qui prime (cf. le
+        // réducteur) et cette lecture ne le concerne pas.
+        readStamp: today && (!restored || today.executionId === restored.executionId) ? today.stamp : null,
       };
       initRef.current = init;
       setLoad({
@@ -458,41 +444,12 @@ export function CaptureScreen() {
       // a saisi ou annulé pendant le trajet.
       if (late && restored !== null) {
         const gen = loadGenRef.current;
-        const knownAtDeparture = Object.values(restored.progress).flatMap((p) =>
-          p.setIds.filter((id): id is string => id !== null),
-        );
         void late.then((lateToday) => {
           if (!lateToday || !active() || loadGenRef.current !== gen) return;
           if (lateToday.executionId !== restored.executionId) return;
-          const queue = readQueue();
           // Remise par la boîte : le tableau n'est peut-être pas encore monté.
-          lateBox.post(gen, restored.executionId, {
-            type: 'reconcile-progress',
-            base: lateToday.progress,
-            pendingSetIds: [
-              ...lateToday.pendingSetIds,
-              ...queue.filter(isSetInsertion).map((op) => op.id),
-            ],
-            knownAtDeparture,
-            // Avec ses valeurs : une série corrigée ici pendant le trajet garde
-            // sa valeur locale (cf. `reconcileProgress`).
-            departure: restored.progress,
-            // Les notes datées aussi : une note écrite ailleurs (autre appareil,
-            // ancien client) que l'état local ignore est adoptée ; une note
-            // locale ou en attente d'envoi n'est jamais touchée. Les écritures
-            // de notes se relèvent comme les séries, avant et après la lecture
-            // (`lateToday.pendingNoteKeys`) puis à l'arrivée : un effacement
-            // acquitté pendant le trajet a vidé la file, la réponse, partie
-            // avant, porte encore la note.
-            // Les écritures de séries qui chevauchent la lecture sont rejouées
-            // sur le réalisé réconcilié, valeurs et rangs complets.
-            queuedOps: unionOfQueueReads(lateToday.pendingSetOps, readOwnQueue()),
-            datedNotes: lateToday.datedNotes,
-            pendingNoteKeys: [
-              ...lateToday.pendingNoteKeys,
-              ...pendingDatedNoteKeys(queue, restored.executionId),
-            ],
-          });
+          // Il relève les écritures locales au moment d'appliquer la réponse.
+          lateBox.post(gen, restored.executionId, lateToday);
         });
       }
     },
@@ -736,7 +693,7 @@ function CaptureBoard({
   template: Session;
   extras: (SessionExercise | null)[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
-  lateBox: LateMailbox<ReconcileAction>;
+  lateBox: LateMailbox<TodayExecution>;
   /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
   boardStateRef: { current: (() => CaptureState) | null };
   /** Génération du chargement dont ce tableau est issu : il ne prend que ses réponses. */
@@ -830,23 +787,15 @@ function CaptureBoard({
     // L'exécution porte la version de séance adoptée au chargement ; un état
     // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
     const versioned = { ...fromSupabase, seanceVersionId };
-    // Dernier temps, dans tous les cas : les écritures de séries de cette
-    // exécution encore en file (cf. `CaptureInit.queuedOps`).
-    const { queuedOps } = init;
-    const withQueued = (built: CaptureState): CaptureState => {
-      const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
-      return withReconciledProgress(built, progress);
-    };
-    if (!restored) return withQueued(versioned);
-    const merged = mergeProgress(versioned, restored);
-    // La base a répondu pour cette exécution : elle fait foi pour les séries,
-    // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
-    // le Journal revenait ici, le cache local étant le plus long.
-    const { pendingSetIds } = init;
-    if (pendingSetIds === null) return withQueued(merged);
-    return withQueued({
-      ...merged,
-      progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
+    // LE RÉALISÉ : la réponse de la base quand elle a répondu pour cette
+    // exécution, sinon ce que l'appareil a gardé, plus les écritures locales
+    // que cette lecture ne contient pas (`openingState`, state.ts).
+    return openingState({
+      hydrated: versioned,
+      restored,
+      read: init.readStamp !== null ? { progress, datedNotes, stamp: init.readStamp } : null,
+      writesSince,
+      asOf: readStamp(),
     });
   });
 
@@ -885,7 +834,17 @@ function CaptureBoard({
   const [mountedExecutionId] = useState(() => state.executionId);
   useEffect(
     () =>
-      lateBox.register(generation, mountedExecutionId, (action) => {
+      lateBox.register(generation, mountedExecutionId, (lateToday) => {
+        // Les écritures locales que la réponse ne contient pas, relevées
+        // MAINTENANT : la boîte a pu la garder le temps du montage.
+        const asOf = readStamp();
+        const action: ReconcileAction = {
+          type: 'reconcile-progress',
+          base: lateToday.progress,
+          writes: writesSince(lateToday.stamp),
+          asOf,
+          datedNotes: lateToday.datedNotes,
+        };
         dispatch(action);
         stateRef.current = captureReducer(stateRef.current, action);
         setRealityEpoch((n) => n + 1);

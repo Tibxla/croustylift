@@ -21,6 +21,7 @@ import {
 import { upperA } from '../features/capture/fixtures'
 import { currentBlockers, UNPERSISTED_CAPTURE_BLOCK, UNPERSISTED_WRITES_BLOCK } from './reload-guards'
 import { shouldReload } from './update'
+import { REGISTRY_KEY, storedPendingIds } from '../test/registry'
 
 class MemoryStorage {
   private store = new Map<string, string>()
@@ -44,7 +45,7 @@ function quota(): { full: boolean } {
   const store = globalThis.localStorage
   const setItem = store.setItem.bind(store)
   store.setItem = (k: string, v: string) => {
-    if (state.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError')
+    if (state.full && k === REGISTRY_KEY) throw new Error('QuotaExceededError')
     setItem(k, v)
   }
   return state
@@ -129,7 +130,7 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     enqueue(execOp)
     enqueue(setOp('s1', 1))
     enqueue(closeOp)
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull()
+    expect(storedPendingIds()).toEqual([])
     expect(currentBlockers()).toEqual([UNPERSISTED_WRITES_BLOCK])
     expect(wouldReload()).toBe(false)
   })
@@ -141,7 +142,7 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
 
     state.full = false
     enqueue(setOp('s1', 1))
-    expect(localStorage.getItem('croustylift:outbox')).not.toBeNull()
+    expect(storedPendingIds()).toEqual(['exec-1', 's1'])
     expect(currentBlockers()).toEqual([])
     expect(wouldReload()).toBe(true)
   })
@@ -156,11 +157,10 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     // L'utilisateur libère de la place, hors ligne : aucun enfilement, aucun
     // acquittement. Seule la question « peut-on recharger ? » repasse.
     state.full = false
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull()
+    expect(storedPendingIds()).toEqual([])
     expect(wouldReload()).toBe(true)
-    // La file entière est sur l'appareil, dans l'ordre : le rechargement ne perd rien.
-    const persisted = JSON.parse(localStorage.getItem('croustylift:outbox')!) as { id: string }[]
-    expect(persisted.map((op) => op.id)).toEqual(['exec-1', 's1', 'exec-1'])
+    // Tout est sur l'appareil, dans l'ordre : le rechargement ne perd rien.
+    expect(storedPendingIds()).toEqual(['exec-1', 's1', 'exec-1'])
     expect(storageFailing()).toBe(false)
     expect(pendingCount()).toBe(3)
   })
@@ -170,7 +170,7 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     enqueue(execOp)
     expect(wouldReload()).toBe(false)
     expect(wouldReload()).toBe(false)
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull()
+    expect(storedPendingIds()).toEqual([])
     expect(pendingCount()).toBe(1)
     expect(currentBlockers()).toEqual([UNPERSISTED_WRITES_BLOCK])
   })

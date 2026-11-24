@@ -40,7 +40,7 @@ vi.mock('../../lib/supabase', () => {
 
 import { deleteExecutionById, deleteSetById, updateExecution } from './data';
 import { deleteDatedNoteById } from '../notes/data';
-import { clearQueue, enqueue, flush, readQuarantine, readQueue } from './outbox';
+import { clearQueue, enqueue, flush, listRefused, readQueue } from './outbox';
 import { syncFns } from './sync';
 
 class MemoryStorage {
@@ -102,9 +102,9 @@ describe('lignes touchées', () => {
 
     const result = await flush(syncFns);
 
-    expect(result).toEqual({ remaining: 0, flushed: 2 });
+    expect(result).toMatchObject({ remaining: 0, flushed: 2 });
     expect(readQueue()).toEqual([]);
-    expect(readQuarantine()).toEqual([]);
+    expect(listRefused()).toEqual([]);
     expect(server.performed_sets).toEqual([]);
   });
 });

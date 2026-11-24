@@ -81,7 +81,7 @@ const rewrite = (weightKg: number): OutboxOp => ({
 });
 
 describe('résiduel 5 : une écriture refusée puis remplacée n’est pas une sauvegarde', () => {
-  it.fails('l’éditeur de séance passée apprend que sa correction attend encore', async () => {
+  it('l’éditeur de séance passée apprend que sa correction attend encore', async () => {
     // La base refuse 9999 kg (borne), puis le réseau tombe.
     upsertSet.mockImplementation(async (row: { weightKg: number }) => {
       if (row.weightKg === 9999) throw Object.assign(new Error('check'), { code: '23514' });

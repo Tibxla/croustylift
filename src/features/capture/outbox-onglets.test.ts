@@ -1,5 +1,5 @@
-// Deux ONGLETS sur la même file (relecture Codex du lot 3A) : deux instances du
-// module `outbox`, un seul stockage partagé, comme deux onglets du navigateur.
+// Deux ONGLETS sur le même registre (relecture Codex du lot 3A) : deux instances
+// du module `outbox`, un seul stockage partagé, comme deux onglets du navigateur.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OutboxOp, SyncFns } from './outbox';
 
@@ -14,7 +14,7 @@ class SharedStorage {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
   setItem(k: string, v: string): void {
-    if (this.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+    if (this.full && k === 'croustylift:registre') throw new Error('QuotaExceededError');
     this.store.set(k, String(v));
   }
   removeItem(k: string): void {
@@ -73,8 +73,15 @@ async function until(ready: () => boolean): Promise<void> {
   if (!ready()) throw new Error('condition jamais atteinte');
 }
 
+/** Les écritures EN ATTENTE de l'enregistrement tel qu'il est écrit sur l'appareil. */
 const persistedIds = () =>
-  (JSON.parse(storage.getItem('croustylift:outbox') ?? '[]') as OutboxOp[]).map((op) => op.id);
+  (
+    JSON.parse(storage.getItem('croustylift:registre') ?? '{"entries":[]}') as {
+      entries: { op: OutboxOp; fate: string }[];
+    }
+  ).entries
+    .filter((entry) => entry.fate === 'pending')
+    .map((entry) => entry.op.id);
 
 beforeEach(() => {
   storage = new SharedStorage();
@@ -227,7 +234,7 @@ describe('verrou de flush occupé par un autre onglet', () => {
     // B logge sa dernière série : verrou pris, rien ne part.
     b.enqueue(setOp('S1'));
     const tabB = recorder();
-    expect(await b.flush(tabB.fns)).toEqual({ remaining: 2, flushed: 0 });
+    expect(await b.flush(tabB.fns)).toMatchObject({ remaining: 2, flushed: 0 });
     expect(tabB.sent).toEqual([]);
 
     // La requête de A échoue, A libère le verrou. Aucune nouvelle saisie dans B.

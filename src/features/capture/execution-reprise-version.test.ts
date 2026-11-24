@@ -49,15 +49,15 @@ vi.mock('../../lib/supabase', () => {
 });
 
 import { loadTodayExecution } from './data';
-import { clearQueue, enqueue } from './outbox';
+import { clearQueue, enqueue, readStamp, writesSince } from './outbox';
 import {
   captureReducer,
   getProgress,
   hydratedState,
   initialState,
-  mergeProgress,
   nextSetOrder,
-  reconcileProgress,
+  openingState,
+  type CaptureState,
 } from './state';
 import { upperA } from './fixtures';
 import { saveLocalAccount } from '../../lib/local-account';
@@ -113,20 +113,34 @@ function etatLocal() {
   return state;
 }
 
-/** Le rang que prendrait la prochaine série, comme la Capture le dérive au montage. */
-async function rangSuivant(localExecutionId: string | null): Promise<number> {
-  const restored = etatLocal();
+/**
+ * Le tableau tel que la Capture le monte : la vraie lecture, puis le vrai état
+ * d'ouverture (`openingState`), sur le vrai registre d'écritures.
+ */
+async function ouverture(restored: CaptureState | null, localExecutionId: string | null = restored?.executionId ?? null) {
   const today = await loadTodayExecution(SEANCE, DATE, localExecutionId);
-  const fromBase = hydratedState(
+  const hydrated = hydratedState(
     upperA,
     today?.progress ?? {},
     today?.datedNotes ?? {},
     DATE,
     today?.executionId ?? 'exec-neuve',
   );
-  const merged = mergeProgress(fromBase, restored);
-  expect(merged.executionId).toBe('exec-1');
-  return nextSetOrder(getProgress(merged, EXO), undefined);
+  const state = openingState({
+    hydrated,
+    restored,
+    read: today && (!restored || today.executionId === restored.executionId) ? today : null,
+    writesSince,
+    asOf: readStamp(),
+  });
+  return { today, state };
+}
+
+/** Le rang que prendrait la prochaine série, comme la Capture le dérive au montage. */
+async function rangSuivant(localExecutionId: string | null): Promise<number> {
+  const { state } = await ouverture(etatLocal(), localExecutionId);
+  expect(state.executionId).toBe('exec-1');
+  return nextSetOrder(getProgress(state, EXO), undefined);
 }
 
 beforeEach(() => {
@@ -214,9 +228,7 @@ describe('série annulée dont la suppression attend encore', () => {
   }
 
   async function reprise() {
-    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
-    const fromBase = hydratedState(upperA, today?.progress ?? {}, {}, DATE, today?.executionId);
-    return getProgress(mergeProgress(fromBase, etatApresAnnulation()), EXO);
+    return getProgress((await ouverture(etatApresAnnulation())).state, EXO);
   }
 
   beforeEach(() => {
@@ -235,18 +247,18 @@ describe('série annulée dont la suppression attend encore', () => {
   it('sans état local (stockage vidé), la série annulée ne revient pas non plus', async () => {
     enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: [EXO] });
 
-    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
+    const { state } = await ouverture(null, 'exec-1');
 
-    expect(today?.progress[EXO]?.setIds).toEqual(['set-1']);
+    expect(getProgress(state, EXO).setIds).toEqual(['set-1']);
   });
 
   it('un exo dont toutes les séries sont annulées disparaît du réalisé relu', async () => {
     enqueue({ type: 'deleteSet', id: 'set-1' });
     enqueue({ type: 'deleteSet', id: 'set-2' });
 
-    const today = await loadTodayExecution(SEANCE, DATE, 'exec-1');
+    const { state } = await ouverture(null, 'exec-1');
 
-    expect(today?.progress[EXO]).toBeUndefined();
+    expect(state.progress[EXO]).toBeUndefined();
   });
 
   it('sans suppression en attente, le réalisé de la base est repris tel quel', async () => {
@@ -264,17 +276,8 @@ describe('série annulée dont la suppression attend encore', () => {
 describe('série supprimée depuis le Journal, suppression acquittée', () => {
   /** La reprise telle que le tableau de capture la fait à son montage. */
   async function reprise() {
-    const restored = etatLocal(); // set-1 et set-2, loggées ici
-    const today = await loadTodayExecution(SEANCE, DATE, restored.executionId);
-    const merged = mergeProgress(
-      hydratedState(upperA, today?.progress ?? {}, {}, DATE, today?.executionId),
-      restored,
-    );
-    const progress =
-      today && today.executionId === restored.executionId
-        ? reconcileProgress(restored.progress, today.progress, { pendingSetIds: today.pendingSetIds })
-        : merged.progress;
-    return getProgress({ ...merged, progress }, EXO);
+    // set-1 et set-2, loggées ici.
+    return getProgress((await ouverture(etatLocal())).state, EXO);
   }
 
   it('la série supprimée ne revient pas, la suivante prend le rang 2', async () => {

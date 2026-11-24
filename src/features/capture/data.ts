@@ -22,11 +22,14 @@
 import {
   cachedKeys,
   cachedRead,
+  cachedReadStamped,
   dropRead,
   networkFirstRead,
   onReadWritten,
   peekRead,
+  peekReadStamped,
   refreshRead,
+  setReadStamper,
 } from '../../lib/read-cache';
 import {
   CAPTURE_SOURCE_KEY,
@@ -48,9 +51,18 @@ import {
   type PersonalRecordBySide,
 } from '../../domain/pr';
 import { getCurrentRoutineId, getCurrentVersionId, listRoutines, listSeances } from '../authoring/data';
-import { loadExerciseNote, pendingDatedNoteKeys } from '../notes/data';
+import { loadExerciseNote } from '../notes/data';
 import type { DatedNoteDraft, HydratedProgress } from './state';
-import { isSetInsertion, isSetWrite, readOwnQueue, unionOfQueueReads, type OutboxOp } from './outbox';
+import {
+  readOwnQueue,
+  readStamp,
+  writesSince,
+  type LocalWrite,
+  type OutboxOp,
+  type ReadStamp,
+  type SetValueColumn,
+} from './outbox';
+import { datedNotesReality, executionReality, exerciseRowsReality } from './execution-reality';
 import type { PreviousDatedNote, Session, SessionExercise } from './fixtures';
 import { groupSetsForEdit, type EditableExercise, type EditableSetRow } from './past-session-edit';
 import {
@@ -541,124 +553,27 @@ export function reconstructExerciseExecutions(
 }
 
 /**
- * Fusionne les écritures ENCORE EN ATTENTE (outbox) par-dessus les lignes lues,
- * pour un exo donné (ADR 0014). Sans elle, une séance capturée hors-ligne
- * n'existe dans AUCUNE source de la Référence — ni en base (pas remontée), ni
- * dans la copie locale (que le réseau alimente) — et le repère « dernière fois »
- * affiche l'avant-dernière séance, de façon garantie.
- *
- * Applique la file DANS SON ORDRE (FIFO, cf. outbox) : `insertSet` pose ou
- * remplace une ligne, `deleteSet` la retire, `deleteExecution` retire toutes
- * celles de son exécution. Le contexte d'exécution (date, version de séance)
- * vient des lignes déjà lues, complété par les `upsertExecution` encore en file
- * — c'est ce qui rend datable une séance jamais remontée.
- *
- * LIMITE ASSUMÉE : une série dont l'`upsertExecution` est DÉJÀ partie alors
- * qu'elle-même attend encore (coupure entre deux ops d'un même flush) n'a plus
- * de contexte lisible ici et reste ignorée jusqu'au prochain chargement en
- * ligne. Idem pour un `deleteSet` visant une ligne d'une copie locale écrite
- * avant le champ `id`. Deux cas transitoires, résorbés par la revalidation.
- */
-export function applyPendingSets(
-  rows: PerformedSetWithExecutionRow[],
-  ops: readonly OutboxOp[],
-  exerciseId: string,
-): PerformedSetWithExecutionRow[] {
-  const context = new Map<string, NonNullable<PerformedSetWithExecutionRow['executions']>>();
-  for (const row of rows) {
-    if (row.executions) context.set(row.execution_id, row.executions);
-  }
-  for (const op of ops) {
-    if (op.type !== 'upsertExecution') continue;
-    context.set(op.id, {
-      performed_on: op.performedOn,
-      // La ligne n'existe pas encore côté serveur, donc pas de `created_at` :
-      // `startedAt` en tient lieu pour le départage à date égale (cf.
-      // `lastReference`). Absent (legacy, ADR 0011) -> chaîne vide, qui perd le
-      // départage : sans conséquence, la date suffit à trancher hors du jour même.
-      created_at: op.startedAt ?? '',
-      seance_version_id: op.seanceVersionId,
-    });
-  }
-
-  // Identité d'une ligne : son `id` quand la copie locale le porte, sinon
-  // (execution, order, côté) — unique par exo et stable, cf. ADR 0005.
-  const keyOf = (row: PerformedSetWithExecutionRow): string =>
-    row.id ?? `${row.execution_id}:${row.set_order}:${row.side ?? ''}`;
-  const byKey = new Map(rows.map((row) => [keyOf(row), row] as const));
-
-  for (const op of ops) {
-    switch (op.type) {
-      case 'patchSet': {
-        if (op.exerciseId !== exerciseId) break;
-        // Écriture partielle (correction, remontée de rang) : elle ne touche
-        // qu'une ligne déjà lue, et que ses colonnes ; elle n'en crée pas.
-        const known = byKey.get(op.id);
-        if (!known) break;
-        byKey.set(
-          op.id,
-          op.only === 'values'
-            ? { ...known, weight_kg: op.weightKg, reps: op.reps, rir: op.rir }
-            : { ...known, set_order: op.setOrder },
-        );
-        break;
-      }
-      case 'insertSet': {
-        if (op.exerciseId !== exerciseId) break;
-        const executions = context.get(op.executionId);
-        if (!executions) break; // Sans date ni scope, la ligne ne dérive rien.
-        byKey.set(op.id, {
-          id: op.id,
-          weight_kg: op.weightKg,
-          reps: op.reps,
-          rir: op.rir,
-          set_order: op.setOrder,
-          side: op.side ?? null,
-          execution_id: op.executionId,
-          executions,
-        });
-        break;
-      }
-      case 'deleteSet':
-        byKey.delete(op.id);
-        break;
-      case 'deleteExecution':
-        for (const [key, row] of byKey) {
-          if (row.execution_id === op.id) byKey.delete(key);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  // Même ordre que la requête (performed_on puis created_at) : `reconstructExerciseExecutions`
-  // documente que l'ordre des exécutions rendues suit celui des lignes.
-  return [...byKey.values()].sort((a, b) => {
-    const da = a.executions?.performed_on ?? '';
-    const db = b.executions?.performed_on ?? '';
-    if (da !== db) return da < db ? -1 : 1;
-    const ca = a.executions?.created_at ?? '';
-    const cb = b.executions?.created_at ?? '';
-    if (ca !== cb) return ca < cb ? -1 : 1;
-    return 0;
-  });
-}
-
-/**
  * Lignes plates de l'historique réel d'un exo : ses performed_sets (scopés RLS)
  * joints à leur exécution (date, created_at, version de séance). Base UNIQUE des
  * dérivées (`deriveExerciseHistory`) : la Référence scopée séance se filtre sur
  * `seance_version_id`, les records gardent tout. User neuf -> liste vide.
  */
-async function loadExerciseExecutions(exerciseId: string): Promise<PerformedSetWithExecutionRow[]> {
+async function loadExerciseExecutions(
+  exerciseId: string,
+): Promise<{ value: PerformedSetWithExecutionRow[]; stamp: ReadStamp | null }> {
   // Cache d'abord (ADR 0012) : la Référence et les Records se dérivent de la
   // copie locale hors-ligne. Elle peut être en retard d'une exécution faite
   // ailleurs (cas résiduel ADR 0003) ; ce qui est écrit d'ICI ne la laisse pas
-  // périmée : tant qu'une série attend, l'outbox la fusionne (ADR 0014), et dès
-  // qu'elle est acquittée la copie est relue (`refreshExerciseRows`).
-  return cachedRead(exerciseRowsKey(exerciseId), () => fetchExerciseRows(exerciseId));
+  // périmée : la copie porte l'ESTAMPILLE de la lecture qui l'a écrite, et les
+  // écritures locales qu'elle ne contient pas sont appliquées par-dessus (ADR
+  // 0014, `exerciseRowsReality`). Dès qu'une série est acquittée la copie est
+  // relue (`refreshExerciseRows`) : passé la rétention du registre, c'est elle
+  // qui tient.
+  return cachedReadStamped(exerciseRowsKey(exerciseId), () => fetchExerciseRows(exerciseId));
 }
+
+// Chaque lecture réseau du cache relève l'estampille du registre à son départ.
+setReadStamper(readStamp);
 
 /** Clé de la copie locale de l'historique d'un exo. */
 const EXERCISE_ROWS_PREFIX = 'exo-execs:';
@@ -829,10 +744,10 @@ export async function loadExerciseHistory(
 export async function loadExerciseRows(
   exerciseId: string,
 ): Promise<PerformedSetWithExecutionRow[]> {
-  const rows = await loadExerciseExecutions(exerciseId);
-  // Les écritures en attente du compte reconnu seulement : celles d'un autre
-  // compte restées en file n'entrent pas dans ses repères.
-  return applyPendingSets(rows, readOwnQueue(), exerciseId);
+  const { value: rows, stamp } = await loadExerciseExecutions(exerciseId);
+  // Les écritures du compte reconnu seulement (`writesSince`) : celles d'un
+  // autre compte restées sur l'appareil n'entrent pas dans ses repères.
+  return exerciseRowsReality(rows, writesSince(stamp), exerciseId);
 }
 
 /**
@@ -848,10 +763,10 @@ export function peekExerciseHistory(
   unilateral: boolean,
   currentExecutionId: string | null,
 ): ExerciseHistory | null {
-  const rows = peekRead<PerformedSetWithExecutionRow[]>(exerciseRowsKey(exerciseId));
-  if (rows === null) return null;
+  const copy = peekReadStamped<PerformedSetWithExecutionRow[]>(exerciseRowsKey(exerciseId));
+  if (copy === null) return null;
   return deriveExerciseHistory(
-    applyPendingSets(rows, readOwnQueue(), exerciseId),
+    exerciseRowsReality(copy.value, writesSince(copy.stamp), exerciseId),
     exerciseId,
     seanceVersionIds,
     unilateral,
@@ -1062,31 +977,13 @@ export interface TodayExecution {
   progress: Record<string, HydratedProgress>;
   datedNotes: Record<string, DatedNoteDraft>;
   /**
-   * Les séries dont l'INSERTION attendait en file pendant la lecture (file lue
-   * avant et après). La réponse ne les porte pas forcément : à la reprise, une
-   * série locale absente de `progress` n'est gardée que si elle est ici, sinon
-   * c'est qu'elle a été supprimée ailleurs (cf. `reconcileProgress`, state.ts).
+   * ESTAMPILLE de cette lecture (`readStamp`, outbox.ts), relevée à son départ.
+   * `progress` et `datedNotes` sont ce que la BASE a rendu, figés à ce départ :
+   * qui les affiche applique par-dessus les écritures locales qu'ils ne
+   * contiennent pas (`writesSince(stamp)`, execution-reality.ts), relevées au
+   * moment de s'en servir.
    */
-  pendingSetIds: string[];
-  /**
-   * Les notes datées de cette exécution dont une ÉCRITURE (pose ou effacement)
-   * attendait en file pendant la lecture, file lue avant et après : leurs exos,
-   * ou l'id de la note pour un effacement hérité (cf. `pendingDatedNoteKeys`).
-   * La réponse est figée à son départ : pour ces notes elle est déjà périmée,
-   * même si l'écriture a été acquittée pendant le trajet et que la file est vide
-   * à l'arrivée. Une note effacée ainsi est déjà retirée de `datedNotes`.
-   */
-  pendingNoteKeys: string[];
-  /**
-   * Les écritures de SÉRIES (insertions, corrections, suppressions) en file
-   * pendant la lecture, relevées avant et après, dans l'ordre de la file. La
-   * réponse est figée à son départ : elle porte les valeurs et les rangs
-   * d'AVANT ces écritures, même acquittées pendant le trajet. Elles sont donc
-   * réappliquées par-dessus (`applyQueuedSets`, state.ts), avec leurs valeurs
-   * complètes : sans cela une renumérotation faite dans le Journal était
-   * défaite par la réponse, et la série suivante laissait un trou de rang.
-   */
-  pendingSetOps: OutboxOp[];
+  stamp: ReadStamp;
 }
 
 /**
@@ -1126,45 +1023,24 @@ export async function loadTodayExecution(
   //
   // La base ne suffit pas à dire qu'une exécution est encore EN COURS : Clôture,
   // Annulation et suppression effacent l'état local dès le geste, alors que leur
-  // écriture attend peut-être encore dans l'outbox. Une exécution que la file
-  // clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait déjà
-  // close. Une série qu'elle supprime est de même retirée du réalisé relu
-  // (`withoutPendingDeletions`). On lit la file aux deux bouts de la lecture, car la réponse est figée
-  // à son départ : avant (l'écriture a pu être acquittée pendant le trajet, la
-  // file est alors vide au retour) et après (elle a pu être enfilée entre-temps).
-  const pendingBefore = readOwnQueue();
+  // écriture attend peut-être encore au registre. Une exécution qu'une écriture
+  // locale clôt ou supprime n'est donc PAS adoptée, comme si la base la montrait
+  // déjà close. La réponse est figée à son départ : on la juge avec les
+  // écritures locales qu'elle ne contient pas (`writesSince(stamp)`), en attente
+  // ou acquittées pendant son trajet.
+  const stamp = readStamp();
   try {
     const today = await fetchTodayExecution(seanceId, date, localExecutionId);
     if (today === null) return null;
-    const pendingAfter = readOwnQueue();
-    // Même décalage pour une SÉRIE annulée : elle a quitté l'état local dès le
-    // geste, son `deleteSet` attend peut-être encore, et la base la porte
-    // toujours. Rendue telle quelle, elle revenait à l'écran au remontage (la
-    // fusion garde la liste la plus longue) et faussait le rang de la suivante.
-    const pending = [...pendingBefore, ...pendingAfter];
-    const visible = withoutPendingDeletions(today, pending);
+    const writes = writesSince(stamp);
     // Ce que la base garde face à une suppression conditionnelle (« Changer de
     // séance ») : une série ou une note acquittée d'ailleurs, et pas annulée ici.
+    const visible = executionReality({ executionId: today.executionId, read: today.progress, writes });
+    const notes = datedNotesReality(today.executionId, today.datedNotes, writes);
     const carriesEntries =
-      Object.values(visible.progress).some((p) => p.sets.length > 0) ||
-      Object.keys(visible.datedNotes).length > 0;
-    const retired =
-      isExecutionRetiredInQueue(today.executionId, pendingBefore, carriesEntries) ||
-      isExecutionRetiredInQueue(today.executionId, pendingAfter, carriesEntries);
-    if (retired) return null;
-    return {
-      ...visible,
-      // Les INSERTIONS seulement : une écriture partielle ne crée pas la ligne,
-      // elle ne justifie donc pas de garder une série que la base n'a pas.
-      pendingSetIds: [...new Set(pending.filter(isSetInsertion).map((op) => op.id))],
-      // Les notes aussi se lisent aux deux bouts : un effacement acquitté
-      // pendant le trajet (par cet onglet ou un autre) a vidé la file, et la
-      // réponse porte encore la note.
-      pendingNoteKeys: [...new Set(pendingDatedNoteKeys(pending, today.executionId))],
-      pendingSetOps: unionOfQueueReads(pendingBefore, pendingAfter).filter(
-        (op) => isSetWrite(op) || op.type === 'deleteSet',
-      ),
-    };
+      Object.values(visible).some((p) => p.sets.length > 0) || Object.keys(notes).length > 0;
+    if (isExecutionRetired(today.executionId, writes, carriesEntries)) return null;
+    return { ...today, stamp };
   } catch {
     return null;
   }
@@ -1203,63 +1079,7 @@ export async function loadTodayExecutionWithin(
 }
 
 /**
- * Le réalisé relu en base, moins ce que la file d'écritures supprime : les
- * séries (`deleteSet` en attente) et les notes datées (`deleteDatedNote`, par
- * son couple, ou par l'id de la note pour un effacement hérité). Un exo qui n'a
- * plus aucune série sort du réalisé. Pur : l'appelant passe la file lue avant
- * ET après la lecture réseau.
- */
-export function withoutPendingDeletions(
-  today: TodayExecution,
-  pendingOps: readonly OutboxOp[],
-): TodayExecution {
-  return withoutDeletedNotes(withoutDeletedSets(today, pendingOps), pendingOps);
-}
-
-function withoutDeletedSets(today: TodayExecution, pendingOps: readonly OutboxOp[]): TodayExecution {
-  const deleted = new Set(
-    pendingOps.filter((op) => op.type === 'deleteSet').map((op) => op.id),
-  );
-  if (deleted.size === 0) return today;
-  const progress: Record<string, HydratedProgress> = {};
-  for (const [exerciseId, entry] of Object.entries(today.progress)) {
-    const kept = entry.setIds
-      .map((id, index) => ({ id, set: entry.sets[index] }))
-      .filter(
-        (row): row is { id: string; set: PerformedSet } =>
-          row.set !== undefined && !deleted.has(row.id),
-      );
-    if (kept.length === 0) continue;
-    progress[exerciseId] = { sets: kept.map((r) => r.set), setIds: kept.map((r) => r.id) };
-  }
-  return { ...today, progress };
-}
-
-/**
- * Une note dont l'effacement attend (ou attendait au départ de la lecture) a
- * quitté l'état local dès le geste, et la base la porte encore : rendue telle
- * quelle, elle revenait dans la Capture. L'effacement vise le couple
- * (exécution, exercice) ; celui d'un bundle antérieur ne porte que l'id.
- */
-function withoutDeletedNotes(today: TodayExecution, pendingOps: readonly OutboxOp[]): TodayExecution {
-  const deletes = pendingOps.filter((op) => op.type === 'deleteDatedNote');
-  if (deletes.length === 0) return today;
-  const datedNotes: Record<string, DatedNoteDraft> = {};
-  let removed = false;
-  for (const [exerciseId, note] of Object.entries(today.datedNotes)) {
-    const gone = deletes.some((op) =>
-      op.executionId !== undefined && op.exerciseId !== undefined
-        ? op.executionId === today.executionId && op.exerciseId === exerciseId
-        : op.id === note.id,
-    );
-    if (gone) removed = true;
-    else datedNotes[exerciseId] = note;
-  }
-  return removed ? { ...today, datedNotes } : today;
-}
-
-/**
- * La file d'écritures en attente RETIRE-t-elle cette exécution : une clôture
+ * Les écritures locales (`writesSince`) RETIRENT-elles cette exécution : une clôture
  * (`updateExecution` portant un `closedAt`) ou une suppression (`deleteExecution`,
  * posée par l'Annulation comme par le journal) qui la vise ? Une correction de
  * métriques sans clôture, ou une op visant une autre exécution, ne compte pas.
@@ -1274,13 +1094,16 @@ function withoutDeletedNotes(today: TodayExecution, pendingOps: readonly OutboxO
  * ailleurs APRÈS la lecture n'est pas vue : l'exécution gardée reste alors
  * ouverte à côté de la nouvelle (classe résiduelle du multi-appareil, ADR 0003).
  */
-export function isExecutionRetiredInQueue(
+export function isExecutionRetired(
   executionId: string,
-  pendingOps: readonly OutboxOp[],
+  writes: readonly LocalWrite[],
   /** La lecture montre-t-elle une série ou une note de cette exécution ? */
   carriesEntries = false,
 ): boolean {
-  return pendingOps.some((op) => {
+  // Une clôture ou une suppression que la base a REFUSÉE ne retire rien : elle
+  // attend un geste dans la feuille des saisies refusées.
+  return writes.some(({ op, fate }) => {
+    if (fate === 'refused') return false;
     if (op.id !== executionId) return false;
     if (op.type === 'deleteExecution') return true;
     if (op.type === 'deleteExecutionIfEmpty') return !carriesEntries;
@@ -1408,10 +1231,8 @@ async function fetchTodayExecution(
     startedAt: startedMs !== null ? Math.min(startedMs, createdMs) : createdMs,
     progress,
     datedNotes,
-    // Remplis par `loadTodayExecution`, qui tient la file.
-    pendingSetIds: [],
-    pendingNoteKeys: [],
-    pendingSetOps: [],
+    // Posée par `loadTodayExecution`, qui la relève au départ.
+    stamp: 0,
   };
 }
 
@@ -1607,13 +1428,28 @@ export async function upsertSet(params: {
  */
 export async function patchSet(
   params:
-    | { id: string; only: 'values'; weightKg: number; reps: number; rir: number }
+    | {
+        id: string;
+        only: 'values';
+        weightKg: number;
+        reps: number;
+        rir: number;
+        /** Les colonnes à écrire ; absent : les trois (cf. `PatchSetOp.cols`). */
+        cols?: readonly SetValueColumn[];
+      }
     | { id: string; only: 'rank'; setOrder: number },
 ): Promise<number> {
-  const patch =
-    params.only === 'values'
-      ? { weight_kg: params.weightKg, reps: params.reps, rir: params.rir }
-      : { set_order: params.setOrder };
+  let patch: { set_order?: number; weight_kg?: number; reps?: number; rir?: number };
+  if (params.only === 'rank') patch = { set_order: params.setOrder };
+  else {
+    // Seules les colonnes que le geste a changées partent : corriger le poids
+    // ici et les reps sur un autre appareil garde les deux (ADR 0003).
+    const cols = params.cols ?? (['weightKg', 'reps', 'rir'] as const);
+    patch = {};
+    if (cols.includes('weightKg')) patch.weight_kg = params.weightKg;
+    if (cols.includes('reps')) patch.reps = params.reps;
+    if (cols.includes('rir')) patch.rir = params.rir;
+  }
   const { data, error } = await supabase
     .from('performed_sets')
     .update(patch)
