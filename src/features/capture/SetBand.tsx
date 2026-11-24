@@ -14,7 +14,7 @@
 // enfoncement. Annuler la dernière série reste dans la barre du bas.
 import { useLayoutEffect, useRef, type MouseEvent } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
-import { pairSidesByOrder } from '../../domain/unilateral';
+import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { Sign, Status, TONE, type Verdict } from '../../ui';
 import { formatWeight } from './format';
 import type { SetBadge } from './set-badges';
@@ -177,11 +177,15 @@ export function UniSetBand({
   /** Ouvre la correction du côté de la ligne d'id `setId`. */
   onEdit: (setId: string) => void;
 }) {
+  // Une case par série présente, rangées par rang (même incomplètes : trois
+  // gauches de suite font trois séries), et la case en cours est celle que vise
+  // le côté choisi (`targetSlotForSide`). Compter les seules séries complètes
+  // cachait la 3ᵉ gauche d'un exo prévu à deux séries.
   const pairs = pairSidesByOrder(sets);
-  const done = pairs.filter((p) => p.left !== null && p.right !== null).length;
-  const slots = Math.max(plannedMax, done + 1);
+  const current = targetSlotForSide(sets, side);
+  const slots = Math.max(plannedMax, pairs.length, current + 1);
   const scroll = slots > 4;
-  const band = useKeepInView(done, slots);
+  const band = useKeepInView(current, slots);
   const badgeOf = (s: PerformedSet | null) => (s ? badgeStatus(badges[sets.indexOf(s)] ?? null) : null);
   const idOf = (s: PerformedSet | null) => (s ? (setIds[sets.indexOf(s)] ?? null) : null);
   return (
@@ -189,7 +193,7 @@ export function UniSetBand({
       {Array.from({ length: slots }, (_, i) => {
         const rank = i + 1;
         const p = pairs[i];
-        const isCurrent = i === done;
+        const isCurrent = i === current;
         const parts = SIDES.map(({ side: sd, letter }) => {
           const s = p ? (sd === 'left' ? p.left : p.right) : null;
           return { sd, letter, s, st: badgeOf(s), live: isCurrent && !s && sd === side };

@@ -99,7 +99,7 @@ import { flushOutbox } from './sync';
 import { boundSetValues } from './stepper-utils';
 import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
-import { pairSidesByOrder } from '../../domain/unilateral';
+import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
 import type { IndexItem } from './ExerciseIndex';
@@ -1473,7 +1473,9 @@ function CapturePanel({
   const completedSets = unilateral
     ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
     : progress.sets.length;
-  const rank = completedSets + 1;
+  // Le rang que dit « Logger » : en unilatéral, la série que vise le côté
+  // choisi (la case en cours de la bande, `targetSlotForSide`).
+  const rank = currentSide ? targetSlotForSide(progress.sets, currentSide) + 1 : completedSets + 1;
   const lastSet = progress.sets[progress.sets.length - 1] ?? null;
 
   // aria-live : annonce « série loggée » après chaque commit.

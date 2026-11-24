@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { effectiveReps, isZeroLoad } from '../../domain/e1rm';
 import { isRepsRecord } from '../../domain/pr';
-import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt } from '../../domain/unilateral';
+import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, targetSlotForSide } from '../../domain/unilateral';
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
@@ -275,9 +275,14 @@ export function ExerciseCapture({
   // La série « à battre » à la position courante (co-roi). En unilatéral (ADR
   // 0010), on l'apparie par (position, CÔTÉ CHOISI) : le repère suit le bras que
   // tu t'apprêtes à logger — sa dernière fois à lui. Bilatéral : par position.
+  // Le rang visé : en unilatéral, celui de la série que la saisie du côté choisi
+  // complète ou ouvre (`targetSlotForSide`, la case en cours de la bande), pas
+  // « séries complètes + 1 » : trois gauches de suite visent la 4ᵉ série à
+  // gauche, la 3ᵉ à droite.
+  const rank = unilateral && currentSide ? targetSlotForSide(progress.sets, currentSide) + 1 : loggedCount + 1;
   const refToBeat = unilateral
-    ? reference?.find((s) => s.order === completedSets + 1 && s.side === currentSide) ?? null
-    : reference?.find((s) => s.order === loggedCount + 1) ?? null;
+    ? reference?.find((s) => s.order === rank && s.side === currentSide) ?? null
+    : reference?.find((s) => s.order === rank) ?? null;
   // Sa mesure : l'e1RM, ou les reps effectives à 0 kg (cf. perf-readout.ts).
 
   // Mesure du BROUILLON, recalculée à chaque réglage, pour viser avant la série.
@@ -327,9 +332,8 @@ export function ExerciseCapture({
   const compact = useCompact();
   const hasNote =
     !isBlankNote(datedNote) || !isBlankNote(perExerciseNote) || !!(exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body));
-  const draft: PerformedSet = { order: completedSets + 1, weightKg, reps, rir, side: currentSide ?? undefined };
+  const draft: PerformedSet = { order: rank, weightKg, reps, rir, side: currentSide ?? undefined };
   const gap = refToBeat ? gapToRef(draft, refToBeat) : null;
-  const rank = completedSets + 1;
   // Le record se lit en reps effectives quand il est tenu à 0 kg (exo jamais chargé).
   const recordValue =
     displayRecord?.bestE1rm != null && displayRecord.bestE1rmSet
