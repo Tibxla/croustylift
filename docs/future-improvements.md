@@ -145,13 +145,6 @@ perte), finition.
   fier : une invitation réelle de bout en bout (le mécanisme est vérifié dans la source
   du serveur d'auth et par tests, pas sur le projet).
 
-### Base et import
-
-- **Réordonnancement des séances : fonction prête, éteinte.** `reorder_seances`
-  (migration 0023) est écrite et son appel aussi, derrière `REORDER_SEANCES_RPC`,
-  laissé à faux tant que la migration n'est pas appliquée. D'ici là, un `UPDATE` par
-  séance, sans transaction.
-
 ### Messages, tests, build
 
 - **Presque aucun test de composant.** Le projet n'a pas de bibliothèque de rendu DOM :

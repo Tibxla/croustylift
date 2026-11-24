@@ -60,7 +60,7 @@ import {
   deleteRoutine,
   deleteSeance,
   getCurrentRoutineId,
-  reorderSeancesViaRpc,
+  reorderSeances,
 } from './data';
 
 beforeEach(() => {
@@ -106,21 +106,26 @@ describe('getCurrentRoutineId', () => {
   });
 });
 
-describe('reorderSeancesViaRpc', () => {
-  it('appelle reorder_seances avec la routine et les ids dans l’ordre', async () => {
-    await reorderSeancesViaRpc('routine-1', ['s2', 's1', 's3']);
+describe('reorderSeances', () => {
+  it('appelle reorder_seances avec la routine et les ids dans l’ordre, en une requête', async () => {
+    const pending = reorderSeances('routine-1', ['s2', 's1', 's3']);
+    // Écriture du plan : le rechargement est bloqué le temps de la RPC.
+    expect(activeBlockers()).toEqual([PLAN_WRITE_BLOCK]);
+    await pending;
 
     expect(server.rpcCalls).toEqual([
       { fn: 'reorder_seances', args: { p_routine_id: 'routine-1', p_seance_ids: ['s2', 's1', 's3'] } },
     ]);
+    expect(activeBlockers()).toEqual([]);
   });
 
   it('relance l’erreur de la base (id en double ou hors de la routine)', async () => {
     server.rpcError = { code: '22023', message: 'id hors de la routine' };
 
-    await expect(reorderSeancesViaRpc('routine-1', ['s1', 's1'])).rejects.toMatchObject({
+    await expect(reorderSeances('routine-1', ['s1', 's1'])).rejects.toMatchObject({
       code: '22023',
     });
+    expect(activeBlockers()).toEqual([]);
   });
 });
 

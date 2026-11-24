@@ -642,64 +642,25 @@ export async function unarchiveSeance(id: string): Promise<void> {
 }
 
 /**
- * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Oui
- * depuis le 2026-11-23 (0023 appliquée en prod) : le réordonnancement passe par
- * elle, en une transaction. L'ancien chemin (une mise à jour par séance) reste
- * derrière ce drapeau pour une base qui n'aurait pas la migration.
- */
-export const REORDER_SEANCES_RPC = true;
-
-/**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
  * (index 0 = première). `orderedIds` doit lister les séances de la routine ;
  * les positions sont réassignées 0..n-1.
  *
- * Deux chemins, choisis par `REORDER_SEANCES_RPC` : la RPC transactionnelle
- * (`reorderSeancesViaRpc`), ou, tant qu'elle n'est pas en base, une mise à jour
- * par séance, en série et sans transaction (pas de bulk upsert pour ne pas
- * risquer d'écrire owner_id via un upsert mal formé).
+ * En UNE transaction côté serveur, par la RPC `reorder_seances` (migration
+ * 0023) : `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`,
+ * qui refuse (22023) un id en double ou hors de la routine.
  */
 export async function reorderSeances(
   routineId: string,
   orderedIds: string[],
 ): Promise<void> {
   return planWrite(async () => {
-    if (REORDER_SEANCES_RPC) {
-      await reorderSeancesViaRpc(routineId, orderedIds);
-      return;
-    }
-    for (let position = 0; position < orderedIds.length; position++) {
-      const id = orderedIds[position];
-      if (id === undefined) continue;
-      const { error } = await supabase
-        .from('seances')
-        .update({ position })
-        .eq('id', id);
-      if (error) throw error;
-    }
+    const { error } = await supabase.rpc('reorder_seances', {
+      p_routine_id: routineId,
+      p_seance_ids: orderedIds,
+    });
+    if (error) throw error;
   });
-}
-
-/**
- * Réordonne les séances d'une routine en UNE transaction côté serveur :
- * `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`, qui
- * refuse (22023) un id en double ou hors de la routine. La fonction n'est pas
- * encore dans `database.types.ts` (migration 0023 à appliquer) : d'où le cast
- * local, à retirer quand les types seront régénérés.
- */
-export async function reorderSeancesViaRpc(
-  routineId: string,
-  orderedIds: string[],
-): Promise<void> {
-  const rpc = supabase.rpc.bind(supabase) as unknown as (
-    fn: 'reorder_seances',
-    args: { p_routine_id: string; p_seance_ids: string[] },
-  ) => PromiseLike<{ error: unknown }>;
-  const { error } = await rpc('reorder_seances', {
-    p_routine_id: routineId,
-    p_seance_ids: orderedIds,
-  });
-  if (error) throw error;
 }
 
 // =====================================================================
