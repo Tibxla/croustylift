@@ -175,6 +175,11 @@ body {
   outline: 2px solid var(--color-ink);
   outline-offset: 2px;
 }
+/* Un titre qui reçoit le focus par programme (ouverture d'une feuille) ne se
+   cercle pas : il n'est pas un contrôle. */
+[tabindex="-1"]:focus-visible {
+  outline: none;
+}
 html {
   color-scheme: dark;
   accent-color: var(--color-ink);
@@ -182,11 +187,15 @@ html {
 }
 
 /* Chiffres tabulaires pour les nombres mesurés, et pour eux seulement : Inter
-   tabulaire espace aussi les traits d'union du texte courant. `.readout` est le
-   nom hérité des écrans pas encore refaits. */
-.tnum,
-.readout {
+   tabulaire donne aussi aux traits d'union une chasse de chiffre (« 3 - 4 »).
+   `.readout`, le nom hérité des écrans pas encore refaits, ne l'applique donc
+   pas : ses textes mêlent nombres et fourchettes (« 3-4 × 8-12 @ RIR 1-2 »), et
+   il l'annule quand un écran hérité l'ajoute à la main (`tabular-nums`). */
+.tnum {
   font-variant-numeric: tabular-nums;
+}
+.readout.tabular-nums {
+  font-variant-numeric: normal;
 }
 
 /* Champs auto-remplis : Chrome et Safari les repeignent en clair, ce qui casse le

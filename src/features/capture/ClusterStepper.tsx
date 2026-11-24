@@ -132,8 +132,10 @@ export function ClusterStepper({
   const atMin = value <= min;
   const atMax = value >= max;
   const shown = draft ?? format(value);
-  // Largeur en `ch` (mono tabulaire) : le readout se centre entre les boutons et
-  // l'unité reste collée au nombre, sans champ « boîte ».
+  // Largeur en `ch` (chiffres tabulaires) : le readout se centre entre les boutons
+  // et l'unité reste collée au nombre, sans champ « boîte ». Le `ch` d'Inter est
+  // plus large que celui de Geist Mono (0,63 em contre 0,6) : le héros passe de 62
+  // à 56 px (taille de lecture secondaire de E) pour que « 126,25 » tienne à 390 px.
   const readoutWidth = `${Math.max(shown.length, 1)}ch`;
 
   const input = (
@@ -147,7 +149,7 @@ export function ClusterStepper({
       onKeyDown={handleKeyDown}
       style={{ width: readoutWidth }}
       className={`readout cursor-text bg-transparent text-center font-medium text-ink caret-accent outline-none ${
-        hero ? 'text-[62px] leading-none tracking-[-0.03em]' : 'text-[30px] leading-none'
+        hero ? 'text-[56px] leading-none tracking-[-0.03em]' : 'text-[30px] leading-none'
       }`}
       aria-label={`${label}${unit ? ` en ${unit}` : ''} : ${format(value)}. Appuyer pour saisir`}
     />
