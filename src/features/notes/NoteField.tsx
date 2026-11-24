@@ -4,9 +4,10 @@
 // chiffres mesurés (poids/reps/RIR via Stepper), pas la prose. Un <textarea>
 // natif est donc légitime ici, comme le <input text> des noms d'exos.
 //
-// Conventions DESIGN.md tenues : surface plate, bordure 1px, focus en accent
-// (seule tache de couleur), encre pleine (pas de gris délavé), tap-target
-// confortable. Aucun tiret long dans les libellés.
+// Rendu : la zone de texte du kit (src/ui/fields.tsx), un seul indicateur de
+// focus, texte de 17 px. Aucun tiret long dans les libellés.
+import { TextArea } from '../../ui';
+
 interface NoteFieldProps {
   id: string;
   label: string;
@@ -41,27 +42,17 @@ export function NoteField({
   onBlur,
 }: NoteFieldProps) {
   return (
-    <label htmlFor={id} className="block">
-      <span
-        className={
-          labelHidden ? 'sr-only' : 'mb-1.5 block text-sm font-medium text-ink'
-        }
-      >
-        {label}
-      </span>
-      {hint && !labelHidden && (
-        <span className="mb-1.5 block text-xs text-ink-muted">{hint}</span>
-      )}
-      <textarea
-        id={id}
-        value={value}
-        placeholder={placeholder}
-        rows={rows}
-        maxLength={maxLength}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        className="field w-full resize-y rounded-xl px-3 py-2.5 text-base leading-relaxed text-ink"
-      />
-    </label>
+    <TextArea
+      id={id}
+      label={label}
+      hideLabel={labelHidden}
+      hint={labelHidden ? undefined : hint}
+      value={value}
+      placeholder={placeholder}
+      rows={rows}
+      maxLength={maxLength}
+      onChange={onChange}
+      onBlur={onBlur}
+    />
   );
 }

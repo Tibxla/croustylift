@@ -51,13 +51,16 @@
 //   - Réduire les animations (Réglages, défaut = système ; `data-motion` sur <html>) :
 //     plus de déplacement ni d'échelle, seuls les fondus restent.
 export { PrimaryButton, SecondaryButton, TextLink } from './buttons';
+export { ActionNote, ActionRow, Confirm, Disclosure } from './confirm';
 export { Choice, Stepper, Switch } from './controls';
+export { CheckBox, FieldError, FIELD_CLASS, ImplicitSubmit, Notice, PasswordField, RadioMark, TextArea, TextField, type TextFieldProps } from './fields';
 export { Chevron, Icon, IconButton, StateIcon, StateMark, type ExoState, type IconName } from './icons';
 export { BottomBar, EmptyState, List, Row, Rule, Screen, ScreenHeader, SectionTitle } from './layout';
 export { NumberRow } from './number-row';
 export { Ruler } from './ruler';
 export { Sheet } from './sheet';
 export { SheetSlotContext } from './sheet-slot';
+export { LoadError, Loading } from './states';
 export { Sign, Status } from './status';
 export { SyncBanner } from './sync-banner';
 export { TONE, type Verdict } from './status-tone';
