@@ -278,11 +278,28 @@ export async function flushOps(ops: OutboxOp[]): Promise<OpsFlushResult> {
  * après la passe, même arrêtée sur un échec, les copies d'historique des séries
  * acquittées sont relues (`refreshTouchedHistory`).
  */
+/** Abonnés à la fin d'une passe (cf. `onFlushSettled`). */
+const flushSettledListeners = new Set<() => void>();
+
+/**
+ * S'abonne à la FIN de chaque passe de flush de cet onglet, réussie ou non :
+ * des ops ont pu sortir de la file (queue-changes.ts). Rend le désabonnement.
+ */
+export function onFlushSettled(listener: () => void): () => void {
+  flushSettledListeners.add(listener);
+  return () => {
+    flushSettledListeners.delete(listener);
+  };
+}
+
 export function flushOutbox() {
   // Le lecteur de session ferme la porte aux écritures sans compte vérifié : sans
   // session, une requête part sous la clé publique et un `update`/`delete` est
   // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
-  return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
+  return flush(syncFns, sessionUserId).finally(() => {
+    refreshTouchedHistory();
+    for (const listener of [...flushSettledListeners]) listener();
+  });
 }
 
 // Un essai reprogrammé après un verrou occupé (cf. outbox) passe par le flush de

@@ -114,6 +114,7 @@ import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
 import { sommaireDetail } from './sommaire-detail';
 import { isDoubleTap, type LogStamp } from './log-guard';
+import { onQueueChanged } from './queue-changes';
 import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
@@ -661,25 +662,27 @@ function SeancePicker({
   const [stored, setStored] = useState(peekSeancesMeta);
   const [queue, setQueue] = useState(readOwnQueue);
   useEffect(() => {
-    const onQueue = () => setQueue(readOwnQueue());
-    window.addEventListener(OUTBOX_CHANGED_EVENT, onQueue);
     // La lecture réseau est chargée à la demande (seance-meta-load.ts) : sans
     // elle, la copie locale reste ce qui s'affiche.
-    let off = () => {};
+    let watch: { stop: () => void; revalidate: () => void } | null = null;
     let alive = true;
+    // La file a pu changer (flush ici ou ailleurs, geste, retour du réseau) :
+    // on relit la file ET la méta, tant que le sélecteur est monté. Une
+    // exécution acquittée quitte la file : sa date doit venir de la base.
+    const offQueue = onQueueChanged(() => {
+      setQueue(readOwnQueue());
+      watch?.revalidate();
+    });
     void import('./seance-meta-load').then(
       (m) => {
-        // Revalidée au retour du réseau et quand la file change (une exécution
-        // acquittée la quitte : sa date vient alors de la base), tant que le
-        // sélecteur est monté.
-        if (alive) off = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored, { revalidateOn: ['online', OUTBOX_CHANGED_EVENT] });
+        if (alive) watch = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
       },
       () => {},
     );
     return () => {
       alive = false;
-      window.removeEventListener(OUTBOX_CHANGED_EVENT, onQueue);
-      off();
+      offQueue();
+      watch?.stop();
     };
   }, [idsKey]);
   const meta = useMemo(() => mergePendingExecutions(stored, queue), [stored, queue]);

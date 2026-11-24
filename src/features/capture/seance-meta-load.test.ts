@@ -44,49 +44,57 @@ beforeEach(() => {
 });
 
 describe('watchSeancesMeta', () => {
-  it('sélecteur fermé : le rejeu après un flush ne relit pas la méta', async () => {
+  it('sélecteur fermé : le rejeu après un flush ne relit pas la méta, et revalidate ne fait plus rien', async () => {
     const fetcher = vi.fn(async () => META);
-    const events = new EventTarget();
-    const stop = watchSeancesMeta(['a'], () => {}, { fetcher, events });
+    const watch = watchSeancesMeta(['a'], () => {}, { fetcher });
     await settle();
-    stop();
+    watch.stop();
     expect(fetcher).toHaveBeenCalledTimes(1);
     revalidateReadCache();
-    await settle();
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    events.dispatchEvent(new Event('online'));
+    watch.revalidate();
     await settle();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it('sélecteur monté : le retour du réseau revalide la méta, et l’écran la reçoit', async () => {
-    const fetcher = vi.fn(async () => META);
-    const events = new EventTarget();
+  it('amorce depuis la copie, puis affiche la réponse réseau', async () => {
+    const first = watchSeancesMeta(['a'], () => {}, { fetcher: async () => META });
+    await settle();
+    first.stop();
     const seen: StoredMap[] = [];
-    const stop = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher, events });
+    const watch = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher: async () => ({ a: { ...META.a!, lastOn: '2026-11-24' } }) });
+    // La copie tout de suite, sans attendre le réseau.
+    expect(seen[0]?.a?.lastOn).toBe('2026-11-20');
     await settle();
-    fetcher.mockResolvedValue({ a: { ...META.a!, lastOn: '2026-11-24' } });
-    events.dispatchEvent(new Event('online'));
-    await settle();
-    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(seen.at(-1)?.a?.lastOn).toBe('2026-11-24');
-    stop();
+    watch.stop();
   });
 
-  it('sélecteur monté : une file qui change (exécution acquittée) revalide la méta, sélecteur fermé non', async () => {
+  it('sélecteur monté : revalidate (la file a changé) relit la méta, et l’écran la reçoit', async () => {
     const fetcher = vi.fn(async () => META);
-    const events = new EventTarget();
     const seen: StoredMap[] = [];
-    const stop = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher, events, revalidateOn: ['online', 'file-changee'] });
+    const watch = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher });
     await settle();
     fetcher.mockResolvedValue({ a: { ...META.a!, lastOn: '2026-11-24' } });
-    events.dispatchEvent(new Event('file-changee'));
+    watch.revalidate();
     await settle();
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(seen.at(-1)?.a?.lastOn).toBe('2026-11-24');
-    stop();
-    events.dispatchEvent(new Event('file-changee'));
+    watch.stop();
+  });
+
+  it('à cache vide, la réponse initiale arrivée APRÈS une réponse plus récente ne réaffiche pas l’ancienne date', async () => {
+    let first: (m: StoredMap) => void = () => {};
+    const fetcher = vi.fn(() => new Promise<StoredMap>((ok) => (first = ok)));
+    const seen: StoredMap[] = [];
+    const watch = watchSeancesMeta(['a'], (m) => seen.push(m), { fetcher });
+    const old = first;
+    // Revalidation (la file a changé) : elle part après, répond avant.
+    fetcher.mockImplementation(async () => ({ a: { ...META.a!, lastOn: '2026-11-24' } }));
+    watch.revalidate();
     await settle();
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    old(META);
+    await settle();
+    expect(seen.at(-1)?.a?.lastOn).toBe('2026-11-24');
+    watch.stop();
   });
 });

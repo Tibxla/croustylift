@@ -3,7 +3,7 @@
 // chunk principal, et son absence (chunk introuvable après une mise à jour) ne
 // coûte que la ligne de méta.
 import { supabase } from '../../lib/supabase';
-import { cachedRead, onReadWritten } from '../../lib/read-cache';
+import { cachedRead, onReadAccepted } from '../../lib/read-cache';
 import { peekSeancesMeta, SEANCES_META_KEY, type StoredMap } from './seance-meta';
 
 /** Lecture réseau : versions, exos de la version courante, dernière exécution. */
@@ -61,42 +61,39 @@ async function fetchSeancesMeta(seanceIds: readonly string[]): Promise<StoredMap
 }
 
 /**
- * Lit la méta (copie d'abord, revalidée en fond) et appelle `onChange` à chaque
- * nouvelle copie, y compris celle de la revalidation. Tolérant : une méta est un
- * confort, son échec ne dit rien. Rend la fonction de désabonnement.
+ * Suit la méta tant que le sélecteur est monté. Amorce : la copie (la ligne
+ * s'affiche sans attendre le réseau). Puis chaque réponse réseau ACCEPTÉE par
+ * les gardes d'ordre de read-cache arrive par `onReadAccepted` : une réponse
+ * partie avant une autre déjà acceptée (première lecture lente, puis une
+ * revalidation plus rapide) ne réaffiche plus l'ancienne date, et une copie
+ * qui ne peut pas s'écrire (stockage plein) s'affiche quand même. Tolérant :
+ * une méta est un confort, son échec ne dit rien.
  *
  * Hors du rejeu global (`replay: false`) : rejouée après chaque flush, elle
  * relisait versions, prescriptions et dernière exécution de chaque séance pour
- * un sélecteur fermé, en plein exercice. Elle se revalide sur les événements
- * `revalidateOn` de `events` (le retour du réseau, et la file qui change : une
- * exécution acquittée quitte la file, sa date doit venir de la base), tant que
- * le sélecteur est monté. `fetcher` et `events` sont injectables pour les tests.
+ * un sélecteur fermé, en plein exercice. Le sélecteur appelle `revalidate`
+ * quand la file a pu changer (queue-changes.ts), et `stop` à son démontage.
+ * `fetcher` est injectable pour les tests.
  */
 export function watchSeancesMeta(
   seanceIds: readonly string[],
   onChange: (stored: StoredMap) => void,
-  {
-    fetcher = () => fetchSeancesMeta(seanceIds),
-    events = typeof window === 'undefined' ? null : window,
-    revalidateOn = ['online'],
-  }: { fetcher?: () => Promise<StoredMap>; events?: EventTarget | null; revalidateOn?: readonly string[] } = {},
-): () => void {
+  { fetcher = () => fetchSeancesMeta(seanceIds) }: { fetcher?: () => Promise<StoredMap> } = {},
+): { stop: () => void; revalidate: () => void } {
   let alive = true;
-  const off = onReadWritten((key) => {
-    if (alive && key === SEANCES_META_KEY) onChange(peekSeancesMeta());
+  const off = onReadAccepted((key, value) => {
+    if (alive && key === SEANCES_META_KEY) onChange(value as StoredMap);
   });
-  const read = () => cachedRead(SEANCES_META_KEY, fetcher, { replay: false });
-  void read().then(
-    (stored) => alive && onChange(stored),
-    () => {},
-  );
-  // Au retour du réseau (ou la file changée), seule la revalidation compte : elle arrive par
-  // `onReadWritten` (la copie, déjà montrée, ne repasse pas après elle).
-  const revalidate = () => void read().catch(() => {});
-  for (const name of revalidateOn) events?.addEventListener(name, revalidate);
-  return () => {
-    alive = false;
-    off();
-    for (const name of revalidateOn) events?.removeEventListener(name, revalidate);
+  const revalidate = () => {
+    if (alive) void cachedRead(SEANCES_META_KEY, fetcher, { replay: false }).catch(() => {});
+  };
+  onChange(peekSeancesMeta());
+  revalidate();
+  return {
+    stop: () => {
+      alive = false;
+      off();
+    },
+    revalidate,
   };
 }
