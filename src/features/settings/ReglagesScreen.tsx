@@ -11,6 +11,9 @@
 // à l'écran pendant qu'on règle. Aucun chiffre technique à l'écran (ni ratio, ni
 // degré).
 //
+// Réduire les animations : par défaut la préférence du système, un choix ici
+// l'emporte (src/settings/reglages.ts).
+//
 // Pas de la règle : de 0,25 à 10 kg par 0,25, en une ligne. Il réglera la règle
 // de poids de la Salle (refonte E, lot Capture) ; la Capture actuelle garde ses
 // boutons + et − à pas fixe.
@@ -29,9 +32,18 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { PendingWritesError } from '../../auth/auth-context';
 import { captureInProgress, requestReload, useUpdateReady } from '../../pwa/register';
-import { signalHex, signalName, STEP_INC, STEP_MAX, STEP_MIN, updateReglages, useReglages } from '../../settings/reglages';
+import {
+  effectiveReduceMotion,
+  signalHex,
+  signalName,
+  STEP_INC,
+  STEP_MAX,
+  STEP_MIN,
+  updateReglages,
+  useReglages,
+} from '../../settings/reglages';
 import { CLARTE_DEFAUT, CLARTE_MAX, FREE_NAME, freeHex, HUE_MAX, HUE_STEP, readable, SIG_PRESETS } from '../../settings/signal-color';
-import { Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, TextLink } from '../../ui';
+import { Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, Switch, TextLink } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { signOutRefusalLabel } from '../capture/sync-label';
 import { downloadUserData, exportFilename } from '../export/data';
@@ -242,7 +254,8 @@ function SignalPreview() {
 /* ------------------------------------------------------------------------ */
 
 function SalleSection() {
-  const { stepKg } = useReglages();
+  const reglages = useReglages();
+  const { stepKg } = reglages;
   return (
     <section>
       <SectionTitle>En salle</SectionTitle>
@@ -256,6 +269,12 @@ function SalleSection() {
           format={(v) => `${formatWeight(v)} kg`}
           valueWidth={92}
           onChange={(v) => updateReglages({ stepKg: v })}
+        />
+        {/* Défaut : la préférence du système ; un choix ici l'emporte. */}
+        <Switch
+          label="Réduire les animations"
+          checked={effectiveReduceMotion(reglages)}
+          onChange={(v) => updateReglages({ reduceMotion: v })}
         />
       </div>
     </section>

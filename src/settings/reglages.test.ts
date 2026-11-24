@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_REGLAGES, parseReglages, signalHex, signalName } from './reglages';
+import { DEFAULT_REGLAGES, effectiveReduceMotion, parseReglages, signalHex, signalName } from './reglages';
 import { CLARTE_MAX, contrast, freeHex, HUE_MAX, readable, SIG_PRESETS } from './signal-color';
 
 describe('parseReglages', () => {
@@ -7,23 +7,25 @@ describe('parseReglages', () => {
     expect(parseReglages(null)).toEqual(DEFAULT_REGLAGES);
     expect(parseReglages('pas du json')).toEqual(DEFAULT_REGLAGES);
     expect(parseReglages('42')).toEqual(DEFAULT_REGLAGES);
-    expect(DEFAULT_REGLAGES).toEqual({ signal: { kind: 'preset', name: 'Jaune' }, stepKg: 1.25 });
+    expect(DEFAULT_REGLAGES).toEqual({ signal: { kind: 'preset', name: 'Jaune' }, stepKg: 1.25, reduceMotion: null });
   });
 
   it('relit une prédéfinie, une couleur libre et un pas valides', () => {
     expect(parseReglages(JSON.stringify({ signal: { kind: 'preset', name: 'Ciel' }, stepKg: 2.5 }))).toEqual({
       signal: { kind: 'preset', name: 'Ciel' },
       stepKg: 2.5,
+      reduceMotion: null,
     });
-    expect(parseReglages(JSON.stringify({ signal: { kind: 'free', h: 96, l: 18 }, stepKg: 0.25 }))).toEqual({
+    expect(parseReglages(JSON.stringify({ signal: { kind: 'free', h: 96, l: 18 }, stepKg: 0.25, reduceMotion: true }))).toEqual({
       signal: { kind: 'free', h: 96, l: 18 },
       stepKg: 0.25,
+      reduceMotion: true,
     });
   });
 
   it('chaque champ invalide retombe sur son défaut, sans emporter l’autre', () => {
     const r = parseReglages(JSON.stringify({ signal: { kind: 'preset', name: 'Fuchsia' }, stepKg: 5 }));
-    expect(r).toEqual({ signal: DEFAULT_REGLAGES.signal, stepKg: 5 });
+    expect(r).toEqual({ signal: DEFAULT_REGLAGES.signal, stepKg: 5, reduceMotion: null });
     const bad = [
       { kind: 'free', h: 97, l: 18 }, // hors cran de 2°
       { kind: 'free', h: 360, l: 18 },
@@ -33,6 +35,20 @@ describe('parseReglages', () => {
     ];
     for (const signal of bad) expect(parseReglages(JSON.stringify({ signal, stepKg: 5 })).signal).toEqual(DEFAULT_REGLAGES.signal);
     for (const stepKg of [0, 0.1, 10.25, -1, 1.3, '2', null]) expect(parseReglages(JSON.stringify({ stepKg })).stepKg).toBe(1.25);
+  });
+});
+
+describe('réduire les animations', () => {
+  it('sans choix, la préférence du système ; un choix explicite l’emporte dans les deux sens', () => {
+    const r = parseReglages(null);
+    expect(effectiveReduceMotion(r, true)).toBe(true);
+    expect(effectiveReduceMotion(r, false)).toBe(false);
+    expect(effectiveReduceMotion({ ...r, reduceMotion: false }, true)).toBe(false);
+    expect(effectiveReduceMotion({ ...r, reduceMotion: true }, false)).toBe(true);
+  });
+
+  it('une valeur stockée qui n’est pas un booléen revient à « suivre le système »', () => {
+    for (const reduceMotion of ['oui', 1, null, {}]) expect(parseReglages(JSON.stringify({ reduceMotion })).reduceMotion).toBeNull();
   });
 });
 

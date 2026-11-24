@@ -48,7 +48,8 @@
 //     répété des centaines de fois en salle (`press={false}`) : le fond change seul.
 //   - Feuille : monte en 240 ms (courbe de tiroir iOS), descend en 150 ms.
 //   - Règle : saut sec au toucher, élan de 320 ms sur un coup sec.
-//   - Réduire les animations (système) : plus de déplacement ni d'échelle.
+//   - Réduire les animations (Réglages, défaut = système ; `data-motion` sur <html>) :
+//     plus de déplacement ni d'échelle, seuls les fondus restent.
 export { PrimaryButton, SecondaryButton, TextLink } from './buttons';
 export { Choice, Stepper, Switch } from './controls';
 export { Chevron, Icon, IconButton, StateIcon, StateMark, type ExoState, type IconName } from './icons';

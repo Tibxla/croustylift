@@ -1,4 +1,5 @@
-// Réglages de l'appareil (écran Réglages) : couleur de signal et pas de la règle.
+// Réglages de l'appareil (écran Réglages) : couleur de signal, pas de la règle,
+// réduire les animations.
 //
 // Préférences d'AFFICHAGE, pas des données : elles restent sur l'appareil, sous
 // une clé qui ne dépend d'aucun compte (lues avant la connexion, pour que l'écran
@@ -7,9 +8,13 @@
 // et des préférences de compte). Elles survivent donc à la Déconnexion, comme le
 // choix d'un thème.
 //
-// Démarrage sans flash : `applyStoredSignal()` est appelé en tête de main.tsx,
-// avant le premier rendu React, et pose `--sig` sur `:root`. Rien n'est écrit
-// dans index.html (la CSP de prod refuse le script en ligne).
+// Démarrage sans flash : `applyStoredReglages()` est appelé en tête de main.tsx,
+// avant le premier rendu React, et pose `--sig` et `data-motion` sur `:root`.
+// Rien n'est écrit dans index.html (la CSP de prod refuse le script en ligne).
+//
+// Réduire les animations : `null` tant que l'utilisateur n'a rien choisi, et
+// c'est alors la préférence du système qui vaut (suivie si elle change) ; un
+// choix explicite l'emporte ensuite, dans un sens comme dans l'autre.
 //
 // La valeur lue est validée champ par champ : un stockage abîmé ou d'une autre
 // version retombe sur les défauts, jamais sur une couleur injectée telle quelle.
@@ -25,6 +30,8 @@ export interface Reglages {
   signal: SignalChoice;
   /** Pas de la règle de poids, en kg : de 0,25 à 10 par 0,25. */
   stepKg: number;
+  /** Réduire les animations : choix explicite, ou null pour suivre le système. */
+  reduceMotion: boolean | null;
 }
 
 export const STEP_MIN = 0.25;
@@ -34,6 +41,7 @@ export const STEP_INC = 0.25;
 export const DEFAULT_REGLAGES: Reglages = {
   signal: { kind: 'preset', name: SIG_DEFAULT.name },
   stepKg: 1.25,
+  reduceMotion: null,
 };
 
 function validSignal(raw: unknown): SignalChoice | null {
@@ -77,6 +85,7 @@ export function parseReglages(raw: string | null): Reglages {
   return {
     signal: validSignal(d.signal) ?? DEFAULT_REGLAGES.signal,
     stepKg: validStep(d.stepKg) ?? DEFAULT_REGLAGES.stepKg,
+    reduceMotion: typeof d.reduceMotion === 'boolean' ? d.reduceMotion : null,
   };
 }
 
@@ -104,6 +113,23 @@ function applySignal(signal: SignalChoice): void {
   document.documentElement.style.setProperty('--sig', signalHex(signal));
 }
 
+const REDUCE_QUERY = '(prefers-reduced-motion: reduce)';
+
+/** Le système demande-t-il de réduire les animations ? */
+export function systemReducesMotion(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.(REDUCE_QUERY).matches;
+}
+
+/** Réduire les animations, tel qu'appliqué : le choix explicite, sinon le système. */
+export function effectiveReduceMotion(r: Reglages, system: boolean = systemReducesMotion()): boolean {
+  return r.reduceMotion ?? system;
+}
+
+function applyMotion(r: Reglages): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.motion = effectiveReduceMotion(r) ? 'reduite' : 'normale';
+}
+
 let current: Reglages | null = null;
 const listeners = new Set<() => void>();
 
@@ -112,9 +138,18 @@ function snapshot(): Reglages {
   return current;
 }
 
-/** Pose le signal enregistré sur `:root`. À appeler avant le premier rendu. */
-export function applyStoredSignal(): void {
+/** Pose le signal et le mouvement enregistrés sur `:root`, et suit la préférence
+ *  du système tant qu'aucun choix explicite n'est fait. À appeler avant le
+ *  premier rendu. */
+export function applyStoredReglages(): void {
   applySignal(snapshot().signal);
+  applyMotion(snapshot());
+  if (typeof window === 'undefined' || !window.matchMedia) return;
+  window.matchMedia(REDUCE_QUERY).addEventListener?.('change', () => {
+    if (snapshot().reduceMotion !== null) return;
+    applyMotion(snapshot());
+    for (const l of listeners) l();
+  });
 }
 
 /** Change des réglages : appliqués tout de suite (le signal en direct sur toute
@@ -124,6 +159,7 @@ export function updateReglages(patch: Partial<Reglages>): void {
   const next = { ...snapshot(), ...patch };
   current = next;
   if (patch.signal) applySignal(next.signal);
+  if (patch.reduceMotion !== undefined) applyMotion(next);
   try {
     localStorage.setItem(REGLAGES_KEY, JSON.stringify(next));
   } catch {
@@ -139,6 +175,7 @@ function subscribe(listener: () => void): () => void {
     if (e.key !== REGLAGES_KEY) return;
     current = readStored();
     applySignal(current.signal);
+    applyMotion(current);
     for (const l of listeners) l();
   };
   window.addEventListener('storage', onStorage);

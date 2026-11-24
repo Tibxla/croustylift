@@ -251,13 +251,13 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Feuille basse
 
-- **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête, défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » du système la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.
+- **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête, défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.
 
 ### Mouvement
 
 - Rare, court, interruptible : des transitions, pas d'images clés. Sorties plus courtes que les entrées. Courbe forte `cubic-bezier(0.23, 1, 0.32, 1)` pour l'enfoncement et l'élan, `cubic-bezier(0.32, 0.72, 0, 1)` pour la feuille.
 - Aucune animation sur les gestes répétés en salle (logger, règle au toucher, rangées de numéros) ni sur le changement de surface : le retour est instantané.
-- `prefers-reduced-motion` : plus de déplacement ni de changement d'échelle ; restent les fondus d'opacité et de couleur.
+- Réduire les animations (Réglages, défaut = préférence du système, `data-motion="reduite"` sur `<html>`) : plus de déplacement ni de changement d'échelle ; restent les fondus d'opacité et de couleur.
 
 ### Écrans hérités (transition)
 

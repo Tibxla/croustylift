@@ -12,7 +12,7 @@ import { prefersReducedMotion } from './motion';
  *  transition. Au toucher, la piste saute au cran ; avec `animateTap`, elle y
  *  glisse en 190 ms (ease-out fort), et un nouveau toucher ou un glissé repart
  *  de la position affichée (interruptible). Ni le clavier ni un changement venu
- *  de l'extérieur n'animent. Réduire les animations (système) : aucun glissé.
+ *  de l'extérieur n'animent. Réduire les animations : aucun glissé.
  *
  *  ÉLAN (grosse marche, ex. +40 kg) : un glissé lâché vite continue sur sa
  *  lancée, proportionnelle à la vitesse du doigt sur ses 100 dernières ms

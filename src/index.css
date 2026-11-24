@@ -221,8 +221,11 @@ input:-webkit-autofill:active {
   - `.ui-veil` / `.ui-sheet` : la feuille monte du bas en 240 ms (courbe de tiroir
     iOS), le voile apparaît en fondu ; entrée par `@starting-style`. La sortie
     (150 ms) se joue en JS sur une copie inerte (src/ui/sheet.tsx).
-  - `prefers-reduced-motion` : plus de déplacement ni de changement d'échelle ;
-    restent les fondus d'opacité, qui aident à comprendre.
+  - Réduire les animations : `data-motion="reduite"` sur <html>, posé au démarrage
+    par src/settings/reglages.ts (réglage de l'app, défaut = préférence du
+    système). Plus de déplacement ni de changement d'échelle ; restent les fondus
+    d'opacité et de couleur, qui aident à comprendre. Les mouvements joués en JS
+    (sortie de feuille, élan de la règle) lisent le même attribut (src/ui/motion.ts).
 */
 .ui-press {
   transition: transform 140ms var(--ease-press);
@@ -249,26 +252,22 @@ input:-webkit-autofill:active {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ui-press:active:not(:disabled) {
+[data-motion="reduite"] *,
+[data-motion="reduite"] *::before,
+[data-motion="reduite"] *::after {
+  /* Écrans hérités compris : plus aucune animation d'entrée, et seules les
+     transitions de couleur et d'opacité survivent (ni enfoncement, ni glissé). */
+  animation: none !important;
+  transition-property: opacity, color, background-color, border-color !important;
+  scroll-behavior: auto !important;
+}
+[data-motion="reduite"] .ui-press:active:not(:disabled) {
+  transform: none;
+}
+@starting-style {
+  [data-motion="reduite"] .ui-sheet {
     transform: none;
-  }
-  .ui-sheet {
-    transition: opacity 200ms ease-out;
-  }
-  @starting-style {
-    .ui-sheet {
-      transform: none;
-      opacity: 0;
-    }
-  }
-  /* Écrans hérités : plus aucune animation d'entrée ni transition longue. */
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
+    opacity: 0;
   }
 }
 
