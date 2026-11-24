@@ -491,3 +491,56 @@ describe('relecture entière : le journal de secours d’un onglet ne défait pa
     expect(a.listRefused()).toEqual([]);
   });
 });
+
+describe('vérification ciblée : le journal de secours ne s’applique qu’à l’écriture telle qu’il l’a vue', () => {
+  const blockRegistry = () => {
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:registre') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    return () => void (storage.setItem = setItem);
+  };
+  const refusing = () =>
+    recorder(async () => {
+      throw Object.assign(new Error('rejet'), { code: '42501' });
+    });
+
+  it('A tient un refus en mémoire ; B refuse la même saisie puis la renvoie : elle reste en attente', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1')]);
+    const free = blockRegistry();
+    await a.flush(refusing().fns);
+    free();
+    // B la refuse à son tour (écrit), puis l'utilisateur la renvoie depuis B ; le réseau tombe.
+    await b.flush(refusing().fns);
+    expect(await b.retryRefused(uid!)).toBe('done');
+    expect(b.fatesOf([uid!])).toEqual(['pending']);
+
+    // A repasse (réseau coupé) : son vieux refus ne doit pas revenir sur le renvoi.
+    await a.flush(recorder(async () => { throw new TypeError('Failed to fetch'); }).fns);
+
+    expect(b.fatesOf([uid!])).toEqual(['pending']);
+  });
+
+  it('A a évincé une acquittée sous quota ; B la tient refusée depuis : le retrait de A ne l’emporte pas', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1'), setOp('S2')]);
+    const offline = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await a.flush(recorder(offline).fns); // les deux entrent au registre
+    const free = blockRegistry();
+    // S1 est acquittée, puis évincée faute de place : en mémoire seulement. S2 reste.
+    await a.flush(recorder(async (op) => (op.id === 'S2' ? offline() : undefined)).fns);
+    free();
+    await b.flush(refusing().fns);
+    expect(b.fatesOf([uid!])).toEqual(['refused']);
+
+    await a.flush(recorder(async () => { throw new TypeError('Failed to fetch'); }).fns);
+
+    expect(b.fatesOf([uid!])).toEqual(['refused']);
+  });
+});

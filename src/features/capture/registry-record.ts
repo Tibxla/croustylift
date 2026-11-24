@@ -62,6 +62,8 @@ export interface Entry {
   at?: number;
   /** Les écritures qu'elle a écartées (cf. « LIGNÉE »), par identité. */
   replaces?: string[];
+  /** RÉVISION : un jeton neuf à chaque modification (cf. `Transition`). Absent : jamais modifiée. */
+  r?: number;
 }
 
 export interface RegistryRecord {
@@ -85,14 +87,17 @@ export type Transition =
   | { t: 'add'; entry: Entry }
   /**
    * Modifie une écriture si elle est encore là (`undefined` retire le champ), et
-   * si son sort est encore `from`, celui qu'elle avait quand la modification a
-   * été décidée. Rejouée plus tard sur l'enregistrement relu (journal de
-   * secours), elle ne défait donc pas ce qu'un autre onglet a écrit entre-temps :
-   * un refus tenu en mémoire ne revient pas sur une écriture acquittée depuis.
+   * si elle est encore à la RÉVISION `r`, celle qu'elle avait quand la
+   * modification a été décidée ; elle passe alors à la révision `to`. Rejouée
+   * plus tard sur l'enregistrement relu (journal de secours), la modification
+   * ne défait donc pas ce qu'un autre onglet a écrit entre-temps : un refus tenu
+   * en mémoire ne revient ni sur une écriture acquittée depuis, ni sur un
+   * renvoi. Une suite de modifications de la même écriture se rejoue en
+   * chaîne, ou pas du tout.
    */
-  | { t: 'patch'; uid: string; fields: Partial<Entry>; from?: Fate }
-  /** Retire des écritures. */
-  | { t: 'drop'; uids: string[] };
+  | { t: 'patch'; uid: string; fields: Partial<Entry>; r?: number; to?: number }
+  /** Retire des écritures ; avec `rs`, chacune seulement si elle est encore à cette révision. */
+  | { t: 'drop'; uids: string[]; rs?: number[] };
 
 function insertSorted(entries: Entry[], entry: Entry): void {
   // Après la dernière écriture de numéro inférieur ou égal : à numéro égal,
@@ -113,7 +118,8 @@ function applyTransition(record: RegistryRecord, transition: Transition): void {
     }
     case 'patch': {
       const entry = record.entries.find((e) => e.uid === transition.uid);
-      if (!entry || (transition.from !== undefined && entry.fate !== transition.from)) return;
+      if (!entry || (transition.r !== undefined && (entry.r ?? 0) !== transition.r)) return;
+      if (transition.to !== undefined) entry.r = transition.to;
       for (const [key, value] of Object.entries(transition.fields)) {
         if (value === undefined) delete (entry as unknown as Record<string, unknown>)[key];
         else (entry as unknown as Record<string, unknown>)[key] = value;
@@ -122,8 +128,11 @@ function applyTransition(record: RegistryRecord, transition: Transition): void {
       return;
     }
     case 'drop': {
-      const gone = new Set(transition.uids);
-      record.entries = record.entries.filter((e) => !gone.has(e.uid));
+      const { uids, rs } = transition;
+      record.entries = record.entries.filter((e) => {
+        const at = uids.indexOf(e.uid);
+        return at === -1 || (rs !== undefined && (e.r ?? 0) !== rs[at]);
+      });
       return;
     }
   }
@@ -167,11 +176,13 @@ export class Draft {
     this.apply({ t: 'add', entry });
   }
   patch(uid: string, fields: Partial<Entry>): void {
-    const from = this.get(uid)?.fate;
-    if (from !== undefined) this.apply({ t: 'patch', uid, fields, from });
+    const entry = this.get(uid);
+    // Un jeton tiré au sort : deux onglets qui modifient la même écriture
+    // chacun de leur côté ne tombent pas sur la même révision.
+    if (entry) this.apply({ t: 'patch', uid, fields, r: entry.r ?? 0, to: 1 + Math.floor(Math.random() * 0xffffffff) });
   }
   drop(uids: readonly string[]): void {
-    if (uids.length > 0) this.apply({ t: 'drop', uids: [...uids] });
+    if (uids.length > 0) this.apply({ t: 'drop', uids: [...uids], rs: uids.map((uid) => this.get(uid)?.r ?? 0) });
   }
   private apply(transition: Transition): void {
     applyTransition(this.record, transition);
@@ -287,6 +298,9 @@ export function heldBy(record: RegistryRecord, entry: Entry): Entry | null {
 
 /** Tout ce qui dépend de l'écriture `uid`, de près ou de loin, dans l'ordre du registre. */
 export function dependentsOf(record: RegistryRecord, uid: string): Entry[] {
+  // Un refus de création DÉPASSÉ ne tient plus rien, quels que soient les liens
+  // que des écritures gardent encore vers lui.
+  if (record.entries.find((e) => e.uid === uid)?.refusal?.superseded) return [];
   const reached = new Set([uid]);
   const out: Entry[] = [];
   // Le registre est trié : une écriture suit toujours ses parents.
@@ -312,7 +326,10 @@ export function effectiveOp(record: RegistryRecord, entry: Entry): OutboxOp {
   const refused = refusedInsertionOf(record, entry);
   if (!refused || refused.op.type !== 'insertSet') return op;
   const base = refused.op;
-  const { only, cols, ...row } = op;
+  // La série reconstituée reste ce qu'était le refus : une création, ou la
+  // réécriture d'une ligne qui existe (`rewrites`).
+  const { only, cols, ...line } = op;
+  const row = { ...line, ...(base.rewrites ? { rewrites: true as const } : {}) };
   if (only === 'rank') {
     return { ...row, type: 'insertSet', weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
   }
@@ -373,6 +390,14 @@ export function admit(draft: Draft, entry: Entry): void {
   if (knows(draft.record, entry.uid)) return;
   const parents = parentsOf(draft.record, entry);
   draft.add(parents.length > 0 ? { ...entry, parents } : entry);
+  // Une écriture qui en a écarté d'autres (`replaces`) peut entrer alors que
+  // celles-ci sont encore là : leur source n'avait pas été réglée (stockage
+  // plein, page rechargée entre deux écritures). La lignée se referme ici.
+  for (const uid of entry.replaces ?? []) {
+    const old = draft.get(uid);
+    const by = draft.get(entry.uid);
+    if (old && by) replace(draft, old, by);
+  }
   // Une écriture reprise d'une ancienne file peut entrer AVANT des écritures
   // déjà là : celles qui attendaient ce parent sans le connaître le reçoivent.
   for (const later of draft.record.entries) {
@@ -465,13 +490,6 @@ export function acknowledge(
         !e.refusal.superseded
       ) {
         draft.patch(e.uid, { refusal: { ...e.refusal, superseded: true } });
-        // Et plus rien n'en dépend : ses saisies sont libres, l'abandonner
-        // n'emporte qu'elle.
-        for (const child of draft.record.entries) {
-          if (!child.parents?.includes(e.uid)) continue;
-          const parents = child.parents.filter((p) => p !== e.uid);
-          draft.patch(child.uid, { parents: parents.length > 0 ? parents : undefined });
-        }
       }
     }
   }
@@ -487,9 +505,11 @@ export function acknowledge(
       (e, index) =>
         index < at &&
         e.owner === entry.owner &&
-        isSetWrite(e.op) &&
         e.op.id === sent.id &&
-        (e.fate === 'refused' || (sent.type === 'deleteSet' && e.fate === 'pending')),
+        // Un ancien refus de la série, écriture OU suppression : renvoyée, une
+        // vieille suppression refusée effacerait la série qui vient d'être écrite.
+        ((e.fate === 'refused' && (isSetWrite(e.op) || e.op.type === 'deleteSet')) ||
+          (sent.type === 'deleteSet' && e.fate === 'pending' && isSetWrite(e.op))),
     );
     for (const old of moot) replace(draft, old, acked);
   }
@@ -592,12 +612,12 @@ export function retry(draft: Draft, uid: string): Outcome {
   return 'done';
 }
 
-/** Abandonne une écriture non acquittée, et tout ce qui en dépend. Rend les identités retirées. */
-export function abandon(draft: Draft, uid: string): string[] {
+/** Abandonne une écriture non acquittée, et tout ce qui en dépend. Rend les écritures retirées. */
+export function abandon(draft: Draft, uid: string): Entry[] {
   const entry = draft.get(uid);
   if (!entry || entry.fate === 'acked') return [];
-  const gone = [uid, ...dependentsOf(draft.record, uid).map((e) => e.uid)];
-  draft.drop(gone);
+  const gone = [entry, ...dependentsOf(draft.record, uid)];
+  draft.drop(gone.map((e) => e.uid));
   return gone;
 }
 

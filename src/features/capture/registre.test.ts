@@ -27,6 +27,7 @@ import {
   readQueue,
   readStamp,
   registryOutdated,
+  retryPersistQueue,
   retryRefused,
   storageFailing,
   writesSince,
@@ -1288,31 +1289,114 @@ describe('relecture entière : une écriture acquittée tenue pour passée le re
   });
 });
 
-describe('relecture entière : sans verrou dans l’ancienne file, cet onglet garde le verrou d’envoi', () => {
-  /** L'ancien onglet demande le verrou d'envoi comme il le fait : sans attendre. */
-  const oldTabGetsTheLock = () =>
-    navigator.locks.request('croustylift:outbox:flush', { ifAvailable: true }, async (lock) => lock !== null);
+// --- Vérification ciblée de la relecture entière (second tour) ----------------------
 
-  it('l’ancien onglet ne peut pas envoyer tant que le verrou manque ; ici, tout continue ; rendu dès qu’il est posé', async () => {
-    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
-    expect(await oldTabGetsTheLock()).toBe(true);
-    const device = deviceFull();
+describe('vérification ciblée : refus de création dépassé, sous stockage plein', () => {
+  it('la réaffirmation réussit sans pouvoir être écrite : abandonner l’ancien refus laisse la série suivante en attente', async () => {
+    enqueue(exec());
+    await flush(base({ refuses: () => '23503' }).fns);
+    const old = refusal('upsertExecution', 'exec-1').refusalId;
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    enqueue(exec());
     await flush(base().fns);
-    expect(storageFailing()).toBe(true);
-
-    expect(await oldTabGetsTheLock()).toBe(false);
-    // Ici, les passes et les gestes de la feuille continuent, sous le verrou gardé.
     enqueue(insert('s1'));
-    const b = base();
-    await flush(b.fns);
-    expect(b.sent).toEqual(['insertSet:s1']);
-    expect(await retryRefused('inconnue')).toBe('gone');
-    expect(await oldTabGetsTheLock()).toBe(false);
+    expect(refusal('upsertExecution', 'exec-1').dependents).toEqual([]);
 
-    // La place revient : le verrou de l'ancienne file est posé, celui d'envoi rendu.
-    device.free();
+    await abandonRefused(old);
+
+    expect(readQueue().map((op) => op.id)).toEqual(['s1']);
+  });
+});
+
+describe('vérification ciblée : une lignée écrite en deux fois se reconstruit en une', () => {
+  it('insertion sur l’appareil, correction tenue en mémoire, toutes deux refusées, place revenue, rechargement : abandonner le refus n’envoie pas l’insertion', async () => {
+    enqueue(insert('s1', 1, { weightKg: 70 }));
+    registryStorageFull();
+    enqueue(correction('s1', 90));
+    await flush(base({ refuses: () => '23514' }).fns);
+    expect(listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([90]);
+    // La place revient pour la boîte d'entrée seulement : le geste tenu en mémoire y est écrit.
+    const store = localStorage as unknown as MemoryStorage;
+    store.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      MemoryStorage.prototype.setItem.call(store, k, v);
+    };
+    expect(retryPersistQueue()).toBe(false);
+
+    const tab = await reloaded();
+    const [only] = tab.listRefused();
+    expect(tab.listRefused()).toHaveLength(1);
+    await tab.abandonRefused(only!.refusalId);
+
+    const b = base();
+    await tab.flush(b.fns);
+    expect(b.sent).toEqual([]);
+  });
+});
+
+describe('vérification ciblée : une écriture complète acquittée écarte aussi une ancienne suppression refusée', () => {
+  it('suppression refusée, puis série réécrite et acquittée : la vieille suppression n’est plus renvoyable', async () => {
+    enqueue(del('s1'));
+    await flush(base({ refuses: () => '42501' }).fns);
+    expect(listRefused()).toHaveLength(1);
+
+    enqueue(insert('s1', 1, { weightKg: 90 }));
     await flush(base().fns);
-    expect(legacyQueueNow()).toMatchObject([{ _uid: 'registre-actif', _owner: 'user-1' }]);
-    expect(await oldTabGetsTheLock()).toBe(true);
+
+    expect(listRefused()).toEqual([]);
+  });
+});
+
+describe('vérification ciblée : une série réécrite garde sa marque d’une reconstruction à l’autre', () => {
+  it('réécriture du Journal refusée, puis correction de la Salle refusée à son tour : toujours une réécriture', async () => {
+    enqueue(insert('s1', 1, { rewrites: true }));
+    await flush(base({ refuses: () => '23514' }).fns);
+    enqueue(correction('s1', 90));
+    await flush(base({ refuses: () => '23514' }).fns);
+
+    expect(listRefused().map((r) => r.op)).toMatchObject([{ type: 'insertSet', weightKg: 90, rewrites: true }]);
+  });
+});
+
+describe('vérification ciblée : abandonner rend ce qui est réellement parti', () => {
+  it('la série acquittée pendant l’attente du verrou n’est pas rendue avec le refus abandonné', async () => {
+    enqueueAll([exec(), insert('s1')]);
+    await flush(base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) }).fns);
+    const old = refusal('upsertExecution', 'exec-1');
+    expect(old.dependents).toHaveLength(1);
+    // Pendant que la feuille attend : la séance est réaffirmée, la série part.
+    enqueue(exec());
+    await flush(base().fns);
+
+    const removed: OutboxOp[] = [];
+    await abandonRefused(old.refusalId, (ops) => removed.push(...ops));
+
+    expect(removed.map((op) => op.type)).toEqual(['upsertExecution']);
+  });
+});
+
+describe('vérification ciblée : l’âge monotone d’une acquittée part de l’âge déjà écoulé', () => {
+  it('vue pour la première fois à neuf minutes, horloge reculée de huit : à onze minutes réelles elle n’est plus appliquée', async () => {
+    let now = Date.now() + 6_000_000_000;
+    let mono = 1000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    vi.spyOn(performance, 'now').mockImplementation(() => mono);
+    const stamp = readStamp();
+    enqueue(insert('s1'));
+    await flush(base().fns);
+    // Une autre page : elle n'a encore jamais vu cette écriture.
+    const tab = await reloaded();
+    now += 9 * 60 * 1000;
+    mono += 9 * 60 * 1000;
+    expect(tab.writesSince(stamp)).toHaveLength(1);
+
+    now += 2 * 60 * 1000 - 8 * 60 * 1000;
+    mono += 2 * 60 * 1000;
+
+    expect(tab.writesSince(stamp)).toEqual([]);
   });
 });

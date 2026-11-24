@@ -795,10 +795,11 @@ function commit(opened: Opened): boolean {
   // écrites au registre ni réglées, et les fait entrer AVANT le rejeu. Notées
   // au journal, elles y revenaient après un retrait : la saisie d'une séance
   // annulée, ou une écriture déjà acquittée, repartait.
-  const pending = [...activeDeferred(), ...draft.log.slice(admitted)];
+  const before = activeDeferred();
+  const pending = () => [...before, ...draft.log.slice(admitted)];
   deferred = null;
   if (outdated) {
-    holdInMemory(pending, true);
+    holdInMemory(pending(), true);
     return false;
   }
   let written = persist(draft.record);
@@ -806,7 +807,6 @@ function commit(opened: Opened): boolean {
     const acked = draft.record.entries.filter((e) => e.fate === 'acked').map((e) => e.uid);
     if (acked.length > 0) {
       draft.drop(acked);
-      pending.push({ t: 'drop', uids: acked });
       written = persist(draft.record);
     }
   }
@@ -843,7 +843,7 @@ function commit(opened: Opened): boolean {
       .filter((box) => inboxKeys.includes(box.key) && box.entries.every((e) => !retained.has(e.uid)))
       .map((box) => box.key),
   );
-  holdInMemory(pending, false);
+  holdInMemory(pending(), false);
   return false;
 }
 
@@ -887,63 +887,15 @@ function absorb(): void {
   else settleLegacy(opened.legacyRead, opened.draft.record, true);
 }
 
-// GARDE DU VERROU D'ENVOI. Tant que l'ancienne file n'a pas son verrou
-// (`legacyUnguarded` : appareil plein, rien à y marquer), rien n'arrête un
-// onglet de l'ancienne version, sinon le verrou du navigateur, qu'il demande
-// comme nous avant d'envoyer. L'onglet qui le constate GARDE donc ce verrou au
-// lieu de le rendre : l'ancien onglet n'envoie plus, quoi qu'il tienne en
-// mémoire. Ici tout continue, à la suite et un à la fois (passes, renvois,
-// abandons) ; les autres onglets à jour trouvent le verrou pris et laissent
-// celui-ci envoyer le registre commun, que leurs saisies réveillent
-// (événement `storage`). Le verrou est rendu dès que celui de l'ancienne file
-// est posé, et de toute façon à la fermeture de l'onglet.
-let kept: { release: () => void; tail: Promise<unknown>; queued: number } | null = null;
-
-function letGoIfGuarded(): void {
-  if (kept === null || kept.queued > 0 || legacyUnguarded) return;
-  kept.release();
-  kept = null;
-}
-
 /**
  * Exécute `run` sous le verrou d'envoi (`FLUSH_LOCK`), ou rend `busy` s'il n'a
  * pas été obtenu (`ifAvailable`). Sans l'API (vieux navigateur), `run` tourne
- * sans verrou. Cf. « GARDE DU VERROU D'ENVOI ».
+ * sans verrou.
  */
 function underLock<T>(options: LockOptions, run: () => T | Promise<T>, busy: T): Promise<T> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
   if (!locks || typeof locks.request !== 'function') return Promise.resolve().then(run);
-  if (kept !== null) {
-    // Cet onglet tient déjà le verrou.
-    const mine = kept;
-    mine.queued += 1;
-    const result = mine.tail.then(run, run);
-    mine.tail = result.then(
-      () => {},
-      () => {},
-    );
-    void mine.tail.then(() => {
-      mine.queued -= 1;
-      letGoIfGuarded();
-    });
-    return result;
-  }
-  return new Promise<T>((resolve, reject) => {
-    Promise.resolve(
-      locks.request(FLUSH_LOCK, options, async (lock) => {
-        if (lock === null) return resolve(busy);
-        try {
-          resolve(await run());
-        } catch (err) {
-          reject(err);
-        }
-        if (!legacyUnguarded || kept !== null) return;
-        await new Promise<void>((release) => {
-          kept = { release, tail: Promise.resolve(), queued: 0 };
-        });
-      }),
-    ).catch(reject);
-  });
+  return Promise.resolve(locks.request(FLUSH_LOCK, options, (lock) => (lock === null ? busy : run())));
 }
 
 /**
@@ -1174,7 +1126,9 @@ function passedRetention(entries: readonly Entry[]): Set<string> {
   const stale = new Set<string>();
   for (const e of entries) {
     if (e.fate !== 'acked') continue;
-    const seen = ackedSeen.get(e.uid) ?? mono ?? 0;
+    // Première vue : l'âge déjà écoulé à l'heure de l'appareil est repris, pour
+    // que le compte monotone ne reparte pas de zéro.
+    const seen = ackedSeen.get(e.uid) ?? (mono ?? 0) - Math.max(0, now - (e.at ?? now));
     const passed =
       seen === true || isExpired(e, now) || (mono !== null && mono - seen > ACKED_RETENTION_MS);
     next.set(e.uid, passed ? true : seen);
@@ -1259,9 +1213,17 @@ export function clearQueue(): void {
   volatile = null;
   deferred = null;
   legacyUnguarded = false;
-  letGoIfGuarded();
   if (typeof localStorage === 'undefined') return;
-  removeKeys([LEGACY_QUEUE_KEY, LEGACY_QUARANTINE_KEY, CORRUPT_KEY, ...keysWith(INBOX_PREFIX)]);
+  // L'ancienne file est vidée, pas son verrou : un onglet de l'ancienne version
+  // reste arrêté (une écriture qui ne grandit pas, elle passe appareil plein).
+  try {
+    const stops = legacyArray(LEGACY_QUEUE_KEY).filter((op) => legacyMark(op) === 'stop');
+    if (stops.length > 0) localStorage.setItem(LEGACY_QUEUE_KEY, JSON.stringify(stops));
+    else localStorage.removeItem(LEGACY_QUEUE_KEY);
+  } catch {
+    removeKeys([LEGACY_QUEUE_KEY]);
+  }
+  removeKeys([LEGACY_QUARANTINE_KEY, CORRUPT_KEY, ...keysWith(INBOX_PREFIX)]);
   if (outdated) return;
   const seq = Math.max(record.seq, highestSeq);
   if (seq === 0 || !persist({ ...emptyRecord(), seq })) removeKeys([REGISTRY_KEY]);
@@ -1500,11 +1462,23 @@ export function retryRefused(refusalId: string): Promise<GestureOutcome> {
  * saisies retenues par cette séance, la correction de cette série). Geste
  * explicite de l'utilisateur (ADR 0012).
  */
-export function abandonRefused(refusalId: string): Promise<GestureOutcome> {
+export function abandonRefused(
+  refusalId: string,
+  /**
+   * Reçoit, sous le verrou, les écritures RÉELLEMENT retirées : la liste
+   * affichée avant d'attendre le verrou (`RefusedWrite.dependents`) a pu
+   * changer entre-temps (une saisie retenue, libérée puis acquittée, ne part
+   * plus avec le refus).
+   */
+  onRemoved?: (ops: OutboxOp[]) => void,
+): Promise<GestureOutcome> {
   return underGestureLock(() =>
     transact((draft) => {
       if (!ownRefusal(draft.record, refusalId)) return 'gone';
-      return abandon(draft, refusalId).length > 0 ? 'done' : 'gone';
+      const gone = abandon(draft, refusalId);
+      if (gone.length === 0) return 'gone';
+      onRemoved?.(gone.map((e) => e.op));
+      return 'done';
     }),
   );
 }
