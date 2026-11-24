@@ -25,8 +25,7 @@
   --color-on-ink: #4a463f;  /* texte secondaire posé sur le bouton principal */
 
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
-  /* Pas de mono dans E : `font-mono` et `.readout` (écrans hérités) tombent sur
-     Inter, les chiffres y passent en tabulaires. */
+  /* Pas de mono dans E : `font-mono` tombe sur Inter. */
   --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
   --radius-block: 6px;      /* boutons, carrés de couleur, champs */
@@ -163,15 +162,9 @@ html {
 }
 
 /* Chiffres tabulaires pour les nombres mesurés, et pour eux seulement : Inter
-   tabulaire donne aussi aux traits d'union une chasse de chiffre (« 3 - 4 »).
-   `.readout`, le nom hérité des écrans pas encore refaits, ne l'applique donc
-   pas : ses textes mêlent nombres et fourchettes (« 3-4 × 8-12 @ RIR 1-2 »), et
-   il l'annule quand un écran hérité l'ajoute à la main (`tabular-nums`). */
+   tabulaire donne aussi aux traits d'union une chasse de chiffre (« 3 - 4 »). */
 .tnum {
   font-variant-numeric: tabular-nums;
-}
-.readout.tabular-nums {
-  font-variant-numeric: normal;
 }
 
 /* Champs auto-remplis : Chrome et Safari les repeignent en clair, ce qui casse le
@@ -229,7 +222,7 @@ input:-webkit-autofill:active {
 [data-motion="reduite"] *,
 [data-motion="reduite"] *::before,
 [data-motion="reduite"] *::after {
-  /* Écrans hérités compris : plus aucune animation d'entrée, et seules les
+  /* Partout : plus aucune animation d'entrée, et seules les
      transitions de couleur et d'opacité survivent (ni enfoncement, ni glissé). */
   animation: none !important;
   transition-property: opacity, color, background-color, border-color !important;

@@ -188,7 +188,7 @@ Palette **retenue** : neuf valeurs, toutes définies une fois dans `src/index.cs
 
 ### Named Rules
 
-**The Tabular Numbers Rule.** Les nombres mesurés seuls (poids, reps, RIR, e1RM, compteurs) sont en chiffres tabulaires (`.tnum`) : ils ne dansent pas d'une série à l'autre. Le texte courant ne l'est pas, ni un texte qui mêle nombres et traits d'union : Inter tabulaire donne au trait d'union une chasse de chiffre (« 3 - 4 », « E - mail »). La classe héritée `.readout` n'est donc pas tabulaire.
+**The Tabular Numbers Rule.** Les nombres mesurés seuls (poids, reps, RIR, e1RM, compteurs) sont en chiffres tabulaires (`.tnum`) : ils ne dansent pas d'une série à l'autre. Le texte courant ne l'est pas, ni un texte qui mêle nombres et traits d'union : Inter tabulaire donne au trait d'union une chasse de chiffre (« 3 - 4 », « E - mail »).
 
 **The No Kicker Rule.** Aucun surtitre en majuscules, aucune étiquette mono traquée au-dessus d'un titre. Le titre porte son propre poids.
 
@@ -242,6 +242,15 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Filet** (`Rule`) : 1 px, aligné sur la marge ou bord à bord.
 - **État vide** (`EmptyState`) : une phrase qui dit ce qui manque, l'action dessous.
 
+### Champs et confirmations
+
+- **Champ** (`TextField`, `PasswordField`, `TextArea`) : fond levé, contour gris repère, 48 px, texte de 17 px (jamais sous 16 px : iOS zoome). Libellé visible au-dessus, ou masqué mais lu (`hideLabel`) quand la section porte déjà le titre. Focus : un seul indicateur, le contour passe au blanc cassé et double. Erreur : la phrase sous le champ, sur un trait blanc cassé à gauche (`FieldError`), jamais de rouge. Pas de placeholder qui imite une valeur. Le clavier n'est admis que pour du texte libre.
+- **Avis** (`Notice`) : trait à gauche, titre, texte gris, actions dessous.
+- **Confirmation en ligne** (`Confirm`) : posée là où l'action a été demandée, le texte dit ce qui sera perdu. Une perte définitive : l'option sûre est le bouton, la perte un lien. Un geste qui se défait (archiver) : l'action est le bouton, « Annuler » le lien.
+- **Section repliée** (`Disclosure`) : titre, compte après un point médian, « Afficher » ou « Masquer » souligné.
+- **Action d'objet** (`ActionRow`) : bouton secondaire pleine largeur, l'explication dessous ; `ActionNote` dit pourquoi une action manque.
+- **Chargement** (`Loading`) : une phrase grise, pas de toupie. **Échec** (`LoadError`) : la phrase sur un trait blanc cassé, puis « Réessayer ».
+
 ### Contrôles sans clavier
 
 - **Interrupteur** (`Switch`) : une ligne, le libellé à gauche, « Oui » ou « Non » écrit, puis la case. Activé : case blanc cassé pleine (jamais le signal).
@@ -259,6 +268,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Feuille basse
 
+- **Saisies refusées** : quand le serveur refuse des saisies, la ligne de synchro porte à son bout « N refusées », souligné ; toute la ligne ouvre la feuille des saisies refusées (aussi depuis Réglages, Données). Chaque saisie dit quoi, quand et pourquoi, avec « Renvoyer » et « Abandonner » (confirmé).
 - **`Sheet`** : voile noir plein à 65 % et panneau levé collé en bas, rayon haut de 10 px, titre et « Fermer » en tête (le titre passe à la ligne, jamais coupé ; sa première ligne au niveau de « Fermer »), défilement interne. Elle monte en 240 ms (courbe de tiroir iOS) et descend en 150 ms ; « Réduire les animations » la fait apparaître en fondu. Fermeture par « Fermer », le voile ou Échap ; le focus va au titre à l'ouverture, reste piégé dans la feuille, et revient à l'élément d'origine à la fermeture.
 
 ### Mouvement
@@ -267,9 +277,9 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - Aucune animation sur les gestes répétés en salle (logger, règle au toucher, rangées de numéros) ni sur le changement de surface : le retour est instantané.
 - Réduire les animations (Réglages, défaut = préférence du système, `data-motion="reduite"` sur `<html>`) : plus de déplacement ni de changement d'échelle ; restent les fondus d'opacité et de couleur.
 
-### Écrans hérités (transition)
+### Reste du pont hérité
 
-Les écrans métier qui n'ont pas encore été refaits (Capture, Analyse, Séances, Exercices, connexion, premier lancement) gardent leur structure et leurs classes `.btn`, `.panel`, `.field`, `bg-surface`, `text-accent-ink`, `text-good`. Ces classes et ces noms de tokens sont redéfinis sur les valeurs de E dans `src/index.css` (section « Pont des écrans hérités ») : blanc cassé pour l'ancien accent, aucune ombre, rayons ramenés à 6 px. Le pont se retire écran par écran quand chacun passe au kit ; il n'accueille aucun nouvel usage.
+Tous les écrans sont au kit. Seule la classe `.field` reste dans `src/index.css` : le choix d'exo de la Salle (`ExercisePicker`) l'écrit encore. Elle se retire quand ce champ passe à `TextField`. Aucun nouvel usage.
 
 ## Do's and Don'ts
 
