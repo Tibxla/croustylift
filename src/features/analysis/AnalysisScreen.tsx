@@ -22,7 +22,7 @@
 // les données affichées restent jusqu'à l'arrivée des nouvelles.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Choice, CopyNote, EmptyState, OfflineState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
-import { invalidateViews, VIEW_PREFIX } from '../../lib/dated-read';
+import { invalidateViews, JOURNAL_VIEW, OVERVIEW_VIEW } from '../../lib/dated-read';
 import { useDatedLoad } from '../../lib/use-dated-load';
 import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
@@ -92,11 +92,6 @@ const loadOverview = async (): Promise<Overview> => {
   ]);
   return { analyses, metrics, plan, routineName };
 };
-
-/** Les copies datées de l'Analyse (lib/dated-read) : hors ligne, elles se
- *  montrent avec leur date ; sans elles, une phrase, pas une erreur. */
-const OVERVIEW_VIEW = `${VIEW_PREFIX}analyse`;
-const JOURNAL_VIEW = `${VIEW_PREFIX}journal`;
 
 export function AnalysisScreen() {
   // Arrivée par « Voir au Journal » (Séance rangée) : l'onglet Journal d'emblée,

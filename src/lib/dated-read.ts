@@ -25,6 +25,12 @@
 //     (`invalidateViews`) : celles de Séances après une écriture du plan
 //     (`SEANCES_VIEWS`), celles de l'Analyse après la correction d'une séance.
 //     La lecture suivante repasse par le réseau, la copie ne sert qu'en secours.
+//   - exception à la règle du flush : quand une passe ACQUITTE une écriture
+//     du réalisé (séries, séances, métriques), les vues de l'Analyse lues par
+//     un écran MONTÉ sont périmées et relues (`refreshMountedViews`). Sans
+//     elle, la relecture que le retour du réseau lance en parallèle du flush
+//     pouvait atteindre la base avant un DELETE et garder la séance supprimée
+//     au Journal. Les vues sans écran monté ne bougent pas ;
 //
 // Les clés commencent toutes par `VIEW_PREFIX` : une seule invalidation les
 // couvre, et l'éviction les sacrifie en premier quand le stockage est plein
@@ -42,6 +48,48 @@ export const ROUTINES_VIEW = `${VIEW_PREFIX}seances`;
 export const ROUTINE_VIEW_PREFIX = `${VIEW_PREFIX}routine:`;
 /** Les copies qu'une écriture du plan fausse : celles de Séances seulement. */
 export const SEANCES_VIEWS = [ROUTINES_VIEW, ROUTINE_VIEW_PREFIX] as const;
+/** La vue d'ensemble de l'Analyse (courbes, mesures de séance, plan). */
+export const OVERVIEW_VIEW = `${VIEW_PREFIX}analyse`;
+/** Le Journal de l'Analyse. */
+export const JOURNAL_VIEW = `${VIEW_PREFIX}journal`;
+
+/** Les comparaisons de blocs d'un exo : `vue:blocs:<exerciseId>`. */
+export const BLOCKS_VIEW_PREFIX = `${VIEW_PREFIX}blocs:`;
+/** Les copies qu'une écriture du réalisé (séries, séances, métriques) fausse : celles de l'Analyse. */
+export const REALISED_VIEWS = [OVERVIEW_VIEW, JOURNAL_VIEW, BLOCKS_VIEW_PREFIX] as const;
+
+/** Les vues lues par un écran MONTÉ (`useDatedLoad`) : clé → ses relectures. */
+const mounted = new Map<string, Set<() => void>>();
+
+/**
+ * Déclare la vue `key` lue par un écran monté : `refresh` la relit (sans
+ * repasser par « chargement »). Rend la fonction de démontage.
+ */
+export function mountView(key: string, refresh: () => void): () => void {
+  const set = mounted.get(key) ?? new Set();
+  set.add(refresh);
+  mounted.set(key, set);
+  return () => {
+    set.delete(refresh);
+    if (set.size === 0 && mounted.get(key) === set) mounted.delete(key);
+  };
+}
+
+/**
+ * Une écriture vient d'être ACQUITTÉE (flush, cf. capture/sync) : les vues
+ * MONTÉES qu'elle fausse sont périmées, puis relues. Une lecture partie avant
+ * l'acquittement (le retour du réseau relit le Journal en parallèle du flush)
+ * a pu décrire la base d'avant : périmée, sa copie ne se montre plus d'abord,
+ * et une réponse encore en vol ne l'écrit plus. Les vues sans écran monté ne
+ * sont ni relues ni périmées : relues à l'ouverture de leur écran, copie
+ * d'abord (cf. en-tête).
+ */
+export function refreshMountedViews(prefixes: readonly string[]): void {
+  const keys = [...mounted.keys()].filter((key) => prefixes.some((p) => key.startsWith(p)));
+  if (keys.length === 0) return;
+  invalidateReads(keys);
+  for (const key of keys) for (const refresh of [...(mounted.get(key) ?? [])]) refresh();
+}
 
 /** Une valeur et l'heure (ms) de la lecture réseau qui l'a produite. */
 export interface Dated<T> {

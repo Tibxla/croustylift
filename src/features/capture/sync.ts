@@ -37,6 +37,7 @@ import {
 } from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
 import { seedRead } from '../../lib/read-cache';
+import { REALISED_VIEWS, refreshMountedViews } from '../../lib/dated-read';
 import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
@@ -54,6 +55,10 @@ const touchedExercises = new Set<string>();
 // la ramènerait après coup) : cette mémoire désigne alors son exo. Bornée à la
 // session (quelques dizaines d'ids), jamais persistée.
 const ackedSets = new Map<string, { exerciseId: string; executionId: string }>();
+// Une écriture du réalisé (série, séance supprimée, métriques de fin) a été
+// acquittée depuis la dernière passe : les vues montées de l'Analyse sont à
+// relire (`refreshMountedViews`, lib/dated-read).
+let realisedTouched = false;
 
 /**
  * Une suppression vient d'être acquittée : marque à relire les seuls exos
@@ -85,6 +90,10 @@ function touchDeleted(
  * retour de cette lecture, et un échec réseau laisse simplement la copie.
  */
 function refreshTouchedHistory(): void {
+  if (realisedTouched) {
+    realisedTouched = false;
+    refreshMountedViews(REALISED_VIEWS);
+  }
   if (touchedExercises.size === 0) return;
   const target = [...touchedExercises];
   touchedExercises.clear();
@@ -135,6 +144,7 @@ export const syncFns: SyncFns = {
     );
     touchedExercises.add(op.exerciseId);
     ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
+    realisedTouched = true;
   },
   insertSet: async (op) => {
     await upsertSet({
@@ -151,10 +161,12 @@ export const syncFns: SyncFns = {
     });
     touchedExercises.add(op.exerciseId);
     ackedSets.set(op.id, { exerciseId: op.exerciseId, executionId: op.executionId });
+    realisedTouched = true;
   },
   deleteSet: async (op) => {
     await deleteSetById(op.id);
     touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
+    realisedTouched = true;
   },
   updateExecution: async (op) => {
     // Le nombre de lignes touchées n'est pas un critère d'échec (cf. data.ts,
@@ -165,6 +177,8 @@ export const syncFns: SyncFns = {
       durationMin: op.durationMin,
       closedAt: op.closedAt,
     });
+    // Durée et BPM : les mesures de séance de l'Analyse.
+    realisedTouched = true;
   },
   upsertDatedNote: (op) =>
     upsertDatedNoteRow({
@@ -197,12 +211,16 @@ export const syncFns: SyncFns = {
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
     touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
+    realisedTouched = true;
   },
   // Suppression conditionnelle (« Changer de séance ») : les copies locales ne
   // sont relues que si la base a réellement supprimé l'exécution.
   deleteExecutionIfEmpty: async (op) => {
     const outcome = await deleteExecutionIfEmpty(op.id);
-    if (outcome === 'deleted') touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
+    if (outcome === 'deleted') {
+      touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
+      realisedTouched = true;
+    }
   },
 };
 

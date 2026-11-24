@@ -24,7 +24,7 @@ import {
   type BlockSeanceProgression,
 } from '../../domain/block-comparison';
 import { CopyNote, EmptyState, List, OfflineState, Row, Sheet, Status } from '../../ui';
-import { VIEW_PREFIX } from '../../lib/dated-read';
+import { BLOCKS_VIEW_PREFIX } from '../../lib/dated-read';
 import { useDatedLoad } from '../../lib/use-dated-load';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
 import { blockPeriodLabel, seanceRoutineLabel } from './block-label';
@@ -51,7 +51,7 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
     const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
     return { executions, blocks, seances: [...seances] };
   }, [exerciseId]);
-  const { state, online, showDate } = useDatedLoad(`${VIEW_PREFIX}blocs:${exerciseId}`, fetchComparison);
+  const { state, online, showDate } = useDatedLoad(`${BLOCKS_VIEW_PREFIX}${exerciseId}`, fetchComparison);
   const seances = useMemo(() => new Map(state.phase === 'ready' ? state.value.seances : []), [state]);
 
   if (state.phase === 'loading') {

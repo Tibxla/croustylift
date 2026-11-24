@@ -2,7 +2,7 @@
 // vue, la suit quand la revalidation la remplace, relit au retour du réseau, et
 // dit quand la date de la copie doit s'afficher.
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { loadDated, watchDated, type DatedState } from './dated-read';
+import { loadDated, mountView, watchDated, type DatedState } from './dated-read';
 
 /** Au-delà, une copie montrée en ligne sans relecture arrivée se date à l'écran
  *  (réseau de salle qui répond mal sans être coupé). */
@@ -57,6 +57,10 @@ export function useDatedLoad<T>(key: string | null, fetcher: () => Promise<T>) {
       stop();
     };
   }, [key, fetcher, online, tick]);
+
+  // Monté, l'écran est relu quand une écriture acquittée fausse sa vue
+  // (`refreshMountedViews`, après un flush).
+  useEffect(() => (key === null ? undefined : mountView(key, () => setTick((k) => k + 1))), [key]);
 
   const copyAt = state.phase === 'ready' && state.copy ? state.at : null;
   useEffect(() => {
