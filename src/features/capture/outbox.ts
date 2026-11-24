@@ -887,6 +887,65 @@ function absorb(): void {
   else settleLegacy(opened.legacyRead, opened.draft.record, true);
 }
 
+// GARDE DU VERROU D'ENVOI. Tant que l'ancienne file n'a pas son verrou
+// (`legacyUnguarded` : appareil plein, rien à y marquer), rien n'arrête un
+// onglet de l'ancienne version, sinon le verrou du navigateur, qu'il demande
+// comme nous avant d'envoyer. L'onglet qui le constate GARDE donc ce verrou au
+// lieu de le rendre : l'ancien onglet n'envoie plus, quoi qu'il tienne en
+// mémoire. Ici tout continue, à la suite et un à la fois (passes, renvois,
+// abandons) ; les autres onglets à jour trouvent le verrou pris et laissent
+// celui-ci envoyer le registre commun, que leurs saisies réveillent
+// (événement `storage`). Le verrou est rendu dès que celui de l'ancienne file
+// est posé, et de toute façon à la fermeture de l'onglet.
+let kept: { release: () => void; tail: Promise<unknown>; queued: number } | null = null;
+
+function letGoIfGuarded(): void {
+  if (kept === null || kept.queued > 0 || legacyUnguarded) return;
+  kept.release();
+  kept = null;
+}
+
+/**
+ * Exécute `run` sous le verrou d'envoi (`FLUSH_LOCK`), ou rend `busy` s'il n'a
+ * pas été obtenu (`ifAvailable`). Sans l'API (vieux navigateur), `run` tourne
+ * sans verrou. Cf. « GARDE DU VERROU D'ENVOI ».
+ */
+function underLock<T>(options: LockOptions, run: () => T | Promise<T>, busy: T): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks || typeof locks.request !== 'function') return Promise.resolve().then(run);
+  if (kept !== null) {
+    // Cet onglet tient déjà le verrou.
+    const mine = kept;
+    mine.queued += 1;
+    const result = mine.tail.then(run, run);
+    mine.tail = result.then(
+      () => {},
+      () => {},
+    );
+    void mine.tail.then(() => {
+      mine.queued -= 1;
+      letGoIfGuarded();
+    });
+    return result;
+  }
+  return new Promise<T>((resolve, reject) => {
+    Promise.resolve(
+      locks.request(FLUSH_LOCK, options, async (lock) => {
+        if (lock === null) return resolve(busy);
+        try {
+          resolve(await run());
+        } catch (err) {
+          reject(err);
+        }
+        if (!legacyUnguarded || kept !== null) return;
+        await new Promise<void>((release) => {
+          kept = { release, tail: Promise.resolve(), queued: 0 };
+        });
+      }),
+    ).catch(reject);
+  });
+}
+
 /**
  * Demande l'écriture, sous le verrou, de ce qui n'est pas encore au registre
  * (mémoire, boîte d'entrée, ancien format). Au tour suivant de la boucle
@@ -911,7 +970,7 @@ function persistSoon(always = false): void {
       activeDeferred().length > 0 || activeVolatile() !== null || readInbox().length > 0 || readLegacy().length > 0;
     // `always` : le démarrage, qui pose aussi le verrou de l'ancienne file.
     if (!waiting && !always) return;
-    void Promise.resolve(locks.request(FLUSH_LOCK, () => absorb())).catch(() => {});
+    void underLock({}, absorb, undefined).catch(() => {});
   }, 0);
 }
 
@@ -1200,6 +1259,7 @@ export function clearQueue(): void {
   volatile = null;
   deferred = null;
   legacyUnguarded = false;
+  letGoIfGuarded();
   if (typeof localStorage === 'undefined') return;
   removeKeys([LEGACY_QUEUE_KEY, LEGACY_QUARANTINE_KEY, CORRUPT_KEY, ...keysWith(INBOX_PREFIX)]);
   if (outdated) return;
@@ -1397,14 +1457,10 @@ const GESTURE_LOCK_WAIT_MS = 4000;
  * autre onglet. Sans l'API (vieux navigateur, tests), `run` tourne sans verrou.
  */
 async function underGestureLock(run: () => GestureOutcome): Promise<GestureOutcome> {
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
-  if (!locks || typeof locks.request !== 'function') return run();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GESTURE_LOCK_WAIT_MS);
   try {
-    return await locks.request(FLUSH_LOCK, { signal: controller.signal }, (lock) =>
-      lock === null ? 'busy' : run(),
-    );
+    return await underLock<GestureOutcome>({ signal: controller.signal }, run, 'busy');
   } catch (err) {
     if (controller.signal.aborted) return 'busy';
     throw err;
@@ -1555,16 +1611,17 @@ function scheduleLockRetry(fns: SyncFns, who?: SessionReader): void {
 export const OUTBOX_CHANGED_EVENT = 'croustylift:outbox-changed';
 
 async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushResult> {
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
-  if (!locks || typeof locks.request !== 'function') return run();
-  return locks.request(FLUSH_LOCK, { ifAvailable: true }, (lock) => {
-    if (lock === null) {
-      flushLockBusy = true;
-      return { remaining: pendingCount(), flushed: 0, settled: [] };
-    }
-    flushLockBusy = false;
-    return run();
-  });
+  const result = await underLock<FlushResult | null>(
+    { ifAvailable: true },
+    () => {
+      flushLockBusy = false;
+      return run();
+    },
+    null,
+  );
+  if (result !== null) return result;
+  flushLockBusy = true;
+  return { remaining: pendingCount(), flushed: 0, settled: [] };
 }
 
 /**

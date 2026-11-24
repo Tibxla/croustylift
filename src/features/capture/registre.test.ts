@@ -1287,3 +1287,32 @@ describe('relecture entière : une écriture acquittée tenue pour passée le re
     await vi.waitFor(() => expect(storedWrites()).toEqual([]));
   });
 });
+
+describe('relecture entière : sans verrou dans l’ancienne file, cet onglet garde le verrou d’envoi', () => {
+  /** L'ancien onglet demande le verrou d'envoi comme il le fait : sans attendre. */
+  const oldTabGetsTheLock = () =>
+    navigator.locks.request('croustylift:outbox:flush', { ifAvailable: true }, async (lock) => lock !== null);
+
+  it('l’ancien onglet ne peut pas envoyer tant que le verrou manque ; ici, tout continue ; rendu dès qu’il est posé', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    expect(await oldTabGetsTheLock()).toBe(true);
+    const device = deviceFull();
+    await flush(base().fns);
+    expect(storageFailing()).toBe(true);
+
+    expect(await oldTabGetsTheLock()).toBe(false);
+    // Ici, les passes et les gestes de la feuille continuent, sous le verrou gardé.
+    enqueue(insert('s1'));
+    const b = base();
+    await flush(b.fns);
+    expect(b.sent).toEqual(['insertSet:s1']);
+    expect(await retryRefused('inconnue')).toBe('gone');
+    expect(await oldTabGetsTheLock()).toBe(false);
+
+    // La place revient : le verrou de l'ancienne file est posé, celui d'envoi rendu.
+    device.free();
+    await flush(base().fns);
+    expect(legacyQueueNow()).toMatchObject([{ _uid: 'registre-actif', _owner: 'user-1' }]);
+    expect(await oldTabGetsTheLock()).toBe(true);
+  });
+});
