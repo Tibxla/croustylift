@@ -16,7 +16,7 @@ Avant chaque migration : sa requête de contrôle préalable, en commentaire en 
 6. `0020_override_exo_de_base.sql`
 7. `0023_reorder_seances.sql`
 8. `0024_import_transactionnel.sql`
-9. `0025_delete_execution_if_empty.sql` : la suppression conditionnelle d'une exécution ouverte et vide (« Changer de séance » dans la Salle). Le client qui l'appelle (`deleteExecutionIfEmpty`, `src/features/capture/data.ts`) marche aussi sans elle, par un repli non atomique : l'appliquer avant ou juste après son déploiement, sans autre contrainte d'ordre.
+9. `0025_delete_execution_if_empty.sql` : la suppression conditionnelle d'une exécution ouverte et vide (« Changer de séance » dans la Salle). À appliquer AVANT le déploiement du client qui l'appelle (`deleteExecutionIfEmpty`, `src/features/capture/data.ts`) : sans elle, ce client ne supprime rien et une exécution vide reste ouverte (la prochaine ouverture l'adopte). Un repli non atomique a été retiré le 24/11 : il pouvait emporter une série acquittée par un autre appareil.
 
 Effet visible sur le client en place : aucun.
 
