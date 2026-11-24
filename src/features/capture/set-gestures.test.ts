@@ -21,6 +21,7 @@ import { correctSet, deleteSet, ranksAfterDeletion } from './set-gestures';
 import {
   captureReducer,
   getProgress,
+  mutationMark,
   initialState,
   loadPersisted,
   persist,
@@ -553,6 +554,123 @@ describe('suppression et réponse tardive de la base', () => {
       queuedOps: [{ ...insert('s2', 2, 7), weightKg: 85, rir: 1 }],
     });
     expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
+  });
+});
+
+// La réponse d'une lecture lente est livrée APRÈS que le serveur a acquitté des
+// gestes faits pendant son trajet : aucun relevé de la file ne les montre plus,
+// et l'état du départ ne connaît pas une série née entre-temps. Le tableau suit
+// donc lui-même ses mutations locales, par id, suppressions comprises.
+describe('réponse livrée après l’acquittement de gestes faits pendant son trajet', () => {
+  /** Au départ de la lecture : une seule série. */
+  const atDeparture = (): CaptureState => ({
+    ...started(),
+    progress: { [BENCH]: { sets: [ps(80, 8, 2, 1)], setIds: ['s1'], skipped: false } },
+  });
+  const logS2 = (state: CaptureState) =>
+    captureReducer(state, { type: 'log-set', exerciseId: BENCH, setId: 's2', set: { weightKg: 80, reps: 7, rir: 1 } });
+  /** La réponse : la lecture a vu S2 (insérée pendant son trajet), telle que loggée. */
+  const late = (departure: CaptureState) => ({
+    type: 'reconcile-progress' as const,
+    base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } },
+    pendingSetIds: [],
+    knownAtDeparture: ['s1'],
+    departure: departure.progress,
+    queuedOps: [],
+  });
+
+  it('série née pendant le trajet, puis SUPPRIMÉE et acquittée : la réponse, qui la porte, ne la ressuscite pas', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
+    const next = captureReducer(state, late(atDeparture()));
+    expect(getProgress(next, BENCH).setIds).toEqual(['s1']);
+  });
+
+  it('pareil pour « Annuler la série » juste après le log', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, { type: 'undo-last-set', exerciseId: BENCH });
+    expect(getProgress(captureReducer(state, late(atDeparture())), BENCH).setIds).toEqual(['s1']);
+  });
+
+  it('série née pendant le trajet, puis CORRIGÉE et acquittée : la réponse, qui porte l’ancienne valeur, ne masque pas la correction', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
+    const next = captureReducer(state, late(atDeparture()));
+    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
+  });
+
+  it('remontée de rang acquittée pendant le trajet : les rangs locaux tiennent, la série supprimée ne revient pas', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, deleteSet(state, BENCH, 's1')!.action);
+    const next = captureReducer(state, late(atDeparture()));
+    expect(getProgress(next, BENCH).setIds).toEqual(['s2']);
+    expect(getProgress(next, BENCH).sets[0]).toEqual(ps(80, 7, 1, 1));
+  });
+
+  it('une ancienne écriture relevée dans la file ne rejoue pas une série supprimée ou corrigée ici', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
+    const stale = { type: 'insertSet', id: 's2', executionId: 'exec-1', exerciseId: BENCH, setOrder: 2, weightKg: 80, reps: 7, rir: 1 } as const;
+    const next = captureReducer(state, { ...late(atDeparture()), queuedOps: [stale] });
+    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
+  });
+
+  it('série corrigée ici mais supprimée ailleurs (le Journal) : la réponse ne la porte pas, elle sort', () => {
+    // Une correction n'écrit que des valeurs : en base, elle n'a rien recréé.
+    let state = started();
+    state = captureReducer(state, correctSet(state, BENCH, 's3', { weightKg: 85, reps: 6, rir: 0 })!.action);
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(80, 7, 1, 2)], setIds: ['s1', 's2'] } },
+      pendingSetIds: [],
+      knownAtDeparture: ['s1', 's2', 's3'],
+      departure: started().progress,
+      queuedOps: [],
+    });
+    expect(getProgress(next, BENCH).setIds).toEqual(['s1', 's2']);
+  });
+
+  it('correction faite AVANT le départ d’une lecture neuve : la base, recorrigée ailleurs depuis, fait foi', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, correctSet(state, BENCH, 's2', { weightKg: 85, reps: 7, rir: 1 })!.action);
+    // La lecture part maintenant : elle relève le compteur et l'état courant.
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: { [BENCH]: { sets: [ps(80, 8, 2, 1), ps(90, 7, 1, 2)], setIds: ['s1', 's2'] } },
+      pendingSetIds: [],
+      knownAtDeparture: ['s1', 's2'],
+      departure: state.progress,
+      departureMark: mutationMark(state),
+      queuedOps: [],
+    });
+    expect(getProgress(next, BENCH).sets[1]).toEqual(ps(90, 7, 1, 2));
+  });
+
+  it('série supprimée APRÈS le relevé d’une lecture neuve : elle ne revient pas', () => {
+    let state = logS2(atDeparture());
+    const mark = mutationMark(state);
+    const departure = state.progress;
+    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
+    const next = captureReducer(state, { ...late(atDeparture()), departure, departureMark: mark, knownAtDeparture: ['s1', 's2'] });
+    expect(getProgress(next, BENCH).setIds).toEqual(['s1']);
+  });
+
+  it('le suivi ne survit pas au rechargement : un état relu repart sans mutation locale', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
+    expect(Object.keys(state.sinceLoad?.removed ?? {})).toEqual(['s2']);
+    persist(state);
+    expect(loadPersisted(upperA, DATE)!.sinceLoad).toBeUndefined();
+  });
+
+  it('une séance neuve (reset) repart sans suivi', () => {
+    let state = logS2(atDeparture());
+    state = captureReducer(state, deleteSet(state, BENCH, 's2')!.action);
+    const fresh = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
+    expect(fresh.sinceLoad?.removed).toEqual({});
+    expect(fresh.sinceLoad?.edited).toEqual({});
+    // Le compteur, lui, ne recule pas : un relevé d'avant reste antérieur.
+    expect(mutationMark(fresh)).toBe(mutationMark(state));
   });
 });
 
