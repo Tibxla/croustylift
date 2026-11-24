@@ -385,6 +385,50 @@ describe('refus qui arrive APRÈS le geste suivant (insertion encore en vol)', (
     expect(listRefused()).toEqual([]);
   });
 
+  it('tant que le geste suivant n’est pas acquitté (réseau coupé), l’ancienne valeur n’est pas renvoyable', async () => {
+    // Le refus arrive, puis le réseau tombe avant l'envoi de la suite.
+    const cut = (): never => {
+      throw new TypeError('Failed to fetch');
+    };
+    // 1. Une réécriture complète attend derrière : l'insertion refusée est dépassée.
+    enqueue(insertS4(123456));
+    enqueue(insertS4(100));
+    await flush({ ...syncFns, insertSet: async (op) => (op.weightKg > 9999.99 ? syncFns.insertSet(op) : cut()) });
+    expect(listRefused()).toEqual([]);
+    expect(readQueue().map((op) => (op as { weightKg?: number }).weightKg)).toEqual([100]);
+    clearQueue();
+
+    // 2. Une suppression attend derrière : rien à renvoyer non plus.
+    enqueue(insertS4(123456));
+    enqueueAll(deleteSet(s4State(123456), BENCH, 's4')!.ops);
+    await flush({ ...syncFns, deleteSet: cut });
+    expect(listRefused()).toEqual([]);
+    clearQueue();
+
+    // 3. Une correction (écriture partielle) attend derrière : le refus reste
+    //    en quarantaine, elle en a besoin pour reconstituer la série, mais il
+    //    n'est pas renvoyable tant qu'elle est en file.
+    enqueue(insertS4(123456));
+    enqueueAll(correctSet(s4State(123456), BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);
+    let sentOnce = false;
+    await flush({
+      ...syncFns,
+      insertSet: async (op) => {
+        if (sentOnce) return cut();
+        sentOnce = true;
+        return syncFns.insertSet(op);
+      },
+    });
+    const refused = listRefused();
+    expect(refused.map((r) => r.op.id)).toEqual(['s4']);
+    expect(retryRefused(refused[0]!.refusalId)).toBe(false);
+    expect(readQueue()).toHaveLength(1);
+    // Le réseau revient : la série part entière et corrigée, le refus tombe.
+    await flush(syncFns);
+    expect(base()).toContain('s4:100kg@4');
+    expect(listRefused()).toEqual([]);
+  });
+
   it('un refus sans rien derrière reste renvoyable, comme avant', async () => {
     enqueue(insertS4(123456));
     await flush(syncFns);

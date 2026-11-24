@@ -900,6 +900,31 @@ function effectiveOp(op: OutboxOp, refused: QuarantinedOp | null): OutboxOp {
     : { ...patch, weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
 }
 
+/**
+ * La file porte-t-elle, APRÈS `op`, une écriture de la même série et du même
+ * compte qui la rend caduque : une réécriture complète, ou une suppression ?
+ * (Règle 3.) Une écriture partielle derrière ne compte pas : elle a besoin du
+ * refus pour reconstituer la série (règle 1).
+ */
+function supersededInQueue(op: OutboxOp): boolean {
+  if (op.type !== 'insertSet') return false;
+  const queue = readQueue();
+  const at = indexInQueue(queue, op);
+  return queue.slice(at + 1).some(
+    (later) =>
+      later.id === op.id &&
+      later._owner === op._owner &&
+      (later.type === 'deleteSet' || isSetInsertion(later)),
+  );
+}
+
+/** La file porte-t-elle une écriture de la série `setId` pour ce compte ? */
+function setWriteQueued(setId: string, owner: string | undefined): boolean {
+  return readQueue().some(
+    (op) => (op.type === 'insertSet' || op.type === 'deleteSet') && op.id === setId && op._owner === owner,
+  );
+}
+
 /** Lève les insertions refusées de la série `op.id` (même compte) : elle vient d'être réécrite ou supprimée en base. */
 function liftRefusedSetWrites(op: OutboxOp): void {
   const quarantine = readQuarantine();
@@ -972,6 +997,11 @@ export function retryRefused(refusalId: string): boolean {
   const quarantine = readQuarantine();
   const target = quarantine.find((q) => isOwnEntry(q) && refusalIdOf(q) === refusalId);
   if (!target) return false;
+  // Une écriture de la même série attend déjà en file (une correction, qui
+  // reconstituera la série à partir de ce refus) : renvoyer l'ancienne saisie
+  // la ferait repartir APRÈS elle, et la dernière écriture gagne. La file s'en
+  // charge ; rien à renvoyer.
+  if (target.op.type === 'insertSet' && setWriteQueued(target.op.id, target.op._owner)) return false;
   const leaves = (q: QuarantinedOp): boolean =>
     q === target ||
     (target.op.type === 'upsertExecution' &&
@@ -1441,6 +1471,14 @@ async function runFlushOnce(
       if (isPermanentRejection(err) && (!who || (await who()) === user)) {
         const code = (err as { code: string }).code;
         const message = (err as { message?: unknown }).message;
+        // Écriture déjà dépassée par la file (règle 3) : elle n'entre pas en
+        // quarantaine, où « renvoyer » l'aurait fait repasser par-dessus la
+        // correction ou recréer la série supprimée. Elle sort, simplement.
+        if (supersededInQueue(op)) {
+          if (removeFromQueue(op) === 'unwritable') return { flushed, drained: false };
+          queue = readQueue();
+          continue;
+        }
         if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`, sent)) {
           console.error(
             `[outbox] « ${op.type} » (id ${op.id}) rejetée par la base, mise en quarantaine :`,
