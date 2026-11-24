@@ -6,8 +6,13 @@
 //            exo (pente du bloc en cours, dernière mesure) ; toucher ouvre la
 //            page de l'exo (courbe parcourue au doigt, séries 2+, comparaison
 //            de deux blocs) ;
-//   Journal  durée et BPM dans le temps, puis l'historique brut séance par
-//            séance ; une séance s'ouvre, puis se corrige.
+//   Journal  l'historique brut séance par séance (ce que chacune a battu),
+//            puis la durée et le BPM dans le temps ; une séance s'ouvre (le
+//            statut de chaque série face à sa Référence), puis se corrige.
+// Sous le titre, « Que veulent dire ces mots ? » déplie e1RM, pente, bloc et
+// Référence. Vue d'ensemble et Journal se lisent dans une copie datée
+// (lib/dated-read) : hors ligne, la dernière copie avec sa date, ou une phrase
+// sans « Erreur » quand l'appareil n'en a pas.
 // Les sous-pages s'empilent dans l'écran (pile locale) : « ‹ Analyse » revient
 // d'un cran, à la position de défilement quittée. Changer de surface les vide.
 //

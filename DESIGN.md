@@ -251,11 +251,12 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Section repliée** (`Disclosure`) : titre, compte après un point médian, « Afficher » ou « Masquer » souligné.
 - **Action d'objet** (`ActionRow`) : bouton secondaire pleine largeur, l'explication dessous ; `ActionNote` dit pourquoi une action manque.
 - **Chargement** (`Loading`) : une phrase grise, pas de toupie. **Échec** (`LoadError`) : « Erreur : » puis la phrase, entre deux filets, puis « Réessayer ».
+- **Hors ligne sans copie** (`OfflineState`) : une phrase grise, jamais « Erreur » (« Séances se consulte avec le réseau. La Salle marche sans. ») ; rien n'est lu, le retour du réseau relit. **Copie datée** (`CopyNote`) : sous l'en-tête, « Copie du 24 nov., 17 h 12 » hors ligne, « Pas de réponse du réseau · copie du … » quand le réseau tarde plus de 3 s.
 
 ### Contrôles sans clavier
 
 - **Interrupteur** (`Switch`) : une ligne, le libellé à gauche, « Oui » ou « Non » écrit, puis la case. Activé : case blanc cassé pleine (jamais le signal).
-- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce.
+- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce. Sous 350 px, le libellé prend sa ligne et les boutons passent dessous, à droite : le libellé ne se coupe jamais mot à mot.
 - **Choix exclusif** (`Choice`) : des mots, le choisi en demi-gras souligné de 2 px. Pas de pilules.
 - **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Flèches au clavier.
 
