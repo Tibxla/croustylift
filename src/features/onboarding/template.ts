@@ -64,7 +64,7 @@ export interface StarterTemplate {
  * la séance ET celui de la routine sont renommables avant validation.
  */
 export const STARTER_TEMPLATE: StarterTemplate = {
-  seanceName: 'Upper A',
+  seanceName: 'Séance A',
   exercises: [
     {
       name: 'Développé couché',
