@@ -26,7 +26,8 @@
 //             principale en bas : créer un exo perso (pré-rempli par une
 //             recherche qui n'a rien trouvé).
 //   fiche     un exo : muscles, mouvement, origine ; note d'instructions lue,
-//             modifiée sur geste explicite ; puis la sortie (revenir à l'exo de
+//             modifiée sur geste explicite dans la feuille de note commune à
+//             l'éditeur de séance (NoteSheet) ; puis la sortie (revenir à l'exo de
 //             base, ou supprimer un exo perso) derrière une confirmation en
 //             ligne où l'option sûre est le bouton.
 //   formulaire  ExerciseForm en écran entier : créer, modifier un exo perso,
@@ -52,7 +53,6 @@ import {
   ScreenHeader,
   SecondaryButton,
   SectionTitle,
-  TextArea,
   TextField,
   TextLink,
   Choice,
@@ -67,6 +67,7 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { NoteSheet } from '../notes/NoteSheet';
 import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   loadExerciseOverrides,
@@ -534,9 +535,10 @@ function Fiche({
   const base = !isPersonalExercise(exo.ownerId);
   const [note, setNote] = useState<NoteLoad>({ phase: 'loading' });
   const [noteAttempt, setNoteAttempt] = useState(0);
+  // Brouillon de la note (null = pas touchée) : tenu ICI, pas dans la feuille,
+  // pour survivre à sa fermeture et tenir le blocage de rechargement.
   const [draft, setDraft] = useState<string | null>(null);
-  const [noteBusy, setNoteBusy] = useState(false);
-  const [noteError, setNoteError] = useState<string | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
   const [guard, setGuard] = useState<null | 'reset' | 'delete'>(null);
   const [guardBusy, setGuardBusy] = useState(false);
   const [guardError, setGuardError] = useState<string | null>(null);
@@ -552,24 +554,17 @@ function Fiche({
   }, [exo.id, onLoadNote, noteAttempt]);
 
   const saved = note.phase === 'ready' ? note.body : '';
+  const noteUnsaved = draft !== null && draft !== saved;
   // Note en cours d'écriture : aucun rechargement automatique ne la jette.
-  const releaseNote = useReloadBlockWhile(NOTE_DRAFT_BLOCK, draft !== null && draft !== saved);
+  const releaseNote = useReloadBlockWhile(NOTE_DRAFT_BLOCK, noteUnsaved);
 
-  async function saveNote() {
-    if (draft === null) return;
-    setNoteBusy(true);
-    setNoteError(null);
-    try {
-      await onSaveNote(exo.id, draft);
-      setNote({ phase: 'ready', body: draft.trim() });
-      releaseNote();
-      setDraft(null);
-      onFlash(draft.trim() ? 'Note enregistrée.' : 'Note effacée.');
-    } catch (err) {
-      setNoteError(errorMessage(err));
-    } finally {
-      setNoteBusy(false);
-    }
+  /** Résolu = enregistrée (la feuille se ferme) ; un refus reste dans la feuille. */
+  async function saveNote(body: string) {
+    await onSaveNote(exo.id, body);
+    setNote({ phase: 'ready', body: body.trim() });
+    releaseNote();
+    setDraft(null);
+    onFlash(body.trim() ? 'Note enregistrée.' : 'Note effacée.');
   }
 
   async function runGuard(action: () => Promise<void>) {
@@ -628,14 +623,13 @@ function Fiche({
       <section>
         <div className="flex min-h-11 items-center justify-between gap-3 px-5 pb-1 pt-5">
           <h2 className="text-[17px] font-semibold text-ink">Note d’instructions</h2>
-          {draft === null && note.phase === 'ready' && (
+          {note.phase === 'ready' && (
             <IconButton
               icon="edit"
               framed
               label={note.body ? 'Modifier la note' : 'Écrire une note'}
               onClick={() => {
-                setDraft(note.body);
-                setNoteError(null);
+                setNoteOpen(true);
                 onFlash(null);
               }}
             />
@@ -656,50 +650,26 @@ function Fiche({
                 Réessayer
               </SecondaryButton>
             </div>
-          ) : draft !== null ? (
-            <>
-              <TextArea
-                label="Note d’instructions"
-                hideLabel
-                value={draft}
-                onChange={setDraft}
-                placeholder="Réglages de la machine, placement, consignes"
-              />
-              <p className="mt-1.5 text-[14px] leading-[1.4] text-muted">
-                Elle t’appartient : la modifier ne personnalise pas l’exo.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-                <SecondaryButton onClick={() => void saveNote()} disabled={noteBusy}>
-                  {noteBusy ? 'Enregistrement…' : 'Enregistrer la note'}
-                </SecondaryButton>
-                <TextLink
-                  tone="muted"
-                  onClick={
-                    noteBusy
-                      ? undefined
-                      : () => {
-                          releaseNote();
-                          setDraft(null);
-                          setNoteError(null);
-                        }
-                  }
-                >
-                  Annuler
-                </TextLink>
-              </div>
-              {noteError && (
-                <p role="alert" className="mt-2 break-words text-[15px] leading-[1.4] text-ink">
-                  {noteError}
-                </p>
-              )}
-            </>
           ) : note.body ? (
             <p className="max-w-[36ch] whitespace-pre-line text-[16px] leading-[1.5] text-ink">{note.body}</p>
           ) : (
             <p className="text-[15px] leading-[1.45] text-muted">Aucune. Elle se lit en salle, dans les notes de l’exo.</p>
           )}
+          {noteUnsaved && <p className="mt-1 text-[14px] font-medium text-ink">Une modification de la note n’est pas enregistrée.</p>}
         </div>
       </section>
+
+      {noteOpen && note.phase === 'ready' && (
+        <NoteSheet
+          exerciseName={exo.name}
+          note={saved}
+          draft={draft ?? saved}
+          hint="Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle t’appartient : la modifier ne personnalise pas l’exo."
+          onDraft={setDraft}
+          onSave={saveNote}
+          onClose={() => setNoteOpen(false)}
+        />
+      )}
 
       {(!base || overridden) && (
         <section className="pt-8">

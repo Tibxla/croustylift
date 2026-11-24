@@ -10,8 +10,9 @@
 // courante, un enregistrement ferme le bloc en cours : on le dit au-dessus du
 // bouton, avant. Un exo déplié à la fois ; les chiffres se règlent aux steppers
 // du kit, jamais au clavier. La note d'instructions appartient à l'exo, hors
-// version : elle s'édite sur geste explicite (feuille), s'enregistre à part et
-// n'allume pas « Enregistrer » ; son brouillon est tenu ICI, pour que la garde
+// version : elle s'édite sur geste explicite (NoteSheet, la même feuille que la
+// fiche d'Exos), s'enregistre à part et n'allume pas « Enregistrer » ; son
+// brouillon est tenu ICI, pour que la garde
 // de sortie et le blocage de rechargement le voient (registre U27).
 //
 // Garde de sortie (seance-dirty) : tant qu'une saisie n'est pas enregistrée
@@ -73,11 +74,11 @@ import { menuLabel, seanceMenu } from './object-actions';
 import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
 import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
+import { NoteSheet } from '../notes/NoteSheet';
 import {
   Alert,
   Choice,
   EmptyState,
-  FieldError,
   Icon,
   IconButton,
   List,
@@ -91,7 +92,6 @@ import {
   SectionTitle,
   Sheet,
   Stepper,
-  TextArea,
   TextField,
   TextLink,
 } from '../../ui';
@@ -833,6 +833,7 @@ export function SeanceEditorView({
           note={notes[noteRow.exerciseId] ?? ''}
           draft={noteDrafts[noteRow.exerciseId] ?? notes[noteRow.exerciseId] ?? ''}
           onDraft={(body) => setNoteDrafts((prev) => ({ ...prev, [noteRow.exerciseId]: body }))}
+          hint="Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle s’enregistre à part, sans créer de version."
           onSave={(body) => saveNote(noteRow.exerciseId, body)}
           onClose={() => setNoteFor(null)}
         />
@@ -1139,80 +1140,6 @@ function CatalogSheet({
         >
           Créer un exo perso
         </SecondaryButton>
-      </div>
-    </Sheet>
-  );
-}
-
-// =====================================================================
-// Note d'instructions (hors version)
-// =====================================================================
-
-/**
- * Feuille d'édition de la note d'un exo (issue #26). Le texte en cours
- * (`draft`) appartient à l'éditeur, pas à la feuille : fermer la feuille ne le
- * perd pas, et la garde de sortie le voit. Vider puis enregistrer efface la note.
- */
-function NoteSheet({
-  exerciseName,
-  note,
-  draft,
-  onDraft,
-  onSave,
-  onClose,
-}: {
-  exerciseName: string;
-  note: string;
-  draft: string;
-  onDraft: (body: string) => void;
-  onSave: (body: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const changed = draft !== note;
-  const clearing = changed && isBlankNote(draft);
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      await onSave(draft);
-      onClose();
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Sheet
-      open
-      title={`Note · ${exerciseName}`}
-      onClose={onClose}
-      footer={
-        <>
-          {error && <FieldError className="mt-0">{error}</FieldError>}
-          {changed && !busy && (
-            <TextLink tone="muted" className="self-start" onClick={() => onDraft(note)}>
-              {isBlankNote(note) ? 'Effacer la saisie' : 'Remettre la note enregistrée'}
-            </TextLink>
-          )}
-          <PrimaryButton disabled={!changed || busy} onClick={() => void submit()}>
-            {busy ? 'Enregistrement…' : !changed ? 'Aucune modification' : clearing ? 'Effacer la note' : 'Enregistrer la note'}
-          </PrimaryButton>
-        </>
-      }
-    >
-      <div className="px-5 pt-1">
-        <TextArea
-          label="Note d’instructions"
-          value={draft}
-          onChange={onDraft}
-          rows={4}
-          placeholder="Prise, réglage de la machine, tempo…"
-          hint="Vaut pour cet exo dans toutes tes séances et s’affiche en salle. Elle s’enregistre à part, sans créer de version."
-        />
       </div>
     </Sheet>
   );
