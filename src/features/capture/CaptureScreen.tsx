@@ -114,7 +114,7 @@ import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
 import { sommaireDetail } from './sommaire-detail';
 import { isDoubleTap, type LogStamp } from './log-guard';
-import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine, watchSeancesMeta } from './seance-meta';
+import { mergePendingExecutions, peekSeancesMeta, seanceMetaLine } from './seance-meta';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
@@ -663,8 +663,18 @@ function SeancePicker({
   useEffect(() => {
     const onQueue = () => setQueue(readOwnQueue());
     window.addEventListener(OUTBOX_CHANGED_EVENT, onQueue);
-    const off = watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+    // La lecture réseau est chargée à la demande (seance-meta-load.ts) : sans
+    // elle, la copie locale reste ce qui s'affiche.
+    let off = () => {};
+    let alive = true;
+    void import('./seance-meta-load').then(
+      (m) => {
+        if (alive) off = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+      },
+      () => {},
+    );
     return () => {
+      alive = false;
       window.removeEventListener(OUTBOX_CHANGED_EVENT, onQueue);
       off();
     };

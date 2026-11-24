@@ -11,7 +11,9 @@
 // cet appareil. D'où UNE copie de plus, `salle-seances-meta`, une seule par
 // compte (bornée, rien à évincer), servie cache d'abord comme le reste de la
 // Salle (ADR 0012) : la liste s'affiche tout de suite, sans attendre le réseau.
-// Sa revalidation de fond prévient l'écran monté (`onReadWritten`).
+// Sa revalidation de fond prévient l'écran monté (`onReadWritten`). La lecture
+// réseau vit dans seance-meta-load.ts, chargé à la demande (hors du chunk
+// principal, budget de `npm run size`) : s'il manque, la ligne reste vide.
 //
 // HORS LIGNE. Une séance faite sans réseau n'est pas encore en base : les
 // exécutions qui attendent dans la file (`upsertExecution`) avancent la date de
@@ -22,8 +24,7 @@
 //
 // « Pas de copie ni de réseau » n'est pas « jamais faite » : sans donnée, la
 // ligne reste vide (sa hauteur est réservée, rien ne saute à l'arrivée).
-import { supabase } from '../../lib/supabase';
-import { cachedRead, onReadWritten, peekRead } from '../../lib/read-cache';
+import { peekRead } from '../../lib/read-cache';
 import { daysBetween } from './format';
 import type { OutboxOp } from './outbox';
 
@@ -36,14 +37,14 @@ export interface SeanceMeta {
 }
 
 /** La copie : la méta et de quoi la fusionner avec la file. */
-interface StoredMeta extends SeanceMeta {
+export interface StoredMeta extends SeanceMeta {
   /** Toutes les versions de la séance : une exécution en file en porte une. */
   versionIds: string[];
   /** L'exécution qui donne `lastOn`, pour savoir si la file l'a supprimée. */
   lastExecutionId: string | null;
 }
 
-type StoredMap = Record<string, StoredMeta>;
+export type StoredMap = Record<string, StoredMeta>;
 
 export const SEANCES_META_KEY = 'salle-seances-meta';
 
@@ -97,81 +98,7 @@ export function mergePendingExecutions(stored: StoredMap, ops: readonly OutboxOp
   return out;
 }
 
-/** Lecture réseau : versions, exos de la version courante, dernière exécution. */
-async function fetchSeancesMeta(seanceIds: readonly string[]): Promise<StoredMap> {
-  if (seanceIds.length === 0) return {};
-  const { data: versions, error } = await supabase
-    .from('seance_versions')
-    .select('id, seance_id, version')
-    .in('seance_id', [...seanceIds]);
-  if (error) throw error;
-  const bySeance = new Map<string, { ids: string[]; current: { id: string; version: number } | null }>();
-  for (const v of versions ?? []) {
-    const entry = bySeance.get(v.seance_id) ?? { ids: [], current: null };
-    entry.ids.push(v.id);
-    if (!entry.current || v.version > entry.current.version) entry.current = { id: v.id, version: v.version };
-    bySeance.set(v.seance_id, entry);
-  }
-  const currentIds = [...bySeance.values()].flatMap((e) => (e.current ? [e.current.id] : []));
-  const counts = new Map<string, number>();
-  if (currentIds.length > 0) {
-    const { data: rows, error: pErr } = await supabase
-      .from('prescriptions')
-      .select('seance_version_id')
-      .in('seance_version_id', currentIds);
-    if (pErr) throw pErr;
-    for (const r of rows ?? []) counts.set(r.seance_version_id, (counts.get(r.seance_version_id) ?? 0) + 1);
-  }
-  // Une requête par séance (quelques-unes par routine), la plus récente seule :
-  // exact, là où une liste bornée de toutes les exécutions pourrait en oublier.
-  const lasts = await Promise.all(
-    seanceIds.map(async (seanceId) => {
-      const { data, error: eErr } = await supabase
-        .from('executions')
-        .select('id, performed_on, seance_versions!inner(seance_id)')
-        .eq('seance_versions.seance_id', seanceId)
-        .order('performed_on', { ascending: false })
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (eErr) throw eErr;
-      return [seanceId, data ? { id: data.id, on: data.performed_on } : null] as const;
-    }),
-  );
-  const out: StoredMap = {};
-  for (const [seanceId, last] of lasts) {
-    const entry = bySeance.get(seanceId);
-    out[seanceId] = {
-      lastOn: last?.on ?? null,
-      lastExecutionId: last?.id ?? null,
-      exerciseCount: entry?.current ? (counts.get(entry.current.id) ?? 0) : 0,
-      versionIds: entry?.ids ?? [],
-    };
-  }
-  return out;
-}
-
 /** La copie locale telle quelle (synchrone), pour le premier rendu. */
 export function peekSeancesMeta(): StoredMap {
   return peekRead<StoredMap>(SEANCES_META_KEY) ?? {};
-}
-
-/**
- * Lit la méta (copie d'abord, revalidée en fond) et appelle `onChange` à chaque
- * nouvelle copie, y compris celle de la revalidation. Tolérant : une méta est un
- * confort, son échec ne dit rien. Rend la fonction de désabonnement.
- */
-export function watchSeancesMeta(seanceIds: readonly string[], onChange: (stored: StoredMap) => void): () => void {
-  let alive = true;
-  const off = onReadWritten((key) => {
-    if (alive && key === SEANCES_META_KEY) onChange(peekSeancesMeta());
-  });
-  void cachedRead(SEANCES_META_KEY, () => fetchSeancesMeta(seanceIds)).then(
-    (stored) => alive && onChange(stored),
-    () => {},
-  );
-  return () => {
-    alive = false;
-    off();
-  };
 }
