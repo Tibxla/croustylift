@@ -34,6 +34,12 @@ export interface RawLogSet {
  * de valeur dans le récap (cf. issue #32).
  */
 export interface RawLogExecutionMeta {
+  /**
+   * Id de la séance jouée, toutes versions confondues (`null` si exécution
+   * hors-template) : la Référence d'une série se cherche dans la même séance
+   * (cf. journal-verdicts). Absent = inconnu, traité comme hors séance.
+   */
+  seanceId?: string | null
   /** Nom de la séance jouée (`null` si exécution hors-template). */
   sessionName: string | null
   /**
@@ -137,6 +143,7 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
       entry = {
         executionId: row.executionId,
         date: row.date,
+        seanceId: row.seanceId ?? null,
         sessionName: row.sessionName,
         routineName: row.routineName,
         bpmAvg: row.bpmAvg,

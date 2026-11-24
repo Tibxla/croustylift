@@ -15,7 +15,7 @@
 // `ExercisePage`, `RawLogView`, `SessionPage` sont purs, montables sans réseau.
 // Après une correction, tout est relu sans repasser par l'écran de chargement :
 // les données affichées restent jusqu'à l'arrivée des nouvelles.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Choice, EmptyState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
 import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import { errorMessage } from '../../lib/error-message';
@@ -25,6 +25,7 @@ import { loadAnalyses, loadPlanExerciseOrder, loadRawLog, loadSessionMetrics, ty
 import type { SessionMetricPoint } from './session-metrics';
 import { BlockComparisonPanel } from './BlockComparisonPanel';
 import { ExerciseList } from './ExerciseList';
+import { journalVerdicts } from './journal-verdicts';
 import { ExercisePage } from './ExercisePage';
 import { PastSessionEditor } from './PastSessionEditor';
 import { RawLogView, SessionPage } from './RawLogView';
@@ -130,6 +131,9 @@ export function AnalysisScreen() {
   const [journalWanted, setJournalWanted] = useState(openOnJournal);
   const overview = useLoad(loadOverview);
   const journal = useLoad(loadRawLog, journalWanted);
+  // Le statut de chaque série face à sa Référence, recalculé sur tout le journal.
+  const journalEntries = journal.state.phase === 'ready' ? journal.state.value : null;
+  const verdicts = useMemo(() => (journalEntries ? journalVerdicts(journalEntries) : new Map()), [journalEntries]);
 
   // Défilement : une page poussée s'ouvre en haut, un retour retrouve la
   // position quittée.
@@ -225,7 +229,7 @@ export function AnalysisScreen() {
       if (!entry) return <Missing title="Séance introuvable" body="Elle n’est plus au journal : supprimée, ou toutes ses séries retirées." onBack={back} />;
       return (
         <Page>
-          <SessionPage entry={entry} onBack={back} onEdit={() => push({ page: 'edit', id: entry.executionId })} />
+          <SessionPage entry={entry} verdicts={verdicts.get(entry.executionId)} onBack={back} onEdit={() => push({ page: 'edit', id: entry.executionId })} />
         </Page>
       );
     }
@@ -280,7 +284,7 @@ export function AnalysisScreen() {
           ) : journal.state.phase === 'error' ? (
             <LoadError what="ton journal" message={journal.state.message} onRetry={journal.reload} />
           ) : (
-            <RawLogView entries={journal.state.value} metrics={metrics} onOpen={(id) => push({ page: 'seance', id })} />
+            <RawLogView entries={journal.state.value} metrics={metrics} verdicts={verdicts} onOpen={(id) => push({ page: 'seance', id })} />
           )}
         </>
       )}
