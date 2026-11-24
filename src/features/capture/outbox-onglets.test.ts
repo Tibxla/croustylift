@@ -460,3 +460,34 @@ describe('troisième tour : une saisie reste lisible pendant son transfert de la
     expect(positions).toBeGreaterThan(1);
   });
 });
+
+describe('relecture entière : le journal de secours d’un onglet ne défait pas ce qu’un autre a écrit', () => {
+  it('A tient un refus en mémoire, B envoie la même saisie et l’acquitte : elle reste acquittée', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1')]);
+    // Le registre ne peut pas être écrit : le refus de A ne tient qu'en mémoire.
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:registre') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    const refusing = recorder(async () => {
+      throw Object.assign(new Error('rejet'), { code: '42501' });
+    });
+    await a.flush(refusing.fns);
+    expect(a.fatesOf([uid!])).toEqual(['refused']);
+    // La place revient, la base accepte : B envoie la saisie et l'écrit acquittée.
+    storage.setItem = setItem;
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    expect(tabB.sent).toEqual(['S1']);
+    expect(b.fatesOf([uid!])).toEqual(['acked']);
+
+    // A repasse : son journal ne doit pas ramener le refus.
+    await a.flush(recorder().fns);
+
+    expect(b.fatesOf([uid!])).toEqual(['acked']);
+    expect(a.listRefused()).toEqual([]);
+  });
+});

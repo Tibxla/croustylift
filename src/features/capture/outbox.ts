@@ -822,8 +822,13 @@ function commit(opened: Opened): boolean {
     return true;
   }
   // Pas écrit : une clé de la boîte dont tout le contenu est réglé ne doit
-  // pas rentrer de nouveau à la lecture suivante.
-  const retained = new Set(draft.record.entries.filter((e) => e.fate !== 'acked').map((e) => e.uid));
+  // pas rentrer de nouveau à la lecture suivante. Réglé, lignée comprise : une
+  // écriture écartée au profit d'une autre qui attend encore garde sa clé
+  // (même règle que `settleLegacy`), sinon l'insertion d'origine d'une série
+  // refusée disparaissait de l'appareil avant que sa remplaçante y soit.
+  const retained = new Set(
+    draft.record.entries.filter((e) => e.fate !== 'acked').flatMap((e) => [e.uid, ...(e.replaces ?? [])]),
+  );
   removeKeys(
     readInbox()
       .filter((box) => inboxKeys.includes(box.key) && box.entries.every((e) => !retained.has(e.uid)))

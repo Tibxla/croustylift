@@ -1194,3 +1194,76 @@ describe('troisième tour : sous stockage plein, une écriture héritée sans in
     expect(weights).toEqual([85, 90]);
   });
 });
+
+// --- Relecture entière du troisième tour (Codex, modèle profond) ---------------------
+
+describe('relecture entière : sous stockage plein, la boîte d’entrée garde la lignée d’une série refusée', () => {
+  it('insertion et correction dans deux clés, toutes deux refusées, registre impossible à écrire : après rechargement l’insertion est toujours là', async () => {
+    enqueue(insert('s1'));
+    enqueue(correction('s1', 90));
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    await flush(base({ refuses: () => '23514' }).fns);
+    expect(listRefused().map((r) => `${r.op.type}:${r.op.id}`)).toEqual(['insertSet:s1']);
+
+    const tab = await reloaded();
+
+    // Les refus ne tenaient qu'en mémoire : les deux gestes, toujours sur
+    // l'appareil, repartent dans l'ordre. Avant, la clé de l'insertion était
+    // effacée : la correction partait seule, sur une ligne qui n'existe pas.
+    const b = base();
+    await tab.flush(b.fns);
+    expect(b.sent).toEqual(['insertSet:s1', 'patchSet:s1']);
+  });
+});
+
+describe('relecture entière : une écriture acquittée n’efface que les refus qui la précèdent', () => {
+  it('deux réécritures complètes refusées, 90 puis 100 kg : la première renvoyée avec succès, la seconde reste un refus', async () => {
+    // Comme le Journal en produit : la série réécrite entière, deux fois de suite.
+    enqueue(insert('s1', 1, { weightKg: 90 }));
+    await flush(base({ refuses: () => '42501' }).fns);
+    const [second] = enqueueAll([insert('s1', 1, { weightKg: 100 })]);
+    await flush(base({ refuses: () => '42501' }).fns);
+    const [first] = listRefused();
+    expect(listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([90, 100]);
+
+    await retryRefused(first!.refusalId);
+    await flush(base().fns);
+
+    expect(listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([100]);
+    expect(fatesOf([second!])).toEqual(['refused']);
+  });
+});
+
+describe('relecture entière : un refus de création dépassé ne tient plus rien', () => {
+  it('séance recréée avec succès, réseau coupé avant sa série : abandonner l’ancien refus n’emporte pas la série', async () => {
+    enqueueAll([exec(), insert('s1')]);
+    await flush(base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) }).fns);
+    const old = refusal('upsertExecution', 'exec-1').refusalId;
+    // La séance est réaffirmée et passe ; le réseau tombe avant la série.
+    enqueue(exec());
+    await flush(base({ cuts: (op) => op.type === 'insertSet' }).fns);
+    expect(readQueue().map((op) => op.id)).toEqual(['s1']);
+    expect(refusal('upsertExecution', 'exec-1').dependents).toEqual([]);
+
+    await abandonRefused(old);
+
+    expect(readQueue().map((op) => op.id)).toEqual(['s1']);
+  });
+
+  it('une série loggée ensuite ne dépend pas de l’ancien refus', async () => {
+    enqueue(exec());
+    await flush(base({ refuses: () => '23503' }).fns);
+    const old = refusal('upsertExecution', 'exec-1').refusalId;
+    enqueue(exec());
+    await flush(base().fns);
+
+    enqueue(insert('s2', 2));
+    await abandonRefused(old);
+
+    expect(readQueue().map((op) => op.id)).toEqual(['s2']);
+  });
+});

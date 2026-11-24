@@ -83,8 +83,14 @@ export function emptyRecord(): RegistryRecord {
 export type Transition =
   /** Ajoute une écriture si son identité est inconnue. */
   | { t: 'add'; entry: Entry }
-  /** Modifie une écriture si elle est encore là (`undefined` retire le champ). */
-  | { t: 'patch'; uid: string; fields: Partial<Entry> }
+  /**
+   * Modifie une écriture si elle est encore là (`undefined` retire le champ), et
+   * si son sort est encore `from`, celui qu'elle avait quand la modification a
+   * été décidée. Rejouée plus tard sur l'enregistrement relu (journal de
+   * secours), elle ne défait donc pas ce qu'un autre onglet a écrit entre-temps :
+   * un refus tenu en mémoire ne revient pas sur une écriture acquittée depuis.
+   */
+  | { t: 'patch'; uid: string; fields: Partial<Entry>; from?: Fate }
   /** Retire des écritures. */
   | { t: 'drop'; uids: string[] };
 
@@ -107,7 +113,7 @@ function applyTransition(record: RegistryRecord, transition: Transition): void {
     }
     case 'patch': {
       const entry = record.entries.find((e) => e.uid === transition.uid);
-      if (!entry) return;
+      if (!entry || (transition.from !== undefined && entry.fate !== transition.from)) return;
       for (const [key, value] of Object.entries(transition.fields)) {
         if (value === undefined) delete (entry as unknown as Record<string, unknown>)[key];
         else (entry as unknown as Record<string, unknown>)[key] = value;
@@ -161,7 +167,8 @@ export class Draft {
     this.apply({ t: 'add', entry });
   }
   patch(uid: string, fields: Partial<Entry>): void {
-    this.apply({ t: 'patch', uid, fields });
+    const from = this.get(uid)?.fate;
+    if (from !== undefined) this.apply({ t: 'patch', uid, fields, from });
   }
   drop(uids: readonly string[]): void {
     if (uids.length > 0) this.apply({ t: 'drop', uids: [...uids] });
@@ -223,12 +230,12 @@ function latestBefore(
   record: RegistryRecord,
   n: number,
   owner: string | undefined,
-  match: (op: OutboxOp) => boolean,
+  match: (op: OutboxOp, entry: Entry) => boolean,
 ): Entry | undefined {
   let found: Entry | undefined;
   for (const e of record.entries) {
     if (e.n > n) break;
-    if (e.fate !== 'acked' && e.owner === owner && match(e.op)) found = e;
+    if (e.fate !== 'acked' && e.owner === owner && match(e.op, e)) found = e;
   }
   return found;
 }
@@ -242,7 +249,9 @@ function parentsOf(record: RegistryRecord, entry: Entry): string[] {
       record,
       entry.n,
       entry.owner,
-      (op) => op.type === 'upsertExecution' && op.id === executionId,
+      // Un refus de création DÉPASSÉ (l'exécution a été recréée avec succès
+      // depuis) ne tient plus rien : personne n'en dépend.
+      (op, e) => op.type === 'upsertExecution' && op.id === executionId && !e.refusal?.superseded,
     );
     if (creation && creation.uid !== entry.uid) parents.push(creation.uid);
   }
@@ -456,21 +465,31 @@ export function acknowledge(
         !e.refusal.superseded
       ) {
         draft.patch(e.uid, { refusal: { ...e.refusal, superseded: true } });
+        // Et plus rien n'en dépend : ses saisies sont libres, l'abandonner
+        // n'emporte qu'elle.
+        for (const child of draft.record.entries) {
+          if (!child.parents?.includes(e.uid)) continue;
+          const parents = child.parents.filter((p) => p !== e.uid);
+          draft.patch(child.uid, { parents: parents.length > 0 ? parents : undefined });
+        }
       }
     }
   }
   if (sent.type === 'insertSet' || sent.type === 'deleteSet') {
-    // La série vient d'être écrite entière, ou supprimée, en base : un ancien
-    // refus de la même série n'a plus d'objet. Après une SUPPRESSION, plus rien
+    // La série vient d'être écrite entière, ou supprimée, en base : un ANCIEN
+    // refus de la même série n'a plus d'objet. Ancien, par position : un refus
+    // qui suit l'écriture acquittée (un vieux refus renvoyé avec succès) reste
+    // la dernière saisie de l'utilisateur. Après une SUPPRESSION, plus rien
     // d'antérieur ne doit pouvoir repartir : une écriture encore retenue par le
     // refus de sa séance est écartée aussi (elle recréerait la série au renvoi).
     const at = draft.record.entries.findIndex((e) => e.uid === uid);
     const moot = draft.record.entries.filter(
       (e, index) =>
+        index < at &&
         e.owner === entry.owner &&
         isSetWrite(e.op) &&
         e.op.id === sent.id &&
-        (e.fate === 'refused' || (sent.type === 'deleteSet' && e.fate === 'pending' && index < at)),
+        (e.fate === 'refused' || (sent.type === 'deleteSet' && e.fate === 'pending')),
     );
     for (const old of moot) replace(draft, old, acked);
   }
