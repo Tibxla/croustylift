@@ -119,11 +119,14 @@ export function Sheet({
         aria-labelledby={id}
         className="ui-sheet absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-sheet border-t border-line bg-raise"
       >
-        <div className="flex flex-none items-center justify-between gap-3 py-2 pl-5 pr-3">
-          <h2 ref={heading} id={id} tabIndex={-1} className="min-w-0 truncate text-[17px] font-semibold text-ink outline-none">
+        {/* Le titre passe à la ligne plutôt que d'être coupé (un nom d'exo long
+            avec le côté, à 360 px) ; sa première ligne reste au niveau de
+            « Fermer » (ligne de 22 px centrée sur la cible de 44 px). */}
+        <div className="flex flex-none items-start justify-between gap-3 py-2 pl-5 pr-3">
+          <h2 ref={heading} id={id} tabIndex={-1} className="min-w-0 break-words py-[11px] text-[17px] font-semibold leading-[22px] text-ink outline-none">
             {title}
           </h2>
-          <TextLink tone="muted" onClick={onClose} className="px-2">
+          <TextLink tone="muted" onClick={onClose} className="flex-none px-2">
             Fermer
           </TextLink>
         </div>
