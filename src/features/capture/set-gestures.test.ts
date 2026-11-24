@@ -11,6 +11,7 @@ import {
   flush,
   readQuarantine,
   readQueue,
+  storageFailing,
   type InsertSetOp,
   type OutboxOp,
   type SyncFns,
@@ -549,5 +550,45 @@ describe('suppression et réponse tardive de la base', () => {
       queuedOps: [{ ...insert('s2', 2, 7), weightKg: 85, rir: 1 }],
     });
     expect(getProgress(next, BENCH).sets[1]).toEqual(ps(85, 7, 1, 2));
+  });
+});
+
+// Stockage de l'appareil plein : la file ne s'écrit plus, elle tient en mémoire
+// (repli de l'outbox). Les gestes doivent partir comme d'habitude.
+describe('gestes sur les séries sous stockage plein', () => {
+  it('correction puis suppression tenues en mémoire : envoyées dans l’ordre, la base finit juste', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Séance déjà en base : trois séries, plus rien en file.
+    const base = fakeBase();
+    for (const [id, order, reps] of [['s1', 1, 8], ['s2', 2, 7], ['s3', 3, 6]] as const) {
+      base.rows.set(id, { setOrder: order, weightKg: 80, reps, rir: 2 });
+    }
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    let state = started();
+    state = play(state, correctSet(state, BENCH, 's3', { weightKg: 82.5, reps: 6, rir: 0 })!);
+    state = play(state, deleteSet(state, BENCH, 's1')!);
+    expect(storageFailing()).toBe(true);
+    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
+      'insertSet:s3',
+      'deleteSet:s1',
+      'insertSet:s2',
+      'insertSet:s3',
+    ]);
+
+    await flush(base.fns);
+    expect(readQueue()).toEqual([]);
+    expect([...base.rows.entries()].map(([id, row]) => `${id}:${row.weightKg}x${row.reps}@${row.setOrder}`)).toEqual([
+      's2:80x7@1',
+      's3:82.5x6@2',
+    ]);
+    // La suppression est partie avant les réécritures de rang.
+    expect(base.sent.indexOf('delete:s1')).toBeLessThan(base.sent.indexOf('upsert:s2:80x7@1'));
+    expect(getProgress(state, BENCH).sets).toEqual([ps(80, 7, 1, 1), ps(82.5, 6, 0, 2)]);
   });
 });
