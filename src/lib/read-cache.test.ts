@@ -14,6 +14,8 @@ import {
   refreshRead,
   revalidateReadCache,
   seedRead,
+  peekRead,
+  peekFreshRead,
 } from './read-cache';
 import { clearLocalAccount, saveLocalAccount } from './local-account';
 
@@ -317,6 +319,25 @@ describe('ordre des réponses et garde de compte', () => {
 // marquées : la lecture suivante passe par le réseau, la copie en secours.
 describe('invalidateReads', () => {
   const key = (k: string) => `croustylift:readcache:user-1:${k}`;
+
+  it('stockage plein : la marque ne peut pas s’écrire, la copie RESTE (secours hors ligne), périmée en mémoire', async () => {
+    await cachedRead('vue:analyse', async () => 'courbes');
+    const storage = localStorage as unknown as MemoryStorage;
+    const full = vi.spyOn(storage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    invalidateReads(['vue:analyse']);
+    // Jamais supprimée : hors ligne, l'Analyse se montre encore.
+    expect(peekRead('vue:analyse')).toBe('courbes');
+    // Mais elle n'est plus tenue pour fraîche : le réseau passe d'abord.
+    expect(peekFreshRead('vue:analyse')).toBeNull();
+    const fetcher = vi.fn(async () => 'courbes neuves');
+    await expect(cachedRead('vue:analyse', fetcher)).resolves.toBe('courbes neuves');
+    full.mockRestore();
+    // Une copie neuve écrite ensuite lève la marque en mémoire.
+    await cachedRead('vue:analyse', async () => 'courbes neuves');
+    expect(peekFreshRead('vue:analyse')).toBe('courbes neuves');
+  });
 
   it('une copie invalidée n’est plus servie d’abord : le réseau passe avant', async () => {
     await cachedRead('capture-source', async () => 'ancien plan');

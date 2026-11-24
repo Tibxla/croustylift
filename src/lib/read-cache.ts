@@ -94,6 +94,14 @@ function fullKey(userId: string, key: string): string {
  */
 const invalidatedAt = new Map<string, number>();
 
+/**
+ * Copies PÉRIMÉES dont la marque n'a pas pu s'écrire (stockage plein) : la
+ * péremption est tenue ici, en mémoire, et la copie reste en place comme
+ * secours (hors ligne, l'écran qui la lit doit encore s'ouvrir). Levée dès
+ * qu'une valeur neuve s'écrit dans la copie.
+ */
+const staleInMemory = new Set<string>();
+
 /** La lecture `seq` de `storageKey` est-elle partie avant une invalidation de sa clé ? */
 function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
   for (const [prefix, at] of invalidatedAt) {
@@ -115,7 +123,7 @@ function readEntry<T>(key: string): { value: T; stale: boolean } | null {
       (parsed as Envelope).v === 1 &&
       'value' in (parsed as Envelope)
     ) {
-      return { value: (parsed as Envelope).value as T, stale: (parsed as Envelope).stale === true };
+      return { value: (parsed as Envelope).value as T, stale: (parsed as Envelope).stale === true || staleInMemory.has(key) };
     }
     return null;
   } catch {
@@ -133,6 +141,7 @@ function writeEntry(key: string, value: unknown): void {
     const before = localStorage.getItem(key);
     const after = JSON.stringify({ v: 1, value } satisfies Envelope);
     localStorage.setItem(key, after);
+    staleInMemory.delete(key);
     if (before !== after) notifyWritten(key);
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
@@ -315,8 +324,9 @@ export function invalidateReads(prefixes: readonly string[]): void {
           JSON.stringify({ v: 1, value: entry.value, stale: true } satisfies Envelope),
         );
       } catch {
-        // Quota plein : faute de pouvoir la marquer, la copie fausse est retirée.
-        localStorage.removeItem(storageKey);
+        // Quota plein : la marque est tenue en mémoire. La copie n'est JAMAIS
+        // retirée : hors ligne, c'est tout ce que l'écran a à montrer.
+        staleInMemory.add(storageKey);
       }
     }
   }
@@ -393,6 +403,7 @@ export function dropRead(key: string): void {
   if (!account || typeof localStorage === 'undefined') return;
   const storageKey = fullKey(account.userId, key);
   revalidators.delete(storageKey);
+  staleInMemory.delete(storageKey);
   try {
     localStorage.removeItem(storageKey);
   } catch {
@@ -463,6 +474,7 @@ export function clearReadCache(): void {
   lastWritten.clear();
   floor.clear();
   invalidatedAt.clear();
+  staleInMemory.clear();
   purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {
