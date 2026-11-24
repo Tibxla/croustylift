@@ -81,7 +81,7 @@ export function Stepper({
       <output
         aria-live="polite"
         aria-label={label}
-        className="tnum min-w-14 whitespace-nowrap text-center text-[20px] font-medium text-ink"
+        className="tnum min-w-14 whitespace-nowrap text-center text-[22px] font-medium text-ink"
         style={valueWidth ? { width: valueWidth } : undefined}
       >
         {format(value)}

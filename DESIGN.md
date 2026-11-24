@@ -188,14 +188,14 @@ Palette **retenue** : neuf valeurs, toutes définies une fois dans `src/index.cs
 
 ### Named Rules
 
-**The Tabular Numbers Rule.** Les nombres mesurés (poids, reps, RIR, e1RM, dates, compteurs) sont en chiffres tabulaires (`.tnum`, ou `.readout` hérité) : ils ne dansent pas d'une série à l'autre. Le texte courant ne l'est pas : Inter tabulaire espace les traits d'union (« E-mail »).
+**The Tabular Numbers Rule.** Les nombres mesurés seuls (poids, reps, RIR, e1RM, compteurs) sont en chiffres tabulaires (`.tnum`) : ils ne dansent pas d'une série à l'autre. Le texte courant ne l'est pas, ni un texte qui mêle nombres et traits d'union : Inter tabulaire donne au trait d'union une chasse de chiffre (« 3 - 4 », « E - mail »). La classe héritée `.readout` n'est donc pas tabulaire.
 
 **The No Kicker Rule.** Aucun surtitre en majuscules, aucune étiquette mono traquée au-dessus d'un titre. Le titre porte son propre poids.
 
 ## Layout
 
 - **Marge d'écran** de 20 px (`px-5`) ; une colonne, contenu au fil du doigt, de haut en bas.
-- **Navigation** : une ligne de cinq mots en haut de chaque écran authentifié (Salle, Analyse, Séances, Exos, Réglages), 48 px de haut, dans le flux (elle défile avec la page). Le mot actif est en demi-gras souligné, les autres en gris. Retoucher le mot actif ne recharge rien. Un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage (diagnostic des barres basses de l'iPhone), comme `?diag=1`.
+- **Navigation** : une ligne de cinq mots en haut de chaque écran authentifié (Salle, Analyse, Séances, Exos, Réglages), 48 px de haut, dans le flux (elle défile avec la page). Le mot actif est en demi-gras souligné, les autres en gris. Retoucher le mot actif ne recharge rien. Un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage (diagnostic des barres basses de l'iPhone), comme « Relevé d'affichage » dans Réglages et `?diag=1`.
 - **Bas d'écran** : réservé à l'action du moment (logger, exo suivant, enregistrer), dans une barre collée en `position: sticky`, fond plein, qui porte elle-même l'encoche basse (`--safe-bottom`). Jamais de `position: fixed` pour une barre : sur iPhone en mode écran d'accueil, une barre fixe se décroche quand WebKit se trompe de fenêtre.
 - **Hauteur d'écran** : le document ne défile pas quand le contenu tient. `.min-h-screen` (écran entier) et `.min-h-surface` (sous la navigation) retirent l'encoche haute et la navigation de `100dvh`.
 - **Encoches** : `--safe-top` et `--safe-bottom` (`env(safe-area-inset-*)`) sont lues une fois sur `:root` ; le scrim haut (`.safe-top-scrim`) garde l'heure lisible au-dessus du contenu qui défile.
@@ -245,7 +245,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 ### Contrôles sans clavier
 
 - **Interrupteur** (`Switch`) : une ligne, le libellé à gauche, « Oui » ou « Non » écrit, puis la case. Activé : case blanc cassé pleine (jamais le signal).
-- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur à largeur fixe pour que les boutons ne bougent pas sous le pouce.
+- **Stepper de formulaire** (`Stepper`) : − valeur +, carrés de 48 px, une ligne, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce.
 - **Choix exclusif** (`Choice`) : des mots, le choisi en demi-gras souligné de 2 px. Pas de pilules.
 - **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Flèches au clavier.
 
