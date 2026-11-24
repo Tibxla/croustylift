@@ -243,7 +243,7 @@ const capitalize = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1) : s);
 const keepTogether = (m: string) => m.replace(/ /g, ' ');
 
 function musclesLine(exo: ListExercise): string {
-  return [...musclesOf(exo).map(keepTogether), ...(exo.unilateral ? ['unilatéral'] : [])].join(' · ');
+  return [...musclesOf(exo).map((m) => keepTogether(capitalize(m))), ...(exo.unilateral ? ['unilatéral'] : [])].join(' · ');
 }
 
 export function ExercisesView({
@@ -598,7 +598,7 @@ function Fiche({
       {flash && <Flash>{flash}</Flash>}
 
       <div className="border-t border-line">
-        <Line label="Muscles">{musclesOf(exo).map(keepTogether).join(', ') || 'aucun'}</Line>
+        <Line label="Muscles">{musclesOf(exo).map((m) => keepTogether(capitalize(m))).join(', ') || 'aucun'}</Line>
         <Line label="Mouvement" sub={exo.unilateral ? 'un côté à la fois, gauche et droite saisis à part' : undefined}>
           {exo.unilateral ? 'unilatéral' : 'bilatéral'}
         </Line>
