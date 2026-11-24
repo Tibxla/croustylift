@@ -148,7 +148,9 @@ export function ExercisePicker({
 
         {/* Séance d'un jour passé restée ouverte : on le dit, avec ses sorties. */}
         {staleSince && (
-          <div role="status" className="mx-5 mb-4 border-l-[3px] border-ink pl-3">
+          // Filets haut et bas, pas de trait latéral (plancher : aucune barre
+          // sur un seul côté d'un bloc).
+          <div role="status" className="mx-5 mb-4 border-y border-line py-3">
             <p className="text-[15px] leading-[1.45] text-ink">Cette séance date d’{staleSince} et n’a pas été terminée.</p>
             <p className="mt-1 text-[14px] leading-[1.45] text-muted">
               {canFinish
