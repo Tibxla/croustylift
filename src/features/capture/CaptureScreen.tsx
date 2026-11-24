@@ -1236,7 +1236,12 @@ function CaptureBoard({
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
     setWeek(null);
-    void loadWeekMuscles({ seanceId: session.id, dateIso: date, currentExecutionId: state.executionId }).then(setWeek);
+    void loadWeekMuscles({
+      seanceId: session.id,
+      dateIso: date,
+      currentExecutionId: state.executionId,
+      currentStartedAt: state.startedAt,
+    }).then(setWeek);
   }, [state.startedAt, state.executionId, session.id, date]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
