@@ -876,6 +876,9 @@ function EditorShell({
     // Plein écran : le haut réserve l'encoche (barre d'état iOS), sans quoi le
     // titre passerait sous l'heure et le scrim opaque qui la couvre.
     <div className="fixed inset-0 z-40 overflow-y-auto bg-bg">
+      {/* Sa propre bande sous la barre d'état : l'éditeur passe au-dessus de celle
+          de l'app (z-25) et défile dans son propre conteneur. */}
+      <div className="safe-top-scrim" aria-hidden="true" />
       <div className="mx-auto w-full max-w-md px-4 pb-8 pt-[calc(1.25rem+var(--safe-top))]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0">

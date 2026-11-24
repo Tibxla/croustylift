@@ -161,8 +161,10 @@ body {
   inset: 0 0 auto 0;
   height: var(--safe-top);
   background-color: var(--color-bg);
-  /* Au-dessus de tout, feuilles comprises : l'heure reste lisible. */
-  z-index: 60;
+  /* Au-dessus du contenu et des barres collées (z-10, z-20), SOUS les voiles des
+     feuilles (emplacement du kit z-40, feuilles héritées z-30 à z-50) : une feuille
+     ouverte assombrit aussi la bande, sans bande plus claire sous l'heure. */
+  z-index: 25;
   pointer-events: none;
 }
 
