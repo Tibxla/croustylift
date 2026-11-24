@@ -70,7 +70,7 @@ import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets } from '../../domain/set-count';
 import { errorMessage } from '../../lib/error-message';
 import { menuLabel, seanceMenu } from './object-actions';
-import { fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
+import { addedNote, fmtCountRange, muscleLabel, rowChange, summarizeRow } from './seance-format';
 import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import {
@@ -346,6 +346,9 @@ export function SeanceEditorView({
     })),
   );
   const [adding, setAdding] = useState(false);
+  // Exos ajoutés depuis l'ouverture du catalogue, qui reste ouvert pour en
+  // ajouter plusieurs à la suite ; le dernier se déplie à la fermeture.
+  const [added, setAdded] = useState<{ rowId: string; name: string }[]>([]);
   const [creatingExo, setCreatingExo] = useState<{ prefill: string } | null>(null);
   const [save, setSave] = useState<SaveStatus>(SAVE_IDLE);
   const [open, setOpen] = useState<string | null>(null);
@@ -429,7 +432,8 @@ export function SeanceEditorView({
     }
   }
 
-  function addExercise(exo: CatalogueExercise) {
+  /** Ajoute une ligne en fin de séance, prescription par défaut. */
+  function appendRow(exo: CatalogueExercise): string {
     const rowId = makeRowId();
     setRows((prev) => [
       ...prev,
@@ -443,10 +447,38 @@ export function SeanceEditorView({
         ...defaultFields(),
       },
     ]);
-    setAdding(false);
     setReorder(false);
+    return rowId;
+  }
+
+  /** Ajout hors catalogue (exo perso créé) : l'exo neuf se déplie et vient en haut. */
+  function addExercise(exo: CatalogueExercise) {
+    const rowId = appendRow(exo);
+    setAdding(false);
     setOpen(rowId);
     setScrollTo(rowId);
+  }
+
+  function openCatalog() {
+    setAdded([]);
+    setAdding(true);
+  }
+
+  /** Toucher un exo du catalogue l'ajoute sans refermer : on enchaîne le suivant. */
+  function pickFromCatalog(exo: CatalogueExercise) {
+    const rowId = appendRow(exo);
+    setAdded((prev) => [...prev, { rowId, name: exo.name }]);
+  }
+
+  /** Fermer le catalogue rend l'éditeur, le dernier ajouté déplié et amené en haut
+   *  (saut sec, pas de défilement doux sous la feuille). */
+  function closeCatalog() {
+    setAdding(false);
+    const last = added[added.length - 1];
+    if (last) {
+      setOpen(last.rowId);
+      setScrollTo(last.rowId);
+    }
   }
 
   // Une seule sauvegarde du plan en vol, partagée par « Enregistrer » et
@@ -726,7 +758,7 @@ export function SeanceEditorView({
         <EmptyState
           title="Séance vide"
           body="Ajoute ses exos dans l’ordre où tu les fais en salle."
-          action={<SecondaryButton onClick={() => setAdding(true)}>Ajouter un exo</SecondaryButton>}
+          action={<SecondaryButton onClick={openCatalog}>Ajouter un exo</SecondaryButton>}
         />
       ) : (
         <>
@@ -773,7 +805,7 @@ export function SeanceEditorView({
           </ul>
           {!reorder && (
             <div className="px-5 pt-4">
-              <SecondaryButton onClick={() => setAdding(true)} className="w-full">
+              <SecondaryButton onClick={openCatalog} className="w-full">
                 Ajouter un exo
               </SecondaryButton>
             </div>
@@ -786,8 +818,9 @@ export function SeanceEditorView({
         open={adding}
         catalogue={catalog}
         rows={rows}
-        onClose={() => setAdding(false)}
-        onPick={addExercise}
+        added={added.map((a) => a.name)}
+        onClose={closeCatalog}
+        onPick={pickFromCatalog}
         onCreate={(prefill) => {
           setAdding(false);
           setCreatingExo({ prefill });
@@ -1002,6 +1035,7 @@ function CatalogSheet({
   open,
   catalogue,
   rows,
+  added,
   onClose,
   onPick,
   onCreate,
@@ -1009,6 +1043,8 @@ function CatalogSheet({
   open: boolean;
   catalogue: CatalogueExercise[];
   rows: EditorRow[];
+  /** Noms ajoutés depuis l'ouverture, dans l'ordre (accusé en pied de feuille). */
+  added: string[];
   onClose: () => void;
   onPick: (exo: CatalogueExercise) => void;
   /** Ouvre la création d'un exo perso, nom prérempli par la recherche. */
@@ -1034,7 +1070,21 @@ function CatalogSheet({
     onClose();
   };
   return (
-    <Sheet open={open} title="Ajouter un exo" onClose={close}>
+    <Sheet
+      open={open}
+      title="Ajouter un exo"
+      onClose={close}
+      footer={
+        // Toujours présent : la région annonce chaque ajout, même quand la ligne
+        // touchée sort de l'écran une fois la recherche vidée.
+        <>
+          <p role="status" aria-live="polite" className="text-[15px] font-medium leading-[1.45] text-ink empty:hidden">
+            {addedNote(added)}
+          </p>
+          {added.length > 0 && <PrimaryButton onClick={close}>Revenir à la séance</PrimaryButton>}
+        </>
+      }
+    >
       <div className="px-5 pb-1">
         <TextField type="search" label="Chercher un exo" hideLabel placeholder="Chercher un exo" value={q} onChange={setQ} enterKeyHint="search" />
       </div>
@@ -1068,7 +1118,9 @@ function CatalogSheet({
                 }
                 value={c.personal ? <span className="text-[14px] font-normal text-muted">perso</span> : undefined}
                 onClick={() => {
-                  reset();
+                  // La recherche se vide pour le suivant ; le filtre par muscle
+                  // reste (on ajoute souvent plusieurs exos du même muscle).
+                  setQ('');
                   onPick(c);
                 }}
               />

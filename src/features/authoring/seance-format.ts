@@ -56,3 +56,12 @@ export function rowChange(saved: readonly EditorRow[], row: EditorRow): 'ajouté
   if (!before) return 'ajouté';
   return summarizeRow(before) !== summarizeRow(row) ? 'modifié' : null;
 }
+
+/** Accusé du catalogue de l'éditeur, qui reste ouvert pour ajouter plusieurs
+ *  exos à la suite : le dernier ajouté, puis le compte de cette ouverture
+ *  (doublons compris, ils sont permis). '' tant que rien n'est ajouté. */
+export function addedNote(names: readonly string[]): string {
+  const last = names[names.length - 1];
+  if (last === undefined) return '';
+  return names.length === 1 ? `${last} ajouté à la séance.` : `${last} ajouté · ${names.length} exos ajoutés.`;
+}

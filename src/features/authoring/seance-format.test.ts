@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exoCount, fmtCount, fmtCountRange, fmtField, muscleLabel, rowChange, seanceCount, summarizeRow } from './seance-format';
+import { addedNote, exoCount, fmtCount, fmtCountRange, fmtField, muscleLabel, rowChange, seanceCount, summarizeRow } from './seance-format';
 import type { EditorRow } from './prescription-edit';
 
 const row = (rowId: string, sets: [number, number], reps: [number, number], rir: [number, number]): EditorRow => ({
@@ -44,5 +44,17 @@ describe('formats de la surface Séances', () => {
     expect(rowChange(saved, row('a', [3, 3], [8, 12], [2, 2]))).toBeNull();
     expect(rowChange(saved, row('a', [4, 4], [8, 12], [2, 2]))).toBe('modifié');
     expect(rowChange(saved, row('b', [3, 3], [8, 12], [2, 2]))).toBe('ajouté');
+  });
+});
+
+describe('addedNote', () => {
+  it('rien d’ajouté : aucune phrase', () => {
+    expect(addedNote([])).toBe('');
+  });
+  it('un ajout : son nom', () => {
+    expect(addedNote(['Crunch'])).toBe('Crunch ajouté à la séance.');
+  });
+  it('plusieurs : le dernier et le compte, doublons compris', () => {
+    expect(addedNote(['Crunch', 'Squat', 'Squat'])).toBe('Squat ajouté · 3 exos ajoutés.');
   });
 });
