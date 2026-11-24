@@ -15,10 +15,11 @@
 // `ExercisePage`, `RawLogView`, `SessionPage` sont purs, montables sans réseau.
 // Après une correction, tout est relu sans repasser par l'écran de chargement :
 // les données affichées restent jusqu'à l'arrivée des nouvelles.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Choice, EmptyState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Choice, CopyNote, EmptyState, OfflineState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
+import { invalidateViews, VIEW_PREFIX } from '../../lib/dated-read';
+import { useDatedLoad } from '../../lib/use-dated-load';
 import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface } from '../../shell/navigation';
-import { errorMessage } from '../../lib/error-message';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
 import { resolveCaptureRoutineId } from '../capture/data';
 import { loadAnalyses, loadPlanExerciseOrder, loadRawLog, loadSessionMetrics, type ExerciseAnalysis } from './data';
@@ -45,8 +46,6 @@ type View =
   | { page: 'compare'; id: string }
   | { page: 'seance'; id: string }
   | { page: 'edit'; id: string };
-
-type Load<T> = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; value: T };
 
 interface Overview {
   analyses: ExerciseAnalysis[];
@@ -88,36 +87,10 @@ const loadOverview = async (): Promise<Overview> => {
   return { analyses, metrics, plan, routineName };
 };
 
-/**
- * Une lecture et son état. `reload` repasse par « chargement » (bouton
- * Réessayer) ; `refresh` relit en gardant l'affichage (après une correction).
- * `enabled` à false : rien n'est lu (le journal attend son onglet).
- */
-function useLoad<T>(fetch: () => Promise<T>, enabled = true) {
-  const [key, setKey] = useState(0);
-  const [state, setState] = useState<Load<T>>({ phase: 'loading' });
-  useEffect(() => {
-    if (!enabled) return;
-    let active = true;
-    fetch().then(
-      (value) => {
-        if (active) setState({ phase: 'ready', value });
-      },
-      (err: unknown) => {
-        if (active) setState({ phase: 'error', message: errorMessage(err) });
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [fetch, key, enabled]);
-  const reload = useCallback(() => {
-    setState({ phase: 'loading' });
-    setKey((k) => k + 1);
-  }, []);
-  const refresh = useCallback(() => setKey((k) => k + 1), []);
-  return { state, reload, refresh };
-}
+/** Les copies datées de l'Analyse (lib/dated-read) : hors ligne, elles se
+ *  montrent avec leur date ; sans elles, une phrase, pas une erreur. */
+const OVERVIEW_VIEW = `${VIEW_PREFIX}analyse`;
+const JOURNAL_VIEW = `${VIEW_PREFIX}journal`;
 
 export function AnalysisScreen() {
   // Arrivée par « Voir au Journal » (Séance rangée) : l'onglet Journal d'emblée,
@@ -130,8 +103,8 @@ export function AnalysisScreen() {
   const view = stack[stack.length - 1]!;
   // Le journal ne se lit qu'à l'ouverture de son onglet (il peut être lourd).
   const [journalWanted, setJournalWanted] = useState(openOnJournal);
-  const overview = useLoad(loadOverview);
-  const journal = useLoad(loadRawLog, journalWanted);
+  const overview = useDatedLoad(OVERVIEW_VIEW, loadOverview);
+  const journal = useDatedLoad(journalWanted ? JOURNAL_VIEW : null, loadRawLog);
   // Le statut de chaque série face à sa Référence, recalculé sur tout le journal.
   const journalEntries = journal.state.phase === 'ready' ? journal.state.value : null;
   const verdicts = useMemo(() => (journalEntries ? journalVerdicts(journalEntries) : new Map()), [journalEntries]);
@@ -169,7 +142,9 @@ export function AnalysisScreen() {
   };
   // Une correction ou une suppression change le journal ET les courbes, les
   // mesures de séance comprises (un point de durée périmé restait affiché).
+  // Leurs copies sont périmées : la relecture passe par le réseau.
   const afterMutation = () => {
+    invalidateViews([OVERVIEW_VIEW, JOURNAL_VIEW]);
     overview.refresh();
     journal.refresh();
   };
@@ -181,6 +156,14 @@ export function AnalysisScreen() {
         <p role="status" className="px-5 py-6 text-[15px] text-muted">
           Chargement de l’analyse…
         </p>
+      </Page>
+    );
+  }
+  if (overview.state.phase === 'offline') {
+    return (
+      <Page>
+        <ScreenHeader title="Analyse" />
+        <OfflineState surface="L’Analyse" />
       </Page>
     );
   }
@@ -225,6 +208,14 @@ export function AnalysisScreen() {
       );
     }
     case 'seance': {
+      if (journal.state.phase === 'offline') {
+        return (
+          <Page>
+            <ScreenHeader title="Séance" back={{ label: 'Retour', onClick: back }} />
+            <OfflineState surface="Le Journal" />
+          </Page>
+        );
+      }
       if (journal.state.phase !== 'ready') return <Missing title="Séance" onBack={back} loading={journal.state.phase === 'loading'} />;
       const entry = journal.state.value.find((e) => e.executionId === view.id);
       if (!entry) return <Missing title="Séance introuvable" body="Elle n’est plus au journal : supprimée, ou toutes ses séries retirées." onBack={back} />;
@@ -265,10 +256,17 @@ export function AnalysisScreen() {
       : journal.state.phase === 'ready'
         ? `${journal.state.value.length} séance${journal.state.value.length > 1 ? 's' : ''} au journal`
         : undefined;
+  // La vue montrée vient d'une copie locale : on dit de quand.
+  const copyAt = overview.showDate
+    ? overview.state.at
+    : tab === 'journal' && journal.showDate && journal.state.phase === 'ready'
+      ? journal.state.at
+      : null;
 
   return (
     <Page>
       <ScreenHeader title="Analyse" meta={empty ? undefined : meta} />
+      {copyAt !== null && <CopyNote at={copyAt} online={overview.online} />}
       {empty ? (
         <NoData />
       ) : (
@@ -284,6 +282,8 @@ export function AnalysisScreen() {
             <p role="status" className="px-5 py-6 text-[15px] text-muted">
               Chargement du journal…
             </p>
+          ) : journal.state.phase === 'offline' ? (
+            <OfflineState surface="Le Journal" />
           ) : journal.state.phase === 'error' ? (
             <LoadError what="ton journal" message={journal.state.message} onRetry={journal.reload} />
           ) : (
