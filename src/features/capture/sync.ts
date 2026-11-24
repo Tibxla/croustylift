@@ -9,6 +9,7 @@
 // exactement comme la capture du jour passe ses ops à l'outbox.
 import {
   deleteExecutionById,
+  deleteExecutionIfEmpty,
   deleteSetById,
   exercisesHoldingRows,
   patchSet,
@@ -197,6 +198,12 @@ export const syncFns: SyncFns = {
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
     touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
+  },
+  // Suppression conditionnelle (« Changer de séance ») : les copies locales ne
+  // sont relues que si la base a réellement supprimé l'exécution.
+  deleteExecutionIfEmpty: async (op) => {
+    const outcome = await deleteExecutionIfEmpty(op.id);
+    if (outcome === 'deleted') touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
   },
 };
 

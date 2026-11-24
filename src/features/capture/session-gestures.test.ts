@@ -47,6 +47,7 @@ describe('leaveSession', () => {
     expect(leaveSession(fresh(), { executionStarted: false })).toEqual({
       kind: 'change',
       needsConfirmation: false,
+      purge: false,
       executionId: 'exec-1',
       ops: [],
     });
@@ -57,17 +58,19 @@ describe('leaveSession', () => {
     expect(plan).toEqual({
       kind: 'cancel',
       needsConfirmation: true,
+      purge: true,
       executionId: 'exec-1',
       ops: [{ type: 'deleteExecution', id: 'exec-1', exerciseIds: ['bench-press'] }],
     });
   });
 
-  it('série loggée puis annulée : rien de saisi, mais l’exécution est née : « changer » la supprime quand même', () => {
+  it('série loggée puis annulée : rien de saisi, mais l’exécution est née : « changer » la supprime si elle est restée vide', () => {
     const undone = captureReducer(log(fresh()), { type: 'undo-last-set', exerciseId: 'bench-press' });
     const plan = leaveSession(undone, { executionStarted: true });
     expect(plan.kind).toBe('change');
     expect(plan.needsConfirmation).toBe(false);
-    expect(plan.ops).toEqual([{ type: 'deleteExecution', id: 'exec-1', exerciseIds: ['bench-press'] }]);
+    expect(plan.purge).toBe(false);
+    expect(plan.ops).toEqual([{ type: 'deleteExecutionIfEmpty', id: 'exec-1', exerciseIds: ['bench-press'] }]);
   });
 
   it('note du jour vidée : rien de saisi, exécution née (la note l’a créée) : supprimée', () => {
@@ -75,7 +78,7 @@ describe('leaveSession', () => {
     state = captureReducer(state, { type: 'set-dated-note', exerciseId: 'squat', noteId: 'n1', body: '' });
     const plan = leaveSession(state, { executionStarted: true });
     expect(plan.kind).toBe('change');
-    expect(plan.ops).toEqual([{ type: 'deleteExecution', id: 'exec-1', exerciseIds: ['squat'] }]);
+    expect(plan.ops).toEqual([{ type: 'deleteExecutionIfEmpty', id: 'exec-1', exerciseIds: ['squat'] }]);
   });
 
   it('exo ajouté sans série : « annuler », à confirmer ; rien à supprimer si l’exécution n’est pas née', () => {

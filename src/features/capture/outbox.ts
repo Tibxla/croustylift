@@ -200,6 +200,28 @@ export interface DeleteExecutionOp {
   exerciseIds?: string[];
 }
 
+/**
+ * Supprime une exécution SEULEMENT SI elle est encore ouverte et vide (ni
+ * série, ni note datée) : le ménage de « Changer de séance », qui part sans
+ * confirmation et ne doit donc rien pouvoir effacer (cf. session-gestures.ts).
+ * La base tranche au moment de l'écriture, d'un seul tenant (RPC
+ * `delete_execution_if_empty`, migration 0025) : une série arrivée d'un autre
+ * onglet ou d'un autre appareil garde l'exécution en vie. Idempotent : sans
+ * effet sur une exécution absente, close ou non vide.
+ *
+ * Un type à part, et non un drapeau sur `deleteExecution` : rien de ce qui lit
+ * `deleteExecution` comme une suppression certaine (rejeu sur les lectures
+ * locales, exécution « retirée » par la file) ne doit s'y tromper, et un onglet
+ * resté sur un ancien bundle refuse le type inconnu au lieu de supprimer sans
+ * condition.
+ */
+export interface DeleteExecutionIfEmptyOp {
+  type: 'deleteExecutionIfEmpty';
+  id: string;
+  /** Comme `DeleteExecutionOp.exerciseIds` : copies locales à relire SI la base a supprimé. */
+  exerciseIds?: string[];
+}
+
 // `_uid` : identité interne UNIQUE d'une op en file, un UUID posé par `enqueue`.
 // Sert à retirer SANS ambiguïté l'op traitée après l'await du flush, et à
 // retrouver ses propres ops après une passe (`flushOps`) : la paire (type,id)
@@ -235,6 +257,7 @@ export type OutboxOp = (
   | UpsertExerciseNoteOp
   | DeleteExerciseNoteOp
   | DeleteExecutionOp
+  | DeleteExecutionIfEmptyOp
 ) &
   Sequenced;
 
@@ -253,6 +276,7 @@ export interface SyncFns {
   upsertExerciseNote: (op: UpsertExerciseNoteOp) => Promise<void>;
   deleteExerciseNote: (op: DeleteExerciseNoteOp) => Promise<void>;
   deleteExecution: (op: DeleteExecutionOp) => Promise<void>;
+  deleteExecutionIfEmpty: (op: DeleteExecutionIfEmptyOp) => Promise<void>;
 }
 
 /**
@@ -1243,6 +1267,8 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
       return fns.deleteExerciseNote(stripSeq(op));
     case 'deleteExecution':
       return fns.deleteExecution(stripSeq(op));
+    case 'deleteExecutionIfEmpty':
+      return fns.deleteExecutionIfEmpty(stripSeq(op));
     default:
       // Type inconnu (op d'une version future écrite par un autre onglet/appareil,
       // ou blob trafiqué) : aucune SyncFn ne sait la jouer. On JETTE plutôt que de

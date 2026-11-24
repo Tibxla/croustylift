@@ -1670,3 +1670,55 @@ export async function deleteExecutionById(id: string): Promise<number> {
   if (error) throw error;
   return data?.length ?? 0;
 }
+
+/** Ce que la suppression conditionnelle a fait de l'exécution. */
+export type ConditionalDeletion = 'deleted' | 'kept' | 'absent';
+
+/** L'erreur dit-elle que la fonction n'existe pas en base (migration non appliquée) ? */
+function isMissingFunction(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  // PGRST202 : PostgREST ne trouve pas la fonction. 42883 : Postgres non plus.
+  return code === 'PGRST202' || code === '42883';
+}
+
+/**
+ * Supprime l'exécution `id` SEULEMENT SI elle est encore ouverte et vide (ni
+ * série, ni note datée). Sert à « Changer de séance », qui part sans
+ * confirmation (cf. session-gestures.ts). Idempotent.
+ *
+ * Chemin normal : la RPC `delete_execution_if_empty` (migration 0025), qui
+ * verrouille l'exécution, vérifie puis supprime d'un seul tenant. Une série
+ * insérée au même instant attend le verrou : soit elle est vue (l'exécution
+ * reste), soit elle arrive après la suppression et la base la refuse (clé
+ * étrangère), ce que la file montre comme une saisie refusée, jamais perdue en
+ * silence.
+ *
+ * REPLI tant que la fonction n'est pas en base : la même vérification en trois
+ * lectures, puis un delete borné aux exécutions ouvertes. Il penche vers
+ * « on garde » (au moindre doute l'exécution reste), mais n'est pas atomique :
+ * une série insérée entre la dernière lecture et le delete part en cascade.
+ * La fenêtre est d'un aller-retour ; seule la migration la ferme.
+ */
+export async function deleteExecutionIfEmpty(id: string): Promise<ConditionalDeletion> {
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    fn: 'delete_execution_if_empty',
+    args: { p_execution_id: string },
+  ) => PromiseLike<{ data: unknown; error: unknown }>;
+  const { data, error } = await rpc('delete_execution_if_empty', { p_execution_id: id });
+  if (!error) return data === 'deleted' || data === 'absent' ? data : 'kept';
+  if (!isMissingFunction(error)) throw error;
+
+  const execution = await supabase.from('executions').select('id, closed_at').eq('id', id).maybeSingle();
+  if (execution.error) throw execution.error;
+  if (!execution.data) return 'absent';
+  if (execution.data.closed_at !== null) return 'kept';
+  const sets = await supabase.from('performed_sets').select('id').eq('execution_id', id).limit(1);
+  if (sets.error) throw sets.error;
+  if ((sets.data?.length ?? 0) > 0) return 'kept';
+  const notes = await supabase.from('dated_notes').select('id').eq('execution_id', id).limit(1);
+  if (notes.error) throw notes.error;
+  if ((notes.data?.length ?? 0) > 0) return 'kept';
+  const removed = await supabase.from('executions').delete().eq('id', id).is('closed_at', null).select('id');
+  if (removed.error) throw removed.error;
+  return (removed.data?.length ?? 0) > 0 ? 'deleted' : 'absent';
+}

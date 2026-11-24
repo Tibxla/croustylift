@@ -61,6 +61,7 @@ function recorder(insertSet?: (op: OutboxOp) => Promise<void>): { fns: SyncFns; 
     upsertExerciseNote: ok,
     deleteExerciseNote: ok,
     deleteExecution: ok,
+    deleteExecutionIfEmpty: ok,
   } as unknown as SyncFns;
   return { fns, sent };
 }
