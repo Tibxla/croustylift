@@ -533,7 +533,17 @@ export function ExerciseCapture({
           </Measure>
           {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
               couleur ni ▲ (ADR 0010, draft-e1rm.ts). */}
-          <Measure compact={compact} center label={`Écart ${gap?.measure ?? 'e1RM'}`}>
+          <Measure
+            compact={compact}
+            center
+            // Sous 340 px (320), « Écart e1RM » et son chiffre ne tiennent pas
+            // entre leurs voisines : « Écart » seul, le chiffre n'y porte pas « kg ».
+            label={
+              <>
+                Écart<span className={compact ? '[@media(max-width:339px)]:hidden' : ''}> {gap?.measure ?? 'e1RM'}</span>
+              </>
+            }
+          >
             {gap ? (
               <Figure value={gap.value} unit={gap.unit} compact={compact} />
             ) : (
@@ -641,7 +651,7 @@ function Measure({
   labelHint,
   children,
 }: {
-  label: string;
+  label: ReactNode;
   compact: boolean;
   right?: boolean;
   /** Écran bas : centrée entre ses deux voisines. */
