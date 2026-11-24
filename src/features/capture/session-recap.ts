@@ -45,9 +45,8 @@
 // s'il est tenu par une AUTRE série que celle du record d'e1RM du même côté.
 // Ordre : gauche puis droite, e1rm puis charge.
 
-import { comparePerformance, effectiveReps, estimateE1rm, isZeroLoad } from '../../domain/e1rm';
+import { effectiveReps, estimateE1rm, isZeroLoad } from '../../domain/e1rm';
 import { liftedKg } from '../../domain/lifted';
-import { heavier } from '../../domain/pr';
 import {
   countLogicalSetsDone,
   countPerformedSets,
@@ -60,7 +59,7 @@ import type { PerformedSet, Range, Side } from '../../domain/types';
 import { currentSetOrder, sidesDoneAt } from '../../domain/unilateral';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import type { ExerciseOrigin, Session, SessionExercise } from './fixtures';
-import { computeSetBadges, computeSetBadgesBySide, summarizeBadges } from './set-badges';
+import { computeSetBadges, computeSetBadgesBySide, dayRecords, summarizeBadges } from './set-badges';
 import { getProgress, type CaptureState, type ExerciseProgress } from './state';
 import { SESSION_DURATION_MAX_MIN } from './summary';
 
@@ -144,8 +143,8 @@ export interface SessionRecap {
 }
 
 /**
- * Les records du jour d'un exo, au plus un par axe et par côté (cf. en-tête).
- * `badges` est aligné par index sur `sets`.
+ * Les records du jour d'un exo, au plus un par axe et par côté (cf. en-tête) :
+ * le décompte partagé avec le Journal (`dayRecords`, set-badges).
  */
 function recordsOf(
   exercise: SessionExercise,
@@ -153,27 +152,12 @@ function recordsOf(
   badges: ReturnType<typeof computeSetBadges>,
   unilateral: boolean,
 ): RecapRecord[] {
-  // Même rangement que `computeRecordFlagsBySide` : une ligne unilatérale sans
-  // côté (donnée inattendue) compte à gauche.
-  const sideOf = (set: PerformedSet): Side | null => (unilateral ? (set.side === 'right' ? 'right' : 'left') : null);
-  const sides: (Side | null)[] = unilateral ? ['left', 'right'] : [null];
-  const records: RecapRecord[] = [];
-  for (const side of sides) {
-    let bestE1rm: PerformedSet | null = null;
-    let bestCharge: PerformedSet | null = null;
-    sets.forEach((set, index) => {
-      const badge = badges[index];
-      if (badge?.axis !== 'record' || sideOf(set) !== side) return;
-      if (badge.record !== 'weight-reps' && (bestE1rm === null || comparePerformance(set, bestE1rm) > 0)) {
-        bestE1rm = set;
-      }
-      if (badge.record !== 'e1rm' && (bestCharge === null || heavier(bestCharge, set))) bestCharge = set;
-    });
-    const base = { exerciseId: exercise.exerciseId, name: exercise.name, side };
-    if (bestE1rm !== null) records.push({ ...base, ...e1rmRecord(bestE1rm) });
-    if (bestCharge !== null && bestCharge !== bestE1rm) records.push({ ...base, ...chargeRecord(bestCharge) });
-  }
-  return records;
+  const base = { exerciseId: exercise.exerciseId, name: exercise.name };
+  return dayRecords(sets, badges, unilateral).map(({ axis, side, set }) => ({
+    ...base,
+    side,
+    ...(axis === 'e1rm' ? e1rmRecord(set) : chargeRecord(set)),
+  }));
 }
 
 type RecordReading = Pick<RecapRecord, 'axis' | 'unit' | 'value' | 'set'>;

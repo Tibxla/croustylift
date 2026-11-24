@@ -65,6 +65,20 @@ describe('journalVerdicts', () => {
     expect(v.get('e2')!.records).toBe(1);
   });
 
+  it('le résumé compte les records comme la fin de séance : au plus un par axe et par côté', () => {
+    // Historique à 50 × 8, puis 55 et 60 × 8 au même RIR : deux séries passent
+    // le record provisoire, la clôture n'en garde qu'un (la meilleure, 60 × 8).
+    const v = journalVerdicts(
+      recentFirst(
+        entry('e1', '2026-01-01', 'push', { bench: [set(50, 8, 2, 1)] }),
+        entry('e2', '2026-01-08', 'push', { bench: [set(55, 8, 2, 1), set(60, 8, 2, 2)] }),
+      ),
+    );
+    expect(v.get('e2')!.records).toBe(1);
+    // Le détail garde le badge de chaque série.
+    expect(v.get('e2')!.sets.get('bench')).toEqual(['record', 'record']);
+  });
+
   it('un record de charge seul se dit « record charge »', () => {
     const v = journalVerdicts(
       recentFirst(

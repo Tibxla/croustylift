@@ -11,7 +11,10 @@
 //     toutes séances confondues, par côté en unilatéral ;
 //   - un seul statut par série, record > battue > égalée. Une série qui bat le
 //     record n'est pas AUSSI comptée battue : le compte de la ligne est celui de
-//     la fin de séance.
+//     la fin de séance ;
+//   - le nombre de records de la ligne est celui de la clôture (`dayRecords`) :
+//     au plus un par axe et par côté, même si deux séries ont passé tour à tour
+//     le record provisoire (chacune garde son badge dans le détail).
 // S'y ajoute « en deçà » (▼), que la Salle ne montre pas sur ses badges : la
 // série avait une Référence à son rang et ne l'a ni battue ni égalée. Sans
 // Référence à ce rang, aucun statut (rien à battre n'est pas un échec).
@@ -20,7 +23,7 @@
 // (`buildRawLog`) : on les parcourt à rebours, dans l'ordre du temps.
 import type { ExerciseExecution, PerformedSet } from '../../domain/types';
 import { personalRecord, personalRecordBySide } from '../../domain/pr';
-import { computeSetBadges, computeSetBadgesBySide, type SetBadge } from '../capture/set-badges';
+import { computeSetBadges, computeSetBadgesBySide, dayRecords, type SetBadge } from '../capture/set-badges';
 import type { RawLogEntry } from './raw-log';
 
 /**
@@ -36,7 +39,8 @@ export interface ExecutionVerdicts {
   sets: Map<string, JournalSetStatus[]>;
   /** Séries battues (hors records), comme le compte de la fin de séance. */
   beaten: number;
-  /** Séries qui portent un record. */
+  /** Records du jour, comptés comme la fin de séance (`dayRecords` : au plus
+   *  un par axe et par côté). Le détail, lui, badge chaque série. */
   records: number;
 }
 
@@ -68,10 +72,9 @@ export function journalVerdicts(entries: readonly RawLogEntry[]): Map<string, Ex
         ? computeSetBadgesBySide(sets, reference, personalRecordBySide(history, exercise.exerciseId))
         : computeSetBadges(sets, reference, history.length > 0 ? personalRecord(history, exercise.exerciseId) : null);
       const statuses = sets.map((s, k) => statusOf(badges[k] ?? null, s, reference));
-      for (const status of statuses) {
-        if (status === 'battue') verdicts.beaten += 1;
-        else if (status === 'record' || status === 'record-charge') verdicts.records += 1;
-      }
+      for (const status of statuses) if (status === 'battue') verdicts.beaten += 1;
+      // Le décompte de la fin de séance : au plus un record par axe et par côté.
+      verdicts.records += dayRecords(sets, badges, unilateral).length;
       verdicts.sets.set(exercise.exerciseId, statuses);
 
       history.push({ date: entry.date, exerciseId: exercise.exerciseId, sets });
