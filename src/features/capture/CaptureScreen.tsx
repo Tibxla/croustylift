@@ -1343,7 +1343,7 @@ function CaptureBoard({
           exercise={activeExercise}
           progress={getProgress(state, activeExercise.exerciseId)}
           index={indexItems}
-          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
+          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId), nextEx.unilateral ?? false) } : null}
           done={counts.done}
           total={session.exercises.length}
           canFinish={loggedAny}
