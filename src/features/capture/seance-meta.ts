@@ -27,7 +27,7 @@
 //
 // « Pas de copie ni de réseau » n'est pas « jamais faite » : sans donnée, la
 // ligne reste vide (sa hauteur est réservée, rien ne saute à l'arrivée).
-import { peekRead } from '../../lib/read-cache';
+import { dropRead, peekRead, seedRead } from '../../lib/read-cache';
 import { daysBetween } from './format';
 import type { OutboxOp } from './outbox';
 
@@ -116,50 +116,43 @@ export function peekSeancesMeta(): StoredMap {
 // partie APRÈS leur acquittement soit acceptée (seance-meta-load.ts) : la
 // génération d'acquittement de la copie, changée à chaque acquittement
 // (sync.ts, `markToRefresh`), écarte toute lecture partie avant.
-const ACKED_KEY = 'croustylift:salle-seances-meta:acquittees';
+// La mémoire est une copie du cache de lecture (`salle-acquittees`) : rattachée
+// au compte reconnu, purgée à la déconnexion avec les autres (`clearReadCache`).
+const ACKED_KEY = 'salle-acquittees';
 /** Borne : quelques séances entre deux relectures, jamais davantage. */
 const ACKED_MAX = 50;
 
 /** Les ops d'exécution acquittées depuis la dernière relecture acceptée. */
 export function readAckedExecutions(): OutboxOp[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(ACKED_KEY) ?? '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (op): op is OutboxOp =>
-        typeof op === 'object' &&
-        op !== null &&
-        typeof (op as { id?: unknown }).id === 'string' &&
-        ((op as OutboxOp).type === 'deleteExecution' ||
-          ((op as OutboxOp).type === 'upsertExecution' &&
-            typeof (op as { seanceVersionId?: unknown }).seanceVersionId === 'string' &&
-            typeof (op as { performedOn?: unknown }).performedOn === 'string')),
-    );
-  } catch {
-    return [];
-  }
+  const stored = peekRead<unknown>(ACKED_KEY);
+  if (!Array.isArray(stored)) return [];
+  return stored.filter(
+    (op): op is OutboxOp =>
+      typeof op === 'object' &&
+      op !== null &&
+      typeof (op as { id?: unknown }).id === 'string' &&
+      ((op as OutboxOp).type === 'deleteExecution' ||
+        ((op as OutboxOp).type === 'upsertExecution' &&
+          typeof (op as { seanceVersionId?: unknown }).seanceVersionId === 'string' &&
+          typeof (op as { performedOn?: unknown }).performedOn === 'string')),
+  );
 }
 
-/** Garde une exécution créée ou supprimée en base, le temps qu'une relecture l'apporte. */
+/**
+ * Garde une exécution créée ou supprimée en base, le temps qu'une relecture
+ * l'apporte. Dédoublonnée par (type, id) avant la borne : une exécution
+ * réaffirmée à chaque remontage ne pousse pas dehors une suppression.
+ * Stockage plein : rien n'est gardé, la ligne peut redire une date dépassée
+ * jusqu'à la relecture.
+ */
 export function rememberAckedExecution(
   op: { type: 'upsertExecution'; id: string; seanceVersionId: string; performedOn: string } | { type: 'deleteExecution'; id: string },
 ): void {
-  if (typeof localStorage === 'undefined') return;
-  const kept = [...readAckedExecutions(), op].slice(-ACKED_MAX);
-  try {
-    localStorage.setItem(ACKED_KEY, JSON.stringify(kept));
-  } catch {
-    // Stockage plein : la ligne peut redire une date dépassée jusqu'à la relecture.
-  }
+  const others = readAckedExecutions().filter((x) => !(x.type === op.type && x.id === op.id));
+  seedRead(ACKED_KEY, [...others, op].slice(-ACKED_MAX));
 }
 
-/** Une lecture partie après tous les acquittements gardés vient d'être acceptée. */
+/** Une lecture partie après tous les acquittements gardés vient d'être acceptée ET écrite. */
 export function clearAckedExecutions(): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.removeItem(ACKED_KEY);
-  } catch {
-    /* no-op */
-  }
+  dropRead(ACKED_KEY);
 }

@@ -81,11 +81,13 @@ export function watchSeancesMeta(
   { fetcher = () => fetchSeancesMeta(seanceIds) }: { fetcher?: () => Promise<StoredMap> } = {},
 ): { stop: () => void; revalidate: () => void } {
   let alive = true;
-  const off = onReadAccepted((key, value) => {
+  const off = onReadAccepted((key, value, persisted) => {
     if (!alive || key !== SEANCES_META_KEY) return;
     // Acceptée, la lecture est partie après tous les acquittements gardés
-    // (génération d'acquittement) : elle les porte, la mémoire peut partir.
-    clearAckedExecutions();
+    // (génération d'acquittement) : elle les porte, la mémoire peut partir,
+    // si la copie a pu s'écrire. Stockage plein, la copie est restée
+    // l'ancienne : le masque la corrige encore.
+    if (persisted) clearAckedExecutions();
     onChange(value as StoredMap);
   });
   const revalidate = () => {

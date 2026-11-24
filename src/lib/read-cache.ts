@@ -148,8 +148,8 @@ function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean
  * Écrit une entrée (dégrade en silence si quota plein / mode privé), puis
  * prévient les abonnés (`onReadWritten`) si le CONTENU a changé.
  */
-function writeEntry(key: string, value: unknown): void {
-  if (typeof localStorage === 'undefined') return;
+function writeEntry(key: string, value: unknown): boolean {
+  if (typeof localStorage === 'undefined') return false;
   try {
     const before = localStorage.getItem(key);
     const after = JSON.stringify({ v: 1, value } satisfies Envelope);
@@ -157,9 +157,11 @@ function writeEntry(key: string, value: unknown): void {
     staleInMemory.delete(key);
     refreshInMemory.delete(key);
     if (before !== after) notifyWritten(key);
+    return true;
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
     // fois : dégradation acceptable, on ne bloque jamais la lecture en cours.
+    return false;
   }
 }
 
@@ -167,7 +169,7 @@ function writeEntry(key: string, value: unknown): void {
 const writeListeners = new Set<(key: string) => void>();
 
 /** Abonnés aux réponses acceptées (cf. `onReadAccepted`). */
-const acceptListeners = new Set<(key: string, value: unknown) => void>();
+const acceptListeners = new Set<(key: string, value: unknown, persisted: boolean) => void>();
 
 /** La clé sans l'étiquette du compte reconnu, `null` si elle est d'un autre compte. */
 function unscoped(storageKey: string): string | null {
@@ -204,9 +206,10 @@ export function onReadWritten(listener: (key: string) => void): () => void {
  * S'abonne aux réponses réseau ACCEPTÉES par les gardes d'ordre
  * (`guardedFetch`), avec leur valeur, que la copie ait pu s'écrire ou non : un
  * stockage plein ne doit pas cacher à l'écran monté la lecture qui vient de
- * réussir (il garderait sinon l'ancienne copie). Rend le désabonnement.
+ * réussir (il garderait sinon l'ancienne copie). `persisted` dit si la copie a
+ * pu s'écrire : sinon elle est restée l'ancienne. Rend le désabonnement.
  */
-export function onReadAccepted(listener: (key: string, value: unknown) => void): () => void {
+export function onReadAccepted(listener: (key: string, value: unknown, persisted: boolean) => void): () => void {
   acceptListeners.add(listener);
   return () => {
     acceptListeners.delete(listener);
@@ -247,10 +250,10 @@ async function guardedFetch<T>(
   ) {
     // Écrite ou non (quota plein), la réponse est la plus fraîche acceptée :
     // elle fixe l'ordre et part aux abonnés (`onReadAccepted`).
-    writeEntry(storageKey, value);
+    const persisted = writeEntry(storageKey, value);
     lastWritten.set(storageKey, seq);
     const key = acceptListeners.size > 0 ? unscoped(storageKey) : null;
-    if (key !== null) for (const listener of [...acceptListeners]) listener(key, value);
+    if (key !== null) for (const listener of [...acceptListeners]) listener(key, value, persisted);
   }
   return value;
 }

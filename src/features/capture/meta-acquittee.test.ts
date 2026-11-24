@@ -36,9 +36,10 @@ vi.mock('../notes/data', () => ({
 import { flushOutbox, syncFns } from './sync';
 import { clearQueue, enqueue, readOwnQueue } from './outbox';
 import { clearReadCache } from '../../lib/read-cache';
+import { clearLocalAccount } from '../../lib/local-account';
 import { saveLocalAccount } from '../../lib/local-account';
 import { watchSeancesMeta } from './seance-meta-load';
-import { mergePendingExecutions, peekSeancesMeta, readAckedExecutions, type StoredMap } from './seance-meta';
+import { mergePendingExecutions, peekSeancesMeta, readAckedExecutions, rememberAckedExecution, type StoredMap } from './seance-meta';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -148,5 +149,48 @@ describe('méta après une suppression acquittée', () => {
     acknowledgeQueue();
     await flushOutbox();
     expect(shown()?.lastOn).toBe('2026-11-24');
+  });
+
+  it('la mémoire est celle du compte : un autre compte ne la voit ni ne la vide, et la déconnexion la purge', () => {
+    rememberAckedExecution({ type: 'deleteExecution', id: 'exec-supprimee' });
+    clearLocalAccount();
+    saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
+    expect(readAckedExecutions()).toEqual([]);
+    clearLocalAccount();
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    expect(readAckedExecutions().map((op) => op.id)).toEqual(['exec-supprimee']);
+    // Déconnexion : toutes les copies partent, la mémoire avec.
+    clearReadCache();
+    expect(readAckedExecutions()).toEqual([]);
+  });
+
+  it('dédoublonnée : 60 réaffirmations de la même exécution ne poussent pas dehors une suppression', () => {
+    rememberAckedExecution({ type: 'deleteExecution', id: 'exec-supprimee' });
+    for (let i = 0; i < 60; i += 1) {
+      rememberAckedExecution({ type: 'upsertExecution', id: 'exec-du-jour', seanceVersionId: 'v1', performedOn: '2026-11-24' });
+    }
+    expect(readAckedExecutions().map((op) => `${op.type}:${op.id}`).sort()).toEqual(['deleteExecution:exec-supprimee', 'upsertExecution:exec-du-jour']);
+  });
+
+  it('stockage plein : une lecture acceptée dont la copie n’a pas pu s’écrire ne vide PAS le masque', async () => {
+    const first = watchSeancesMeta(['a'], () => {}, { fetcher: async () => meta('2026-11-20', 'exec-supprimee') });
+    await settle();
+    first.stop();
+    enqueue(DELETE);
+    acknowledgeQueue();
+    await flushOutbox();
+    const storage = localStorage as unknown as MemoryStorage;
+    const real = storage.setItem.bind(storage);
+    const full = vi.spyOn(storage, 'setItem').mockImplementation((k: string, v: string) => {
+      if (k.endsWith(':salle-seances-meta')) throw new DOMException('quota', 'QuotaExceededError');
+      real(k, v);
+    });
+    const watch = watchSeancesMeta(['a'], () => {}, { fetcher: async () => meta('2026-11-18', 'exec-precedente') });
+    await settle();
+    watch.stop();
+    full.mockRestore();
+    // La copie est restée l'ancienne : sans le masque, la date supprimée reparaîtrait.
+    expect(peekSeancesMeta().a?.lastExecutionId).toBe('exec-supprimee');
+    expect(shown()).toBeNull();
   });
 });
