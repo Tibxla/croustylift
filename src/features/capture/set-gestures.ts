@@ -31,8 +31,9 @@
 //   - hors ligne, le log puis sa correction tiennent tous deux en file et
 //     partent dans l'ordre, la dernière écriture gagne ;
 //   - une série dont l'insertion a été refusée par la base (quarantaine) est
-//     relevée par sa correction : l'enfilement retire l'écriture refusée de la
-//     même série (`enqueue`, outbox.ts) ;
+//     relevée par sa correction : le flush envoie alors la série ENTIÈRE,
+//     reconstituée du refus et de la correction, et lève le refus une fois
+//     l'écriture acquittée (outbox.ts, « Séries refusées, puis reprises ») ;
 //   - la Référence fusionnée (`applyPendingSets`) et la reprise
 //     (`applyQueuedSets`) remplacent déjà une série par son id.
 // Les badges (battue, égalée, record) ne sont pas stockés : ils se recalculent

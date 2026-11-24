@@ -833,19 +833,80 @@ function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
  * reste en file et l'appelant arrête la passe (conserver plutôt que perdre).
  * Rend faux dans ce cas.
  */
-function moveToQuarantine(op: OutboxOp, reason: string): boolean {
+function moveToQuarantine(op: OutboxOp, reason: string, stored: OutboxOp = op): boolean {
   if (typeof localStorage === 'undefined') return false;
   // L'op a pu être retirée de la file pendant sa requête (« Annuler la séance »,
   // `purgeByExecution`) : l'utilisateur l'a abandonnée, la réponse tardive de la
   // base ne la remet pas en quarantaine. Rien à déplacer, la passe continue.
   if (!isQueued(op)) return true;
   try {
-    const entry: QuarantinedOp = { op, reason, at: new Date().toISOString() };
-    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...readQuarantine(), entry]));
+    // `stored` : ce qui a réellement été envoyé (la série entière reconstituée,
+    // cf. `effectiveOp`). Il REMPLACE alors l'ancien refus de la même série :
+    // une seule saisie reste renvoyable, la plus récente.
+    const entry: QuarantinedOp = { op: stored, reason, at: new Date().toISOString() };
+    const others =
+      stored === op
+        ? readQuarantine()
+        : readQuarantine().filter(
+            (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+          );
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...others, entry]));
   } catch {
     return false;
   }
   return removeFromQueue(op) !== 'unwritable';
+}
+
+// --- Séries refusées, puis reprises par un geste -------------------------------
+//
+// Une série dont l'INSERTION a été refusée par la base attend en quarantaine.
+// L'utilisateur peut la corriger ou la supprimer depuis la Salle : le refus
+// n'a alors plus d'objet. Trois règles, toutes appliquées DANS le flush (donc
+// sous son verrou : un autre onglet qui déplace une op en quarantaine au même
+// moment ne peut pas voir son entrée écrasée par une liste lue avant) :
+//   1. une écriture PARTIELLE (correction, remontée de rang) d'une série dont
+//      l'insertion est en quarantaine est envoyée comme la série ENTIÈRE,
+//      reconstituée du refus et de l'écriture : la ligne n'existe pas en base,
+//      un `update` ne toucherait rien ;
+//   2. le refus n'est levé qu'une fois son remplaçant ACQUITTÉ par la base
+//      (jamais à l'enfilement : stockage plein, le remplaçant ne tient qu'en
+//      mémoire, et fermer la page perdrait les deux versions) ;
+//   3. une écriture refusée que la file a DÉJÀ dépassée (une réécriture
+//      complète ou une suppression de la même série attend derrière elle)
+//      n'entre pas en quarantaine : « renvoyer » la saisie écraserait la
+//      correction, ou recréerait la série supprimée.
+
+/** L'insertion refusée (complète) de la série `setId` pour le compte de `op`, s'il y en a une. */
+function refusedInsertOf(op: OutboxOp): QuarantinedOp | null {
+  return (
+    readQuarantine().find(
+      (q) => isSetInsertion(q.op) && q.op.id === op.id && q.op._owner === op._owner,
+    ) ?? null
+  );
+}
+
+/**
+ * Ce qu'il faut réellement envoyer pour `op`. Une écriture partielle dont
+ * l'insertion d'origine est en quarantaine devient la série entière (règle 1) :
+ * les champs du refus, les valeurs ou le rang de l'écriture partielle par-dessus.
+ */
+function effectiveOp(op: OutboxOp, refused: QuarantinedOp | null): OutboxOp {
+  if (op.type !== 'insertSet' || op.only === undefined || refused === null) return op;
+  if (refused.op.type !== 'insertSet') return op;
+  const { only: _only, ...patch } = op;
+  const base = refused.op;
+  return op.only === 'values'
+    ? { ...patch, setOrder: base.setOrder, side: base.side }
+    : { ...patch, weightKg: base.weightKg, reps: base.reps, rir: base.rir, side: base.side };
+}
+
+/** Lève les insertions refusées de la série `op.id` (même compte) : elle vient d'être réécrite ou supprimée en base. */
+function liftRefusedSetWrites(op: OutboxOp): void {
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter(
+    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && q.op._owner === op._owner),
+  );
+  if (kept.length !== quarantine.length) writeQuarantine(kept);
 }
 
 /**
@@ -1100,27 +1161,7 @@ export function enqueueAll(ops: readonly OutboxOp[]): string[] {
     });
   }
   writeQueue(queue);
-  ops.forEach(supersedeRefusedSetWrites);
   return uids;
-}
-
-/**
- * Une écriture de série refusée par la base (en quarantaine) n'a plus d'objet
- * dès qu'une nouvelle écriture de la MÊME série est enfilée : une correction la
- * remplace, une suppression la rend sans cible. On la retire donc de la
- * quarantaine. Sans cela, « renvoyer » la saisie refusée réécrirait l'ancienne
- * valeur par-dessus la correction, et la Déconnexion resterait retenue par une
- * saisie que l'utilisateur vient de reprendre. Seulement les entrées du compte
- * reconnu ; les autres écritures refusées (exécution, notes) ne sont pas
- * concernées.
- */
-function supersedeRefusedSetWrites(op: OutboxOp): void {
-  if (op.type !== 'insertSet' && op.type !== 'deleteSet') return;
-  const quarantine = readQuarantine();
-  const kept = quarantine.filter(
-    (q) => !(q.op.type === 'insertSet' && q.op.id === op.id && isOwnEntry(q)),
-  );
-  if (kept.length !== quarantine.length) writeQuarantine(kept);
 }
 
 /** Enfile une op (cf. `enqueueTracked`) et renvoie la nouvelle longueur de file. */
@@ -1386,8 +1427,11 @@ async function runFlushOnce(
       queue = readQueue();
       continue;
     }
+    // Écriture partielle d'une série dont l'insertion a été refusée : c'est la
+    // série entière qui part (cf. « Séries refusées, puis reprises »).
+    const sent = effectiveOp(op, op.type === 'insertSet' && op.only ? refusedInsertOf(op) : null);
     try {
-      await runOp(op, fns);
+      await runOp(sent, fns);
     } catch (err) {
       // REJET DÉFINITIF de la base (cf. `isPermanentRejection`) : rejouer l'op
       // échouerait à l'identique et bloquerait tout ce qui suit. Elle part en
@@ -1397,7 +1441,7 @@ async function runFlushOnce(
       if (isPermanentRejection(err) && (!who || (await who()) === user)) {
         const code = (err as { code: string }).code;
         const message = (err as { message?: unknown }).message;
-        if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`)) {
+        if (moveToQuarantine(op, `${code} : ${typeof message === 'string' ? message : ''}`, sent)) {
           console.error(
             `[outbox] « ${op.type} » (id ${op.id}) rejetée par la base, mise en quarantaine :`,
             err,
@@ -1439,6 +1483,11 @@ async function runFlushOnce(
     // encore dans la file. On arrête la passe (elle sera rejouée sans effet au
     // prochain flush) plutôt que de la relire et de la renvoyer sans fin.
     if (removal === 'unwritable') return { flushed, drained: false };
+    // La série vient d'être écrite entière, ou supprimée, en base : un ancien
+    // refus de son insertion n'a plus d'objet. Levé ICI, à l'acquittement.
+    if ((sent.type === 'insertSet' && sent.only === undefined) || sent.type === 'deleteSet') {
+      liftRefusedSetWrites(op);
+    }
     if (removal === 'removed') flushed += 1;
     queue = readQueue();
   }

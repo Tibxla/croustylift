@@ -238,14 +238,16 @@ describe('correctSet et la file d’écritures', () => {
     await flush(refusing.fns);
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['s1']);
 
-    // La correction remplace l'écriture refusée : plus rien en quarantaine pour
-    // cette série (« renvoyer » réécrirait l'ancienne valeur, et la Déconnexion
-    // resterait retenue par une saisie qui n'a plus d'objet).
+    // La correction remplace l'écriture refusée, mais le refus n'est levé qu'une
+    // fois la correction ACQUITTÉE : d'ici là il reste la seule copie durable.
     play(started(), correctSet(started(), BENCH, 's1', { weightKg: 85, reps: 6, rir: 1 })!);
-    expect(readQuarantine()).toEqual([]);
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['s1']);
     const base = fakeBase();
     await flush(base.fns);
     expect(base.rows.get('s1')).toMatchObject({ weightKg: 85 });
+    // Plus rien en quarantaine pour cette série (« renvoyer » réécrirait
+    // l'ancienne valeur, et la Déconnexion resterait retenue pour rien).
+    expect(readQuarantine()).toEqual([]);
   });
 });
 
@@ -465,6 +467,7 @@ describe('deleteSet', () => {
     await flush(refusing.fns);
     expect(readQuarantine()).toHaveLength(1);
     play(started(), deleteSet(started(), BENCH, 's3')!);
+    await flush(fakeBase().fns);
     expect(readQuarantine()).toEqual([]);
   });
 
