@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cardTimeAxis, dayToTime, shortDay, timeAxis, timeTick, timeToDay } from './chart-time'
+import { cardTimeAxis, dayToTime, monthTicks, shortDay, timeAxis, timeTick, timeToDay } from './chart-time'
 import { analyzeExecutions } from './data'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -99,3 +99,19 @@ describe('axe d’une carte : primaires affichées et séries 2+', () => {
   })
 })
 
+
+describe('monthTicks', () => {
+  const t = (iso: string) => Date.parse(iso)
+  it('pose une graduation au 1er de chaque mois, l’année au passage de janvier', () => {
+    const ticks = monthTicks([t('2026-10-12'), t('2027-02-20')], 10)
+    expect(ticks.map((k) => k.label)).toEqual(['nov.', 'déc.', '2027', 'févr.'])
+    expect(ticks[0]!.x).toBe(t('2026-11-01'))
+  })
+  it('espace les mois quand la place manque', () => {
+    const ticks = monthTicks([t('2026-01-05'), t('2026-12-20')], 5)
+    expect(ticks.map((k) => k.label)).toEqual(['mars', 'mai', 'juil.', 'sept.', 'nov.'])
+  })
+  it('rend [] sous deux graduations', () => {
+    expect(monthTicks([t('2026-11-03'), t('2026-11-20')], 5)).toEqual([])
+  })
+})
