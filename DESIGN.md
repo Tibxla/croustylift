@@ -214,7 +214,7 @@ Palette **retenue** : neuf valeurs, toutes définies une fois dans `src/index.cs
 
 - **Rayon des blocs** : 6 px (`rounded-block`) pour les boutons, les carrés de couleur, les champs. Les cases d'un interrupteur prennent 3 px.
 - **Rayon haut des feuilles** : 10 px (`rounded-t-sheet`).
-- **Filets** : 1 px `--color-line` ; trait épais de 2 px en `--color-muted` pour séparer deux familles de contenu ; trait de 3 px blanc cassé à gauche d'une ligne courante ou d'un message d'erreur.
+- **Filets** : 1 px `--color-line` ; trait épais de 2 px en `--color-muted` pour séparer deux familles de contenu ; trait de 3 px blanc cassé à gauche d'un message d'erreur, d'un avis ou d'une confirmation en ligne (jamais d'une ligne de liste).
 - Pas de pilule, pas de `rounded-2xl`, pas de cercle décoratif. Les seuls cercles sont les marques d'état d'un exo.
 
 ## Components
@@ -236,7 +236,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 ### Listes et structure
 
-- **Ligne** (`Row`) : titre 17 px qui passe à la ligne plutôt que d'être coupé, méta 14 px dessous, valeur à droite, chevron si la ligne s'ouvre. Filet bas. Ligne courante : trait blanc cassé de 3 px à gauche.
+- **Ligne** (`Row`) : titre 17 px qui passe à la ligne plutôt que d'être coupé, méta 14 px dessous, valeur à droite, chevron si la ligne s'ouvre. Filet bas. Ligne courante : titre en demi-gras et `aria-current`, le mot qui le dit (« courante ») en méta ; pas de bande latérale.
 - **Titre de section** (`SectionTitle`) : 17 px demi-gras, en casse de phrase, avec une valeur d'appoint à droite.
 - **En-tête d'écran** (`ScreenHeader`) : retour nommé (« ‹ Séances »), titre de 28 px, méta dessous.
 - **Filet** (`Rule`) : 1 px, aligné sur la marge ou bord à bord.
@@ -249,7 +249,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Confirmation en ligne** (`Confirm`) : posée là où l'action a été demandée, le texte dit ce qui sera perdu. Une perte définitive : l'option sûre est le bouton, la perte un lien. Un geste qui se défait (archiver) : l'action est le bouton, « Annuler » le lien.
 - **Section repliée** (`Disclosure`) : titre, compte après un point médian, « Afficher » ou « Masquer » souligné.
 - **Action d'objet** (`ActionRow`) : bouton secondaire pleine largeur, l'explication dessous ; `ActionNote` dit pourquoi une action manque.
-- **Chargement** (`Loading`) : une phrase grise, pas de toupie. **Échec** (`LoadError`) : la phrase sur un trait blanc cassé, puis « Réessayer ».
+- **Chargement** (`Loading`) : une phrase grise, pas de toupie. **Échec** (`LoadError`) : « Erreur : » puis la phrase, entre deux filets, puis « Réessayer ».
 
 ### Contrôles sans clavier
 

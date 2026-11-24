@@ -1,7 +1,7 @@
 // Surface « Séances » : édition du plan, au calme (refonte E, DESIGN.md).
 //
 // Trois niveaux, une page chacun, navigation en state local (pas de routeur) :
-//   routines  la courante en tête (trait blanc cassé + le mot), les autres, les
+//   routines  la courante en tête (titre en demi-gras + le mot), les autres, les
 //             archivées repliées ; « Créer une routine » est l'action principale.
 //   routine   ses séances dans l'ordre de rotation (Réordonner = Monter /
 //             Descendre en mots, par la RPC `reorder_seances`), créer une séance

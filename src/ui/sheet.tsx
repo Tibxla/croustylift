@@ -67,6 +67,14 @@ export function Sheet({
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollTop = useRef(0);
   const shown = open && !!slot;
+  // La dernière fermeture reçue, lue par Échap : l'effet de focus ne dépend pas
+  // d'`onClose`. Sinon une fermeture écrite en ligne (nouvelle à chaque rendu)
+  // relançait l'effet à chaque frappe dans un champ de la feuille, et le focus
+  // sautait au titre au milieu de la saisie.
+  const closeRef = useRef(onClose);
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  });
 
   useEffect(() => {
     if (!shown) return;
@@ -74,7 +82,7 @@ export function Sheet({
     heading.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        closeRef.current();
         return;
       }
       const panel = panelRef.current;
@@ -92,7 +100,7 @@ export function Sheet({
       // Rendre le focus à ce qui a ouvert la feuille, s'il est encore là.
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
-  }, [shown, onClose]);
+  }, [shown]);
 
   useLayoutEffect(() => {
     const veil = veilRef.current;

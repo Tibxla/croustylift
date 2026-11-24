@@ -492,10 +492,48 @@ export function SeanceEditorView({
   const lifecycle = planRowActions({ executed: actions.executed, archived: false, isCurrent: false });
   const noteRow = noteFor ? rows.find((r) => r.exerciseId === noteFor) : undefined;
 
+  // Confirmation de sortie : une feuille, au-dessus de l'éditeur comme de la
+  // création d'un exo perso (la garde peut se déclencher sur l'un ou l'autre).
+  const leaveSheet = (
+    <Sheet
+      open={pendingLeave !== null && prompt !== null}
+      title={prompt?.label ?? ''}
+      onClose={resumeEditing}
+      footer={
+        <>
+          <PrimaryButton onClick={resumeEditing}>Continuer l’édition</PrimaryButton>
+          <TextLink
+            tone="muted"
+            className="self-start"
+            onClick={() => {
+              const leave = pendingLeave;
+              setPendingLeave(null);
+              // La garde tombe avec l'écran ; on la retire tout de suite pour que
+              // la sortie confirmée ne repasse pas par elle. Le blocage de
+              // rechargement aussi : la saisie est abandonnée, et un changement
+              // d'onglet peut recharger dans la foulée.
+              if (leave) leaveNow(leave);
+            }}
+          >
+            Quitter sans enregistrer
+          </TextLink>
+        </>
+      }
+    >
+      {prompt && (
+        <div role="alert" className="px-5 pb-2">
+          <p className="text-[16px] font-semibold leading-[1.35] text-ink">{prompt.title}</p>
+          <p className="mt-1 text-[15px] leading-[1.45] text-muted">{prompt.detail}</p>
+        </div>
+      )}
+    </Sheet>
+  );
+
   // Création d'un exo perso depuis le catalogue : un écran entier, au-dessus de
   // l'éditeur, qui garde son brouillon (l'état reste monté ici).
   if (creatingExo) {
     return (
+      <>
       <ExerciseForm
         frame={{ title: 'Nouvel exo perso', meta: `Il s’ajoute à ${seanceName} une fois créé.`, backLabel: seanceName }}
         prefillName={creatingExo.prefill}
@@ -509,6 +547,8 @@ export function SeanceEditorView({
           addExercise(created);
         }}
       />
+      {leaveSheet}
+      </>
     );
   }
 
@@ -719,38 +759,7 @@ export function SeanceEditorView({
         />
       )}
 
-      <Sheet
-        open={pendingLeave !== null && prompt !== null}
-        title={prompt?.label ?? ''}
-        onClose={resumeEditing}
-        footer={
-          <>
-            <PrimaryButton onClick={resumeEditing}>Continuer l’édition</PrimaryButton>
-            <TextLink
-              tone="muted"
-              className="self-start"
-              onClick={() => {
-                const leave = pendingLeave;
-                setPendingLeave(null);
-                // La garde tombe avec l'écran ; on la retire tout de suite pour que
-                // la sortie confirmée ne repasse pas par elle. Le blocage de
-                // rechargement aussi : la saisie est abandonnée, et un changement
-                // d'onglet peut recharger dans la foulée.
-                if (leave) leaveNow(leave);
-              }}
-            >
-              Quitter sans enregistrer
-            </TextLink>
-          </>
-        }
-      >
-        {prompt && (
-          <div role="alert" className="px-5 pb-2">
-            <p className="text-[16px] font-semibold leading-[1.35] text-ink">{prompt.title}</p>
-            <p className="mt-1 text-[15px] leading-[1.45] text-muted">{prompt.detail}</p>
-          </div>
-        )}
-      </Sheet>
+      {leaveSheet}
 
       <NameSheet
         open={renaming}
