@@ -107,11 +107,12 @@ import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
 import { useGoToSurface } from '../../shell/navigation';
-import { syncLine, type SyncState } from '../../shell/sync-line';
+import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
+import { sommaireDetail } from './sommaire-detail';
 import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
@@ -1391,23 +1392,13 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
 /** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
- *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, l'état
- *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
- *  sous la barre du pouce. */
+ *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, pas de
+ *  ligne (elle pousserait la rangée RIR sous la barre du pouce) : seules les
+ *  alarmes s'y disent, le bouton Sommaire garde la progression. */
 function SalleSync() {
   const sync = useSyncState();
   const openRefused = useOpenRefusedWrites();
   return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
-}
-
-/** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
- *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
-function sommaireDetail(sync: SyncState, done: number, total: number): string {
-  if (sync.unsaved) return 'stockage plein';
-  if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
-  if (sync.pending > 0) return `envoi · ${sync.pending}`;
-  if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
-  return `${done} sur ${total} faits`;
 }
 
 /** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
@@ -1523,6 +1514,7 @@ function CapturePanel({
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
   // par le serveur se disent en clair, en tête.
   const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
   return (
@@ -1568,19 +1560,15 @@ function CapturePanel({
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
-              sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
+              detail.alarm ? `, ${detail.text}` : ''
             }`}
             className={BAR_BTN}
           >
             <span className={BAR_TITLE}>Sommaire</span>
-            {/* Une file en attente (ou un refus, un stockage plein) se voit d'un coup
-                d'œil : blanc cassé demi-gras, comme dans le prototype. */}
-            <span
-              className={`tnum w-full truncate text-[13px] leading-tight ${
-                sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
-              }`}
-            >
-              {sommaireDetail(sync, done, total)}
+            {/* La progression, toujours (sommaire-detail.ts) ; une alarme (stockage
+                plein, refus) prend sa place, en blanc cassé demi-gras. */}
+            <span className={`tnum w-full truncate text-[13px] leading-tight ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
+              {detail.text}
             </span>
           </button>
           {undoWhat ? (
