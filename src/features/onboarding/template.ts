@@ -19,6 +19,27 @@ export function isFirstLaunch(routineCount: number): boolean {
 }
 
 // =====================================================================
+// Noms saisis au premier lancement
+// =====================================================================
+
+/** Longueur maximale d'un nom de routine ou de séance à l'écran de premier lancement. */
+export const FIRST_NAME_MAX_LENGTH = 80;
+
+/**
+ * Vérifie un nom saisi au premier lancement : non vide une fois les blancs
+ * retirés, et au plus `FIRST_NAME_MAX_LENGTH` caractères (la base refuse au-delà
+ * de 200). Rend le message à afficher, ou `null` si le nom est valable.
+ */
+export function firstNameProblem(kind: 'routine' | 'séance', name: string): string | null {
+  const trimmed = name.trim();
+  if (trimmed === '') return `Donne un nom à ta ${kind}.`;
+  if ([...trimmed].length > FIRST_NAME_MAX_LENGTH) {
+    return `Le nom de la ${kind} est trop long (${FIRST_NAME_MAX_LENGTH} caractères au plus).`;
+  }
+  return null;
+}
+
+// =====================================================================
 // Modèle de départ
 // =====================================================================
 

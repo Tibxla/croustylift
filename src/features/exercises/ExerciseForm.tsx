@@ -21,6 +21,11 @@ import {
   validatePersonalExercise,
 } from '../authoring/exercise-input';
 import { NoteField } from '../notes/NoteField';
+import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
+import { errorMessage } from '../../lib/error-message';
+
+/** Raison du blocage de rechargement tenu par un formulaire d'exo modifié et non enregistré. */
+const EXERCISE_DRAFT_BLOCK = 'brouillon-exercice';
 
 /** Saisie d'un exo perso : nom, muscles principaux (canoniques), unilatéral. */
 export interface ExerciseFormValue {
@@ -70,6 +75,17 @@ export function ExerciseForm({
   const [error, setError] = useState<string | null>(null);
   const hasNote = initialNote !== undefined;
 
+  // Saisie en cours (création ou édition) : aucun rechargement automatique tant
+  // qu'elle ne vit qu'en mémoire. Levé au démontage (le parent ferme le
+  // formulaire) ; `releaseDraft` le lève tout de suite à l'enregistrement réussi
+  // et à l'annulation (cf. pwa/useReloadBlockWhile).
+  const dirty =
+    name !== (initial?.name ?? '') ||
+    muscles.join('\n') !== (initial?.primaryMuscles ?? []).join('\n') ||
+    unilateral !== (initial?.unilateral ?? false) ||
+    note !== (initialNote ?? '');
+  const releaseDraft = useReloadBlockWhile(EXERCISE_DRAFT_BLOCK, dirty);
+
   const trimmed = name.trim();
   // validatePersonalExercise renvoie null quand la saisie est valide.
   const canSubmit =
@@ -86,8 +102,9 @@ export function ExerciseForm({
         hasNote ? note : undefined,
       );
       // Succès : le parent ferme le formulaire, pas de reset nécessaire ici.
+      releaseDraft();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -183,7 +200,10 @@ export function ExerciseForm({
         <button
           type="button"
           disabled={busy}
-          onClick={onCancel}
+          onClick={() => {
+            releaseDraft();
+            onCancel();
+          }}
           className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium disabled:opacity-50"
         >
           Annuler

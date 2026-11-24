@@ -152,3 +152,42 @@ export function seedDraft({
 
   return { weightKg, reps, rir };
 }
+
+/**
+ * Faut-il RÉAMORCER le brouillon de la série en cours avec le préremplissage
+ * recalculé ? Deux sortes de déclencheurs :
+ *   - `explicit` : un geste ou un fait de la séance (changement d'exo, série
+ *     loggée ou annulée, changement de côté). Toujours : c'est une nouvelle
+ *     saisie qui commence, et le marqueur « touché » est levé avec elle ;
+ *   - `history` : seul l'historique a changé sous l'écran (la Référence vient
+ *     d'être rafraîchie depuis le réseau). Seulement si le brouillon n'a PAS été
+ *     touché : dès la première interaction (tap, frappe, même non validée), ce
+ *     que l'utilisateur règle ne bouge plus. Le repère affiché, lui, suit.
+ */
+export function shouldReseedDraft(trigger: 'explicit' | 'history', touched: boolean): boolean {
+  return trigger === 'explicit' || !touched;
+}
+
+/**
+ * Faut-il REPROPOSER le côté de la prochaine saisie (exo unilatéral : le côté
+ * qui manque à la série en cours) ?
+ *   - seulement quand la saisie change (`keyChanged` : autre exo, nombre de
+ *     séries loggées différent). Un simple rafraîchissement ne touche pas au
+ *     côté affiché ;
+ *   - et jamais quand ce changement vient de la base (`fromReality` : une
+ *     réponse tardive a ajouté une série écrite ailleurs) alors que
+ *     l'utilisateur a déjà réglé son brouillon (`draftTouched`) ou choisi son
+ *     côté (`sideChosen`). Le sélecteur ne bascule pas sous ses doigts, et son
+ *     brouillon n'est donc pas réamorcé par un faux changement de côté.
+ * Un geste de la séance (série loggée ou annulée, changement d'exo) repropose
+ * toujours : c'est une nouvelle saisie, les deux marqueurs sont levés avec elle.
+ */
+export function shouldReproposeSide(ctx: {
+  keyChanged: boolean;
+  fromReality: boolean;
+  draftTouched: boolean;
+  sideChosen: boolean;
+}): boolean {
+  if (!ctx.keyChanged) return false;
+  return !(ctx.fromReality && (ctx.draftTouched || ctx.sideChosen));
+}

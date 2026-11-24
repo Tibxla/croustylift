@@ -37,6 +37,7 @@ import {
   deletePersonalExercise,
 } from '../authoring/data';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
+import { invalidatePlanCopies } from '../capture/plan-copies';
 import {
   loadExerciseOverrides,
   upsertExerciseOverride,
@@ -60,6 +61,7 @@ import {
   toListExercise,
   type ListExercise,
 } from './exercises-list';
+import { errorMessage } from '../../lib/error-message';
 
 // =====================================================================
 // Conteneur : chargement + mutations
@@ -99,7 +101,7 @@ export function ExercisesScreen() {
         setLoad({ phase: 'ready', exercises: rows.map(toListExercise), overridden });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -139,11 +141,21 @@ export function ExercisesScreen() {
         reload();
       }}
       onSaveOverride={async (id, value) => {
-        await upsertExerciseOverride(id, value);
+        // Les templates et le catalogue servis à la Capture portent les champs
+        // personnalisés : leurs copies sont périmées.
+        try {
+          await upsertExerciseOverride(id, value);
+        } finally {
+          invalidatePlanCopies();
+        }
         reload();
       }}
       onResetOverride={async (id) => {
-        await resetExerciseOverride(id);
+        try {
+          await resetExerciseOverride(id);
+        } finally {
+          invalidatePlanCopies();
+        }
         reload();
       }}
       onLoadNote={loadExerciseNote}
@@ -388,7 +400,7 @@ function BaseRow({
       setNote(await onLoadNote(exo.id));
       setMode('edit');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setMode('idle');
     }
   }
@@ -434,7 +446,7 @@ function BaseRow({
       // version de base. On referme la confirmation, sinon elle restait figée.
       setMode('idle');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -527,7 +539,7 @@ function PersonalRow({
       setNote(await onLoadNote(exo.id));
       setMode('edit');
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setMode('idle');
     }
   }
@@ -568,7 +580,7 @@ function PersonalRow({
       // Succès : le conteneur recharge, cette ligne disparaît.
     } catch (err) {
       // Suppression refusée (exo référencé) ou échec réseau : message lisible.
-      setError(errMessage(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -919,7 +931,7 @@ function ScreenError({
   onRetry: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
       <p className="text-sm text-ink-muted">{intro}</p>
       <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
       <button
@@ -931,8 +943,4 @@ function ScreenError({
       </button>
     </div>
   );
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

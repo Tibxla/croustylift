@@ -41,15 +41,17 @@ vi.mock('./data', () => ({
 vi.mock('../notes/data', () => ({
   upsertDatedNote: vi.fn(),
   deleteDatedNoteById: vi.fn(),
+  deleteDatedNoteByCouple: vi.fn(),
   upsertExerciseNoteRow: vi.fn(),
   deleteExerciseNoteByExercise: vi.fn(),
 }));
 
 import { flushOps, syncFns } from './sync';
-import { readQueue } from './outbox';
+import { enqueue, readQueue } from './outbox';
 // `./data` est mocké plus haut : cet import récupère la vi.fn() pour asserter
 // l'argument reçu par data.updateExecution (chaîne closed_at).
 import { updateExecution } from './data';
+import { deleteDatedNoteByCouple, deleteDatedNoteById } from '../notes/data';
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
@@ -107,7 +109,7 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     const res = await flushOps(ops);
 
     expect(flushMock).toHaveBeenCalledTimes(1);
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toEqual({ remaining: 0, pending: 0, refused: 0, flushed: 2 });
   });
 
   it('NE renvoie PAS remaining: 0 quand un flush en vol n’a pas vu nos ops', async () => {
@@ -144,6 +146,60 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
 
     expect(res.remaining).toBe(1);
+    // Refusée, pas en attente : l'écran ne doit pas dire « pas de réseau ».
+    expect(res).toMatchObject({ pending: 0, refused: 1 });
+  });
+
+  it('une de nos ops encore en file est « en attente », pas « refusée »', async () => {
+    (flushMock as Mock).mockImplementation(async () => ({ remaining: 2, flushed: 0 }));
+
+    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
+
+    expect(res).toMatchObject({ remaining: 2, pending: 2, refused: 0 });
+  });
+
+  it('deux onglets : une purge de la quarantaine pendant la passe ne cache pas notre op refusée', async () => {
+    // Une saisie refusée plus tôt, d'une autre séance, est déjà en quarantaine.
+    (globalThis.localStorage as Storage).setItem(
+      'croustylift:outbox:quarantine',
+      JSON.stringify([
+        { op: setOp('ancienne', 'autre-exec'), reason: '23514 : rejet', at: '2026-11-22T10:00:00Z' },
+      ]),
+    );
+    (flushMock as Mock).mockImplementation(async () => {
+      const refused = readQueue().find((op) => op.id === 's1');
+      (globalThis.localStorage as Storage).setItem('croustylift:outbox', JSON.stringify([]));
+      // Pendant la passe, l'autre onglet annule sa séance : l'ancienne entrée
+      // quitte la quarantaine, et notre op refusée y prend la PREMIÈRE place.
+      (globalThis.localStorage as Storage).setItem(
+        'croustylift:outbox:quarantine',
+        JSON.stringify([{ op: refused, reason: '23503 : rejet', at: '2026-11-23T10:00:00Z' }]),
+      );
+      return { remaining: 0, flushed: 0 };
+    });
+
+    const res = await flushOps([setOp('s1', 'e1')]);
+
+    // Repérée par position (« les entrées d'après notre enfilement »), notre op
+    // refusée passait pour une sauvegarde réussie.
+    expect(res).toMatchObject({ remaining: 1, pending: 0, refused: 1 });
+  });
+
+  it('une op d’un AUTRE lot, de même id que la nôtre, ne compte pas pour nous', async () => {
+    // Même ligne corrigée deux fois : la première correction attend déjà en file.
+    enqueue(setOp('s1', 'e1'));
+    (flushMock as Mock).mockImplementation(async () => {
+      // Seule NOTRE op (la dernière enfilée) passe ; l'ancienne reste en file.
+      (globalThis.localStorage as Storage).setItem(
+        'croustylift:outbox',
+        JSON.stringify(readQueue().slice(0, 1)),
+      );
+      return { remaining: 1, flushed: 1 };
+    });
+
+    const res = await flushOps([setOp('s1', 'e1')]);
+
+    expect(res).toMatchObject({ remaining: 0, pending: 0, refused: 0 });
   });
 
   it('ne compte QUE nos ops, pas celles d’une AUTRE exécution restée en file', async () => {
@@ -206,5 +262,25 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     // peut se fermer), même si la file globale n'est pas vide (op étrangère).
     expect(res.remaining).toBe(0);
     expect(readQueue().map((o) => o.id)).toEqual(['autre']);
+  });
+});
+
+describe('syncFns.deleteDatedNote', () => {
+  it('efface par COUPLE quand l’op le porte : une note née sous un autre id part aussi', async () => {
+    await syncFns.deleteDatedNote({
+      type: 'deleteDatedNote',
+      id: 'note-deterministe',
+      executionId: 'exec-1',
+      exerciseId: 'bench',
+    });
+    expect(deleteDatedNoteByCouple).toHaveBeenCalledWith('exec-1', 'bench');
+    expect(deleteDatedNoteById).not.toHaveBeenCalled();
+  });
+
+  it('op d’un bundle antérieur, sans couple : efface par id comme avant', async () => {
+    vi.mocked(deleteDatedNoteByCouple).mockClear();
+    await syncFns.deleteDatedNote({ type: 'deleteDatedNote', id: 'note-1' });
+    expect(deleteDatedNoteById).toHaveBeenCalledWith('note-1');
+    expect(deleteDatedNoteByCouple).not.toHaveBeenCalled();
   });
 });

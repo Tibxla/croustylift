@@ -34,6 +34,16 @@ describe('elapsedMinutesSince', () => {
     vi.useRealTimers();
   });
 
+  it('séance oubliée, terminée le lendemain : durée non mesurée (null), pas 1 400 min', () => {
+    vi.setSystemTime(1_000_000 + 60_000 * 1400);
+    expect(elapsedMinutesSince(1_000_000)).toBeNull();
+  });
+
+  it('au plafond exact (600 min) la durée est encore rendue', () => {
+    vi.setSystemTime(1_000_000 + 60_000 * 600);
+    expect(elapsedMinutesSince(1_000_000)).toBe(600);
+  });
+
   it('retourne le nombre de minutes écoulées (arrondi)', () => {
     vi.setSystemTime(1_000_000 + 60_000 * 45); // +45 min exactement
     expect(elapsedMinutesSince(1_000_000)).toBe(45);
@@ -105,9 +115,22 @@ describe('buildSummary', () => {
     expect(buildSummary(upperA, state).exercisesDone).toBe(1);
   });
 
-  it('un exo passé (skipped) compte comme "fait"', () => {
+  it("un exo passé n'est pas compté comme fait : il est compté à part", () => {
     const state = captureReducer(mkState(), { type: 'skip-exercise', exerciseId: 'bench-press' });
-    expect(buildSummary(upperA, state).exercisesDone).toBe(1);
+    const s = buildSummary(upperA, state);
+    expect(s.exercisesDone).toBe(0);
+    expect(s.exercisesSkipped).toBe(1);
+  });
+
+  it('un exo passé après avoir atteint son minimum reste compté passé, pas fait', () => {
+    let state = mkState();
+    for (const setId of ['s1', 's2', 's3']) {
+      state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId, set: set1 });
+    }
+    state = captureReducer(state, { type: 'skip-exercise', exerciseId: 'bench-press' });
+    const s = buildSummary(upperA, state);
+    expect(s.exercisesDone).toBe(0);
+    expect(s.exercisesSkipped).toBe(1);
   });
 
   it('totalSets compte toutes les séries de tous les exercices', () => {

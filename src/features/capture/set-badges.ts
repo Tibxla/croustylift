@@ -5,12 +5,14 @@
 //   - RÉFÉRENCE (« dernière fois ») : la série à la MÊME position (et le même côté
 //     en unilatéral) lors de la dernière exécution. Juge = e1RM, seuils STRICTS :
 //     e1RM strictement supérieur -> « battu », strictement égal -> « égalisé »,
-//     inférieur -> rien. (Fini le `>=` qui criait « battu » sur une égalité.)
+//     inférieur -> rien. Comparaison exacte (`comparePerformance`), comme pour
+//     le Record : 87,5 × 5 et 85 × 6 s'égalisent, aucun ne bat l'autre. Deux
+//     séries à 0 kg (poids du corps) se jugent aux reps effectives.
 //   - RECORD personnel (all-time) : e1RM et/ou charge, géré par record-flags.
 //
 // Un seul badge par ligne, hiérarchie RECORD > battu > égalisé : si une série bat
 // son record, on montre « Record » (pas aussi « battu », redondant).
-import { estimateE1rm } from '../../domain/e1rm';
+import { comparePerformance } from '../../domain/e1rm';
 import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 import type { PerformedSet } from '../../domain/types';
 import {
@@ -28,11 +30,6 @@ export type SetBadge =
   | { axis: 'reference'; verdict: 'battu' | 'egalise' }
   | null;
 
-/** e1RM arrondi à 0,01 kg : compare sans bruit flottant (l'égalité doit pouvoir tomber). */
-function e1rmRounded(set: PerformedSet): number {
-  return Math.round(estimateE1rm(set.weightKg, set.reps, set.rir) * 100) / 100;
-}
-
 /**
  * Verdict d'une série face à la référence, à sa position (`order`) ET son côté
  * (`side`, pour l'unilatéral — chaque bras vs sa propre dernière fois). Aucune
@@ -45,10 +42,13 @@ export function referenceVerdict(
   if (!reference) return null;
   const ref = reference.find((r) => r.order === set.order && r.side === set.side);
   if (!ref) return null;
-  const here = e1rmRounded(set);
-  const there = e1rmRounded(ref);
-  if (here > there) return 'battu';
-  if (here === there) return 'egalise';
+  // Comparaison EXACTE (cf. domain/e1rm.ts) : ni flottants bruts, qui séparent
+  // d'un bit deux e1RM égaux, ni arrondi au centième, qui confond deux e1RM
+  // distincts. À 0 kg des deux côtés, l'e1RM est nul et ne dit rien : les reps
+  // effectives jugent (`comparePerformance`).
+  const order = comparePerformance(set, ref);
+  if (order > 0) return 'battu';
+  if (order === 0) return 'egalise';
   return null;
 }
 

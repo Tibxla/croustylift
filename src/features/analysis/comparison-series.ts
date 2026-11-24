@@ -14,7 +14,7 @@ export interface WeeklyPoint {
    * Semaines ÉCOULÉES depuis le premier point du bloc (le 1er point est à 0) :
    * c'est l'écart exact qui rend les pentes comparables. L'AFFICHAGE compte les
    * semaines à partir de S1 (« S0 » n'existe pas en muscu) ; ce +1 ne vit que
-   * dans le tick du graphe (`ComparisonChart.formatWeekTick`), pas ici.
+   * dans le libellé (`weekLabel`), pas dans la valeur.
    */
   week: number
   e1rm: number
@@ -36,4 +36,13 @@ export function toWeeklySeries(curve: E1rmPoint[]): WeeklyPoint[] {
     week: (Date.parse(point.date) - t0) / MS_PER_WEEK,
     e1rm: point.e1rm,
   }))
+}
+
+/**
+ * Libellé d'une semaine écoulée : « S1 » pour la première, pas « S0 ». On
+ * TRONQUE : un point au jour 4 du bloc (0,57 semaine) est encore en S1, il ne
+ * passe en S2 qu'au jour 7. Sert aux ticks de l'axe et à l'infobulle du graphe.
+ */
+export function weekLabel(week: number): string {
+  return `S${Math.floor(week) + 1}`
 }

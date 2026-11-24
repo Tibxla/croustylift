@@ -1,17 +1,53 @@
 import type { ConfigChange, Block } from './types'
 
+/** Instant ISO en millisecondes, ou `null` s'il est absent ou illisible. */
+export function instantMs(at: string | undefined): number | null {
+  if (at === undefined) return null
+  const ms = Date.parse(at)
+  return Number.isNaN(ms) ? null : ms
+}
+
+/**
+ * Ordre chronologique de deux changements : par INSTANT quand les deux en
+ * portent un (le jour d'un changement dépend du fuseau où on le lit, pas son
+ * instant) ; sinon par jour (ISO 'YYYY-MM-DD', ordre lexicographique).
+ */
+function compareChanges(a: ConfigChange, b: ConfigChange): number {
+  const aMs = instantMs(a.at)
+  const bMs = instantMs(b.at)
+  if (aMs !== null && bMs !== null) return aMs - bMs
+  return a.date.localeCompare(b.date)
+}
+
 export function detectBlocks(changes: ConfigChange[]): Block[] {
-  // Trie par date sans muter l'entrée. Les dates ISO 'YYYY-MM-DD' s'ordonnent lexicographiquement.
-  const sorted = [...changes].sort((a, b) => a.date.localeCompare(b.date))
+  // Trie sans muter l'entrée (tri stable : à égalité, l'ordre d'entrée tient).
+  const sorted = [...changes].sort(compareChanges)
 
   // Fusionne les entrées consécutives de même config (redondantes, pas un vrai changement).
   const runs = sorted.filter(
     (change, i) => i === 0 || change.configId !== sorted[i - 1]!.configId,
   )
 
-  return runs.map((run, i) => ({
-    configId: run.configId,
-    start: run.date,
-    end: i + 1 < runs.length ? runs[i + 1]!.date : null,
-  }))
+  return runs.map((run, i) => {
+    const next = runs[i + 1]
+    const block: Block = {
+      configId: run.configId,
+      start: run.date,
+      end: next ? next.date : null,
+    }
+    // Les instants ne sont posés que s'ils existent : un bloc sans instant reste
+    // borné au jour (cf. `executionsInBlock`).
+    if (run.at !== undefined) block.startAt = run.at
+    if (next?.at !== undefined) block.endAt = next.at
+    return block
+  })
+}
+
+/**
+ * Identité d'un bloc dans une liste : son instant de début, à défaut son jour.
+ * Le jour seul ne suffit plus, deux blocs peuvent naître le même jour (routine
+ * activée le matin, plan retouché l'après-midi) et porter chacun des points.
+ */
+export function blockKey(block: Block): string {
+  return block.startAt ?? block.start
 }

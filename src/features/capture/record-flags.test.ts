@@ -1,5 +1,6 @@
 // Marquage « nouveau record » des séries du jour (issue #34), logique pure.
 import { describe, it, expect } from 'vitest';
+import { estimateE1rm } from '../../domain/e1rm';
 import type { PerformedSet } from '../../domain/types';
 import type { PersonalRecord } from '../../domain/pr';
 import { computeRecordFlags } from './record-flags';
@@ -52,6 +53,35 @@ describe('computeRecordFlags', () => {
     // 1ʳᵉ bat le record ; 2ᵉ plus lourde encore bat le record courant → re-marquée.
     const sets = [set(100, 5, 1, 1), set(110, 5, 1, 2)];
     expect(computeRecordFlags(sets, record)).toEqual(['both', 'both']);
+  });
+
+  it('un autre couple poids/reps de même e1RM que le record n’est pas un record d’e1RM', () => {
+    // 85 × 6 et 87,5 × 5 valent le même e1RM (99,1666… kg) à un bit flottant près.
+    const record: PersonalRecord = {
+      bestE1rm: estimateE1rm(85, 6, 0),
+      bestE1rmSet: { weightKg: 85, reps: 6 },
+      bestWeightReps: { weightKg: 90, reps: 3 },
+    };
+    expect(computeRecordFlags([set(87.5, 5, 0, 1)], record)).toEqual([null]);
+    const inverse: PersonalRecord = { ...record, bestE1rm: estimateE1rm(87.5, 5, 0) };
+    expect(computeRecordFlags([set(85, 6, 0, 1)], inverse)).toEqual([null]);
+  });
+
+  it('le record courant du jour ne se fait pas « battre » par une égalité', () => {
+    // La 1ʳᵉ série pose le record du jour ; la 2ᵉ et la 3ᵉ l'égalent seulement.
+    const record: PersonalRecord = { bestE1rm: 60, bestE1rmSet: null, bestWeightReps: { weightKg: 200, reps: 1 } };
+    const sets = [set(85, 6, 0, 1), set(87.5, 5, 0, 2), set(85, 6, 0, 3)];
+    expect(computeRecordFlags(sets, record)).toEqual(['e1rm', null, null]);
+  });
+
+  it('un dépassement sous le centième de kg reste un record d’e1RM', () => {
+    // 28,75 × 9 = 36,4166… ; 23,25 × 18 = 36,425.
+    const record: PersonalRecord = {
+      bestE1rm: estimateE1rm(28.75, 9, 0),
+      bestE1rmSet: null,
+      bestWeightReps: { weightKg: 200, reps: 1 },
+    };
+    expect(computeRecordFlags([set(23.25, 18, 0, 1)], record)).toEqual(['e1rm']);
   });
 
   it('premier passage (record null) : jamais de marqueur, même si la série progresse', () => {

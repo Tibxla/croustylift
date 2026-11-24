@@ -4,7 +4,6 @@ import {
   compareBlocks,
   compareBlockSeances,
   defaultComparisonPair,
-  summarizeBlocks,
   summarizeBlockSeances,
 } from './block-comparison'
 
@@ -50,7 +49,9 @@ describe('compareBlocks', () => {
     expect(result.winner).toBe('second')
   })
 
-  it('attribue les exécutions au bloc dont la fenêtre [start, end) couvre la date', () => {
+  // Repli SANS instant (bloc ou exécution sans horodatage) : la règle au jour
+  // d'origine. Avec instants, c'est l'heure qui tranche (cf. plus bas).
+  it('sans instant, la fenêtre [start, end) se lit au jour : le jour de la coupure va au bloc qui s’ouvre', () => {
     const executions: ExerciseExecution[] = [
       exec('2026-01-01', 100),
       exec('2026-01-08', 102),
@@ -169,50 +170,6 @@ describe('compareBlocks', () => {
     expect(result.second.curve).toHaveLength(2)
     expect(result.first.curve[0]!.date).toBe('2026-01-01')
     expect(result.first.curve.every((p) => typeof p.e1rm === 'number')).toBe(true)
-  })
-})
-
-describe('summarizeBlocks', () => {
-  it('renvoie une progression par bloc, dans l\'ordre d\'entrée', () => {
-    const executions: ExerciseExecution[] = [
-      exec('2026-01-01', 100),
-      exec('2026-01-08', 102),
-      exec('2026-01-15', 104),
-      exec('2026-02-01', 100),
-      exec('2026-02-08', 110),
-      exec('2026-02-15', 120),
-    ]
-    const blocks: Block[] = [
-      block('A', '2026-01-01', '2026-02-01'),
-      block('B', '2026-02-01', null),
-    ]
-
-    const summaries = summarizeBlocks(executions, EXO, blocks)
-
-    expect(summaries).toHaveLength(2)
-    expect(summaries[0]!.block).toBe(blocks[0])
-    expect(summaries[1]!.block).toBe(blocks[1])
-    expect(summaries[0]!.pointCount).toBe(3)
-    expect(summaries[1]!.pointCount).toBe(3)
-    expect(summaries[0]!.weeklyRate).not.toBeNull()
-  })
-
-  it('marque pointCount 0 pour un bloc sans exécution de cet exo', () => {
-    const executions: ExerciseExecution[] = [exec('2026-02-08', 100)]
-    const blocks: Block[] = [
-      block('A', '2026-01-01', '2026-02-01'), // aucune exécution dedans
-      block('B', '2026-02-01', null),
-    ]
-
-    const summaries = summarizeBlocks(executions, EXO, blocks)
-
-    expect(summaries[0]!.pointCount).toBe(0)
-    expect(summaries[0]!.weeklyRate).toBeNull()
-    expect(summaries[1]!.pointCount).toBe(1)
-  })
-
-  it('renvoie [] pour une liste de blocs vide', () => {
-    expect(summarizeBlocks([exec('2026-01-01', 100)], EXO, [])).toEqual([])
   })
 })
 
@@ -343,5 +300,236 @@ describe('defaultComparisonPair', () => {
   it('moins de deux options : rien à pré-sélectionner', () => {
     expect(defaultComparisonPair([opt(b1, 'upper-a')])).toBeNull()
     expect(defaultComparisonPair([])).toBeNull()
+  })
+})
+
+// --- Rattachement par instant (ADR 0001, amendement du 2026-11-23) ------------
+//
+// Une séance faite AVANT l'édition du plan, le même jour, reste dans l'ancien
+// bloc : on compare l'instant de l'exécution (lancement, à défaut création) à
+// celui du changement de plan, plus leurs jours.
+
+describe('rattachement d’une exécution à son bloc par instant', () => {
+  const blockA: Block = {
+    configId: 'A',
+    start: '2026-09-01',
+    end: '2026-09-22',
+    startAt: '2026-09-01T08:00:00+00:00',
+    endAt: '2026-09-22T17:30:00+00:00',
+  }
+  const blockB: Block = {
+    configId: 'B',
+    start: '2026-09-22',
+    end: null,
+    startAt: '2026-09-22T17:30:00+00:00',
+  }
+  const at = (date: string, weightKg: number, instants: Partial<ExerciseExecution>) => ({
+    ...exec(date, weightKg),
+    ...instants,
+  })
+
+  it('séance lancée avant l’édition du plan, le même jour : elle reste dans l’ancien bloc', () => {
+    const executions = [
+      at('2026-09-08', 100, { startedAt: '2026-09-08T16:00:00+00:00' }),
+      at('2026-09-15', 102.5, { startedAt: '2026-09-15T16:00:00+00:00' }),
+      at('2026-09-22', 105, { startedAt: '2026-09-22T16:00:00+00:00' }),
+      at('2026-09-29', 100, { startedAt: '2026-09-29T16:00:00+00:00' }),
+      at('2026-10-06', 101, { startedAt: '2026-10-06T16:00:00+00:00' }),
+    ]
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.curve.map((p) => p.date)).toEqual([
+      '2026-09-08',
+      '2026-09-15',
+      '2026-09-22',
+    ])
+    expect(result.second.curve.map((p) => p.date)).toEqual(['2026-09-29', '2026-10-06'])
+  })
+
+  it('séance lancée après l’édition, le même jour : elle va au nouveau bloc', () => {
+    const executions = [at('2026-09-22', 105, { startedAt: '2026-09-22T18:00:00+00:00' })]
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.pointCount).toBe(0)
+    expect(result.second.pointCount).toBe(1)
+  })
+
+  it('lancée pile à l’instant de la coupure : début inclus, fin exclue', () => {
+    const executions = [at('2026-09-22', 105, { startedAt: '2026-09-22T17:30:00+00:00' })]
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.pointCount).toBe(0)
+    expect(result.second.pointCount).toBe(1)
+  })
+
+  it('sans lancement horodaté, repli au jour : la création de la ligne ne compte pas', () => {
+    // `created_at` est l'heure d'arrivée en base, fausse après une séance hors
+    // ligne : il ne remplace jamais le lancement. Le jour de la coupure va donc
+    // au bloc qui s'ouvre, comme avant.
+    const executions = [at('2026-09-22', 105, { createdAt: '2026-09-22T16:05:00+00:00' })]
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.pointCount).toBe(0)
+    expect(result.second.pointCount).toBe(1)
+  })
+
+  it('avec lancement et instant de frontière, seuls les instants comptent, pas les jours', () => {
+    // Séance lancée à 00 h 10 à Paris le 23 (22:10 UTC le 22), datée du 23 par
+    // l'appareil, AVANT la retouche de 22:30 UTC. Relue depuis Londres, la
+    // frontière est datée du 22 : au jour, la séance passait dans le nouveau bloc.
+    const londonA: Block = { ...blockA, endAt: '2026-09-22T22:30:00+00:00' }
+    const londonB: Block = { ...blockB, startAt: '2026-09-22T22:30:00+00:00' }
+    const executions = [at('2026-09-23', 105, { startedAt: '2026-09-22T22:10:00+00:00' })]
+    const result = compareBlocks(executions, EXO, londonA, londonB)
+    expect(result.first.pointCount).toBe(1)
+    expect(result.second.pointCount).toBe(0)
+  })
+
+  it('le lancement prime sur la création (séance hors ligne, envoyée après l’édition)', () => {
+    const executions = [
+      at('2026-09-22', 105, {
+        startedAt: '2026-09-22T16:00:00+00:00',
+        createdAt: '2026-09-22T19:00:00+00:00',
+      }),
+    ]
+    expect(compareBlocks(executions, EXO, blockA, blockB).first.pointCount).toBe(1)
+  })
+
+  it('sans lancement, un instant de création tardif ne déplace pas une séance d’un autre jour', () => {
+    // Séance du 15/09 hors ligne, ligne créée en base le 23/09 seulement.
+    const executions = [at('2026-09-15', 102.5, { createdAt: '2026-09-23T07:00:00+00:00' })]
+    const result = compareBlocks(executions, EXO, blockA, blockB)
+    expect(result.first.pointCount).toBe(1)
+    expect(result.second.pointCount).toBe(0)
+  })
+
+  it('deux blocs nés le même jour portent chacun leurs points', () => {
+    const morning: Block = {
+      configId: 'M',
+      start: '2026-09-22',
+      end: '2026-09-22',
+      startAt: '2026-09-22T07:00:00+00:00',
+      endAt: '2026-09-22T10:00:00+00:00',
+    }
+    const afternoon: Block = {
+      configId: 'N',
+      start: '2026-09-22',
+      end: null,
+      startAt: '2026-09-22T10:00:00+00:00',
+    }
+    const executions = [
+      at('2026-09-22', 100, { startedAt: '2026-09-22T08:00:00+00:00' }),
+      at('2026-09-22', 105, { startedAt: '2026-09-22T16:00:00+00:00' }),
+    ]
+    const result = compareBlocks(executions, EXO, morning, afternoon)
+    expect(result.first.curve.map((p) => p.e1rm)).toHaveLength(1)
+    expect(result.second.curve.map((p) => p.e1rm)).toHaveLength(1)
+    expect(result.first.curve[0]!.e1rm).toBeLessThan(result.second.curve[0]!.e1rm)
+  })
+
+  it('la pré-sélection voit deux blocs distincts même nés le même jour', () => {
+    const morning: Block = {
+      configId: 'M',
+      start: '2026-09-22',
+      end: '2026-09-22',
+      startAt: '2026-09-22T07:00:00+00:00',
+      endAt: '2026-09-22T10:00:00+00:00',
+    }
+    const afternoon: Block = {
+      configId: 'N',
+      start: '2026-09-22',
+      end: null,
+      startAt: '2026-09-22T10:00:00+00:00',
+    }
+    expect(
+      defaultComparisonPair([
+        { block: morning, seanceId: 'a' },
+        { block: afternoon, seanceId: 'a' },
+        { block: afternoon, seanceId: 'b' },
+      ]),
+    ).toEqual([0, 2])
+  })
+})
+
+// --- Verdict : égalité décidée sur les pentes AFFICHÉES ------------------------
+
+describe('verdict de comparaison et arrondi d’affichage', () => {
+  const blocks: [Block, Block] = [
+    block('a', '2026-01-01', '2026-03-01'),
+    block('b', '2026-03-01', null),
+  ]
+  /** Trois points hebdomadaires dont la pente vaut exactement `rate` %/semaine. */
+  function atRate(rate: number, start: string): ExerciseExecution[] {
+    const t0 = Date.parse(start)
+    return [0, 1, 2].map((i) => ({
+      date: new Date(t0 + i * 7 * 864e5).toISOString().slice(0, 10),
+      exerciseId: EXO,
+      sets: [{ weightKg: 100 * (1 + (rate / 100) * (i - 1)), reps: 1, rir: 0, order: 1 }],
+    }))
+  }
+  const compare = (first: number, second: number) =>
+    compareBlocks(
+      [...atRate(first, '2026-01-05'), ...atRate(second, '2026-03-02')],
+      EXO,
+      blocks[0],
+      blocks[1],
+    )
+
+  it('deux pentes affichées à l’identique (+2,3 et +2,3) sont à égalité', () => {
+    expect(compare(2.26, 2.34).winner).toBe('tie')
+  })
+
+  it('deux pentes affichées différemment (+2,2 et +2,3) ont un gagnant', () => {
+    expect(compare(2.24, 2.26).winner).toBe('second')
+  })
+
+  it('deux pentes négatives : le gagnant est celle qui recule le moins', () => {
+    const result = compare(-1, -3)
+    expect(result.first.weeklyRate!).toBeLessThan(0)
+    expect(result.second.weeklyRate!).toBeLessThan(0)
+    expect(result.winner).toBe('first')
+  })
+})
+
+// Exo au poids du corps saisi à 0 kg (ADR 0013, amendement du 2026-11-23) : la
+// pente se mesure sur les reps effectives, et l'unité est celle de l'exo entier.
+describe('comparaison de blocs d’un exo saisi à 0 kg', () => {
+  const bw = (date: string, reps: number, seanceId = 's1'): ExerciseExecution => ({
+    date,
+    exerciseId: EXO,
+    seanceId,
+    sets: [{ weightKg: 0, reps, rir: 0, order: 1 }],
+  })
+  const a = block('A', '2026-01-01', '2026-02-01')
+  const b = block('B', '2026-02-01', null)
+
+  it('deux blocs à 0 kg : chacun a une pente en reps, et un gagnant', () => {
+    const executions = [
+      bw('2026-01-01', 8),
+      bw('2026-01-08', 8),
+      bw('2026-01-15', 9),
+      bw('2026-02-01', 9),
+      bw('2026-02-08', 11),
+      bw('2026-02-15', 13),
+    ]
+    const result = compareBlockSeances(
+      executions,
+      EXO,
+      { block: a, seanceId: 's1' },
+      { block: b, seanceId: 's1' },
+    )
+    expect(result.first.curve.map((p) => p.e1rm)).toEqual([8, 8, 9])
+    expect(result.first.weeklyRate).not.toBeNull()
+    expect(result.second.weeklyRate!).toBeGreaterThan(result.first.weeklyRate!)
+    expect(result.winner).toBe('second')
+  })
+
+  it('exo chargé depuis : le bloc resté à 0 kg n’a plus de points, il sort des options', () => {
+    const executions = [
+      bw('2026-01-01', 8),
+      bw('2026-01-08', 9),
+      bw('2026-01-15', 10),
+      { ...bw('2026-02-01', 5), sets: [{ weightKg: 5, reps: 5, rir: 0, order: 1 }] },
+      { ...bw('2026-02-08', 5), sets: [{ weightKg: 7.5, reps: 5, rir: 0, order: 1 }] },
+    ]
+    const options = summarizeBlockSeances(executions, EXO, [a, b])
+    expect(options.map((o) => o.block.configId)).toEqual(['B'])
+    expect(options[0]!.pointCount).toBe(2)
   })
 })

@@ -20,9 +20,11 @@ This repo is **single-context**: one `GLOSSARY.md` + `docs/adr/` at the root.
 ├── docs/adr/
 │   ├── 0001-templates-versionnes-blocs-derives.md
 │   ├── 0002-deviations-derivees-par-diff.md
-│   └── …
+│   └── …                              ← one file per decision, numbered in order
 └── src/
 ```
+
+The two files above are only examples: list `docs/adr/` to see every decision (more than twenty at the time of writing). An ADR is never rewritten when a later one changes it; it gets a dated `## Amendement du AAAA-MM-JJ` section at the end, so read each ADR to its last line.
 
 If the project ever grows into a monorepo with separate contexts, switch to the multi-context layout below.
 

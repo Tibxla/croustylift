@@ -8,11 +8,24 @@
 //
 // `null` = pas assez de séances pour ajuster une pente : on l'affiche en clair
 // (« pente indispo »), pas en zéro trompeur.
+//
+// La pente porte sur le bloc en cours (ADR 0016, amendement du 2026-11-23). Le
+// badge reste un chiffre court ; sa période s'écrit sous le graphe et, pour les
+// lecteurs d'écran, dans son libellé (`period`).
 import { TrendArrow } from './TrendArrow';
 import { trendColor, trendOf } from './trend';
+import { formatRate } from './format';
 
-export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) {
+export function ProgressionBadge({
+  weeklyRate,
+  period,
+}: {
+  weeklyRate: number | null;
+  /** La période de la pente, p. ex. « bloc en cours depuis le 3 nov. ». */
+  period?: string;
+}) {
   if (weeklyRate === null) {
+    // Le texte se lit tel quel ; la période et ce qui manque sont sous le graphe.
     return (
       <span className="inline-flex items-center rounded-md bg-surface-2 px-2 py-1 text-xs text-ink-muted">
         pente indispo
@@ -30,23 +43,23 @@ export function ProgressionBadge({ weeklyRate }: { weeklyRate: number | null }) 
       : trend === 'down'
         ? 'bg-[color-mix(in_oklab,var(--color-warn),transparent_86%)]'
         : 'bg-surface-2';
-  const sign = weeklyRate > 0 ? '+' : ''; // le '−' vient déjà du nombre négatif.
+  // Chiffre en français (virgule, signe moins), signe compris : cf. `formatRate`.
+  const rate = formatRate(weeklyRate);
   const label =
     trend === 'up'
-      ? `Progression ${sign}${weeklyRate.toFixed(1)} % par semaine`
+      ? `Progression ${rate} % par semaine`
       : trend === 'down'
-        ? `Régression ${weeklyRate.toFixed(1)} % par semaine`
-        : `Stagnation, ${sign}${weeklyRate.toFixed(1)} % par semaine`;
+        ? `Régression ${rate} % par semaine`
+        : `Stagnation, ${rate} % par semaine`;
 
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-md px-2 py-1 ${bgTint} ${color}`}
-      aria-label={label}
+      aria-label={period ? `${label}, ${period}` : label}
     >
       <TrendArrow trend={trend} />
       <span className="readout text-xs font-medium">
-        {sign}
-        {weeklyRate.toFixed(1)}
+        {rate}
         <span className="ml-0.5 font-normal opacity-80"> %/sem</span>
       </span>
     </span>

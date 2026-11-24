@@ -27,6 +27,7 @@
 // client) pour rester idempotente. Discriminées par `type`.
 import type { Side } from '../../domain/types';
 import { loadLocalAccount } from '../../lib/local-account';
+import { writeMakingRoom } from './cache-eviction';
 
 /** Crée l'exécution du jour. Insertion seule par id : la réaffirmer ne réécrit rien. */
 export interface UpsertExecutionOp {
@@ -90,7 +91,10 @@ export interface UpdateExecutionOp {
 
 /**
  * Crée (ou ré-affirme) la NOTE DATÉE d'un exo pour l'exécution courante (issue
- * #26). Idempotent via upsert par id (UUID client) : rejouer pose le même corps.
+ * #26). Idempotent : rejouer pose le même corps sur la même ligne. La ligne
+ * écrite est celle du COUPLE (exécution, exercice) si la base en a déjà une,
+ * quel que soit son id ; `id` (UUID déterministe du couple) ne sert qu'à en
+ * créer une (cf. `upsertDatedNote`, features/notes/data.ts).
  * Comme une série, elle dépend de l'exécution (FK) → enfilée APRÈS l'upsert
  * d'exécution, ordre garanti par le FIFO.
  */
@@ -103,10 +107,21 @@ export interface UpsertDatedNoteOp {
   body: string;
 }
 
-/** Supprime une note datée par son id (corps vidé). Idempotent (delete par id). */
+/**
+ * Efface la note datée d'un exo dans une exécution (corps vidé). L'identité
+ * d'une note datée est son COUPLE (exécution, exercice) : l'effacement vise le
+ * couple, donc aussi une note née sous un autre id (ancien client, autre
+ * appareil). Idempotent.
+ *
+ * `executionId` et `exerciseId` sont absents d'une op enfilée par un bundle
+ * antérieur : elle n'efface alors que la ligne `id`, comme avant. `id` reste
+ * l'identité de l'op dans la file et dans l'état local.
+ */
 export interface DeleteDatedNoteOp {
   type: 'deleteDatedNote';
   id: string;
+  executionId?: string;
+  exerciseId?: string;
 }
 
 /**
@@ -167,11 +182,18 @@ export interface DeleteExecutionOp {
   exerciseIds?: string[];
 }
 
-// `_seq` : identité interne UNIQUE d'une op en file, stampée par `enqueue`. Sert à
-// retirer SANS ambiguïté la tête traitée après l'await du flush — la paire (type,id)
-// n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés sur
-// le même id). Optionnel : une op héritée d'un bundle antérieur n'en a pas (repli
-// sur (type,id) le temps qu'elle soit drainée).
+// `_uid` : identité interne UNIQUE d'une op en file, un UUID posé par `enqueue`.
+// Sert à retirer SANS ambiguïté l'op traitée après l'await du flush, et à
+// retrouver ses propres ops après une passe (`flushOps`) : la paire (type,id)
+// n'est PAS unique (updateExecution / upsertExerciseNote peuvent être ré-enfilés
+// sur le même id). Un UUID et non un compteur : la file est commune aux onglets
+// de l'appareil, et un compteur tenu par onglet pouvait donner le même numéro à
+// deux ops, l'une étant alors retirée à la place de l'autre sans avoir été
+// envoyée (audit sync, constat 11).
+//
+// `_seq` : l'ancien compteur, encore posé (ordre d'enfilement lisible au
+// diagnostic) et seule identité des ops enfilées par un bundle antérieur, sans
+// `_uid`. Une op sans l'un ni l'autre ne se reconnaît qu'en tête par (type,id).
 //
 // `_owner` : id du COMPTE reconnu sur l'appareil à l'enfilement (marqueur
 // local-account), posé par `enqueue`. La file est commune à l'appareil ; sous
@@ -179,7 +201,11 @@ export interface DeleteExecutionOp {
 // saisies de A ne remontent jamais sous B (audit sécurité, constat 1). Une op
 // sans `_owner` vient d'un bundle antérieur : `adoptLegacyOps` l'attribue au
 // compte reconnu au démarrage.
-type Sequenced = { _seq?: number; _owner?: string };
+//
+// `_at` : instant de l'enfilement (epoch ms, horloge de l'appareil, donc
+// comparable entre ses onglets). Il ne sert qu'à replacer dans la file les
+// écritures tenues en mémoire quand le stockage est plein (cf. `readQueue`).
+type Sequenced = { _seq?: number; _owner?: string; _uid?: string; _at?: number };
 
 export type OutboxOp = (
   | UpsertExecutionOp
@@ -231,21 +257,109 @@ export interface FlushResult {
 
 const STORAGE_KEY = 'croustylift:outbox';
 
+
 // Clé de QUARANTAINE : reçoit un blob illisible (JSON cassé / forme invalide)
 // AVANT que `readQueue` ne renvoie `[]`. Sans ça, la prochaine écriture écraserait
 // le blob fautif et les ops seraient perdues en silence. Conservé, il permet de
 // diagnostiquer voire récupérer à la main (issue F11).
 const CORRUPT_KEY = `${STORAGE_KEY}:corrupt`;
 
+// REPLI MÉMOIRE de la file, engagé quand le stockage refuse de l'écrire (quota
+// plein, mode privé). Avant, l'écriture refusée était seulement signalée en
+// console : l'op enfilée n'existait nulle part (chaque lecture repartait du
+// stockage, resté à l'état d'avant), elle était perdue sur-le-champ, et la
+// bannière disait « Synchronisé ».
+//
+// Le repli ne tient PAS une copie de la file : la file est commune aux onglets,
+// et réécrire le stockage depuis une copie en mémoire effaçait ce qu'un autre
+// onglet y avait écrit entre-temps (sa série n'était jamais envoyée). Il tient
+// seulement l'ÉCART entre la file voulue et la file persistée, par identité
+// d'enfilement : les ops ajoutées qui n'ont pas pu être écrites (`adds`) et
+// celles retirées dont le retrait n'a pas pu l'être (`removals`). La file LUE
+// est toujours la file persistée, relue à l'instant, sur laquelle cet écart est
+// rejoué : ce qu'un autre onglet a écrit ou retiré y est donc toujours. Chaque
+// écriture retente le stockage ; dès qu'une passe, l'écart est résorbé et rendu.
+//
+// Ce que le repli ne sauve pas : la page fermée avant le retour du stockage, ce
+// qui n'y a pas été écrit est perdu, et la file persistée, en retard, peut
+// rejouer une insertion dont la suppression n'était qu'en mémoire (cf.
+// `removeFromQueue`). `storageFailing` le dit à la bannière. Lié à l'objet
+// `localStorage` qui a refusé (il ne survit pas à son remplacement).
+//
+// `seen` : pour chaque op tenue en mémoire, les identités que la file persistée
+// portait quand elle y est entrée. Sert à situer une op persistée SANS instant
+// d'enfilement (écrite par un onglet resté sur un bundle antérieur) : présente
+// alors, elle est plus ancienne ; apparue depuis, elle est plus récente (cf.
+// `mergeByEnqueueTime`).
+interface VolatileGap {
+  adds: OutboxOp[];
+  removals: Set<string>;
+  seen: Map<string, ReadonlySet<string>>;
+}
+let volatile: ({ storage: Storage } & VolatileGap) | null = null;
+
+/** Identité d'une op en file : son UUID d'enfilement, à défaut son contenu. */
+function opKey(op: OutboxOp): string {
+  return op._uid ?? JSON.stringify(op);
+}
+
 /**
- * Lit la file persistée (vide si rien / illisible).
+ * Réunit des relevés successifs de la file (avant une lecture réseau, après, à
+ * l'arrivée de sa réponse) en une liste sans doublon, dans l'ordre de la file :
+ * une op déjà vue garde sa place, une op apparue depuis vient à la suite.
+ */
+export function unionOfQueueReads(...reads: readonly (readonly OutboxOp[])[]): OutboxOp[] {
+  const seen = new Set<string>();
+  const out: OutboxOp[] = [];
+  for (const read of reads) {
+    for (const op of read) {
+      const key = opKey(op);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(op);
+    }
+  }
+  return out;
+}
+
+/** L'écart tenu en mémoire, s'il est engagé pour le stockage courant. */
+function activeVolatile(): VolatileGap | null {
+  if (volatile === null || typeof localStorage === 'undefined') return null;
+  return volatile.storage === localStorage ? volatile : null;
+}
+
+/**
+ * Vrai tant qu'une partie de la file ne tient qu'en mémoire : le stockage de
+ * l'appareil a refusé sa dernière écriture. Les saisies en attente ne
+ * survivraient pas à la fermeture de l'app.
+ */
+export function storageFailing(): boolean {
+  return activeVolatile() !== null;
+}
+
+/**
+ * Vrai tant que des ops ENFILÉES ne sont écrites nulle part ailleurs qu'en
+ * mémoire : recharger la page les détruirait (séries, clôture). Plus étroit que
+ * `storageFailing`, qui reste vrai pour un écart vide ou fait de seuls retraits :
+ * ici, seulement les ajouts non persistés. Faux dès qu'ils sont écrits sur
+ * l'appareil (le stockage accepte de nouveau) ou acquittés par la base (retirés
+ * de la file). C'est ce que lit l'autorisation de recharger (pwa/reload-guards).
+ */
+export function hasUnpersistedOps(): boolean {
+  const gap = activeVolatile();
+  return gap !== null && gap.adds.length > 0;
+}
+
+/**
+ * Lit la file persistée, telle qu'elle est dans le stockage à l'instant (vide si
+ * rien / illisible).
  *
  * Si le blob est présent mais ILLISIBLE (JSON cassé) ou de forme invalide (pas un
  * tableau), on le SAUVEGARDE sous `CORRUPT_KEY` et on `console.warn` une fois avant
- * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu — la
+ * de renvoyer `[]` : la file repart vide mais le blob fautif n'est pas perdu, la
  * prochaine écriture l'aurait sinon écrasé sans laisser de trace.
  */
-export function readQueue(): OutboxOp[] {
+function readPersistedQueue(): OutboxOp[] {
   if (typeof localStorage === 'undefined') return [];
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return [];
@@ -258,6 +372,91 @@ export function readQueue(): OutboxOp[] {
     quarantineBlob(raw, 'JSON illisible');
     return [];
   }
+}
+
+/**
+ * Lit la file : la file persistée, relue à l'instant, sur laquelle est rejoué
+ * l'écart tenu en mémoire quand le stockage a refusé une écriture (cf.
+ * `volatile`). Les écritures d'un autre onglet y figurent donc toujours.
+ */
+export function readQueue(): OutboxOp[] {
+  const persisted = readPersistedQueue();
+  const gap = activeVolatile();
+  if (gap === null) return persisted;
+  // Une op MODIFIÉE à identité constante (cf. `writeQueue`) est à la fois dans
+  // les retraits (sa version persistée) et dans les ajouts (sa version voulue) :
+  // elle est remplacée À SA PLACE dans la file persistée. La retirer puis la
+  // replacer comme un ajout la faisait passer après les ops qui la suivaient :
+  // file héritée « écrire, effacer, réécrire » la même note, l'effacement
+  // complété partait en dernier et supprimait la note réécrite. Si sa version
+  // persistée a disparu (un autre onglet l'a envoyée), elle reste un ajout.
+  const modified = new Map(
+    gap.adds.filter((op) => gap.removals.has(opKey(op))).map((op) => [opKey(op), op] as const),
+  );
+  const replaced = new Set<string>();
+  const kept: OutboxOp[] = [];
+  for (const op of persisted) {
+    const key = opKey(op);
+    if (!gap.removals.has(key)) {
+      kept.push(op);
+      continue;
+    }
+    const wanted = modified.get(key);
+    if (wanted === undefined) continue;
+    kept.push(wanted);
+    replaced.add(key);
+  }
+  // Une op tenue en mémoire ne double jamais une op de même identité de la file.
+  const keptKeys = new Set(kept.map(opKey));
+  return mergeByEnqueueTime(
+    kept,
+    gap.adds.filter((op) => !replaced.has(opKey(op)) && !keptKeys.has(opKey(op))),
+    gap.seen,
+  );
+}
+
+/**
+ * Replace les écritures tenues en mémoire (`adds`) dans la file persistée, à
+ * leur instant d'enfilement (`_at`). Avant, elles partaient toutes APRÈS la file
+ * persistée : stockage plein, deux onglets, l'un garde en mémoire une note
+ * d'instructions, l'autre persiste ensuite sa correction ; le premier envoyait
+ * la correction puis l'ancienne note, qui gagnait en base.
+ *
+ * Fusion stable : l'ordre de chaque liste est conservé, une écriture en mémoire
+ * passe avant la première écriture persistée STRICTEMENT plus récente qu'elle
+ * (à instant égal, la persistée d'abord).
+ *
+ * Quand l'une des deux n'a pas d'instant (`_at` absent : op d'un bundle
+ * antérieur), on se rabat sur `seenBefore` : pour chaque op en mémoire, les
+ * identités que la file persistée portait quand elle y est entrée. Une op
+ * persistée qui n'y figure pas est APPARUE DEPUIS, donc plus récente :
+ * l'écriture en mémoire passe avant elle. Pendant un déploiement, un onglet
+ * resté sur l'ancien bundle écrit ses corrections sans instant ; tenues pour
+ * « plus anciennes que tout », elles partaient avant la note gardée en mémoire
+ * par un onglet à jour, qui les écrasait. Sans `seenBefore`, une op sans
+ * instant ne déplace rien (persistée : avant ; en mémoire : en fin). Pur.
+ */
+export function mergeByEnqueueTime(
+  persisted: OutboxOp[],
+  adds: OutboxOp[],
+  seenBefore?: ReadonlyMap<string, ReadonlySet<string>>,
+): OutboxOp[] {
+  if (adds.length === 0) return persisted;
+  const goesBefore = (add: OutboxOp, op: OutboxOp): boolean => {
+    if (add._at !== undefined && op._at !== undefined) return add._at < op._at;
+    const seen = seenBefore?.get(opKey(add));
+    return seen !== undefined && !seen.has(opKey(op));
+  };
+  const out: OutboxOp[] = [];
+  let next = 0;
+  for (const op of persisted) {
+    while (next < adds.length && goesBefore(adds[next]!, op)) {
+      out.push(adds[next]!);
+      next += 1;
+    }
+    out.push(op);
+  }
+  return [...out, ...adds.slice(next)];
 }
 
 /** Met le blob fautif de côté (clé de quarantaine) et prévient une fois. */
@@ -275,26 +474,81 @@ function quarantineBlob(raw: string, reason: string): void {
 }
 
 /**
- * Écrit la file (dégrade en `console.warn` si quota plein / mode privé). Rend
- * faux si l'écriture a été refusée : le flush s'en sert pour ne pas reprendre
- * une file dont il n'a pas pu retirer l'op traitée.
+ * Écrit la file. `queue` vient d'une lecture faite à l'instant (`readQueue`),
+ * donc de la file persistée du moment : ce n'est jamais une réécriture depuis
+ * une copie ancienne. Si le stockage refuse (quota plein / mode privé), les
+ * copies de lecture NON ESSENTIELLES cèdent d'abord la place (cf.
+ * cache-eviction : jamais celles du chemin d'ouverture de la Capture). Si
+ * l'écriture ne passe toujours pas, l'ÉCART avec la file persistée est tenu en
+ * mémoire (cf. `volatile`) et le refus est signalé (console, bannière).
+ *
+ * Rend faux quand la file n'a pas pu être PERSISTÉE : elle n'en est pas moins à
+ * jour pour la page en cours, par l'écart tenu en mémoire.
  */
 function writeQueue(queue: OutboxOp[]): boolean {
   if (typeof localStorage === 'undefined') return false;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+  const persist = (): boolean => {
+    try {
+      if (queue.length === 0) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (writeMakingRoom(persist)) {
+    volatile = null;
     return true;
-  } catch {
-    // Quota plein / mode privé : la file en mémoire reste correcte pour la
-    // session courante, on dégrade sans bloquer la capture. On le SIGNALE
-    // (au lieu d'un no-op muet) : la persistance ne suit plus, donc un kill de
-    // l'app perdrait ce qui n'a pas pu être écrit — autant pouvoir le voir.
+  }
+  if (!storageFailing()) {
     console.warn(
       '[outbox] écriture localStorage refusée (quota plein / mode privé) : ' +
-        'la file reste en mémoire pour la session mais ne survivra pas à un reload.',
+        'les saisies sont tenues en mémoire pour la session mais ne survivront pas à un reload.',
     );
-    return false;
   }
+  // L'écart entre la file voulue et la file persistée, par identité. Une op
+  // MODIFIÉE à identité constante (un effacement de note hérité, complété au
+  // démarrage par `adoptLegacyOps`, garde son `_uid`) fait partie de l'écart :
+  // sa version persistée est retirée, sa version voulue tenue en mémoire. Ne
+  // comparer que les identités jetait la modification, et l'op partait dans sa
+  // forme d'avant.
+  const persisted = readPersistedQueue();
+  const wanted = new Map(queue.map((op) => [opKey(op), JSON.stringify(op)] as const));
+  const present = new Map(persisted.map((op) => [opKey(op), JSON.stringify(op)] as const));
+  const adds = queue.filter((op) => present.get(opKey(op)) !== JSON.stringify(op));
+  // Ce que la file persistée portait à l'ENTRÉE en mémoire de chaque op : gardé
+  // d'une écriture refusée à la suivante, posé maintenant pour une op nouvelle.
+  const previous = activeVolatile()?.seen;
+  const presentKeys: ReadonlySet<string> = new Set(present.keys());
+  volatile = {
+    storage: localStorage,
+    adds,
+    removals: new Set(
+      [...present.keys()].filter((key) => wanted.get(key) !== present.get(key)),
+    ),
+    seen: new Map(adds.map((op) => [opKey(op), previous?.get(opKey(op)) ?? presentKeys] as const)),
+  };
+  return false;
+}
+
+/**
+ * Retente d'écrire sur l'appareil ce que la file ne tient qu'en mémoire. Sans
+ * cela, le repli mémoire n'était résorbé que par la prochaine écriture de la
+ * file (enfilement ou acquittement) : stockage plein, place libérée, réseau
+ * coupé, plus rien ne retentait, et l'écart restait en mémoire alors que
+ * l'appareil l'aurait accepté. Rend vrai si la file est persistée en sortie
+ * (elle l'était déjà, ou l'écriture vient de passer). Sans effet de bord sinon :
+ * l'écart reste tenu en mémoire, tel quel.
+ */
+export function retryPersistQueue(): boolean {
+  if (activeVolatile() === null) return true;
+  const persisted = writeQueue(readQueue());
+  // La bannière « stockage plein » se relit sur cet événement : sans lui elle
+  // restait affichée jusqu'à la prochaine écriture de la file.
+  if (persisted && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
+  }
+  return persisted;
 }
 
 /**
@@ -309,18 +563,56 @@ export function readOwnQueue(): OutboxOp[] {
 }
 
 /**
- * Migration douce : attribue au compte local reconnu les ops enfilées par un
- * bundle antérieur (sans `_owner`). À appeler AU DÉMARRAGE, avant que la couche
+ * Migration douce des ops enfilées par un bundle antérieur : complète les
+ * effacements de note datée (cf. `completeLegacyNoteDeletes`, pour toute la
+ * file), et attribue au compte local reconnu les ops sans `_owner`. À appeler AU
+ * DÉMARRAGE, avant tout envoi et avant que la couche
  * d'auth ne réécrive le marqueur : faite au flush, elle donnerait les ops de A
  * au compte B arrivé entre-temps. Sans marqueur, rien n'est attribué : ces ops
  * restent en file et ne partent sous aucun compte (on ne devine pas).
  */
 export function adoptLegacyOps(): void {
-  const owner = loadLocalAccount()?.userId;
-  if (!owner) return;
   const queue = readQueue();
-  if (queue.every((op) => op._owner !== undefined)) return;
-  writeQueue(queue.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op)));
+  // Les effacements de notes hérités d'abord (cf. `completeLegacyNoteDeletes`).
+  let next = completeLegacyNoteDeletes(queue);
+  const owner = loadLocalAccount()?.userId;
+  if (owner && next.some((op) => op._owner === undefined)) {
+    next = next.map((op) => (op._owner === undefined ? { ...op, _owner: owner } : op));
+  }
+  if (next !== queue) writeQueue(next);
+}
+
+/**
+ * Complète les EFFACEMENTS de note datée enfilés par un bundle antérieur, qui ne
+ * portent que l'id de la note, avec le couple (exécution, exercice) de
+ * l'écriture de la même note encore en file (même id, même compte).
+ *
+ * Pourquoi : l'écriture d'une note vise désormais la ligne de son COUPLE, quel
+ * que soit son id (`upsertDatedNote`, features/notes/data.ts). Si la base tient
+ * la note sous un autre id (écrite ailleurs, ou par un client plus ancien),
+ * l'écriture en file atterrit sur cette ligne-là ; l'effacement qui la suivait,
+ * resté sur l'id d'origine, ne touchait alors aucune ligne et sortait de la
+ * file comme un succès. La note saisie puis effacée restait en base. Avec son
+ * couple, l'effacement vise la même ligne que l'écriture.
+ *
+ * Un effacement sans écriture de la même note en file garde son seul id : le
+ * couple est inconnu, et la note visée existe sous cet id (il vient de l'état
+ * de capture qui l'avait lue). Rend `queue` lui-même si rien ne change. Pur.
+ */
+export function completeLegacyNoteDeletes(queue: OutboxOp[]): OutboxOp[] {
+  let changed = false;
+  const next = queue.map((op) => {
+    if (op.type !== 'deleteDatedNote') return op;
+    if (op.executionId !== undefined && op.exerciseId !== undefined) return op;
+    const write = queue.find(
+      (other) =>
+        other.type === 'upsertDatedNote' && other.id === op.id && other._owner === op._owner,
+    );
+    if (write === undefined || write.type !== 'upsertDatedNote') return op;
+    changed = true;
+    return { ...op, executionId: write.executionId, exerciseId: write.exerciseId };
+  });
+  return changed ? next : queue;
 }
 
 /** Longueur courante de la file (pilote l'indicateur de sync). */
@@ -335,8 +627,10 @@ export function pendingCount(): number {
 // derrière elle, sans autre issue que la purge totale (audit sync, constat 6).
 // Elle est mise de côté ici : conservée telle quelle avec la raison du rejet,
 // JAMAIS rejouée automatiquement, comptée à part (`quarantineCount`) pour que
-// l'UI puisse la signaler. Elle ne part qu'avec `clearQueue` (Déconnexion
-// forcée, forçage de purge) : les gardes d'auth la comptent via `heldCount`.
+// l'UI puisse la signaler. Elle n'en sort que par un geste : renvoi ou abandon
+// de la saisie (`retryRefused`, `abandonRefused`), annulation de sa séance
+// (`purgeByExecution`), ou `clearQueue` (Déconnexion forcée, forçage de purge).
+// Les gardes d'auth la comptent via `heldCount`.
 
 const QUARANTINE_KEY = `${STORAGE_KEY}:quarantine`;
 
@@ -378,6 +672,52 @@ export function quarantineCount(): number {
  */
 export function heldCount(): number {
   return pendingCount() + quarantineCount();
+}
+
+/**
+ * Ce que l'appareil retient, PAR COMPTE (ADR 0019) : la file est commune, mais
+ * les écritures d'un compte absent ne sont pas celles du compte présent. `own` :
+ * file et quarantaine du compte reconnu (une op sans compte, d'un bundle
+ * antérieur, est tenue pour la sienne) ; `ownRefused` : la part en quarantaine ;
+ * `foreign` : ce que retiennent d'autres comptes. Avant, `heldCount` comptait
+ * tout ensemble : le compte présent ne pouvait se déconnecter qu'en forçant, ce
+ * qui jetait les saisies de l'autre.
+ */
+export function heldCounts(): { own: number; ownRefused: number; foreign: number } {
+  const owner = loadLocalAccount()?.userId;
+  const isOwn = (op: OutboxOp) => op._owner === undefined || op._owner === owner;
+  const queue = readQueue();
+  const quarantine = readQuarantine();
+  const ownPending = queue.filter(isOwn).length;
+  const ownRefused = quarantine.filter((q) => isOwn(q.op)).length;
+  return {
+    own: ownPending + ownRefused,
+    ownRefused,
+    foreign: queue.length + quarantine.length - ownPending - ownRefused,
+  };
+}
+
+/**
+ * Retire de la file et de la quarantaine les écritures du compte reconnu (et
+ * celles sans compte), et elles seules : celles d'un AUTRE compte restent, à
+ * leur place, pour remonter quand il reviendra. C'est la purge de la
+ * Déconnexion : on n'y jette que ce qui est à soi. Le blob de file illisible
+ * (`CORRUPT_KEY`), dont on ne sait pas l'auteur, part avec elle.
+ */
+export function clearOwnQueue(): void {
+  if (typeof localStorage === 'undefined') return;
+  const owner = loadLocalAccount()?.userId;
+  const isForeign = (op: OutboxOp) => op._owner !== undefined && op._owner !== owner;
+  const queue = readQueue().filter(isForeign);
+  const quarantine = readQuarantine().filter((q) => isForeign(q.op));
+  writeQueue(queue);
+  try {
+    if (quarantine.length > 0) localStorage.setItem(QUARANTINE_KEY, JSON.stringify(quarantine));
+    else localStorage.removeItem(QUARANTINE_KEY);
+    localStorage.removeItem(CORRUPT_KEY);
+  } catch {
+    /* no-op */
+  }
 }
 
 /**
@@ -425,6 +765,7 @@ function blockedByQuarantine(op: OutboxOp, quarantine: QuarantinedOp[]): boolean
 
 /** Position de l'op `op` ELLE-MÊME dans `queue` (cf. `removeFromQueue`), -1 si absente. */
 function indexInQueue(queue: OutboxOp[], op: OutboxOp): number {
+  if (op._uid !== undefined) return queue.findIndex((o) => o._uid === op._uid);
   if (op._seq !== undefined) {
     return queue.findIndex((o) => o._seq === op._seq && o.type === op.type && o.id === op.id);
   }
@@ -437,22 +778,30 @@ function isQueued(op: OutboxOp): boolean {
 }
 
 /**
- * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_seq`
- * (unique, stampé à l'enqueue), type et id à l'appui. Une op héritée sans `_seq`
- * (file d'un bundle antérieur) ne se reconnaît qu'en TÊTE par (type, id), le
- * temps qu'elle soit drainée.
+ * Retire de la file l'op `op` ELLE-MÊME, où qu'elle soit. Identité par `_uid`
+ * (UUID posé à l'enqueue) ; à défaut (op d'un bundle antérieur) par `_seq`, type
+ * et id à l'appui ; à défaut encore, en TÊTE seulement par (type, id), le temps
+ * qu'elle soit drainée.
  *
  * Rend `'removed'`, `'absent'` (elle n'y était plus : purgée entre-temps), ou
- * `'unwritable'` : le retrait n'a pas pu être persisté (quota plein), l'op est
- * donc TOUJOURS dans la file persistée. L'appelant doit alors arrêter sa passe,
- * sinon il la relirait et la rejouerait sans fin.
+ * `'unwritable'` : le retrait n'a pu être ni persisté ni tenu en mémoire, l'op
+ * est donc TOUJOURS dans la file. L'appelant doit alors arrêter sa passe, sinon
+ * il la relirait et la rejouerait sans fin. Un retrait que le stockage refuse
+ * mais que le miroir mémoire tient vaut `'removed'` : la file persistée garde
+ * alors une op déjà passée en base, qui serait rejouée après un rechargement.
+ * Rejouer une op est sans effet (idempotence par id), SAUF dans un cas : une
+ * insertion restée persistée alors que la suppression de la même ligne n'a
+ * existé qu'en mémoire recrée la ligne. Limite du stockage plein, bornée à la
+ * fenêtre où la file en mémoire dépasse la file persistée.
  */
 function removeFromQueue(op: OutboxOp): 'removed' | 'absent' | 'unwritable' {
   const current = readQueue();
   const at = indexInQueue(current, op);
   if (at === -1) return 'absent';
   current.splice(at, 1);
-  return writeQueue(current) ? 'removed' : 'unwritable';
+  // Retrait non persisté mais tenu en mémoire : pour la page en cours l'op
+  // n'est plus en file, la passe peut continuer sans la relire.
+  return writeQueue(current) || storageFailing() ? 'removed' : 'unwritable';
 }
 
 /**
@@ -497,6 +846,82 @@ function liftExecutionBlock(executionId: string): void {
   }
 }
 
+// --- Saisies refusées : lister, renvoyer, abandonner --------------------------
+//
+// La quarantaine n'avait qu'une sortie, la purge. Ces trois fonctions donnent à
+// l'utilisateur la main sur CHAQUE saisie refusée : la voir avec sa raison, la
+// renvoyer (la cause a pu être levée : contrainte relâchée, exo recréé), ou
+// l'abandonner. Elles ne portent que sur les saisies du compte reconnu (ou sans
+// compte) : celles d'un autre compte ne se voient ni ne se touchent d'ici.
+// L'écran qui les appelle se pose avec la refonte ; la logique est là.
+
+/** Une saisie refusée, avec l'identité par laquelle la renvoyer ou l'abandonner. */
+export interface RefusedWrite extends QuarantinedOp {
+  /** Identité stable de l'entrée (l'UUID d'enfilement de l'op quand elle en a un). */
+  refusalId: string;
+}
+
+function refusalIdOf(entry: QuarantinedOp): string {
+  return entry.op._uid ?? `${entry.at}:${entry.op.type}:${entry.op.id}:${entry.op._seq ?? ''}`;
+}
+
+/** L'entrée est-elle au compte reconnu (ou sans compte, bundle antérieur) ? */
+function isOwnEntry(entry: QuarantinedOp): boolean {
+  return entry.op._owner === undefined || entry.op._owner === loadLocalAccount()?.userId;
+}
+
+/** Les saisies refusées du compte reconnu, dans l'ordre de leur refus. */
+export function listRefused(): RefusedWrite[] {
+  return readQuarantine()
+    .filter(isOwnEntry)
+    .map((entry) => ({ ...entry, refusalId: refusalIdOf(entry) }));
+}
+
+/**
+ * Remet une saisie refusée en fin de file : elle sera retentée au prochain flush
+ * (et reviendra en quarantaine si la base la refuse encore). Renvoyer la création
+ * d'une exécution renvoie avec elle, à sa suite et dans leur ordre, les saisies
+ * qui n'avaient été retenues que parce qu'elles en dépendaient. Rend faux si
+ * l'entrée est introuvable ou si le stockage refuse l'écriture (rien ne bouge).
+ */
+export function retryRefused(refusalId: string): boolean {
+  const quarantine = readQuarantine();
+  const target = quarantine.find((q) => isOwnEntry(q) && refusalIdOf(q) === refusalId);
+  if (!target) return false;
+  const leaves = (q: QuarantinedOp): boolean =>
+    q === target ||
+    (target.op.type === 'upsertExecution' &&
+      isOwnEntry(q) &&
+      requiredExecution(q.op) === target.op.id);
+  const resent = quarantine.filter(leaves).map((q) => q.op);
+  // La file d'abord : si la seconde écriture échoue, l'op est à deux endroits
+  // (renvoyée ET listée), jamais nulle part.
+  if (!writeQueue([...readQueue(), ...resent])) return false;
+  return writeQuarantine(quarantine.filter((q) => !leaves(q)));
+}
+
+/**
+ * Abandonne une saisie refusée : elle quitte la quarantaine et ne sera jamais
+ * envoyée. Geste explicite de l'utilisateur, sur UNE saisie (ADR 0012). Rend
+ * faux si l'entrée est introuvable ou si le stockage refuse l'écriture.
+ */
+export function abandonRefused(refusalId: string): boolean {
+  const quarantine = readQuarantine();
+  const kept = quarantine.filter((q) => !(isOwnEntry(q) && refusalIdOf(q) === refusalId));
+  if (kept.length === quarantine.length) return false;
+  return writeQuarantine(kept);
+}
+
+function writeQuarantine(entries: QuarantinedOp[]): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify(entries));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Vide entièrement la file (sert à la déconnexion / aux tests). Supprime AUSSI le
  * blob de QUARANTAINE (`CORRUPT_KEY`) : à la déconnexion sur un appareil partagé,
@@ -505,6 +930,7 @@ function liftExecutionBlock(executionId: string): void {
  * raison pour les ops en quarantaine (`QUARANTINE_KEY`).
  */
 export function clearQueue(): void {
+  volatile = null;
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(STORAGE_KEY);
@@ -593,33 +1019,67 @@ function purgeQuarantineByExecution(executionId: string): void {
 
 // --- Enfilement ---------------------------------------------------------------
 
+let seqCounter = 0;
+
+/** UUID d'enfilement (cf. `_uid`). Repli non cryptographique sur un très vieux runtime. */
+function newUid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 /**
  * Ajoute une op en queue de file et persiste immédiatement. L'op est durable
  * dès cet instant : même si l'app meurt avant le flush, elle remontera au
- * prochain montage. Renvoie la nouvelle longueur de file.
+ * prochain montage. Rend l'identité d'enfilement de l'op (`_uid`), par laquelle
+ * l'appelant peut la retrouver après une passe (cf. `isPending`, `isRefused`).
  */
-let seqCounter = 0;
-
-export function enqueue(op: OutboxOp): number {
+export function enqueueTracked(op: OutboxOp): string {
   const queue = readQueue();
-  // Stampe une identité unique monotone. Ré-amorcée sur le max déjà persisté pour
-  // rester unique après un reload (le compteur en mémoire repart à 0, pas la file).
+  // Compteur d'ordre, ré-amorcé sur le max déjà persisté. Il n'identifie plus
+  // l'op (deux onglets peuvent donner le même numéro) : c'est le rôle de `_uid`.
   const maxSeq = queue.reduce((m, o) => (o._seq !== undefined && o._seq > m ? o._seq : m), 0);
   seqCounter = Math.max(seqCounter, maxSeq) + 1;
   // Étiquette de compte : celui que l'appareil reconnaît à cet instant.
   const owner = loadLocalAccount()?.userId;
-  queue.push({ ...op, _seq: seqCounter, ...(owner ? { _owner: owner } : {}) });
+  const uid = newUid();
+  queue.push({
+    ...op,
+    _seq: seqCounter,
+    _uid: uid,
+    _at: Date.now(),
+    ...(owner ? { _owner: owner } : {}),
+  });
   writeQueue(queue);
-  return queue.length;
+  return uid;
+}
+
+/** Enfile une op (cf. `enqueueTracked`) et renvoie la nouvelle longueur de file. */
+export function enqueue(op: OutboxOp): number {
+  enqueueTracked(op);
+  return readQueue().length;
+}
+
+/** Combien des ops enfilées sous ces identités attendent encore en file ? */
+export function pendingAmong(uids: readonly string[]): number {
+  const ours = new Set(uids);
+  return readQueue().filter((op) => op._uid !== undefined && ours.has(op._uid)).length;
+}
+
+/** Combien des ops enfilées sous ces identités la base a-t-elle refusées (quarantaine) ? */
+export function refusedAmong(uids: readonly string[]): number {
+  const ours = new Set(uids);
+  return readQuarantine().filter((q) => q.op._uid !== undefined && ours.has(q.op._uid)).length;
 }
 
 // --- Flush --------------------------------------------------------------------
 
-/** Retire les champs internes `_seq` et `_owner` (mécanique de file) : la couche
- *  sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique → préserve le
- *  type narrowé. */
-function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner'> {
-  const { _seq: _ignored, _owner: _alsoIgnored, ...rest } = op;
+/** Retire les champs internes `_seq`, `_uid`, `_owner` et `_at` (mécanique de file) : la
+ *  couche sync reçoit l'op DOMAINE, jamais l'identité de queue. Générique →
+ *  préserve le type narrowé. */
+function stripSeq<T extends Sequenced>(op: T): Omit<T, '_seq' | '_owner' | '_uid' | '_at'> {
+  const { _seq: _ignored, _owner: _alsoIgnored, _uid: _ignoredToo, _at: _ignoredAsWell, ...rest } = op;
   return rest;
 }
 
@@ -663,6 +1123,88 @@ function runOp(op: OutboxOp, fns: SyncFns): Promise<void> {
 // On sérialise via une promesse mémoïsée — les appels en vol partagent le résultat.
 let inFlight: Promise<FlushResult> | null = null;
 
+// ENTRE ONGLETS, la promesse mémoïsée ne suffit pas : chaque onglet a la sienne,
+// sur la même file. Deux passes simultanées pouvaient croiser leurs envois : un
+// onglet envoie puis retire « insertSet X » et « deleteSet X » pendant que
+// l'insertion de l'autre, partie avant, arrive après la suppression et fait
+// revenir la série. Un verrou du navigateur (`navigator.locks`) ne laisse donc
+// flusher qu'un onglet à la fois.
+//
+// Le verrou n'est jamais ATTENDU, et jamais REPRIS à un autre onglet : s'il est
+// pris, un autre onglet flushe cette même file (et relit la file entre deux
+// ops, donc voit ce qu'on vient d'enfiler) ; la passe d'ici ne fait rien, le dit
+// par son `remaining`, et un nouvel essai est reprogrammé tant que la file n'est
+// pas vide (cf. `scheduleLockRetry`). Reprendre le verrou d'un onglet dont la
+// passe dure laisserait deux onglets écrire en même temps, ce que le verrou
+// existe pour empêcher. Un onglet figé par le système en pleine passe garde
+// donc le verrou jusqu'à son réveil ; les essais continuent, espacés. Sans
+// l'API (vieux navigateur, tests), la passe tourne sans verrou, comme avant.
+const FLUSH_LOCK = 'croustylift:outbox:flush';
+
+// NOUVEL ESSAI après un verrou occupé. Ne pas attendre le verrou ne doit pas
+// vouloir dire « ne plus jamais essayer » : si la passe de l'autre onglet
+// s'arrête sur un échec transitoire juste après notre refus, il libère le
+// verrou et plus rien ne réveillait notre file, qui attendait la prochaine
+// saisie ou le prochain remontage. Tant que le verrou a été refusé, que la file
+// n'est pas vide et que l'appareil est en ligne, un essai est donc reprogrammé,
+// avec des attentes qui s'allongent (0,5 s, puis le double, plafonné à 30 s).
+// Un seul minuteur à la fois ; il s'éteint dès que le verrou est obtenu ou que
+// la file est vide. Hors ligne, rien n'est reprogrammé : le retour du réseau
+// relance la synchro par ailleurs.
+const LOCK_RETRY_FIRST_MS = 500;
+const LOCK_RETRY_MAX_MS = 30_000;
+let flushLockBusy = false;
+let lockRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let lockRetryAttempt = 0;
+/** Ce que le nouvel essai lance : par défaut la même passe, sinon le flush de l'app. */
+let lockRetryRunner: (() => Promise<unknown>) | null = null;
+
+/**
+ * Fait passer les nouveaux essais par le flush de l'app (`flushOutbox`, qui
+ * relit aussi les copies d'historique acquittées) plutôt que par la passe nue.
+ */
+export function setFlushRetryRunner(run: (() => Promise<unknown>) | null): void {
+  lockRetryRunner = run;
+}
+
+function scheduleLockRetry(fns: SyncFns, who?: SessionReader): void {
+  if (lockRetryTimer !== null) return;
+  const delay = Math.min(LOCK_RETRY_FIRST_MS * 2 ** lockRetryAttempt, LOCK_RETRY_MAX_MS);
+  lockRetryAttempt += 1;
+  lockRetryTimer = setTimeout(() => {
+    lockRetryTimer = null;
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (offline || readQueue().length === 0) {
+      lockRetryAttempt = 0;
+      return;
+    }
+    void (lockRetryRunner ? lockRetryRunner() : flush(fns, who))
+      .catch(() => {})
+      .finally(() => {
+        // L'écran suit la file (bannière de synchro) sans attendre un geste.
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+          window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
+        }
+      });
+  }, delay);
+}
+
+/** Événement `window` émis quand la file a bougé sans geste de l'écran (nouvel essai). */
+export const OUTBOX_CHANGED_EVENT = 'croustylift:outbox-changed';
+
+async function underFlushLock(run: () => Promise<FlushResult>): Promise<FlushResult> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (!locks || typeof locks.request !== 'function') return run();
+  return locks.request(FLUSH_LOCK, { ifAvailable: true }, (lock) => {
+    if (lock === null) {
+      flushLockBusy = true;
+      return { remaining: readQueue().length, flushed: 0 };
+    }
+    flushLockBusy = false;
+    return run();
+  });
+}
+
 /**
  * Synchronise la file vers Supabase et renvoie l'état après la passe.
  *
@@ -679,13 +1221,23 @@ let inFlight: Promise<FlushResult> | null = null;
  * `who` : lecteur de la session vérifiée. Fourni, rien ne part sans compte
  * connecté. Absent (tests de la file seule), aucun contrôle de session ni de compte.
  *
- * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé.
+ * Concurrent-safe : un flush déjà en vol est réutilisé plutôt que doublé, et un
+ * seul onglet flushe à la fois (cf. `underFlushLock`).
  */
 export function flush(fns: SyncFns, who?: SessionReader): Promise<FlushResult> {
   if (inFlight) return inFlight;
-  inFlight = runFlush(fns, who).finally(() => {
-    inFlight = null;
-  });
+  inFlight = underFlushLock(() => runFlush(fns, who))
+    .then((result) => {
+      // Verrou pris par un autre onglet et file non vide : un essai est
+      // reprogrammé (cf. `scheduleLockRetry`). Verrou obtenu : les attentes
+      // repartent de zéro.
+      if (flushLockBusy && result.remaining > 0) scheduleLockRetry(fns, who);
+      else if (!flushLockBusy) lockRetryAttempt = 0;
+      return result;
+    })
+    .finally(() => {
+      inFlight = null;
+    });
   return inFlight;
 }
 

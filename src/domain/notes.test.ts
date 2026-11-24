@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  normalizeNoteBody,
-  isBlankNote,
-  describeNoteKind,
-  type NoteKind,
-} from './notes'
+import { normalizeNoteBody, isBlankNote } from './notes'
 
 describe('normalizeNoteBody', () => {
   it('retire les espaces de bord sans toucher au texte interne', () => {
@@ -38,15 +33,5 @@ describe('isBlankNote', () => {
   it('faux dès qu il y a du contenu réel', () => {
     expect(isBlankNote('prise serrée')).toBe(false)
     expect(isBlankNote('  x  ')).toBe(false)
-  })
-})
-
-describe('describeNoteKind', () => {
-  it('distingue les deux types de notes du modèle (cf. brainstorm §4)', () => {
-    const perExercise: NoteKind = 'per-exercise'
-    const dated: NoteKind = 'dated'
-
-    expect(describeNoteKind(perExercise)).toBe('Note de l’exercice')
-    expect(describeNoteKind(dated)).toBe('Note du jour')
   })
 })

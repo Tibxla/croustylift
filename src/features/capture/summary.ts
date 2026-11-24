@@ -7,9 +7,19 @@ import type { SessionSummary } from './SessionEnd';
 import { countLogicalSetsDone, countPerformedSets } from '../../domain/set-count';
 
 /**
+ * Durée maximale d'une séance, en minutes (10 h) : le même plafond que l'éditeur
+ * de séance passée. Au-delà, le chrono n'a pas mesuré une séance.
+ */
+export const SESSION_DURATION_MAX_MIN = 600;
+
+/**
  * Durée écoulée en minutes (arrondi) depuis le lancement de la séance, ou `null`
- * si `startedAt` est absent/invalide (cas dégénéré : on n'envoie ni n'affiche
- * de durée plutôt qu'une valeur trompeuse).
+ * si elle n'est pas MESURABLE : `startedAt` absent ou invalide, ou durée au-delà
+ * du plafond. Ce second cas est celui d'une séance oubliée sans clôture puis
+ * terminée le lendemain : le chrono affichait de l'ordre de 1 400 min, valeur
+ * jamais mesurée qui écrasait l'échelle du graphe de durée. On n'envoie ni
+ * n'affiche alors de durée, plutôt qu'une valeur inventée (elle reste
+ * saisissable depuis le journal).
  */
 export function elapsedMinutesSince(startedAt: number | undefined): number | null {
   if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) return null;
@@ -18,11 +28,13 @@ export function elapsedMinutesSince(startedAt: number | undefined): number | nul
   // une op de clôture rejetée empoisonne l'outbox (incident 2026-07-30 : la
   // contrainte refusait aussi 0, cf. migration 0012). 0 = « moins de 30 s »,
   // mesure honnête d'un faux départ.
-  return Math.max(0, Math.round((Date.now() - startedAt) / 60000));
+  const minutes = Math.max(0, Math.round((Date.now() - startedAt) / 60000));
+  return minutes > SESSION_DURATION_MAX_MIN ? null : minutes;
 }
 
 /**
- * Construit le récap sobre de l'exécution courante : exos faits / total + le
+ * Construit le récap sobre de l'exécution courante : exos faits / total (les exos
+ * passés comptés à part) + le
  * décompte RÉEL des séries (total + par muscle), pondéré par reps (issue #60,
  * affine #37). Le décompte applique la règle exacte via le domaine pur
  * `countPerformedSets` : chaque série logique (un set_order ; unilatéral G+D au
@@ -37,8 +49,13 @@ export function buildSummary(session: Session, state: CaptureState): SessionSumm
     // deux lignes par série (G + D), donc `sets.length` le déclarerait « fait »
     // à mi-chemin du prescrit. `countLogicalSetsDone` vaut `sets.length` en
     // bilatéral (1 ligne = 1 order) et reste juste en unilatéral.
-    return p.skipped || countLogicalSetsDone(p.sets) >= ex.prescription.sets.min;
+    // Un exo PASSÉ n'est pas un exo fait : il est compté à part, pour que
+    // « Exercices faits 3/3 » ne couvre pas une séance où l'on en a sauté un.
+    return !p.skipped && countLogicalSetsDone(p.sets) >= ex.prescription.sets.min;
   }).length;
+  const exercisesSkipped = session.exercises.filter(
+    (ex) => getProgress(state, ex.exerciseId).skipped,
+  ).length;
 
   const count = countPerformedSets(
     session.exercises.map((ex) => ({
@@ -51,6 +68,7 @@ export function buildSummary(session: Session, state: CaptureState): SessionSumm
   return {
     sessionName: session.name,
     exercisesDone,
+    exercisesSkipped,
     exercisesTotal: session.exercises.length,
     totalSets: count.total,
     setsByMuscle: count.byMuscle,

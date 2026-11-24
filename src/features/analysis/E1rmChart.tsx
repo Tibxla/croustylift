@@ -13,10 +13,11 @@
 // séries (jamais pour une seule). Grille hairline, ligne de référence pointillée
 // (e1RM de départ de la séance accent), ticks/labels en mono (Readout Rule).
 //
-// AXE X : catégoriel pour une série seule (rendu historique inchangé, un pas
-// par séance), NUMÉRIQUE en temps réel pour la superposition — les séances ont
-// des dates différentes, seul un axe numérique aligne honnêtement leurs points
-// (un axe catégoriel concaténerait les dates série par série, hors chronologie).
+// AXE X : NUMÉRIQUE, en temps réel, pour une courbe seule comme pour une
+// superposition (cf. chart-time.ts). L'axe catégoriel d'origine posait un pas
+// par séance : une pause de huit semaines y tenait la largeur d'une semaine
+// (audit du 2026-11-22, D9). Les séances d'une superposition ont en plus des
+// dates différentes, que seul un axe numérique aligne honnêtement.
 import { useId } from 'react';
 import {
   Area,
@@ -30,23 +31,14 @@ import {
   YAxis,
   type TooltipContentProps,
 } from 'recharts';
-import type { E1rmPoint } from '../../domain/types';
+import type { CurveUnit, E1rmPoint } from '../../domain/types';
+import { dayToTime, shortDay, timeTick, type TimeAxis } from './chart-time';
+import { measureLabel } from './unit-label';
+import { ACCENT, BG, HAIR, INK_FAINT, INK_MUTED, READOUT_TICK } from './chart-style';
 
-// On lit les tokens OKLCH directement : le SVG de Recharts accepte
-// `stroke="var(--color-…)"`, donc l'accent reste la SEULE source de vérité.
-const ACCENT = 'var(--color-accent)';
-const BG = 'var(--color-bg)';
-const HAIR = 'var(--color-hair)';
-const INK_MUTED = 'var(--color-ink-muted)';
-const INK_FAINT = 'var(--color-ink-faint)';
 
-/** Police mono tabulaire pour tous les chiffres mesurés (axes, tooltip). */
-const READOUT_TICK = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  fill: INK_FAINT,
-  fontVariant: 'tabular-nums',
-} as const;
+/** Ticks en ink-faint : la courbe héros prime sur son axe. */
+const TICK = { ...READOUT_TICK, fill: INK_FAINT } as const;
 
 /** Une courbe e1RM nommée : la série d'UNE séance. La 1ʳᵉ passée porte l'accent. */
 export interface E1rmSeries {
@@ -92,37 +84,38 @@ function styleFor(index: number): SeriesStyle {
   return { stroke: INK_FAINT, strokeWidth: 1.5, strokeDasharray: '4 3' };
 }
 
-/** 'YYYY-MM-DD' → 'JJ/MM' (mono, court : l'axe X ne doit jamais déborder). */
-function formatDateTick(iso: string): string {
-  const [, month, day] = iso.split('-');
-  if (!month || !day) return iso;
-  return `${day}/${month}`;
-}
-
-/** Tick de l'axe temps numérique (superposition) : epoch ms → 'JJ/MM'. */
-function formatTimeTick(t: number): string {
-  return formatDateTick(new Date(t).toISOString().slice(0, 10));
-}
-
 /** Un point daté + son abscisse numérique (axe temps de la superposition). */
 type TimedPoint = E1rmPoint & { t: number };
 
 function toTimed(curve: E1rmPoint[]): TimedPoint[] {
-  // Date.parse('YYYY-MM-DD') = minuit UTC : cohérent avec formatTimeTick (ISO).
-  return curve.map((p) => ({ ...p, t: Date.parse(p.date) }));
+  return curve.map((p) => ({ ...p, t: dayToTime(p.date) }));
 }
 
 // Recharts injecte les props du tooltip à l'exécution ; `content={<… />}` les
 // fournit donc vides au typage statique → on les rend partielles.
-function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, string>>) {
+/** Infobulle d'un point daté, partagée avec le graphe des séries 2+. */
+export function E1rmTooltip({
+  active,
+  payload,
+  unit,
+  named,
+}: Partial<TooltipContentProps<number, string>> & {
+  /** Ce qui suit le chiffre : « kg », « reps », « kg moy. ». */
+  unit: string;
+  /**
+   * Nommer chaque ligne par sa séance : en superposition seulement. Seule, la
+   * courbe n'a pas de nom et Recharts mettrait à sa place la clé de donnée
+   * (« e1rm »), fausse sur une courbe en reps.
+   */
+  named: boolean;
+}) {
   if (!active || !payload || payload.length === 0) return null;
   const first = payload[0];
   if (!first) return null;
   const point = first.payload as E1rmPoint;
-  const named = payload.length > 1 || typeof first.name === 'string';
   return (
     <div className="surface-raised rounded-lg px-3 py-2">
-      <p className="readout text-[11px] text-ink-muted">{formatDateTick(point.date)}</p>
+      <p className="readout text-[11px] text-ink-muted">{shortDay(point.date)}</p>
       {payload.map((entry, i) => {
         const p = entry.payload as E1rmPoint;
         return (
@@ -131,7 +124,7 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
               <span className="text-xs font-normal text-ink-muted">{entry.name} </span>
             )}
             {Math.round(p.e1rm)}
-            <span className="ml-1 text-xs font-normal text-ink-muted">kg</span>
+            <span className="ml-1 text-xs font-normal text-ink-muted">{unit}</span>
           </p>
         );
       })}
@@ -140,27 +133,35 @@ function E1rmTooltip({ active, payload }: Partial<TooltipContentProps<number, st
 }
 
 /** Résumé textuel des courbes pour les lecteurs d'écran (le SVG est muet). */
-function describeSeries(series: E1rmSeries[]): string {
-  const populated = series.filter((s) => s.curve.length > 0);
-  if (populated.length === 0) return 'Courbe e1RM de la 1ʳᵉ série, aucune donnée.';
-  if (populated.length === 1) {
-    const only = populated[0]!;
-    const values = only.curve.map((p) => p.e1rm);
-    const min = Math.round(Math.min(...values));
-    const max = Math.round(Math.max(...values));
-    return `Courbe e1RM de la 1ʳᵉ série sur ${only.curve.length} séances, de ${min} à ${max} kg.`;
-  }
-  const parts = populated.map((s) => {
-    const values = s.curve.map((p) => p.e1rm);
-    return `${s.name} sur ${s.curve.length} exécutions, de ${Math.round(Math.min(...values))} à ${Math.round(Math.max(...values))} kg`;
-  });
-  return `Courbes e1RM de la 1ʳᵉ série par séance : ${parts.join(' ; ')}.`;
+function describeSeries(series: E1rmSeries[], unit: CurveUnit, multi: boolean): string {
+  // Un exo jamais chargé se lit en reps effectives, pas en e1RM (cf. CurveUnit).
+  const title = `Courbe ${measureLabel(unit)} de la 1ʳᵉ série`;
+  const parts = series
+    .filter((s) => s.curve.length > 0)
+    .map((s) => {
+      const values = s.curve.map((p) => Math.round(p.e1rm));
+      // Nommée par sa séance en superposition seulement.
+      return `${multi ? `${s.name} ` : ''}sur ${values.length} séances, de ${Math.min(...values)} à ${Math.max(...values)} ${unit}`;
+    });
+  return parts.length === 0 ? `${title}, aucune donnée.` : `${title} : ${parts.join(' ; ')}.`;
 }
 
 export function E1rmChart({
   series,
   legend,
+  unit,
+  periodStart,
+  axis,
 }: {
+  /** L'axe temps des courbes affichées (cf. chart-time.ts), partagé avec les séries 2+. */
+  axis: TimeAxis | null;
+  /**
+   * Jour ISO où commence la période de la pente (le bloc en cours). Tracé en
+   * repère vertical quand des points de la courbe accent le précèdent.
+   */
+  periodStart?: string | null;
+  /** L'unité des courbes : 'reps' pour un exo jamais chargé (axe et infobulle). */
+  unit: CurveUnit;
   /** Les courbes AFFICHÉES, accent en tête. */
   series: E1rmSeries[];
   /** Absente, ou une seule entrée : pas de légende. */
@@ -175,6 +176,11 @@ export function E1rmChart({
   // montée d'un coup. Les subordonnées n'en posent pas (une seule référence).
   const baseline = accentCurve.length > 0 ? accentCurve[0]?.e1rm : undefined;
   const multi = populated.length > 1;
+  const firstAccentT = accentCurve[0] ? dayToTime(accentCurve[0].date) : null;
+  const periodStartT =
+    periodStart != null && firstAccentT !== null && dayToTime(periodStart) > firstAccentT
+      ? dayToTime(periodStart)
+      : null;
 
   // Points cerclés sur la courbe accent ; le DERNIER (le présent) en disque plein.
   // Recharts type le callback `dot` de façon stricte (DotItemDotProps) : on reçoit
@@ -205,7 +211,7 @@ export function E1rmChart({
 
   const yAxis = (
     <YAxis
-      tick={READOUT_TICK}
+      tick={TICK}
       tickLine={false}
       axisLine={false}
       width={36}
@@ -217,100 +223,75 @@ export function E1rmChart({
 
   return (
     <div>
-      <div className="h-40 w-full" role="img" aria-label={describeSeries(series)}>
+      <div className="h-40 w-full" role="img" aria-label={describeSeries(series, unit, multi)}>
         <ResponsiveContainer width="100%" height="100%">
-          {multi ? (
-            // SUPERPOSITION : axe temps numérique (dates différentes par séance),
-            // subordonnées d'abord (dessous), l'accent par-dessus, façon
-            // ComparisonChart. Chaque série porte son propre `data`.
-            <ComposedChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
-              {gradient}
-              <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
-              <XAxis
-                type="number"
-                dataKey="t"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={formatTimeTick}
-                tick={READOUT_TICK}
-                tickLine={false}
-                axisLine={{ stroke: HAIR }}
-                minTickGap={24}
-                interval="preserveStartEnd"
-              />
-              {yAxis}
-              {baseline != null && (
-                <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
-              )}
-              <Tooltip content={<E1rmTooltip />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
-              {populated
-                .slice(1)
-                .map((s, i) => {
-                  const style = styleFor(i + 1);
-                  return (
-                    <Line
-                      key={s.id}
-                      name={s.name}
-                      data={toTimed(s.curve)}
-                      type="monotone"
-                      dataKey="e1rm"
-                      stroke={style.stroke}
-                      strokeWidth={style.strokeWidth}
-                      strokeDasharray={style.strokeDasharray}
-                      dot={{ r: 2, fill: style.stroke, strokeWidth: 0 }}
-                      isAnimationActive={false}
-                    />
-                  );
-                })
-                .reverse()}
-              <Area
-                name={accentSeries.name}
-                data={toTimed(accentCurve)}
-                type="monotone"
-                dataKey="e1rm"
-                stroke={ACCENT}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill={`url(#${gradientId})`}
-                dot={renderAccentDot}
-                activeDot={{ r: 5, fill: ACCENT, stroke: BG, strokeWidth: 2.5 }}
-                isAnimationActive={false}
-              />
-            </ComposedChart>
-          ) : (
-            // UNE seule séance : rendu signature historique inchangé (axe
-            // catégoriel, un pas par exécution), sans légende.
-            <ComposedChart data={accentCurve} margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
-              {gradient}
-              <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickFormatter={formatDateTick}
-                tick={READOUT_TICK}
-                tickLine={false}
-                axisLine={{ stroke: HAIR }}
-                minTickGap={24}
-                interval="preserveStartEnd"
-              />
-              {yAxis}
-              {baseline != null && (
-                <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
-              )}
-              <Tooltip content={<E1rmTooltip />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
-              <Area
-                type="monotone"
-                dataKey="e1rm"
-                stroke={ACCENT}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill={`url(#${gradientId})`}
-                dot={renderAccentDot}
-                activeDot={{ r: 5, fill: ACCENT, stroke: BG, strokeWidth: 2.5 }}
-                isAnimationActive={false}
-              />
-            </ComposedChart>
-          )}
+          {/* Axe temps numérique pour toutes les cartes : les séances d'une
+              superposition ont des dates différentes, et même seule une courbe
+              doit montrer ses pauses. Subordonnées d'abord (dessous), l'accent
+              par-dessus, façon ComparisonChart. Chaque série porte son `data`. */}
+          <ComposedChart margin={{ top: 8, right: 20, bottom: 4, left: -8 }}>
+            {gradient}
+            <CartesianGrid stroke={HAIR} strokeWidth={1} vertical={false} />
+            <XAxis
+              type="number"
+              dataKey="t"
+              domain={axis?.domain}
+              ticks={axis?.ticks}
+              tickFormatter={timeTick}
+              tick={TICK}
+              tickLine={false}
+              axisLine={{ stroke: HAIR }}
+              minTickGap={24}
+              interval="preserveStartEnd"
+            />
+            {yAxis}
+            {baseline != null && (
+              <ReferenceLine y={baseline} stroke={INK_FAINT} strokeDasharray="4 5" strokeWidth={1} />
+            )}
+            {/* Début de la période de la pente (le bloc en cours), quand des
+                points le précèdent : ce qui est à gauche du trait n'entre pas
+                dans le chiffre du badge. */}
+            {periodStartT != null && (
+              <ReferenceLine x={periodStartT} stroke={INK_FAINT} strokeDasharray="2 4" strokeWidth={1} />
+            )}
+            <Tooltip content={<E1rmTooltip unit={unit} named={multi} />} cursor={{ stroke: HAIR, strokeWidth: 1 }} />
+            {populated
+              .slice(1)
+              .map((s, i) => {
+                const style = styleFor(i + 1);
+                return (
+                  <Line
+                    key={s.id}
+                    name={s.name}
+                    data={toTimed(s.curve)}
+                    type="monotone"
+                    dataKey="e1rm"
+                    stroke={style.stroke}
+                    strokeWidth={style.strokeWidth}
+                    strokeDasharray={style.strokeDasharray}
+                    dot={{ r: 2, fill: style.stroke, strokeWidth: 0 }}
+                    isAnimationActive={false}
+                  />
+                );
+              })
+              .reverse()}
+            <Area
+              // Nommée seulement en superposition : seule, l'infobulle ne répète
+              // pas le nom de la séance (le titre de la carte le dit).
+              name={multi ? accentSeries.name : undefined}
+              data={toTimed(accentCurve)}
+              type="monotone"
+              dataKey="e1rm"
+              stroke={ACCENT}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill={`url(#${gradientId})`}
+              dot={renderAccentDot}
+              activeDot={{ r: 5, fill: ACCENT, stroke: BG, strokeWidth: 2.5 }}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
 

@@ -5,8 +5,19 @@
 // La requête Supabase reste dans la couche d'accès ; seul le groupement/tri est
 // testé ici, les courbes elles-mêmes étant couvertes par le domaine.
 import { describe, expect, it } from 'vitest';
-import { analyzeExecutions, type SeanceInfo, type TrainedExercise } from './data';
-import type { ExerciseExecution } from '../../domain/types';
+import {
+  analyzeExecutions,
+  groupExecutionRows,
+  pickFirstExecution,
+  type FirstExecutionCandidate,
+  type ExecutionSetRow,
+  type SeanceInfo,
+  type TrainedExercise,
+} from './data';
+import type { Block, ExerciseExecution } from '../../domain/types';
+import { detectBlocks } from '../../domain/block';
+import { summarizeBlockSeances } from '../../domain/block-comparison';
+import { buildConfigTimeline } from './config-timeline';
 
 const exercise: TrainedExercise = { exerciseId: 'bench', name: 'Développé couché' };
 
@@ -195,3 +206,375 @@ describe('analyzeExecutions — libellé « séance · routine » (ADR 0016)', (
     expect(seanceCurves[0]?.label).toBe('Push');
   });
 });
+
+// --- Lecture groupée de l'Analyse (une lecture pour toutes les cartes) ---------
+//
+// `loadAnalyses` lisait une requête par exo (environ 40 pour 30 exos). Il lit
+// désormais toutes les séries en une lecture paginée, que `groupExecutionRows`
+// répartit par exo. Les lignes arrivent triées par id (pagination), donc dans le
+// désordre : le regroupement ne doit pas en dépendre.
+
+describe('groupExecutionRows : toutes les séries, regroupées par exo', () => {
+  const setRow = (over: Partial<ExecutionSetRow> & { id: string }): ExecutionSetRow => ({
+    created_at: '2026-07-01T10:00:00+00:00',
+    weight_kg: 80,
+    reps: 5,
+    rir: 1,
+    set_order: 1,
+    side: null,
+    execution_id: 'x1',
+    exercise_id: 'bench',
+    exercises: { name: 'Développé couché' },
+    executions: {
+      performed_on: '2026-07-01',
+      created_at: '2026-07-01T09:59:00+00:00',
+      started_at: '2026-07-01T09:30:00+00:00',
+      seance_versions: {
+        seance_id: 's-upper',
+        seances: { name: 'Upper A', routine_id: 'r-ul', routines: { name: 'Upper/Lower' } },
+      },
+    },
+    ...over,
+  });
+
+  const rows: ExecutionSetRow[] = [
+    // Désordre volontaire : la série 2 du bench arrive avant la série 1.
+    setRow({ id: 'a', set_order: 2, weight_kg: 77.5, created_at: '2026-07-01T10:05:00+00:00' }),
+    setRow({ id: 'b', exercise_id: 'squat', exercises: { name: 'Squat' }, weight_kg: 120 }),
+    setRow({ id: 'c', set_order: 1, created_at: '2026-07-01T10:00:00+00:00' }),
+  ];
+
+  it('rend une entrée par exo, avec son nom et ses exécutions', () => {
+    const grouped = groupExecutionRows(rows);
+    expect([...grouped.keys()].sort()).toEqual(['bench', 'squat']);
+    expect(grouped.get('bench')!.name).toBe('Développé couché');
+    expect(grouped.get('squat')!.executions).toHaveLength(1);
+    expect(grouped.get('squat')!.executions[0]!.sets[0]!.weightKg).toBe(120);
+  });
+
+  it('les deux exos d’une même séance gardent chacun leur exécution (même id d’exécution)', () => {
+    const grouped = groupExecutionRows(rows);
+    const bench = grouped.get('bench')!.executions[0]!;
+    const squat = grouped.get('squat')!.executions[0]!;
+    expect(bench.id).toBe('x1');
+    expect(squat.id).toBe('x1');
+    expect(bench.exerciseId).toBe('bench');
+    expect(squat.exerciseId).toBe('squat');
+    expect(bench.sets).toHaveLength(2);
+  });
+
+  it('remet les séries dans l’ordre de saisie, quel que soit l’ordre d’arrivée', () => {
+    const bench = groupExecutionRows(rows).get('bench')!.executions[0]!;
+    expect(bench.sets.map((s) => s.order)).toEqual([1, 2]);
+  });
+
+  it('porte date, création, lancement et séance de l’exécution', () => {
+    const { executions, seances } = groupExecutionRows(rows).get('bench')!;
+    expect(executions[0]).toMatchObject({
+      date: '2026-07-01',
+      createdAt: '2026-07-01T09:59:00+00:00',
+      startedAt: '2026-07-01T09:30:00+00:00',
+      seanceId: 's-upper',
+    });
+    expect(seances.get('s-upper')).toEqual({
+      name: 'Upper A',
+      routineId: 'r-ul',
+      routineName: 'Upper/Lower',
+    });
+  });
+
+  it('sans lancement horodaté ni séance : champs absents, rien d’inventé', () => {
+    const grouped = groupExecutionRows([
+      setRow({
+        id: 'z',
+        executions: {
+          performed_on: '2026-07-01',
+          created_at: '2026-07-01T09:59:00+00:00',
+          started_at: null,
+          seance_versions: null,
+        },
+      }),
+    ]);
+    const execution = grouped.get('bench')!.executions[0]!;
+    expect(execution.startedAt).toBeUndefined();
+    expect(execution.seanceId).toBeUndefined();
+    expect(grouped.get('bench')!.seances.size).toBe(0);
+  });
+
+  it('une série orpheline d’exécution est écartée', () => {
+    expect(groupExecutionRows([setRow({ id: 'o', executions: null })]).size).toBe(0);
+  });
+
+  it('même résultat que la lecture par exo pour l’analyse d’une carte', () => {
+    const { executions, seances } = groupExecutionRows(rows).get('bench')!;
+    const analysis = analyzeExecutions(
+      { exerciseId: 'bench', name: 'Développé couché' },
+      executions,
+      seances,
+    );
+    expect(analysis.seanceCurves).toHaveLength(1);
+    expect(analysis.seanceCurves[0]!.seanceName).toBe('Upper A');
+  });
+});
+
+// --- Première exécution du compte (bloc implicite, ADR 0001) -------------------
+
+describe('pickFirstExecution : la première séance réellement faite', () => {
+  const candidate = (over: Partial<FirstExecutionCandidate> & { id: string }): FirstExecutionCandidate => ({
+    performed_on: '2026-08-05',
+    created_at: '2026-08-05T08:05:00+00:00',
+    started_at: '2026-08-05T08:00:00+00:00',
+    seance_versions: { seances: { routine_id: 'R' } },
+    performed_sets: [{ id: 's1' }],
+    ...over,
+  })
+
+  it('synchronisation dans le désordre : la séance lancée à 8 h hors ligne passe avant celle de 13 h, arrivée en base la première', () => {
+    const offline = candidate({
+      id: 'b',
+      started_at: '2026-08-05T08:00:00+00:00',
+      created_at: '2026-08-05T14:00:00+00:00',
+    })
+    const online = candidate({
+      id: 'a',
+      started_at: '2026-08-05T13:00:00+00:00',
+      created_at: '2026-08-05T13:00:05+00:00',
+      seance_versions: { seances: { routine_id: 'R2' } },
+    })
+    const expected = { date: '2026-08-05', startedAt: '2026-08-05T08:00:00+00:00', routineId: 'R' }
+    expect(pickFirstExecution([online, offline])).toEqual(expected)
+    expect(pickFirstExecution([offline, online])).toEqual(expected)
+  })
+
+  it('une exécution sans série (note seule) n’ouvre pas le bloc', () => {
+    const noteOnly = candidate({
+      id: 'n',
+      started_at: '2026-08-05T07:00:00+00:00',
+      performed_sets: [],
+      seance_versions: { seances: { routine_id: 'AUTRE' } },
+    })
+    expect(pickFirstExecution([noteOnly, candidate({ id: 'x' })])?.routineId).toBe('R')
+    expect(pickFirstExecution([noteOnly])).toBeNull()
+  })
+
+  it('le jour passe avant l’instant, et sans lancement la création ordonne sans devenir un instant', () => {
+    const legacy = candidate({
+      id: 'l',
+      performed_on: '2026-08-01',
+      started_at: null,
+      created_at: '2026-08-09T10:00:00+00:00',
+    })
+    expect(pickFirstExecution([candidate({ id: 'x' }), legacy])).toEqual({
+      date: '2026-08-01',
+      routineId: 'R',
+    })
+  })
+
+  it('à égalité complète, l’id départage ; sans séance résoluble ou sans ligne, rien', () => {
+    const a = candidate({ id: 'a', seance_versions: { seances: { routine_id: 'RA' } } })
+    const b = candidate({ id: 'b', seance_versions: { seances: { routine_id: 'RB' } } })
+    expect(pickFirstExecution([b, a])?.routineId).toBe('RA')
+    expect(pickFirstExecution([candidate({ id: 'z', seance_versions: null })])).toBeNull()
+    expect(pickFirstExecution([])).toBeNull()
+  })
+
+  it('Tokyo le 20 à 00 h 10 puis Los Angeles le 19 à 22 h 30 : le bloc s’ouvre au plus ancien LANCEMENT, les deux points y restent', () => {
+    // Les jours disent l'inverse des instants : Tokyo (daté du 20) est lancé à
+    // 15:10 UTC le 19, Los Angeles (daté du 19) à 06:30 UTC le 20.
+    const tokyo = candidate({
+      id: 't',
+      performed_on: '2026-11-20',
+      started_at: '2026-11-19T15:10:00+00:00',
+      created_at: '2026-11-19T15:15:00+00:00',
+    })
+    const losAngeles = candidate({
+      id: 'l',
+      performed_on: '2026-11-19',
+      started_at: '2026-11-20T06:30:00+00:00',
+      created_at: '2026-11-20T06:35:00+00:00',
+    })
+    const first = pickFirstExecution([losAngeles, tokyo])
+    expect(first).toEqual({
+      date: '2026-11-19',
+      startedAt: '2026-11-19T15:10:00+00:00',
+      routineId: 'R',
+    })
+
+    const blocks = detectBlocks(
+      buildConfigTimeline({
+        activations: [],
+        seanceVersions: [],
+        seances: [{ id: 'A', routineId: 'R' }],
+        firstExecution: first,
+      }),
+    )
+    const ex = (c: FirstExecutionCandidate): ExerciseExecution => ({
+      date: c.performed_on,
+      exerciseId: 'bench',
+      seanceId: 'A',
+      id: c.id,
+      startedAt: c.started_at ?? undefined,
+      sets: [{ weightKg: 80, reps: 5, rir: 1, order: 1 }],
+    })
+    const options = summarizeBlockSeances([ex(tokyo), ex(losAngeles)], 'bench', blocks)
+    expect(options.map((o) => o.pointCount)).toEqual([2])
+  })
+})
+
+// Constat D8 de l'audit du 2026-11-22 : un exo saisi à 0 kg avait une courbe
+// plate à 0, un chiffre héros « 0 » et une pente indisponible même sur cinq séances.
+describe('analyzeExecutions : exo saisi à 0 kg', () => {
+  const bw = (date: string, reps: number, seanceId = 's-upper'): ExerciseExecution => ({
+    date,
+    exerciseId: 'bench',
+    sets: [{ weightKg: 0, reps, rir: 0, order: 1 }],
+    createdAt: `${date}T10:00:00.000Z`,
+    id: `e-${date}-${seanceId}`,
+    seanceId,
+  });
+
+  it('jamais chargé : courbe et pente en reps effectives, unité dite', () => {
+    const analysis = analyzeExecutions(
+      exercise,
+      [
+        bw('2026-07-01', 8),
+        bw('2026-07-08', 9),
+        bw('2026-07-15', 10),
+        bw('2026-07-22', 11),
+        bw('2026-07-29', 12),
+      ],
+      names,
+    );
+    expect(analysis.unit).toBe('reps');
+    expect(analysis.zeroLoadHoles).toBe(0);
+    const curve = analysis.seanceCurves[0]!;
+    expect(curve.curve.map((p) => p.e1rm)).toEqual([8, 9, 10, 11, 12]);
+    expect(curve.weeklyRate).not.toBeNull();
+    expect(curve.weeklyRate!).toBeGreaterThan(0);
+  });
+
+  it('chargé dans une autre séance : toute la carte en kg, les séances à 0 kg comptées en trous', () => {
+    const analysis = analyzeExecutions(
+      exercise,
+      [
+        bw('2026-07-01', 8, 's-fullbody'),
+        bw('2026-07-08', 9, 's-fullbody'),
+        execution('2026-07-03', 5, 's-upper'),
+        execution('2026-07-10', 7.5, 's-upper'),
+      ],
+      names,
+    );
+    expect(analysis.unit).toBe('kg');
+    // La séance restée à 0 kg n'a plus de courbe : elle ne se superpose pas, en
+    // reps, à une courbe en kilos.
+    expect(analysis.seanceCurves.map((c) => c.seanceId)).toEqual(['s-upper']);
+    expect(analysis.zeroLoadHoles).toBe(2);
+  });
+});
+
+// Constat D9 de l'audit du 2026-11-22 : la pente du badge couvrait tout
+// l'historique de la séance. Elle porte sur le bloc en cours (ADR 0016,
+// amendement du 2026-11-23).
+describe('analyzeExecutions : la pente porte sur le bloc en cours', () => {
+  /** Jour ISO `start` + `days`. */
+  const plus = (start: string, days: number) =>
+    new Date(Date.parse(start) + days * 86_400_000).toISOString().slice(0, 10);
+  const current = (start: string, startAt?: string): Block => ({
+    configId: 'c2',
+    start,
+    end: null,
+    ...(startAt ? { startAt } : {}),
+  });
+
+  it('20 semaines à plat puis 6 semaines à +2 kg : la pente est celle du nouveau plan', () => {
+    const flat = Array.from({ length: 20 }, (_, i) =>
+      execution(plus('2026-01-05', i * 7), 100, 's-upper'),
+    );
+    const rising = Array.from({ length: 6 }, (_, i) =>
+      execution(plus('2026-05-25', i * 7), 100 + 2 * i, 's-upper'),
+    );
+    const all = [...flat, ...rising];
+
+    const whole = analyzeExecutions(exercise, all, names).seanceCurves[0]!;
+    const scoped = analyzeExecutions(exercise, all, names, current('2026-05-25')).seanceCurves[0]!;
+
+    // Sur tout l'historique, le nouveau plan est noyé : stagnation.
+    expect(whole.weeklyRate!).toBeLessThan(0.5);
+    expect(scoped.weeklyRate!).toBeGreaterThan(1.5);
+    expect(scoped.ratePeriod).toEqual({ since: '2026-05-25', sessions: 6 });
+    // La courbe, elle, garde tout l'historique.
+    expect(scoped.curve).toHaveLength(26);
+  });
+
+  it('bloc trop court : pas de pente, et surtout pas celle de tout l’historique', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+      execution('2026-03-02', 95, 's-upper'),
+      execution('2026-03-09', 97, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, current('2026-03-01')).seanceCurves[0]!;
+    expect(curve.weeklyRate).toBeNull();
+    expect(curve.ratePeriod).toEqual({ since: '2026-03-01', sessions: 2 });
+  });
+
+  it('séance jamais faite depuis le début du bloc : zéro séance, pas de pente', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, current('2026-03-01')).seanceCurves[0]!;
+    expect(curve.weeklyRate).toBeNull();
+    expect(curve.ratePeriod).toEqual({ since: '2026-03-01', sessions: 0 });
+  });
+
+  it('chaque séance a sa pente, lue dans le même bloc', () => {
+    const all = [
+      execution('2026-03-02', 80, 's-upper'),
+      execution('2026-03-09', 82, 's-upper'),
+      execution('2026-03-16', 84, 's-upper'),
+      execution('2026-03-04', 70, 's-fullbody'),
+      execution('2026-02-01', 60, 's-fullbody'),
+    ];
+    const { seanceCurves } = analyzeExecutions(exercise, all, names, current('2026-03-01'));
+    const upper = seanceCurves.find((c) => c.seanceId === 's-upper')!;
+    const fullbody = seanceCurves.find((c) => c.seanceId === 's-fullbody')!;
+    expect(upper.ratePeriod.sessions).toBe(3);
+    expect(upper.weeklyRate!).toBeGreaterThan(0);
+    expect(fullbody.ratePeriod.sessions).toBe(1);
+    expect(fullbody.weeklyRate).toBeNull();
+  });
+
+  it('rattachement par instant : la séance lancée avant la retouche du même jour reste hors du bloc', () => {
+    const before: ExerciseExecution = {
+      ...execution('2026-03-01', 100, 's-upper', 'e-avant'),
+      startedAt: '2026-03-01T17:00:00.000Z',
+    };
+    const after: ExerciseExecution = {
+      ...execution('2026-03-01', 101, 's-upper', 'e-apres'),
+      startedAt: '2026-03-01T19:00:00.000Z',
+    };
+    const curve = analyzeExecutions(
+      exercise,
+      [before, after],
+      names,
+      current('2026-03-01', '2026-03-01T18:30:00.000Z'),
+    ).seanceCurves[0]!;
+    expect(curve.curve).toHaveLength(2);
+    expect(curve.ratePeriod.sessions).toBe(1);
+  });
+
+  it('compte sans aucun bloc : la pente couvre tout l’historique, période sans début', () => {
+    const all = [
+      execution('2026-01-05', 100, 's-upper'),
+      execution('2026-01-12', 102, 's-upper'),
+      execution('2026-01-19', 104, 's-upper'),
+    ];
+    const curve = analyzeExecutions(exercise, all, names, null).seanceCurves[0]!;
+    expect(curve.weeklyRate!).toBeGreaterThan(0);
+    expect(curve.ratePeriod).toEqual({ since: null, sessions: 3 });
+  });
+});
+

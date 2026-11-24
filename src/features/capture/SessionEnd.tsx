@@ -13,6 +13,8 @@ import { useState } from 'react';
 import { Stepper } from './Stepper';
 import { MetricRow } from './MetricRow';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
+import { formatCount } from './format';
+import { errorMessage } from '../../lib/error-message';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
@@ -22,7 +24,10 @@ export interface SessionEndValues {
 /** Récap sobre de l'exécution close : exos faits / total + décompte des séries. */
 export interface SessionSummary {
   sessionName: string;
+  /** Exos dont le minimum prescrit est atteint. Un exo passé n'en fait pas partie. */
   exercisesDone: number;
+  /** Exos explicitement passés, sans égard à leurs séries : affichés à part. */
+  exercisesSkipped: number;
   exercisesTotal: number;
   /**
    * Total des séries selon la règle de décompte pondérée par reps (issue #60,
@@ -62,15 +67,6 @@ function intFormat(value: number): string {
   return String(Math.round(value));
 }
 
-/**
- * Format d'un décompte de séries FRACTIONNAIRE (issue #60, pondération par reps) :
- * une décimale, virgule décimale FR (jamais de point, jamais de tiret long, cf.
- * DESIGN.md). Ex. « 1,8 ».
- */
-function fmtCount(value: number): string {
-  return value.toFixed(1).replace('.', ',');
-}
-
 export function SessionEnd({
   summary,
   durationMin,
@@ -95,7 +91,7 @@ export function SessionEnd({
       await onSave(values);
       setSaved(values);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -232,11 +228,16 @@ function SummaryCard({
           {summary.exercisesDone}
           <span className="text-base text-ink-muted">/{summary.exercisesTotal}</span>
         </p>
+        {summary.exercisesSkipped > 0 && (
+          <p className="mt-0.5 text-xs text-ink-muted">
+            dont {summary.exercisesSkipped} passé{summary.exercisesSkipped > 1 ? 's' : ''}
+          </p>
+        )}
       </div>
       <div className="surface-card rounded-2xl px-4 py-3.5">
         <p className="text-xs font-medium text-ink-muted">Séries loggées</p>
         <p className="readout mt-1 text-2xl font-medium tabular-nums text-ink">
-          {fmtCount(summary.totalSets)}
+          {formatCount(summary.totalSets)}
         </p>
       </div>
       {durationMin != null && (
@@ -287,7 +288,7 @@ function MuscleBreakdown({ setsByMuscle }: { setsByMuscle: Record<string, number
               <div className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-sm text-ink">{muscle}</span>
                 <span className="readout shrink-0 text-[13px] tabular-nums text-ink">
-                  {fmtCount(value)}
+                  {formatCount(value)}
                 </span>
               </div>
               <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2">
@@ -326,7 +327,7 @@ function SessionDone({
   const hasBpm = typeof values.bpmAvg === 'number';
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-12 pt-10">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-12 pt-10">
       <div className="flex flex-col items-center text-center">
         <span
           className="flex h-14 w-14 items-center justify-center rounded-full border text-good"

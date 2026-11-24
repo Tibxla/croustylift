@@ -23,6 +23,7 @@
 // identité (rowId) pour rester éditable indépendamment.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClusterStepper } from '../capture/ClusterStepper';
+import { formatCount } from '../capture/format';
 import { listExercises } from '../capture/data';
 import { NoteField } from '../notes/NoteField';
 import { loadExerciseNote, saveExerciseNote } from '../notes/data';
@@ -46,7 +47,24 @@ import {
   rowsToPlannedExercises,
   moveRow,
 } from './prescription-edit';
+import {
+  hasPrescriptionChanges,
+  editingResumed,
+  hasUnsavedEdits,
+  leavePrompt,
+  noteDraftExerciseIds,
+  saveControl,
+  saveFailed,
+  SAVE_BUSY,
+  SAVE_DONE,
+  SAVE_IDLE,
+  type SaveStatus,
+  requestLeave,
+  setLeaveGuard,
+} from './seance-dirty';
+import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
 import { countPlannedSets, type CountRange } from '../../domain/set-count';
+import { errorMessage } from '../../lib/error-message';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 
@@ -124,7 +142,7 @@ export function SeanceEditor({ seanceId, seanceName, onBack }: SeanceEditorProps
         setLoad({ phase: 'ready', rows, catalogue, notes });
       } catch (err) {
         if (!active) return;
-        setLoad({ phase: 'error', message: errMessage(err) });
+        setLoad({ phase: 'error', message: errorMessage(err) });
       }
     })();
 
@@ -197,6 +215,9 @@ export interface PersonalExerciseFormInput {
   unilateral: boolean;
 }
 
+/** Raison du blocage de rechargement tenu par une séance modifiée et non enregistrée. */
+const SEANCE_DRAFT_BLOCK = 'brouillon-seance';
+
 export interface SeanceEditorViewProps {
   seanceName: string;
   initialRows: EditorRow[];
@@ -231,10 +252,26 @@ export function SeanceEditorView({
   makeRowId,
 }: SeanceEditorViewProps) {
   const [rows, setRows] = useState<EditorRow[]>(initialRows);
+  // Dernières lignes ENREGISTRÉES : la base de comparaison du drapeau « modifié ».
+  // Elle avance à chaque enregistrement réussi, sinon le retour différé qui suit
+  // demanderait de confirmer la perte d'une saisie déjà enregistrée.
+  const [savedRows, setSavedRows] = useState<EditorRow[]>(initialRows);
+  const dirty = hasPrescriptionChanges(savedRows, rows);
+  // Navigation en attente de confirmation (retour ou changement d'onglet), tant
+  // que des modifications ne sont pas enregistrées.
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
   // Notes d'instructions par exo (issue #26), éditées et sauvegardées à part du
   // versionnage des prescriptions. Une note vaut pour TOUTES les lignes du même
   // exo (exercise_notes est unique par exo).
   const [notes, setNotes] = useState<Record<string, string>>(initialNotes);
+  // Brouillons des notes, par exo : tenus ICI et non dans le champ, pour que la
+  // garde de sortie et le blocage de rechargement les voient. Un brouillon
+  // survit ainsi au repli de la carte, et deux lignes du même exo partagent le
+  // même texte en cours.
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  // Quitter perdrait-il une saisie ? Prescriptions modifiées OU brouillon de
+  // note. « Enregistrer » reste sur `dirty` seul (cf. seance-dirty).
+  const unsaved = hasUnsavedEdits({ savedRows, rows, savedNotes: notes, noteDrafts });
   // Catalogue local : on y ajoute les exos perso créés à la volée, sans recharger.
   const [catalog, setCatalog] = useState<CatalogueExercise[]>(() =>
     catalogue.map((e) => ({
@@ -246,11 +283,7 @@ export function SeanceEditorView({
     })),
   );
   const [adding, setAdding] = useState(false);
-  const [save, setSave] = useState<{ busy: boolean; error: string | null; done: boolean }>({
-    busy: false,
-    error: null,
-    done: false,
-  });
+  const [save, setSave] = useState<SaveStatus>(SAVE_IDLE);
 
   // Scroll vers le bas après un ajout (issue #57) : enchaîner les ajouts sans
   // scroller à la main. On compte les ajouts (et non rows.length, qui bouge aussi
@@ -271,6 +304,32 @@ export function SeanceEditorView({
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
     };
   }, []);
+
+  // Garde de sortie (cf. seance-dirty) : tant que l'éditeur porte une saisie non
+  // enregistrée (prescriptions ou note), toute navigation qui le ferait
+  // disparaître passe par la confirmation ci-dessous.
+  useEffect(() => {
+    if (!unsaved) return;
+    setLeaveGuard((proceed) => {
+      // La confirmation vit dans l'écran principal : on referme la feuille
+      // d'ajout, sinon la demande resterait en attente sans rien afficher.
+      setAdding(false);
+      setPendingLeave(() => proceed);
+    });
+    return () => setLeaveGuard(null);
+  }, [unsaved]);
+
+  // Tant que l'éditeur porte une saisie non enregistrée (prescriptions ou note),
+  // aucun rechargement automatique (nouvelle version en attente) : elle ne vit
+  // qu'en mémoire. Levé dès qu'il n'y en a plus (enregistrement) et au
+  // démontage ; `releaseDraft` le lève tout de suite à l'abandon confirmé (cf.
+  // pwa/useReloadBlockWhile).
+  const releaseDraft = useReloadBlockWhile(SEANCE_DRAFT_BLOCK, unsaved);
+
+  function requestBack() {
+    if (unsaved) setPendingLeave(() => onBack);
+    else onBack();
+  }
 
   function updateRow(rowId: string, key: FieldKey, next: FieldValue) {
     setRows((prev) =>
@@ -311,19 +370,34 @@ export function SeanceEditorView({
   }
 
   async function handleSave() {
-    setSave({ busy: true, error: null, done: false });
+    setSave(SAVE_BUSY);
     try {
       await onSave(rows);
-      setSave({ busy: false, error: null, done: true });
-      // Laisse la confirmation visible un instant, puis retour.
+      setSavedRows(rows);
+      setPendingLeave(null); // plus rien à perdre : une confirmation ouverte tombe.
+      setSave(SAVE_DONE);
+      // Laisse la confirmation visible un instant, puis retour. Par la garde de
+      // sortie : s'il reste le brouillon d'une note, elle demande avant de partir.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
-      backTimerRef.current = setTimeout(onBack, 900);
+      backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
     } catch (err) {
-      setSave({ busy: false, error: errMessage(err), done: false });
+      setSave(saveFailed(errorMessage(err)));
     }
   }
 
   const empty = rows.length === 0;
+  // Textes de la confirmation de sortie : quand seule une note est en jeu (cas
+  // du retour différé après un enregistrement réussi), elle le dit.
+  const prompt = pendingLeave
+    ? leavePrompt({
+        prescriptions: dirty,
+        noteDraftNames: noteDraftExerciseIds(
+          notes,
+          noteDrafts,
+          rows.map((r) => r.exerciseId),
+        ).map((id) => rows.find((r) => r.exerciseId === id)?.exerciseName ?? ''),
+      })
+    : null;
 
   if (adding) {
     return (
@@ -341,8 +415,8 @@ export function SeanceEditorView({
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-40 pt-3">
-      <BackButton label="Retour aux séances" onClick={onBack} />
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-40 pt-3">
+      <BackButton label="Retour aux séances" onClick={requestBack} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
         {seanceName}
@@ -367,6 +441,10 @@ export function SeanceEditorView({
                   isFirst={index === 0}
                   isLast={index === rows.length - 1}
                   note={notes[row.exerciseId] ?? ''}
+                  noteDraft={noteDrafts[row.exerciseId] ?? notes[row.exerciseId] ?? ''}
+                  onNoteDraft={(body) =>
+                    setNoteDrafts((prev) => ({ ...prev, [row.exerciseId]: body }))
+                  }
                   onMove={(direction) => setRows((prev) => moveRow(prev, index, direction))}
                   onRemove={() => setRows((prev) => prev.filter((r) => r.rowId !== row.rowId))}
                   onField={(key, next) => updateRow(row.rowId, key, next)}
@@ -405,7 +483,7 @@ export function SeanceEditorView({
               <PlusIcon />
               Ajouter
             </button>
-            {save.done ? (
+            {saveControl(save, dirty) === 'saved' ? (
               <p
                 className="surface-card flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl text-base font-semibold text-good"
                 role="status"
@@ -418,14 +496,16 @@ export function SeanceEditorView({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={empty || save.busy}
+                disabled={empty || save.busy || !dirty}
                 className="btn btn-primary h-12 flex-1 rounded-2xl text-base disabled:bg-none disabled:bg-surface disabled:text-ink-muted disabled:opacity-100 disabled:shadow-none"
               >
                 {save.busy
                   ? 'Enregistrement…'
                   : empty
                     ? 'Ajoute au moins un exercice'
-                    : 'Enregistrer'}
+                    : dirty
+                      ? 'Enregistrer'
+                      : 'Aucune modification'}
               </button>
             )}
           </div>
@@ -433,6 +513,44 @@ export function SeanceEditorView({
             <p className="readout mt-2 break-words text-xs text-warn" role="alert">
               {save.error}
             </p>
+          )}
+          {/* Confirmation INLINE avant de perdre une saisie (jamais window.confirm). */}
+          {pendingLeave && prompt && (
+            <div className="mt-2 rounded-xl bg-surface-2/60 p-3" role="alertdialog" aria-label={prompt.label}>
+              <p className="text-sm text-ink">{prompt.title}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">{prompt.detail}</p>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingLeave(null);
+                    // L'éditeur reste ouvert : « Séance enregistrée. » rend sa
+                    // place au bouton (cf. seance-dirty, `editingResumed`).
+                    setSave(editingResumed);
+                  }}
+                  className="btn btn-secondary h-11 flex-1 rounded-xl px-4 text-sm font-medium"
+                >
+                  Continuer l&apos;édition
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const leave = pendingLeave;
+                    setPendingLeave(null);
+                    // La garde tombe avec l'écran ; on la retire tout de suite
+                    // pour que la sortie confirmée ne repasse pas par elle. Le
+                    // blocage de rechargement aussi : la saisie est abandonnée,
+                    // et un changement d'onglet peut recharger dans la foulée.
+                    setLeaveGuard(null);
+                    releaseDraft();
+                    leave();
+                  }}
+                  className="btn btn-ghost h-11 rounded-xl px-4 text-sm font-medium text-warn"
+                >
+                  Quitter
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -455,13 +573,9 @@ function fmtField(v: FieldValue): string {
  * fixe), sinon « 1,8-2,4 » (trait d'union court, jamais de tiret long, cf.
  * DESIGN.md). Les bornes égales après arrondi s'affichent en valeur unique.
  */
-function fmtCount(value: number): string {
-  return value.toFixed(1).replace('.', ',');
-}
-
 function fmtCountRange(range: CountRange): string {
-  const min = fmtCount(range.min);
-  const max = fmtCount(range.max);
+  const min = formatCount(range.min);
+  const max = formatCount(range.max);
   return min === max ? min : `${min}-${max}`;
 }
 
@@ -550,6 +664,8 @@ function ExerciseRowCard({
   isFirst,
   isLast,
   note,
+  noteDraft,
+  onNoteDraft,
   onMove,
   onRemove,
   onField,
@@ -561,6 +677,9 @@ function ExerciseRowCard({
   isLast: boolean;
   /** Note d'instructions de l'exo (issue #26), '' si aucune. */
   note: string;
+  /** Texte en cours de saisie de la note (égal à `note` tant qu'elle n'est pas touchée). */
+  noteDraft: string;
+  onNoteDraft: (body: string) => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
   onField: (key: FieldKey, next: FieldValue) => void;
@@ -631,6 +750,8 @@ function ExerciseRowCard({
             <ExerciseNoteEditor
               exerciseName={row.exerciseName}
               note={note}
+              draft={noteDraft}
+              onDraftChange={onNoteDraft}
               onSave={onSaveNote}
             />
           </div>
@@ -693,17 +814,23 @@ function ExerciseRowCard({
  * l'exo lui-même, pas pour cette version de séance. Vider puis enregistrer
  * efface la note. Texte libre : <textarea> légitime (le ban clavier OS ne vise
  * que les chiffres mesurés).
+ *
+ * Le texte en cours (`draft`) appartient à l'éditeur de séance, pas à ce champ :
+ * la garde de sortie et le blocage de rechargement doivent le voir.
  */
 function ExerciseNoteEditor({
   exerciseName,
   note,
+  draft,
+  onDraftChange,
   onSave,
 }: {
   exerciseName: string;
   note: string;
+  draft: string;
+  onDraftChange: (body: string) => void;
   onSave: (body: string) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(note);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -728,7 +855,7 @@ function ExerciseNoteEditor({
       if (savedTimerRef.current != null) clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => setSaved(false), 1600);
     } catch (err) {
-      setError(errMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -743,7 +870,7 @@ function ExerciseNoteEditor({
         value={draft}
         placeholder="Prise serrée, coudes rentrés, descente contrôlée."
         rows={3}
-        onChange={setDraft}
+        onChange={onDraftChange}
       />
       <div className="mt-2.5 flex items-center justify-end gap-2">
         {saved && !dirty && (
@@ -917,7 +1044,7 @@ function AddExerciseSheet({
   }, [catalogue, query, muscle]);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col px-4 pb-8 pt-3">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col px-4 pb-8 pt-3">
       <BackButton label="Retour à la séance" onClick={onCancel} />
 
       <h2 className="mt-1 text-3xl font-semibold leading-tight tracking-[-0.025em] text-ink">
@@ -1200,7 +1327,7 @@ function ScreenError({
   onRetry: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="mx-auto flex min-h-surface w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
       <p className="text-sm text-ink-muted">{intro}</p>
       <p className="readout max-w-full break-words text-xs text-warn">{message}</p>
       <button
@@ -1212,8 +1339,4 @@ function ScreenError({
       </button>
     </div>
   );
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

@@ -3,7 +3,10 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { defaultSide, nextOrderForSide } from '../../domain/unilateral';
 import type { Session } from './fixtures';
+import type { OutboxOp } from './outbox';
 import { loadLocalAccount } from '../../lib/local-account';
+import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
+import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 /** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
 export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
@@ -40,6 +43,22 @@ export interface ExerciseProgress {
   skipped: boolean;
 }
 
+/**
+ * Un geste d'édition de la séance en cours (issue #36) : un exo AJOUTÉ à la fin,
+ * ou un exo du plan REMPLACÉ par un autre (`replaces`). Il porte ce qu'il faut du
+ * catalogue pour reconstruire l'exo sans le relire (nom, unilatéral, muscles) :
+ * la séance s'ouvre sur les copies locales, sans dépendre du catalogue.
+ */
+export interface LayoutEdit {
+  kind: 'added' | 'swapped';
+  exerciseId: string;
+  name: string;
+  unilateral: boolean;
+  primaryMuscles: string[];
+  /** Pour un remplacement : l'exo du plan dont celui-ci prend la place. */
+  replaces?: string;
+}
+
 export interface CaptureState {
   sessionId: string;
   /**
@@ -53,6 +72,30 @@ export interface CaptureState {
   executionId: string;
   /** Date ISO 'YYYY-MM-DD' de l'exécution. */
   date: string;
+  /**
+   * La version de séance sous laquelle l'exécution est NÉE. Une exécution n'en
+   * change jamais (ADR 0021), alors que la séance peut être retouchée en plein
+   * entraînement : la Capture remontée doit recharger le template de CETTE
+   * version, pas celui de la version courante, sinon l'écran montre un plan que
+   * l'exécution ne suit pas. Absent d'un état persisté avant ce champ (repli :
+   * `adoptedVersionId`).
+   */
+  seanceVersionId?: string;
+  /**
+   * DISPOSITION de la séance : le journal des exos ajoutés ou remplacés en cours
+   * de séance, dans l'ordre des gestes. La séance affichée vaut le template plus
+   * ce journal, rien d'autre (`replayLayout`, session-edit.ts). Avant, ces gestes
+   * ne vivaient que dans l'état React de l'écran : au changement d'onglet ou au
+   * rechargement, la séance était reconstruite depuis le seul template, l'exo
+   * ajouté disparaissait du sélecteur et ses séries sortaient du récap.
+   *
+   * Persistée AVEC l'état, donc liée à l'id d'exécution qu'il porte : elle ne se
+   * rejoue jamais sur une autre exécution (la fusion garde celle de l'état local,
+   * un état abandonné l'emporte avec lui). MÊME TÉLÉPHONE seulement : un autre
+   * appareil qui reprend la séance n'a pas ce journal et ne montre que le
+   * template ; on ne reconstruit pas la disposition depuis les séries en base.
+   */
+  layout?: LayoutEdit[];
   /**
    * Horodatage du LANCEMENT de la session de capture (epoch ms, `Date.now()`).
    * Sert à chronométrer la durée auto : `durationMin = round((Date.now() - startedAt) / 60000)`
@@ -97,6 +140,27 @@ export type CaptureAction =
   | { type: 'set-dated-note'; exerciseId: string; noteId: string; body: string }
   | { type: 'skip-exercise'; exerciseId: string }
   | { type: 'unskip-exercise'; exerciseId: string }
+  // Réponse TARDIVE de la base pour l'exécution en cours (ouverture bornée à
+  // 3 s) : le réalisé est réconcilié par identifiant (cf. `reconcileProgress`).
+  // Rien d'autre ne bouge : exo ouvert, disposition, notes, chrono.
+  | {
+      type: 'reconcile-progress';
+      base: Record<string, HydratedProgress>;
+      pendingSetIds: string[];
+      knownAtDeparture: string[];
+      /** Notes datées de la base pour cette exécution, par exo (cf. `reconcileDatedNotes`). */
+      datedNotes?: Record<string, DatedNoteDraft>;
+      /** Exos (et ids de notes) dont une écriture de note attend encore en file. */
+      pendingNoteKeys?: string[];
+      /**
+       * Écritures de séries qui chevauchent la lecture (file relevée avant, après,
+       * et à l'arrivée de la réponse) : réappliquées sur le réalisé réconcilié,
+       * avec leurs valeurs et rangs complets (cf. `applyQueuedSets`).
+       */
+      queuedOps?: OutboxOp[];
+    }
+  // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
+  | { type: 'edit-layout'; edit: LayoutEdit }
   // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
   | { type: 'reset'; executionId: string }
   // Réancre le chrono (ADR 0011) : pose `startedAt` (epoch ms fourni par le
@@ -247,6 +311,45 @@ export function isExecutionStarted(
 }
 
 /**
+ * L'état est-il INTACT, tel qu'à l'ouverture d'une séance neuve : rien de
+ * saisi (ni série, ni note datée), aucun exo ouvert, passé, ajouté ou remplacé ?
+ * C'est la condition pour l'abandonner sans rien perdre de ce que l'utilisateur
+ * a fait (adoption tardive d'une exécution trouvée en base, cf. CaptureScreen).
+ */
+export function isPristine(state: CaptureState): boolean {
+  if (state.activeExerciseId !== null) return false;
+  if ((state.layout?.length ?? 0) > 0) return false;
+  if (Object.keys(state.datedNotes).length > 0) return false;
+  return Object.values(state.progress).every((p) => p.sets.length === 0 && !p.skipped);
+}
+
+/**
+ * Peut-on ADOPTER l'exécution du jour que la base vient de rendre, trop tard
+ * pour l'ouverture, à la place de l'exécution provisoire `provisionalExecutionId`
+ * sous laquelle la séance s'est ouverte ? Seulement si rien n'a été fait sous
+ * l'id provisoire : aucune saisie partie (`isExecutionStarted`), et un tableau
+ * intact (`isPristine`).
+ *
+ * `current` : l'état COURANT du tableau monté, pas sa copie enregistrée. Stockage
+ * plein, l'écriture de l'état est refusée : la copie paraissait intacte alors
+ * que l'utilisateur avait ouvert un exo ou en avait ajouté un, et l'adoption
+ * remontait le tableau en jetant ces gestes. `null` : le tableau n'est pas
+ * encore monté, rien n'a donc pu y être fait.
+ */
+export function canAdoptLateExecution(
+  current: CaptureState | null,
+  provisionalExecutionId: string,
+  pendingOps: readonly OutboxOp[],
+): boolean {
+  if (current === null) {
+    return !pendingOps.some((op) => op.type === 'upsertExecution' && op.id === provisionalExecutionId);
+  }
+  if (current.executionId !== provisionalExecutionId) return false;
+  if (isExecutionStarted(current, null, pendingOps)) return false;
+  return isPristine(current);
+}
+
+/**
  * Faut-il RÉANCRER le chrono sur le set qu'on logge (ADR 0011) ? Seulement si le
  * lancement a expiré (plus d'1 h) ET que l'exécution n'est pas encore née : un
  * lancement oublié, jamais suivi d'un set. Une séance entamée garde son
@@ -260,6 +363,66 @@ export function shouldReanchorLaunch(
   now = Date.now(),
 ): boolean {
   return !executionStarted && now - state.startedAt > LAUNCH_EXPIRY_MS;
+}
+
+/**
+ * La version de séance dont la Capture doit charger le template : celle de
+ * l'exécution ADOPTÉE, pas forcément la version courante (ADR 0021 : une
+ * exécution garde sa version de naissance, même si la séance est retouchée en
+ * plein entraînement). L'identité et la version se résolvent ensemble, dans
+ * l'ordre de priorité de la fusion (`mergeProgress`) :
+ *   1. un état local existe : c'est SON exécution qui est adoptée. Sa version
+ *      est celle qu'il porte ; à défaut (état persisté avant ce champ), celle de
+ *      son `upsertExecution` encore en file ; à défaut, celle de la base si elle
+ *      a rendu la MÊME exécution ;
+ *   2. pas d'état local : l'exécution ouverte que la base a rendue, donc sa version ;
+ *   3. rien de tout cela (séance neuve, ou version inconnue) : la version courante.
+ * `pendingOps` : la file d'écritures (seuls `type`, `id` et `seanceVersionId` lus).
+ */
+export function adoptedVersionId(input: {
+  restored: CaptureState | null;
+  pendingOps: readonly { type: string; id: string; seanceVersionId?: string }[];
+  today: { executionId: string; seanceVersionId: string | null } | null;
+  currentVersionId: string;
+}): string {
+  const { restored, pendingOps, today, currentVersionId } = input;
+  if (restored) {
+    if (restored.seanceVersionId) return restored.seanceVersionId;
+    const queued = pendingOps.find(
+      (op) => op.type === 'upsertExecution' && op.id === restored.executionId,
+    );
+    if (queued?.seanceVersionId) return queued.seanceVersionId;
+    if (today && today.executionId === restored.executionId && today.seanceVersionId) {
+      return today.seanceVersionId;
+    }
+    return currentVersionId;
+  }
+  return today?.seanceVersionId ?? currentVersionId;
+}
+
+/**
+ * Les versions de séance que portent les états de capture persistés (séances en
+ * cours sur l'appareil) : leurs templates ne doivent pas être évincés du cache
+ * de lecture, même s'ils ne sont plus ceux de la version courante.
+ */
+export function persistedVersionIds(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  const ids = new Set<string>();
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<CaptureState> | null;
+        if (typeof parsed?.seanceVersionId === 'string') ids.add(parsed.seanceVersionId);
+      } catch {
+        // État illisible : rien à en tirer.
+      }
+    }
+  } catch {
+    /* no-op */
+  }
+  return [...ids];
 }
 
 /**
@@ -390,7 +553,11 @@ export function hydratedState(
 /**
  * Fusionne deux états « en cours » au montage : `a` = hydraté de Supabase (fait
  * foi au reload), `b` = restauré du localStorage (filet offline : écriture pas
- * encore synchronisée, survie au background). Pour chaque exo on garde le réalisé
+ * encore synchronisée, survie au background). Pour le RÉALISÉ, cette fusion par
+ * longueur n'est que le repli sans réponse de la base : quand elle a répondu
+ * pour la même exécution, l'appelant remplace le réalisé fusionné par
+ * `reconcileProgress` (la base fait foi, plus les écritures en attente).
+ * Pour chaque exo on garde le réalisé
  * le plus avancé, ET on aligne les `setIds` index par index pour qu'AUCUNE série
  * affichée ne reste sans id annulable (bug H2/F1) :
  *   - longueurs différentes → on garde la source la plus longue (le réalisé le
@@ -428,11 +595,214 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
   return {
     ...a,
     executionId: b.executionId,
+    // La version suit l'exécution : celle de l'état local, comme son id.
+    seanceVersionId: b.seanceVersionId ?? a.seanceVersionId,
+    // La disposition aussi : seul l'état local la connaît (cf. `layout`).
+    layout: b.layout,
     startedAt: b.startedAt,
     progress,
     datedNotes,
     closedAt: null,
   };
+}
+
+/**
+ * Applique au réalisé les écritures de SÉRIES de l'exécution `executionId` qui
+ * attendent encore en file, dans l'ordre de la file : `insertSet` pose la série
+ * (ou remplace celle du même id), `deleteSet` la retire.
+ *
+ * Pourquoi : une série peut être ajoutée à l'exécution en cours depuis le
+ * Journal. Tant que son insertion attend (hors ligne surtout), elle n'est ni en
+ * base ni dans l'état de la Capture, qui ne connaît que ses propres saisies : le
+ * tableau repris l'ignorait, et la série suivante prenait SON rang (deux lignes
+ * au même rang en base une fois la file vidée). Vaut que la base ait répondu ou
+ * non. Une série déjà présente n'est pas doublée, une série de la Capture dont
+ * la suppression attend sort.
+ *
+ * Les séries d'un exo touché sont retriées par rang, puis gauche avant droite,
+ * comme à la réhydratation. `skipped` est conservé. Rend `progress` lui-même si
+ * la file ne change rien. Pur.
+ */
+export function applyQueuedSets(
+  progress: Record<string, ExerciseProgress>,
+  ops: readonly OutboxOp[],
+  executionId: string,
+): Record<string, ExerciseProgress> {
+  // Séries par id, exo par exo ; une série sans id (cache d'ancien format) garde
+  // une clé de position et ne peut être ni remplacée ni retirée par la file.
+  const rows = new Map<string, { exerciseId: string; set: PerformedSet; id: string | null }>();
+  for (const [exerciseId, entry] of Object.entries(progress)) {
+    entry.sets.forEach((set, index) => {
+      const id = entry.setIds[index] ?? null;
+      rows.set(id ?? `sans-id:${exerciseId}:${index}`, { exerciseId, set, id });
+    });
+  }
+  const touched = new Set<string>();
+  for (const op of ops) {
+    if (op.type === 'insertSet') {
+      if (op.executionId !== executionId) continue;
+      const set: PerformedSet = {
+        weightKg: op.weightKg,
+        reps: op.reps,
+        rir: op.rir,
+        order: op.setOrder,
+        ...(op.side ? { side: op.side } : {}),
+      };
+      const known = rows.get(op.id);
+      if (known && known.exerciseId === op.exerciseId && sameSet(known.set, set)) continue;
+      if (known) touched.add(known.exerciseId);
+      rows.set(op.id, { exerciseId: op.exerciseId, set, id: op.id });
+      touched.add(op.exerciseId);
+    } else if (op.type === 'deleteSet') {
+      const known = rows.get(op.id);
+      if (!known) continue;
+      rows.delete(op.id);
+      touched.add(known.exerciseId);
+    }
+  }
+  if (touched.size === 0) return progress;
+
+  const out: Record<string, ExerciseProgress> = { ...progress };
+  for (const exerciseId of touched) {
+    const mine = [...rows.values()]
+      .filter((row) => row.exerciseId === exerciseId)
+      .sort(
+        (a, b) =>
+          a.set.order - b.set.order ||
+          (a.set.side === 'right' ? 1 : 0) - (b.set.side === 'right' ? 1 : 0),
+      );
+    const skipped = progress[exerciseId]?.skipped ?? false;
+    if (mine.length === 0 && !skipped) {
+      delete out[exerciseId];
+      continue;
+    }
+    out[exerciseId] = { sets: mine.map((r) => r.set), setIds: mine.map((r) => r.id), skipped };
+  }
+  return out;
+}
+
+function sameSet(a: PerformedSet, b: PerformedSet): boolean {
+  return (
+    a.weightKg === b.weightKg &&
+    a.reps === b.reps &&
+    a.rir === b.rir &&
+    a.order === b.order &&
+    (a.side ?? null) === (b.side ?? null)
+  );
+}
+
+/**
+ * RÉCONCILIE les notes datées locales avec celles que la base vient de rendre
+ * pour la MÊME exécution (réponse tardive, tableau déjà monté). Même règle que
+ * la fusion au montage (`mergeProgress`) : le LOCAL prime par exo.
+ *   - un exo sans note locale ADOPTE celle de la base, avec son id. C'est le cas
+ *     d'une note écrite ailleurs (autre appareil, ancien client à id aléatoire)
+ *     que l'état local ignorait : sans cela le champ restait vide et la saisie
+ *     suivante repartait de rien ;
+ *   - un exo qui porte déjà une note locale la GARDE telle quelle, corps vidé
+ *     compris (un effacement est une édition) : la saisie de l'utilisateur ne
+ *     bouge pas sous ses doigts ;
+ *   - un exo dont une écriture de note attend encore en file (`pendingKeys` :
+ *     exos, ou ids de notes pour les ops d'un bundle antérieur) n'adopte rien :
+ *     la base ne connaît pas encore cette écriture, sa version est déjà périmée.
+ * Rend `local` lui-même quand rien n'est adopté. Pur.
+ */
+export function reconcileDatedNotes(
+  local: Record<string, DatedNoteDraft>,
+  base: Record<string, DatedNoteDraft>,
+  pendingKeys: readonly string[],
+): Record<string, DatedNoteDraft> {
+  const pending = new Set(pendingKeys);
+  let next: Record<string, DatedNoteDraft> | null = null;
+  for (const [exerciseId, note] of Object.entries(base)) {
+    if (local[exerciseId] !== undefined) continue;
+    if (pending.has(exerciseId) || pending.has(note.id)) continue;
+    next ??= { ...local };
+    next[exerciseId] = { id: note.id, body: note.body };
+  }
+  return next ?? local;
+}
+
+/**
+ * RÉCONCILIE le réalisé local avec celui que la base vient de rendre pour la
+ * MÊME exécution : la base fait foi pour les séries, et les écritures locales
+ * encore en attente s'appliquent par-dessus, PAR IDENTIFIANT. C'est la règle de
+ * toute reprise où la base a répondu ; `mergeProgress` (« la liste la plus
+ * longue gagne ») ne reste que le repli quand elle n'a pas répondu (hors ligne).
+ *
+ * Avec la seule fusion par longueur, une série supprimée depuis le Journal
+ * (suppression acquittée) revenait en Capture, le cache local étant plus long
+ * que la base ; et une série écrite ailleurs n'entrait que si la base devenait
+ * la plus longue.
+ *
+ * Par exo, le résultat est :
+ *   - les séries de la BASE (déjà purgées des suppressions en attente, cf.
+ *     `withoutPendingDeletions` côté data) ;
+ *   - plus les séries LOCALES inconnues de la base dont l'insertion attend
+ *     encore (`pendingSetIds` : la file lue avant et après la lecture réseau).
+ *     Une série locale que la base n'a pas et que rien n'attend a été supprimée
+ *     ailleurs : elle sort ;
+ *   - une série locale sans id (cache d'ancien format) reste si la base n'a
+ *     rien au même rang et au même côté.
+ * `skipped` vient du local (la base ne le connaît pas).
+ *
+ * RÉPONSE TARDIVE (`knownAtDeparture`) : appliquée à un tableau déjà monté,
+ * elle décrit la base au DÉPART de la lecture, alors que l'utilisateur a pu
+ * saisir depuis. `knownAtDeparture` liste les séries que l'état local portait à
+ * ce départ : une série locale qui n'y est pas a été loggée pendant le trajet,
+ * elle est gardée quoi que dise la réponse ; une série de la réponse qui y était
+ * mais que l'état local n'a plus a été annulée pendant le trajet, elle ne
+ * revient pas. Pur.
+ */
+export function reconcileProgress(
+  local: Record<string, ExerciseProgress>,
+  base: Record<string, HydratedProgress>,
+  options: { pendingSetIds: readonly string[]; knownAtDeparture?: readonly string[] | null },
+): Record<string, ExerciseProgress> {
+  const pending = new Set(options.pendingSetIds);
+  const known = options.knownAtDeparture ? new Set(options.knownAtDeparture) : null;
+  const localIds = new Set<string>();
+  for (const p of Object.values(local)) {
+    for (const id of p.setIds) if (id !== null) localIds.add(id);
+  }
+
+  const out: Record<string, ExerciseProgress> = {};
+  for (const exerciseId of new Set([...Object.keys(local), ...Object.keys(base)])) {
+    const mine = local[exerciseId];
+    const theirs = base[exerciseId];
+    const sets: PerformedSet[] = [];
+    const setIds: (string | null)[] = [];
+    const baseIds = new Set<string>();
+
+    theirs?.sets.forEach((set, i) => {
+      const id = theirs.setIds[i];
+      if (id === undefined) return;
+      baseIds.add(id);
+      // Annulée ici pendant le trajet de la lecture : elle ne revient pas.
+      if (known?.has(id) && !localIds.has(id)) return;
+      sets.push(set);
+      setIds.push(id);
+    });
+
+    mine?.sets.forEach((set, i) => {
+      const id = mine.setIds[i] ?? null;
+      if (id === null) {
+        // Ancien format : gardée seulement si la base n'a rien à cette place.
+        if (sets.some((s) => s.order === set.order && s.side === set.side)) return;
+      } else {
+        if (baseIds.has(id)) return;
+        const loggedSinceDeparture = known !== null && !known.has(id);
+        if (!pending.has(id) && !loggedSinceDeparture) return;
+      }
+      sets.push(set);
+      setIds.push(id);
+    });
+
+    const skipped = mine?.skipped ?? false;
+    if (sets.length === 0 && !skipped) continue;
+    out[exerciseId] = { sets, setIds, skipped };
+  }
+  return out;
 }
 
 /**
@@ -541,6 +911,29 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       };
     }
 
+    case 'reconcile-progress': {
+      // La base fait foi pour les séries qu'elle porte, mais sa réponse date de
+      // son départ : les écritures de séries qui chevauchent la lecture sont
+      // rejouées par-dessus, sinon une correction ou une renumérotation faite
+      // depuis le Journal reprenait ses valeurs d'avant.
+      const reconciled = reconcileProgress(state.progress, action.base, {
+        pendingSetIds: action.pendingSetIds,
+        knownAtDeparture: action.knownAtDeparture,
+      });
+      return {
+        ...state,
+        progress: action.queuedOps
+          ? applyQueuedSets(reconciled, action.queuedOps, state.executionId)
+          : reconciled,
+        datedNotes: action.datedNotes
+          ? reconcileDatedNotes(state.datedNotes, action.datedNotes, action.pendingNoteKeys ?? [])
+          : state.datedNotes,
+      };
+    }
+
+    case 'edit-layout':
+      return { ...state, layout: [...(state.layout ?? []), action.edit] };
+
     case 'close':
       // Fige la clôture EN MÉMOIRE. Tout le reste (réalisé, ids) est conservé : le
       // récap de fin se lit dans la foulée immédiate. Au remontage, rien ne
@@ -563,6 +956,8 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
         activeExerciseId: null,
         progress: {},
         datedNotes: {},
+        // La disposition appartient à l'exécution abandonnée.
+        layout: undefined,
         closedAt: null,
       };
 
@@ -574,7 +969,8 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
 // --- Persistance « survit au background » -----------------------------------
 // L'exécution en cours est sauvée en localStorage et restaurée au montage.
 
-const STORAGE_PREFIX = 'croustylift:capture:';
+/** Préfixe des clés d'état de capture : `croustylift:capture:<séance>:<date>`. */
+export const STORAGE_PREFIX = CAPTURE_STATE_PREFIX;
 
 function storageKey(sessionId: string, date: string): string {
   return `${STORAGE_PREFIX}${sessionId}:${date}`;
@@ -619,6 +1015,33 @@ function normalizeDatedNotes(raw: unknown): Record<string, DatedNoteDraft> {
   return out;
 }
 
+/**
+ * Normalise la disposition lue du cache : ne garde que les gestes bien formés
+ * (un remplacement sans cible n'est pas rejouable). Absente ou vide : pas de champ.
+ */
+function normalizeLayout(raw: unknown): { layout?: LayoutEdit[] } {
+  if (!Array.isArray(raw)) return {};
+  const layout: LayoutEdit[] = [];
+  for (const value of raw) {
+    if (!value || typeof value !== 'object') continue;
+    const e = value as Partial<LayoutEdit>;
+    if (e.kind !== 'added' && e.kind !== 'swapped') continue;
+    if (typeof e.exerciseId !== 'string' || typeof e.name !== 'string') continue;
+    if (e.kind === 'swapped' && typeof e.replaces !== 'string') continue;
+    layout.push({
+      kind: e.kind,
+      exerciseId: e.exerciseId,
+      name: e.name,
+      unilateral: e.unilateral === true,
+      primaryMuscles: Array.isArray(e.primaryMuscles)
+        ? e.primaryMuscles.filter((m): m is string => typeof m === 'string')
+        : [],
+      ...(e.kind === 'swapped' ? { replaces: e.replaces } : {}),
+    });
+  }
+  return layout.length > 0 ? { layout } : {};
+}
+
 /** Charge l'exécution persistée pour cette séance/jour, ou null si rien/invalide. */
 export function loadPersisted(session: Session, date: string): CaptureState | null {
   if (typeof localStorage === 'undefined') return null;
@@ -640,6 +1063,9 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
       // doivent garder le même id à la restauration. Cache pré-executionId (ancien
       // format) : on en forge un neuf pour ne pas casser la session restaurée.
       executionId: typeof parsed.executionId === 'string' ? parsed.executionId : newId(),
+      ...(typeof parsed.seanceVersionId === 'string'
+        ? { seanceVersionId: parsed.seanceVersionId }
+        : {}),
       date,
       // CONSERVE le startedAt persisté (la durée survit au background). Si une
       // session pré-startedAt traînait en cache, on retombe sur « maintenant ».
@@ -651,6 +1077,7 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
         typeof parsed.activeExerciseId === 'string' ? parsed.activeExerciseId : null,
       progress: normalizeProgress(parsed.progress),
       datedNotes: normalizeDatedNotes(parsed.datedNotes),
+      ...normalizeLayout(parsed.layout),
       // NE RESTAURE JAMAIS la clôture (ADR 0009 : clôture transitoire). On ne
       // restaure que l'état d'une séance EN COURS (offline : ne pas perdre les
       // séries loggées sur un reload). Le câblage de persistance nettoie d'ailleurs
@@ -664,22 +1091,121 @@ export function loadPersisted(session: Session, date: string): CaptureState | nu
   }
 }
 
+/** La dernière sauvegarde de l'état de capture a-t-elle été refusée par le stockage ? */
+let persistFailing = false;
+
+/**
+ * Vrai tant que l'état de capture en cours n'a pas pu être écrit sur l'appareil
+ * (stockage plein) : il ne tient qu'en mémoire et ne survivrait pas à la
+ * fermeture de l'app. La bannière de synchro le dit.
+ */
+export function capturePersistFailing(): boolean {
+  return persistFailing;
+}
+
+/**
+ * L'état de capture que le stockage a refusé, RETENU en mémoire tel qu'il devait
+ * être écrit. Sans cela il n'existait que dans le tableau monté : un exo ajouté
+ * à la séance n'alimente pas la file d'écritures, donc rien ne signalait qu'un
+ * rechargement (mise à jour de l'app au changement d'onglet) allait le détruire,
+ * et quitter la Capture le perdait sans nouvel essai. Retenu, il peut être
+ * réécrit plus tard (`retryPersistCaptureState`) et retient le rechargement
+ * tant qu'il ne l'est pas (`hasUnpersistedCaptureState`, pwa/reload-guards).
+ *
+ * Levé dès que l'état est écrit, que sa séance est close, annulée ou supprimée,
+ * ou que le compte est purgé.
+ */
+let unsaved: {
+  key: string;
+  value: string;
+  date: string;
+  executionId: string;
+  exerciseIds: string[];
+} | null = null;
+
+function forgetUnsaved(): void {
+  unsaved = null;
+  persistFailing = false;
+}
+
+/**
+ * Un état de capture ne tient-il qu'en mémoire, faute d'avoir pu être écrit ?
+ * Borné dans le temps : un état d'avant la veille de `today` n'est plus
+ * reprenable (`resolveCaptureDate`), il ne retient donc plus rien. Sans cette
+ * borne, un stockage resté plein sur une séance jamais close retiendrait la
+ * mise à jour de l'app sans fin.
+ */
+export function hasUnpersistedCaptureState(today: string = todayIso()): boolean {
+  return unsaved !== null && unsaved.date >= previousDayIso(today);
+}
+
+/**
+ * Retente d'écrire l'état de capture retenu en mémoire (l'utilisateur a pu
+ * libérer de la place). Rend vrai s'il n'y a plus rien de retenu en sortie.
+ */
+export function retryPersistCaptureState(): boolean {
+  if (unsaved === null) return true;
+  if (typeof localStorage === 'undefined') return false;
+  const { key, value, exerciseIds } = unsaved;
+  const written = writeMakingRoom(() => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, exerciseIds);
+  if (written) forgetUnsaved();
+  return written;
+}
+
+/**
+ * Les exos qu'un état de capture porte : ceux de sa disposition (ajoutés ou
+ * remplaçants, absents du template), ceux qui ont du réalisé, et l'exo ouvert.
+ */
+function captureStateExerciseIds(state: CaptureState): string[] {
+  return [
+    ...(state.layout ?? []).map((edit) => edit.exerciseId),
+    ...Object.keys(state.progress),
+    ...(state.activeExerciseId ? [state.activeExerciseId] : []),
+  ];
+}
+
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
-  try {
-    // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
-    // capture d'un compte sous un autre (cf. `loadPersisted`).
-    const ownerId = loadLocalAccount()?.userId;
-    localStorage.setItem(
-      storageKey(state.sessionId, state.date),
-      JSON.stringify(ownerId ? { ...state, ownerId } : state),
-    );
-  } catch {
-    // Quota plein / mode privé : on dégrade silencieusement, la capture reste en mémoire.
-  }
+  // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
+  // capture d'un compte sous un autre (cf. `loadPersisted`).
+  const ownerId = loadLocalAccount()?.userId;
+  const key = storageKey(state.sessionId, state.date);
+  const value = JSON.stringify(ownerId ? { ...state, ownerId } : state);
+  const write = (): boolean => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // Quota plein : les copies de lecture NON ESSENTIELLES cèdent la place (cf.
+  // cache-eviction : jamais celles du chemin d'ouverture de la Capture), puis
+  // nouvel essai. Si rien n'y fait, la capture reste en mémoire et le refus est
+  // signalé (bannière), au lieu de l'ancienne dégradation muette. Les exos de
+  // CET état ne cèdent jamais leurs copies : c'est souvent l'ajout d'un exo qui
+  // déclenche l'éviction, avant même que sa disposition soit sur l'appareil.
+  const exerciseIds = captureStateExerciseIds(state);
+  persistFailing = !writeMakingRoom(write, exerciseIds);
+  // Refusé : l'état est retenu tel qu'il devait être écrit (cf. `unsaved`).
+  unsaved = persistFailing
+    ? { key, value, date: state.date, executionId: state.executionId, exerciseIds }
+    : null;
 }
 
 export function clearPersisted(session: Session, date: string): void {
+  // La séance est close ou abandonnée : ses exos n'ont plus à être protégés de
+  // l'éviction (cf. cache-eviction).
+  forgetEntrustedExercises();
+  // Ni à être réécrits : l'état retenu en mémoire, s'il est le sien, est levé.
+  if (unsaved?.key === storageKey(session.id, date)) forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(storageKey(session.id, date));
@@ -697,6 +1223,7 @@ export function clearPersisted(session: Session, date: string): void {
  * Clôture et l'Annulation (`clearPersisted`), ciblé par id d'exécution.
  */
 export function clearPersistedExecution(executionId: string): void {
+  if (unsaved?.executionId === executionId) forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     // Collecte avant suppression : retirer en itérant décale les index.
@@ -725,6 +1252,7 @@ export function clearPersistedExecution(executionId: string): void {
  * reste du storage sont purgés ailleurs).
  */
 export function clearCaptureState(): void {
+  forgetUnsaved();
   if (typeof localStorage === 'undefined') return;
   try {
     // Collecte avant suppression : retirer en itérant décale les index.
@@ -732,6 +1260,73 @@ export function clearCaptureState(): void {
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
       if (key !== null && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
+ * Purge l'état de capture du compte reconnu (et les états sans compte, d'un
+ * ancien format), et eux seuls : la capture en cours d'un AUTRE compte, dont les
+ * écritures attendent encore sur l'appareil, reste pour son retour. C'est la
+ * purge de la Déconnexion ; `clearCaptureState` reste celle du forçage.
+ */
+export function clearOwnCaptureState(): void {
+  // L'état retenu en mémoire est celui de la séance en cours du compte reconnu.
+  forgetUnsaved();
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const owner = loadLocalAccount()?.userId;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      let ownerId: unknown;
+      try {
+        ownerId = (JSON.parse(localStorage.getItem(key) ?? 'null') as { ownerId?: unknown } | null)
+          ?.ownerId;
+      } catch {
+        ownerId = undefined; // État illisible : à personne, il part.
+      }
+      if (typeof ownerId !== 'string' || ownerId === owner) keys.push(key);
+    }
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* no-op */
+  }
+}
+
+/**
+ * Retire les états de capture devenus IRRÉCUPÉRABLES : ceux d'avant la veille de
+ * `today`. La reprise ne regarde que le jour même et la veille
+ * (`resolveCaptureDate`) ; au-delà, l'état d'une séance oubliée sans clôture
+ * n'était plus jamais lu ni purgé, et restait en clair sur l'appareil. Ses
+ * écritures ne sont pas concernées : elles vivent dans l'outbox. Seuls les états
+ * du compte reconnu (ou sans compte) partent ; ceux d'un autre compte restent.
+ * Appelée une fois par lancement de l'app, à l'arrivée en Capture.
+ */
+export function pruneStaleCaptureStates(today = todayIso()): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const oldestKept = previousDayIso(today);
+    const owner = loadLocalAccount()?.userId;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(STORAGE_PREFIX)) continue;
+      // Clé : `croustylift:capture:<séance>:<AAAA-MM-JJ>`.
+      const date = key.slice(key.lastIndexOf(':') + 1);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date >= oldestKept) continue;
+      let ownerId: unknown;
+      try {
+        ownerId = (JSON.parse(localStorage.getItem(key) ?? 'null') as { ownerId?: unknown } | null)
+          ?.ownerId;
+      } catch {
+        ownerId = undefined;
+      }
+      if (typeof ownerId !== 'string' || ownerId === owner) keys.push(key);
     }
     for (const key of keys) localStorage.removeItem(key);
   } catch {

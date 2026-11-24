@@ -23,6 +23,8 @@ export interface RawExecutionMetric {
   durationMin: number | null
   /** L'exécution a-t-elle au moins une série loggée ? Sinon : pas un point (orpheline). */
   hasSets: boolean
+  /** Timestamp ISO de création : ordonne deux exécutions du même jour. Optionnel. */
+  createdAt?: string
 }
 
 /** Un point du graphe BPM/durée : la date + les deux métriques (l'une peut manquer). */
@@ -36,12 +38,20 @@ export interface SessionMetricPoint {
 /**
  * Dérive les points BPM/durée des exécutions : garde celles qui ont au moins une
  * des deux métriques, triées par date CROISSANTE (axe temporel, comme les autres
- * graphes de l'analyse). Pure.
+ * graphes de l'analyse), dans l'ordre de création le même jour. Pure.
  */
 export function buildSessionMetrics(
   executions: RawExecutionMetric[],
 ): SessionMetricPoint[] {
-  const points = executions.flatMap((execution) => {
+  // Tri AVANT de réduire aux points : dates ISO 'YYYY-MM-DD' (ordre lexicographique
+  // = chronologique), puis ordre de création le même jour, sinon deux séances du
+  // même jour sortaient dans l'ordre d'arrivée des lignes.
+  const ordered = [...executions].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) || (a.createdAt ?? '').localeCompare(b.createdAt ?? ''),
+  )
+
+  return ordered.flatMap((execution) => {
     // Exécution vide (aucune série) : jamais un point, même avec une durée.
     if (!execution.hasSets) {
       return []
@@ -57,7 +67,4 @@ export function buildSessionMetrics(
       },
     ]
   })
-
-  // Dates ISO 'YYYY-MM-DD' : l'ordre lexicographique est l'ordre chronologique.
-  return points.sort((a, b) => a.date.localeCompare(b.date))
 }

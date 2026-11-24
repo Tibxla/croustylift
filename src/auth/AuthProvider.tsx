@@ -1,21 +1,29 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isAuthRetryableFetchError, type Session } from '@supabase/supabase-js'
-import { supabase, supabaseAuthStorageKey } from '../lib/supabase'
+import { arrivalHash, supabase, supabaseAuthStorageKey } from '../lib/supabase'
+import {
+  arrivalFromHash,
+  definePassword,
+  hasPasswordProof,
+  offlineStartSetupOwed,
+  syncPasswordSetup,
+} from './arrival-link'
 import { AuthContext, PendingWritesError, type AuthContextValue } from './auth-context'
 import { clearLocalAccount, loadLocalAccount, type LocalAccount } from '../lib/local-account'
-import { recognizeAccount } from './account-switch'
+import { arrivalBlockedBy, recognizeAccount } from './account-switch'
+import { ArrivalGuardScreen } from './ArrivalGuardScreen'
 import { clearReadCache } from '../lib/read-cache'
 import { setSessionUserReader } from '../lib/session-identity'
 import { clearLocalPrefs } from '../lib/local-prefs'
 import {
   adoptLegacyOps,
+  clearOwnQueue,
   clearQueue,
-  heldCount,
-  quarantineCount,
+  heldCounts,
 } from '../features/capture/outbox'
 import { foreignPendingWrites } from './pending-guard'
 import { flushOutbox } from '../features/capture/sync'
-import { clearCaptureState } from '../features/capture/state'
+import { clearCaptureState, clearOwnCaptureState } from '../features/capture/state'
 
 /**
  * Budget d'attente du boot (ADR 0012) : au-delà, la décision est LOCALE
@@ -38,21 +46,58 @@ setSessionUserReader(async () => {
 // chargement, avant que le moindre événement d'auth ne réécrive le marqueur.
 adoptLegacyOps()
 
+// Arrivée par lien d'INVITATION : la session s'ouvre par un simple SIGNED_IN,
+// sans PASSWORD_RECOVERY. Le premier événement porteur de session envoie donc
+// l'invité définir son mot de passe (une seule fois par chargement de page).
+// Ce fragment n'est que le premier signal : l'obligation elle-même est tenue
+// par le serveur et relue sur chaque session (`syncPasswordSetup`).
+let inviteArrivalPending = arrivalFromHash(arrivalHash).kind === 'invite'
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
-  // Positionné à true dès que Supabase émet PASSWORD_RECOVERY — l'app aiguille
-  // alors vers ResetPasswordScreen, prioritaire sur tout autre écran.
+  // Positionné à true dès que Supabase émet PASSWORD_RECOVERY, ou à l'arrivée par
+  // un lien d'invitation : l'app aiguille alors vers ResetPasswordScreen,
+  // prioritaire sur tout autre écran.
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false)
+  // Obligation de l'INVITÉ : son mot de passe n'est pas encore défini (cf.
+  // arrival-link). Tenue à part de la récupération, parce qu'elle se relit sur
+  // chaque session et peut retomber seule (mot de passe défini ailleurs), ce
+  // qu'un flux de récupération en cours ne doit jamais faire.
+  const [passwordSetupOwed, setPasswordSetupOwed] = useState(false)
   // Marqueur d'identité local (ADR 0012) : qui est reconnu sur cet appareil.
   const [localAccount, setLocalAccount] = useState<LocalAccount | null>(() => loadLocalAccount())
   // Vrai quand la session est invérifiable (réseau) mais que la Session locale
   // fait foi : l'app s'ouvre sans validation serveur, la revalidation suivra.
   const [offlineRecognized, setOfflineRecognized] = useState(false)
+  // Arrivée RETENUE par la garde (ADR 0019) : une session s'est ouverte, par lien
+  // ou restauration, pour un autre compte que celui dont l'appareil retient des
+  // saisies. Elle n'est ni reconnue ni montrée à l'app tant que l'utilisateur n'a
+  // pas tranché (cf. ArrivalGuardScreen) : forcer, ou y renoncer.
+  const [heldArrival, setHeldArrival] = useState<{
+    session: Session
+    /** Arrivée par un lien de récupération : l'écran de mot de passe au forçage. */
+    recovery: boolean
+    /** Invité sans mot de passe : l'obligation suit l'arrivée si elle est forcée. */
+    setupOwed: boolean
+    /** Le compte dont les saisies attendent, et combien. */
+    email: string | null
+    held: number
+  } | null>(null)
 
   useEffect(() => {
     let active = true
     let settled = false
+
+    // Démarrage en SESSION LOCALE (ADR 0012) : pas de session, donc rien à lire
+    // du serveur. La copie de l'obligation écrite sur l'appareil fait foi
+    // jusqu'à la première session validée, qui la confirme ou la lève.
+    const recognizeOffline = () => {
+      const account = loadLocalAccount()
+      if (!account) return
+      if (offlineStartSetupOwed(account)) setPasswordSetupOwed(true)
+      setOfflineRecognized(true)
+    }
 
     // Boot borné (ADR 0012) : si getSession() n'a pas répondu sous 3 s (wifi
     // zombie), on tranche localement. Une réponse tardive reprendra la main via
@@ -60,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const timer = setTimeout(() => {
       if (!active || settled) return
       settled = true
-      if (loadLocalAccount()) setOfflineRecognized(true)
+      recognizeOffline()
       setLoading(false)
     }, BOOT_TIMEOUT_MS)
 
@@ -72,13 +117,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         settled = true
         clearTimeout(timer)
         if (data.session) {
-          setSession(data.session)
-        } else if (error && isAuthRetryableFetchError(error) && loadLocalAccount()) {
+          // Sous la garde d'arrivée : c'est l'événement d'auth qui tranchera.
+          if (arrivalBlockedBy(data.session.user.id) === 0) {
+            // Session restaurée d'un invité qui n'a pas encore de mot de passe :
+            // l'écran de mot de passe d'abord, dès ce premier rendu.
+            if (syncPasswordSetup(data.session, inviteArrivalPending)) setPasswordSetupOwed(true)
+            setSession(data.session)
+          }
+        } else if (error && isAuthRetryableFetchError(error)) {
           // Session présente mais INVÉRIFIABLE (jeton périmé + réseau injoignable) :
           // la Session locale fait foi (ADR 0012). supabase-js garde sa session en
           // storage et le refresh retente en fond — au retour du réseau, soit elle
           // se revalide (TOKEN_REFRESHED), soit elle s'avère révoquée (SIGNED_OUT).
-          setOfflineRecognized(true)
+          recognizeOffline()
         }
         // `null` SANS erreur réseau = vraiment déconnecté (jamais connecté, ou
         // révocation déjà actée) → login. Le marqueur, lui, n'est pas touché :
@@ -89,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!active || settled) return
         settled = true
         clearTimeout(timer)
-        if (loadLocalAccount()) setOfflineRecognized(true)
+        recognizeOffline()
         setLoading(false)
       })
 
@@ -97,6 +148,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return
+      // OBLIGATION DE MOT DE PASSE de l'invité, AVANT la garde d'arrivée : elle
+      // se lit sur la session (serveur), sur le fragment de ce chargement et sur
+      // la copie de l'appareil, et cette copie est réécrite ici. Une arrivée
+      // retenue par la garde, puis rechargée (plus de fragment), puis forcée,
+      // la retrouve donc entière.
+      let setupOwed = false
+      if (nextSession?.user) {
+        setupOwed = syncPasswordSetup(nextSession, inviteArrivalPending)
+        inviteArrivalPending = false
+      }
+      // GARDE D'ARRIVÉE (ADR 0019), avant tout le reste : une session pour un AUTRE compte
+      // que celui dont l'appareil retient des saisies n'entre pas. Elle couvre ce
+      // que `signIn` ne voit pas : lien de récupération, lien d'invitation,
+      // session restaurée. La session est gardée de côté, le marqueur ne bouge pas.
+      if (nextSession?.user) {
+        const held = arrivalBlockedBy(nextSession.user.id)
+        if (held > 0) {
+          const recovery = event === 'PASSWORD_RECOVERY'
+          setHeldArrival((current) => ({
+            session: nextSession,
+            recovery: recovery || (current?.recovery ?? false),
+            setupOwed: setupOwed || (current?.setupOwed ?? false),
+            email: loadLocalAccount()?.email ?? null,
+            held,
+          }))
+          setSession(null)
+          setLoading(false)
+          return
+        }
+      }
+      if (nextSession?.user) {
+        // Posée pour toute session qui entre ; ne retombe que sur PREUVE d'un
+        // mot de passe (défini ici ou ailleurs), jamais sur une copie manquante.
+        if (setupOwed) setPasswordSetupOwed(true)
+        else if (hasPasswordProof(nextSession)) setPasswordSetupOwed(false)
+      }
       if (event === 'PASSWORD_RECOVERY') {
         // On a une session temporaire recovery : on la garde pour pouvoir appeler
         // updateUser(), mais on signale à l'app qu'il faut afficher le reset.
@@ -122,6 +209,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
       if (event === 'SIGNED_OUT') {
+        setHeldArrival(null)
+        // Plus de session : l'obligation de l'invité n'a plus d'objet ici (sans
+        // quoi son écran masquerait la connexion). Elle sera relue à la suivante.
+        setPasswordSetupOwed(false)
         // Déconnexion volontaire OU révocation : la session n'existe plus, la
         // reconnaissance hors-ligne tombe avec elle. Le marqueur et les données
         // locales, eux, ne partent qu'avec la Déconnexion (cf. signOut) — une
@@ -156,12 +247,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOfflineRecognized(false)
   }, [])
 
+  // Purge de la DÉCONNEXION : ce qui est au compte qui part, et rien d'autre. Les
+  // écritures et la capture d'un AUTRE compte encore retenues sur l'appareil
+  // restent pour son retour : seul le forçage (`forgetLocalData`) les jette.
+  const forgetOwnLocalData = useCallback(() => {
+    clearOwnCaptureState()
+    clearOwnQueue()
+    clearReadCache()
+    clearLocalPrefs()
+    clearLocalAccount()
+    setLocalAccount(null)
+    setOfflineRecognized(false)
+  }, [])
+
+  // Garde d'arrivée, issue 1 : FORCER. Les saisies retenues sont purgées (geste
+  // explicite, ADR 0012), puis le compte arrivé est reconnu et entre.
+  const forceHeldArrival = useCallback(() => {
+    if (!heldArrival) return
+    forgetLocalData()
+    const account: LocalAccount = {
+      userId: heldArrival.session.user.id,
+      email: heldArrival.session.user.email ?? null,
+    }
+    recognizeAccount(account)
+    setLocalAccount(account)
+    setSession(heldArrival.session)
+    if (heldArrival.recovery) setIsPasswordRecovery(true)
+    // Relue sur la session retenue, et réécrite après la purge : forcer la garde
+    // ne fait pas entrer un invité sans mot de passe.
+    if (syncPasswordSetup(heldArrival.session, heldArrival.setupOwed)) setPasswordSetupOwed(true)
+    setHeldArrival(null)
+  }, [heldArrival, forgetLocalData])
+
+  // Garde d'arrivée, issue 2 : RENONCER. La session arrivée est fermée sur cet
+  // appareil ; rien n'est purgé, le compte précédent peut se reconnecter.
+  const cancelHeldArrival = useCallback(() => {
+    setHeldArrival(null)
+    void supabase.auth.signOut({ scope: 'local' }).then(({ error }) => {
+      if (!error) return
+      try {
+        localStorage.removeItem(supabaseAuthStorageKey)
+      } catch {
+        /* stockage indisponible : rien à retirer */
+      }
+    })
+  }, [])
+
   const value = useMemo<AuthContextValue>(
     () => ({
       session,
       user: session?.user ?? null,
       loading,
-      isPasswordRecovery,
+      isPasswordRecovery: isPasswordRecovery || passwordSetupOwed,
       localAccount,
       offlineRecognized,
       signIn: async (email, password) => {
@@ -171,14 +308,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const held = foreignPendingWrites(email)
         if (held > 0) throw new PendingWritesError(held)
         const { error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) throw error
-      },
-      signUp: async (email, password) => {
-        // Même garde que la Connexion : sans confirmation d'e-mail, l'inscription
-        // ouvre une session sur-le-champ, par-dessus les saisies d'un autre.
-        const held = foreignPendingWrites(email)
-        if (held > 0) throw new PendingWritesError(held)
-        const { error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
       },
       signOut: async ({ force = false } = {}) => {
@@ -193,11 +322,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           /* hors-ligne ou flush en échec : le blocage ci-dessous tranche */
         }
         // Les ops en quarantaine (rejetées par la base) comptent aussi : la
-        // Déconnexion les purgerait, donc seul le forçage peut les jeter.
-        const pending = heldCount()
-        if (!force && pending > 0) throw new PendingWritesError(pending, quarantineCount())
+        // Déconnexion les purgerait, donc seul le forçage peut les jeter. On ne
+        // compte que les écritures de CE compte : celles d'un autre compte encore
+        // retenues sur l'appareil ne le retiennent pas, et sa Déconnexion, forcée
+        // ou non, ne les jette pas (cf. `forgetOwnLocalData`).
+        const { own, ownRefused } = heldCounts()
+        if (!force && own > 0) throw new PendingWritesError(own, ownRefused)
 
-        const { error } = await supabase.auth.signOut()
+        // Portée LOCALE : seule la session de CET appareil est révoquée. La
+        // portée par défaut de supabase-js (« global ») déconnectait aussi le
+        // téléphone quand on se déconnectait de l'ordinateur.
+        const { error } = await supabase.auth.signOut({ scope: 'local' })
         if (error) {
           // Hors-ligne, supabase-js REFUSE de retirer sa session locale (l'appel
           // réseau échoue avant sa purge interne). File vide ou forçage : la
@@ -213,10 +348,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           setSession(null)
         }
-        // Purge les données locales en clair (réalisé de capture, outbox et blob
-        // de quarantaine, copies de lecture, marqueur) : sur un appareil partagé,
-        // elles ne doivent pas survivre au départ de l'utilisateur.
-        forgetLocalData()
+        // Purge les données locales en clair de CE compte (réalisé de capture,
+        // outbox et blob de quarantaine, copies de lecture, marqueur) : sur un
+        // appareil partagé, elles ne doivent pas survivre à son départ.
+        forgetOwnLocalData()
       },
       forgetLocalData,
       requestPasswordReset: async (email) => {
@@ -226,15 +361,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       updatePassword: async (password) => {
-        const { error } = await supabase.auth.updateUser({ password })
-        if (error) throw error
+        // Invité qui doit son mot de passe : enregistré, puis prouvé par une
+        // session ouverte AVEC lui (SIGNED_IN, `amr: password`), qui lève
+        // l'obligation et sa copie sur l'appareil. Récupération ordinaire :
+        // terminée dès l'enregistrement (cf. arrival-link, `definePassword`).
+        await definePassword(
+          supabase.auth,
+          password,
+          passwordSetupOwed ? { email: session?.user.email ?? localAccount?.email } : null,
+        )
       },
       clearPasswordRecovery: () => {
         setIsPasswordRecovery(false)
+        setPasswordSetupOwed(false)
       },
     }),
-    [session, loading, isPasswordRecovery, localAccount, offlineRecognized, forgetLocalData],
+    [
+      session,
+      loading,
+      isPasswordRecovery,
+      passwordSetupOwed,
+      localAccount,
+      offlineRecognized,
+      forgetLocalData,
+      forgetOwnLocalData,
+    ],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      {heldArrival ? (
+        <ArrivalGuardScreen
+          heldEmail={heldArrival.email}
+          arrivingEmail={heldArrival.session.user.email ?? null}
+          held={heldArrival.held}
+          onForce={forceHeldArrival}
+          onCancel={cancelHeldArrival}
+        />
+      ) : (
+        children
+      )}
+    </AuthContext.Provider>
+  )
 }

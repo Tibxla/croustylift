@@ -9,6 +9,7 @@
 //     couleur seule.
 import { useRef, useState } from 'react';
 import { restoreFromFile } from './data-import';
+import { errorMessage } from '../../lib/error-message';
 
 type Status =
   | { phase: 'idle' }
@@ -40,7 +41,7 @@ export function ImportButton({
     } catch (err) {
       setStatus({
         phase: 'error',
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }

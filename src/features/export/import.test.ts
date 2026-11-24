@@ -2,15 +2,16 @@
 //
 // Stratégie calquée sur export.test.ts : client INJECTÉ, fonctions PURES, aucun
 // import de lib/supabase. On teste trois couches séparément :
-//   1. parseImportFile   — parsing + validation du JSON brut (pure)
-//   2. importUserData    — orchestration upsert table par table (client injecté)
-// Les cas d'erreur (version inconnue, JSON invalide, erreur Supabase) sont traités
-// en premier (red-green-refactor).
+//   1. parseImportFile   : parsing + validation du JSON brut (pure)
+//   2. prepareForRestore : mise à niveau des lignes d'une vieille sauvegarde (pure)
+//   3. importUserData    : un seul appel à la fonction `import_user_data`
+//      (client injecté), qui écrit tout dans une transaction côté base.
 
 import { describe, it, expect } from 'vitest';
 import {
   IMPORT_FORMAT_VERSION,
   parseImportFile,
+  prepareForRestore,
   importUserData,
   type ImportClient,
   type ParsedImport,
@@ -35,22 +36,28 @@ function validJson(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-/** Fabrique un mock de client Supabase pour l'import. */
-function fakeImportClient(
-  onUpsert: (
-    table: string,
-    rows: Row[],
-  ) => { data: null; error: { message: string } | null },
-): ImportClient {
+/** Faux client : note chaque appel de fonction, répond `error` (null = succès). */
+function fakeImportClient(error: { message: string; code?: string } | null = null): {
+  client: ImportClient;
+  calls: { fn: string; data: CollectedData }[];
+} {
+  const calls: { fn: string; data: CollectedData }[] = [];
   return {
-    from(table: string) {
-      return {
-        upsert(rows: Row[], options: { onConflict: string; ignoreDuplicates?: boolean }) {
-          void options; // utilisé en runtime, vérifié en intégration
-          return Promise.resolve(onUpsert(table, rows));
-        },
-      };
+    calls,
+    client: {
+      rpc(fn, args) {
+        calls.push({ fn, data: args.p_data });
+        return Promise.resolve({ error });
+      },
     },
+  };
+}
+
+function parsedWith(data: Partial<CollectedData>): ParsedImport {
+  return {
+    version: 2,
+    exportedAt: '2026-11-23T10:00:00.000Z',
+    data: { ...emptyCollected(), ...data },
   };
 }
 
@@ -153,149 +160,167 @@ describe('parseImportFile', () => {
   });
 });
 
+// === prepareForRestore ========================================================
+
+describe('prepareForRestore', () => {
+  it('exo d’une sauvegarde d’avant `unilateral` et `primary_muscles` : complété depuis son groupe', () => {
+    const data = {
+      ...emptyCollected(),
+      exercises: [{ id: 'perso-1', owner_id: 'me', name: 'Mon exo', muscle_group: 'dos' }],
+    };
+
+    const out = prepareForRestore(data);
+
+    expect(out.exercises).toEqual([
+      {
+        id: 'perso-1',
+        owner_id: 'me',
+        name: 'Mon exo',
+        muscle_group: 'dos',
+        unilateral: false,
+        primary_muscles: ['dos'],
+      },
+    ]);
+  });
+
+  it('exo aux muscles principaux vides : remplis depuis son groupe (la base en exige un)', () => {
+    const data = {
+      ...emptyCollected(),
+      exercises: [
+        { id: 'perso-1', muscle_group: 'biceps', unilateral: true, primary_muscles: [] },
+      ],
+    };
+
+    expect(prepareForRestore(data).exercises[0]).toMatchObject({
+      unilateral: true,
+      primary_muscles: ['biceps'],
+    });
+  });
+
+  it('exo déjà complet : rendu tel quel', () => {
+    const exo = {
+      id: 'perso-1',
+      muscle_group: 'dos',
+      unilateral: true,
+      primary_muscles: ['dos', 'biceps'],
+    };
+    const data = { ...emptyCollected(), exercises: [exo] };
+
+    expect(prepareForRestore(data).exercises).toEqual([exo]);
+  });
+
+  it('deux notes datées pour le même exo dans la même exécution : seule la plus récente est restaurée', () => {
+    const data = {
+      ...emptyCollected(),
+      dated_notes: [
+        { id: 'n-recente', execution_id: 'e1', exercise_id: 'x1', body: 'la bonne', created_at: '2026-06-02T10:05:00Z' },
+        { id: 'n-ancienne', execution_id: 'e1', exercise_id: 'x1', body: 'doublon', created_at: '2026-06-02T10:00:00Z' },
+        { id: 'n-autre-exo', execution_id: 'e1', exercise_id: 'x2', body: 'autre exo', created_at: '2026-06-02T09:00:00Z' },
+        { id: 'n-autre-seance', execution_id: 'e2', exercise_id: 'x1', body: 'autre séance', created_at: '2026-06-01T09:00:00Z' },
+      ],
+    };
+
+    const out = prepareForRestore(data);
+
+    expect(out.dated_notes.map((n) => n.id)).toEqual(['n-recente', 'n-autre-exo', 'n-autre-seance']);
+  });
+
+  it('ne modifie ni l’entrée ni les autres tables', () => {
+    const data = {
+      ...emptyCollected(),
+      exercises: [{ id: 'perso-1', muscle_group: 'dos' }],
+      routines: [{ id: 'r1', name: 'PPL' }],
+    };
+    const before = JSON.parse(JSON.stringify(data)) as CollectedData;
+
+    const out = prepareForRestore(data);
+
+    expect(data).toEqual(before);
+    expect(out.routines).toBe(data.routines);
+  });
+});
+
 // === importUserData ===========================================================
 
 describe('importUserData', () => {
-  it('appelle upsert dans l ordre parent -> enfant pour chaque table non vide', async () => {
-    const upsertedTables: string[] = [];
-    const client = fakeImportClient((table) => {
-      upsertedTables.push(table);
-      return { data: null, error: null };
+  it('envoie toute la sauvegarde en UN appel à import_user_data : tout passe ou rien n’est écrit', async () => {
+    const { client, calls } = fakeImportClient();
+    const parsed = parsedWith({
+      exercises: [
+        { id: 'perso-1', name: 'Mon exo', owner_id: 'me', muscle_group: 'dos', unilateral: false, primary_muscles: ['dos'] },
+      ],
+      routines: [{ id: 'r1', name: 'Ma routine' }],
+      performed_sets: [{ id: 'ps1', weight_kg: 80 }],
     });
 
-    const parsed: ParsedImport = {
-      version: 1,
-      exportedAt: '2026-06-18T10:00:00.000Z',
-      data: {
-        ...emptyCollected(),
-        exercises: [{ id: 'perso-1', name: 'Mon exo', owner_id: 'me' }],
-        // exercise_overrides référence exercises : doit venir après dans EXPORT_TABLES
-        exercise_overrides: [{ id: 'ov1', user_id: 'me', exercise_id: 'perso-1' }],
-        routines: [{ id: 'r1', name: 'Ma routine' }],
-        performed_sets: [{ id: 'ps1', weight_kg: 80 }],
-      },
-    };
-
     await importUserData(client, parsed);
 
-    // Les tables renseignées sont upsertées dans l'ordre EXPORT_TABLES.
-    expect(upsertedTables).toEqual(['exercises', 'exercise_overrides', 'routines', 'performed_sets']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.fn).toBe('import_user_data');
+    expect(calls[0]!.data).toEqual(parsed.data);
   });
 
-  it('exercise_overrides : réimport idempotent sur onConflict: id', async () => {
-    const upsertArgs: { table: string; rows: Row[]; onConflict: string }[] = [];
-    const client: ImportClient = {
-      from(table: string) {
-        return {
-          upsert(rows: Row[], options) {
-            upsertArgs.push({ table, rows, onConflict: options.onConflict });
-            return Promise.resolve({ data: null, error: null });
-          },
-        };
-      },
-    };
-
-    const override = { id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' };
-    const parsed: ParsedImport = {
-      version: 1,
-      exportedAt: '2026-06-18T10:00:00.000Z',
-      data: { ...emptyCollected(), exercise_overrides: [override] },
-    };
-
-    await importUserData(client, parsed);
-    await importUserData(client, parsed); // 2e import : idempotent
-
-    const calls = upsertArgs.filter((a) => a.table === 'exercise_overrides');
-    expect(calls).toHaveLength(2);
-    expect(calls[0]!.rows).toEqual([override]);
-    expect(calls[0]!.onConflict).toBe('id');
-    expect(calls[1]!.onConflict).toBe('id');
-  });
-
-  it('saute les tables vides (pas d appel upsert)', async () => {
-    const upsertedTables: string[] = [];
-    const client = fakeImportClient((table) => {
-      upsertedTables.push(table);
-      return { data: null, error: null };
-    });
-
-    const parsed: ParsedImport = {
-      version: 1,
-      exportedAt: '2026-06-18T10:00:00.000Z',
-      data: emptyCollected(), // tout vide
-    };
-
-    await importUserData(client, parsed);
-
-    expect(upsertedTables).toHaveLength(0);
-  });
-
-  it('est idempotent : ré-importer les mêmes lignes ne provoque pas d erreur', async () => {
-    // On vérifie que onConflict: 'id' est passé (upsert par UUID).
-    const upsertArgs: { table: string; rows: Row[]; onConflict: string }[] = [];
-    const client: ImportClient = {
-      from(table: string) {
-        return {
-          upsert(rows: Row[], options) {
-            upsertArgs.push({ table, rows, onConflict: options.onConflict });
-            return Promise.resolve({ data: null, error: null });
-          },
-        };
-      },
-    };
-
-    const parsed: ParsedImport = {
-      version: 1,
-      exportedAt: '2026-06-18T10:00:00.000Z',
-      data: {
-        ...emptyCollected(),
-        routines: [{ id: 'r1', name: 'Ma routine' }],
-      },
-    };
-
-    await importUserData(client, parsed);
-    // 2e import identique : ne doit pas lever
-    await importUserData(client, parsed);
-
-    // upsert appelé 2 fois, toujours avec onConflict: 'id'.
-    expect(upsertArgs).toHaveLength(2);
-    expect(upsertArgs[0]!.onConflict).toBe('id');
-    expect(upsertArgs[1]!.onConflict).toBe('id');
-  });
-
-  it('remonte l erreur Supabase d une table', async () => {
-    const client = fakeImportClient((table) => {
-      if (table === 'routines') return { data: null, error: { message: 'db boom' } };
-      return { data: null, error: null };
-    });
-
-    const parsed: ParsedImport = {
-      version: 1,
-      exportedAt: '2026-06-18T10:00:00.000Z',
-      data: {
-        ...emptyCollected(),
-        routines: [{ id: 'r1', name: 'Ma routine' }],
-      },
-    };
-
-    await expect(importUserData(client, parsed)).rejects.toThrow('db boom');
-  });
-
-  it('importe toutes les tables renseignées dans l ordre EXPORT_TABLES', async () => {
-    const upsertedTables: string[] = [];
-    const client = fakeImportClient((table) => {
-      upsertedTables.push(table);
-      return { data: null, error: null };
-    });
-
-    // Toutes les tables avec au moins une ligne.
+  it('envoie les douze tables, dans l’ordre parents puis enfants', async () => {
+    const { client, calls } = fakeImportClient();
     const fullData = Object.fromEntries(
       EXPORT_TABLES.map((t) => [t, [{ id: `${t}-1` }]]),
     ) as unknown as CollectedData;
 
     await importUserData(client, { version: 1, exportedAt: '2026-06-18T10:00:00.000Z', data: fullData });
 
-    // L'ordre doit respecter EXPORT_TABLES (parents avant enfants).
-    expect(upsertedTables).toEqual([...EXPORT_TABLES]);
+    expect(Object.keys(calls[0]!.data)).toEqual([...EXPORT_TABLES]);
+  });
+
+  it('met les lignes à niveau avant l’envoi (vieille sauvegarde)', async () => {
+    const { client, calls } = fakeImportClient();
+
+    await importUserData(
+      client,
+      parsedWith({ exercises: [{ id: 'perso-1', name: 'Mon exo', muscle_group: 'dos' }] }),
+    );
+
+    expect(calls[0]!.data.exercises[0]).toMatchObject({ unilateral: false, primary_muscles: ['dos'] });
+  });
+
+  it('sauvegarde vide : aucun appel', async () => {
+    const { client, calls } = fakeImportClient();
+
+    await importUserData(client, parsedWith({}));
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('remonte l’erreur de la base', async () => {
+    const { client } = fakeImportClient({ message: 'db boom' });
+
+    await expect(
+      importUserData(client, parsedWith({ routines: [{ id: 'r1', name: 'Ma routine' }] })),
+    ).rejects.toThrow('db boom');
+  });
+
+  it('un refus de contrainte est dit en français, sans le nom de la contrainte', async () => {
+    const routines = parsedWith({ routines: [{ id: 'r1', name: 'Ma routine' }] });
+    const fk = fakeImportClient({
+      code: '23503',
+      message: 'insert or update on table "seances" violates foreign key constraint "seances_routine_id_fkey"',
+    });
+    await expect(importUserData(fk.client, routines)).rejects.toThrow(
+      /^Import refusé : le fichier fait référence à un élément qu’il ne contient pas.*Rien n’a été importé\.$/,
+    );
+    const check = fakeImportClient({
+      code: '23514',
+      message: 'new row for relation "exercises" violates check constraint "exercises_name_taille_check"',
+    });
+    await expect(importUserData(check.client, routines)).rejects.toThrow(
+      /^Import refusé : le fichier contient une valeur hors des limites acceptées.*Rien n’a été importé\.$/,
+    );
+    // Un refus de trigger porte le même code, mais son propre message : il passe.
+    const trigger = fakeImportClient({
+      code: '23503',
+      message: 'L’exercice 42 n’est ni un exo de base ni un exo de ce compte.',
+    });
+    await expect(importUserData(trigger.client, routines)).rejects.toThrow(
+      'L’exercice 42 n’est ni un exo de base ni un exo de ce compte.',
+    );
   });
 });

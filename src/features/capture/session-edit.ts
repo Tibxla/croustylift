@@ -5,6 +5,7 @@
 // une DÉVIATION, dérivée par diff entre la liste réelle et le template d'origine
 // (cf. ADR 0002 « déviations dérivées par diff »). Logique pure, testée.
 import type { Session, SessionExercise } from './fixtures';
+import type { LayoutEdit } from './state';
 
 /**
  * Les ids d'exos du template d'origine, dans l'ordre. À capturer UNE fois (au
@@ -82,4 +83,55 @@ export function deriveExerciseDeviations(
     }
   }
   return deviations;
+}
+
+/**
+ * Reconstruit la séance du jour au remontage : le TEMPLATE, sur lequel on rejoue
+ * dans l'ordre les gestes d'édition persistés avec l'état de capture (`layout`).
+ * Les gestes sont rejoués par les MÊMES fonctions que le direct (`addExercise`,
+ * `swapExercise`) : le remontage rend la liste que l'utilisateur avait sous les
+ * yeux, y compris « A remplacé par B, puis A réajouté ».
+ *
+ * La séance vaut le template plus ce journal, rien d'autre : un exo qui porte
+ * des séries sans geste enregistré n'est PAS ramené ici (un vieil état local peut
+ * tenir des séries venues d'une autre exécution, et les rendre visibles les
+ * rendrait annulables).
+ *
+ * `resolve` fournit l'exo prêt à afficher pour un geste (historique, note), ou
+ * `null` si sa lecture a échoué : la séance s'ouvre alors sans lui à ce montage,
+ * le geste restant dans le journal pour le suivant. Garde-fous :
+ *   - jamais deux fois le même exo : un geste dont l'exo est déjà dans la liste
+ *     (entré au plan depuis) est sans effet, la ligne du template l'emporte ;
+ *   - un remplacement dont la cible n'est plus dans la liste (plan changé)
+ *     devient un ajout, pour ne pas perdre l'exo et ses séries.
+ */
+export function replayLayout(
+  template: Session,
+  layout: readonly LayoutEdit[],
+  resolve: (edit: LayoutEdit, index: number) => SessionExercise | null,
+): Session {
+  let session = template;
+  layout.forEach((edit, index) => {
+    if (session.exercises.some((e) => e.exerciseId === edit.exerciseId)) return;
+    const exercise = resolve(edit, index);
+    if (!exercise) return;
+    const target = edit.kind === 'swapped' ? edit.replaces : undefined;
+    session =
+      target !== undefined && session.exercises.some((e) => e.exerciseId === target)
+        ? swapExercise(session, target, exercise)
+        : addExercise(session, exercise);
+  });
+  return session;
+}
+
+/** Le geste d'édition à journaliser pour un exo ajouté ou remplaçant (cf. `layout`). */
+export function layoutEditOf(exercise: SessionExercise, replaces?: string): LayoutEdit {
+  return {
+    kind: replaces === undefined ? 'added' : 'swapped',
+    exerciseId: exercise.exerciseId,
+    name: exercise.name,
+    unilateral: exercise.unilateral ?? false,
+    primaryMuscles: exercise.primaryMuscles ?? [],
+    ...(replaces === undefined ? {} : { replaces }),
+  };
 }

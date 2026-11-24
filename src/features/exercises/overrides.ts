@@ -19,6 +19,15 @@ import {
   type ExerciseOverrideValues,
   type ExerciseShared,
 } from '../../domain/exercise-override';
+import { withReloadBlocked } from '../../pwa/blockers';
+import { translateConstraintError } from '../../lib/db-errors';
+
+/**
+ * Raison du blocage de rechargement tenu pendant l'écriture d'un override : une
+ * lecture de la base puis une écriture, que la page ne doit pas quitter entre
+ * les deux (`withReloadBlocked`, pwa/blockers).
+ */
+export const EXERCISE_WRITE_BLOCK = 'ecriture-override-exercice';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 type OverrideRow = Database['public']['Tables']['exercise_overrides']['Row'];
@@ -151,29 +160,32 @@ export async function upsertExerciseOverride(
   exerciseId: string,
   values: { name: string; primaryMuscles: string[]; unilateral: boolean },
 ): Promise<void> {
-  const base = await loadSharedBase(exerciseId);
-  const override = diffExerciseOverride(base, {
-    name: values.name,
-    unilateral: values.unilateral,
-    primaryMuscles: values.primaryMuscles,
+  return withReloadBlocked(EXERCISE_WRITE_BLOCK, async () => {
+    const base = await loadSharedBase(exerciseId);
+    const override = diffExerciseOverride(base, {
+      name: values.name,
+      unilateral: values.unilateral,
+      primaryMuscles: values.primaryMuscles,
+    });
+
+    // Aucun champ ne diverge plus de la base : c'est un reset, on retire l'override.
+    if (!isOverridden(override)) {
+      await resetExerciseOverride(exerciseId);
+      return;
+    }
+
+    const { error } = await supabase.from('exercise_overrides').upsert(
+      {
+        exercise_id: exerciseId,
+        name: override.name,
+        unilateral: override.unilateral,
+        primary_muscles: override.primaryMuscles,
+      },
+      { onConflict: 'user_id,exercise_id' },
+    );
+    // Refus de contrainte (exo supprimé entre-temps, nom trop long) : en français.
+    if (error) throw translateConstraintError(error);
   });
-
-  // Aucun champ ne diverge plus de la base : c'est un reset, on retire l'override.
-  if (!isOverridden(override)) {
-    await resetExerciseOverride(exerciseId);
-    return;
-  }
-
-  const { error } = await supabase.from('exercise_overrides').upsert(
-    {
-      exercise_id: exerciseId,
-      name: override.name,
-      unilateral: override.unilateral,
-      primary_muscles: override.primaryMuscles,
-    },
-    { onConflict: 'user_id,exercise_id' },
-  );
-  if (error) throw error;
 }
 
 /**
@@ -182,9 +194,11 @@ export async function upsertExerciseOverride(
  * un exo déjà non personnalisé ne fait rien et ne lève pas.
  */
 export async function resetExerciseOverride(exerciseId: string): Promise<void> {
-  const { error } = await supabase
-    .from('exercise_overrides')
-    .delete()
-    .eq('exercise_id', exerciseId);
-  if (error) throw error;
+  return withReloadBlocked(EXERCISE_WRITE_BLOCK, async () => {
+    const { error } = await supabase
+      .from('exercise_overrides')
+      .delete()
+      .eq('exercise_id', exerciseId);
+    if (error) throw translateConstraintError(error);
+  });
 }

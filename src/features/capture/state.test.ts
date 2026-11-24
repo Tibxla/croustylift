@@ -9,10 +9,20 @@ import {
   statusOf,
   initialState,
   isExecutionStarted,
+  isPristine,
   isResumable,
   LAUNCH_EXPIRY_MS,
   shouldReanchorLaunch,
+  adoptedVersionId,
+  capturePersistFailing,
+  persistedVersionIds,
+  pruneStaleCaptureStates,
+  applyQueuedSets,
+  canAdoptLateExecution,
+  reconcileDatedNotes,
+  reconcileProgress,
   clearCaptureState,
+  clearOwnCaptureState,
   hydratedState,
   mergeProgress,
   loadPersisted,
@@ -1159,5 +1169,694 @@ describe('resolveCaptureDate', () => {
     const { date, restored } = resolveCaptureDate(upperA, TODAY);
     expect(date).toBe(TODAY);
     expect(restored).toBeNull();
+  });
+});
+
+describe('clearOwnCaptureState (purge de la Déconnexion)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  it('retire la capture du compte reconnu et les états sans compte, garde celle d’un autre', () => {
+    const put = (key: string, ownerId?: string) =>
+      localStorage.setItem(
+        `croustylift:capture:${key}`,
+        JSON.stringify({ sessionId: key, ...(ownerId ? { ownerId } : {}) }),
+      );
+    put('seance-a:2026-11-23', 'user-a');
+    put('seance-b:2026-11-22', 'user-b');
+    put('seance-ancienne:2026-11-01');
+    localStorage.setItem('croustylift:outbox', '[]');
+
+    clearOwnCaptureState();
+
+    expect(localStorage.getItem('croustylift:capture:seance-a:2026-11-23')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:seance-ancienne:2026-11-01')).toBeNull();
+    expect(localStorage.getItem('croustylift:capture:seance-b:2026-11-22')).not.toBeNull();
+    // Rien d'autre que le préfixe capture n'est touché.
+    expect(localStorage.getItem('croustylift:outbox')).toBe('[]');
+  });
+});
+
+describe('persist, stockage plein', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  it('le refus du stockage est signalé, puis levé dès qu’une sauvegarde passe', () => {
+    const state = initialState(upperA, '2026-11-23');
+    const store = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = store.setItem.bind(localStorage);
+    let full = true;
+    store.setItem = (k, v) => {
+      if (full && k.startsWith('croustylift:capture:')) throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+
+    persist(state);
+    expect(capturePersistFailing()).toBe(true);
+
+    full = false;
+    persist(state);
+    expect(capturePersistFailing()).toBe(false);
+    expect(loadPersisted(upperA, '2026-11-23')?.executionId).toBe(state.executionId);
+  });
+
+  it('les copies de lecture cèdent la place à la séance en cours', () => {
+    const state = initialState(upperA, '2026-11-23');
+    const COPY = 'croustylift:readcache:user-a:exo-execs:e1';
+    localStorage.setItem(COPY, 'copie');
+    const store = localStorage as unknown as { setItem: (k: string, v: string) => void };
+    const write = store.setItem.bind(localStorage);
+    store.setItem = (k, v) => {
+      // Plein tant que la copie de lecture occupe la place.
+      if (localStorage.getItem(COPY) !== null) throw new Error('QuotaExceededError');
+      write(k, v);
+    };
+
+    persist(state);
+
+    expect(capturePersistFailing()).toBe(false);
+    expect(localStorage.getItem(COPY)).toBeNull();
+    expect(loadPersisted(upperA, '2026-11-23')?.executionId).toBe(state.executionId);
+  });
+});
+
+// Séance retouchée en plein entraînement : l'exécution garde sa version de
+// naissance (ADR 0021), la Capture doit recharger le template de CETTE version.
+describe('version de séance de l’exécution adoptée', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const local = (extra: Partial<CaptureState> = {}): CaptureState => ({
+    ...initialState(upperA, '2026-11-23'),
+    executionId: 'exec-1',
+    ...extra,
+  });
+
+  it('la version survit à la sauvegarde, à la restauration et à la fusion avec la base', () => {
+    persist(local({ seanceVersionId: 'v1' }));
+    const restored = loadPersisted(upperA, '2026-11-23');
+    expect(restored?.seanceVersionId).toBe('v1');
+
+    // La base hydrate sous la version courante que l'écran vient de charger.
+    const fromBase = { ...hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1'), seanceVersionId: 'v2' };
+    expect(mergeProgress(fromBase, restored!).seanceVersionId).toBe('v1');
+  });
+
+  it('fusion avec un état local d’avant ce champ : la version de la base est gardée', () => {
+    const fromBase = { ...hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1'), seanceVersionId: 'v1' };
+    expect(mergeProgress(fromBase, local()).seanceVersionId).toBe('v1');
+  });
+
+  it('état local qui porte sa version : c’est elle, même si le plan est passé en v2', () => {
+    expect(
+      adoptedVersionId({
+        restored: local({ seanceVersionId: 'v1' }),
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('état local d’avant ce champ : la version de sa création encore en file', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [
+          { type: 'upsertExecution', id: 'autre', seanceVersionId: 'v9' },
+          { type: 'upsertExecution', id: 'exec-1', seanceVersionId: 'v1' },
+        ],
+        today: null,
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('état local d’avant ce champ, création déjà partie : la version lue en base pour la même exécution', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('la version d’une AUTRE exécution rendue par la base ne s’applique pas à l’état local', () => {
+    expect(
+      adoptedVersionId({
+        restored: local(),
+        pendingOps: [],
+        today: { executionId: 'exec-autre', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v2');
+  });
+
+  it('sans état local : la version de l’exécution ouverte trouvée en base', () => {
+    expect(
+      adoptedVersionId({
+        restored: null,
+        pendingOps: [],
+        today: { executionId: 'exec-1', seanceVersionId: 'v1' },
+        currentVersionId: 'v2',
+      }),
+    ).toBe('v1');
+  });
+
+  it('séance neuve : la version courante', () => {
+    expect(
+      adoptedVersionId({ restored: null, pendingOps: [], today: null, currentVersionId: 'v2' }),
+    ).toBe('v2');
+  });
+
+  it('persistedVersionIds liste les versions des séances en cours sur l’appareil', () => {
+    persist(local({ seanceVersionId: 'v1' }));
+    persist({ ...local({ seanceVersionId: 'v7' }), sessionId: 'autre-seance' });
+    persist({ ...local(), sessionId: 'sans-version' });
+
+    expect(persistedVersionIds().sort()).toEqual(['v1', 'v7']);
+  });
+});
+
+describe('pruneStaleCaptureStates (séance oubliée sans clôture)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const put = (date: string, ownerId = 'user-a') =>
+    localStorage.setItem(
+      `croustylift:capture:seance-1:${date}`,
+      JSON.stringify({ sessionId: 'seance-1', date, ownerId }),
+    );
+  const has = (date: string) => localStorage.getItem(`croustylift:capture:seance-1:${date}`) !== null;
+
+  it('garde le jour même et la veille (reprenables), retire les états plus anciens', () => {
+    put('2026-11-23');
+    put('2026-11-22');
+    put('2026-11-21');
+    put('2026-10-02');
+
+    pruneStaleCaptureStates('2026-11-23');
+
+    expect(has('2026-11-23')).toBe(true);
+    expect(has('2026-11-22')).toBe(true);
+    expect(has('2026-11-21')).toBe(false);
+    expect(has('2026-10-02')).toBe(false);
+  });
+
+  it('ne touche pas à l’état d’un autre compte, même ancien', () => {
+    put('2026-10-02', 'user-b');
+
+    pruneStaleCaptureStates('2026-11-23');
+
+    expect(has('2026-10-02')).toBe(true);
+  });
+});
+
+// Exo ajouté ou remplacé en cours de séance (signalement utilisateur 3) : la
+// disposition est un journal de gestes, persisté avec l'état, donc lié à son
+// exécution. Sans lui, l'exo disparaissait au changement d'onglet.
+describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+    saveLocalAccount({ userId: 'user-a', email: 'a@exemple.com' });
+  });
+
+  const curl = { exerciseId: 'curl', name: 'Curl', unilateral: true, primaryMuscles: ['biceps'] };
+  const dips = { exerciseId: 'dips', name: 'Dips', unilateral: false, primaryMuscles: ['triceps'] };
+  const edited = () => {
+    let state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
+    state = captureReducer(state, { type: 'edit-layout', edit: { kind: 'added', ...curl } });
+    state = captureReducer(state, {
+      type: 'edit-layout',
+      edit: { kind: 'swapped', replaces: 'bench-press', ...dips },
+    });
+    return state;
+  };
+
+  it('le reducer enregistre les gestes dans l’ordre', () => {
+    expect(edited().layout).toEqual([
+      { kind: 'added', ...curl },
+      { kind: 'swapped', replaces: 'bench-press', ...dips },
+    ]);
+  });
+
+  it('la disposition survit à la sauvegarde et à la restauration', () => {
+    persist(edited());
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toEqual(edited().layout);
+  });
+
+  it('à la fusion avec la base, c’est la disposition de l’état local qui est gardée', () => {
+    const fromBase = hydratedState(upperA, {}, {}, '2026-11-23', 'exec-1');
+    expect(mergeProgress(fromBase, edited()).layout).toEqual(edited().layout);
+    // L'état hydraté de la base seule n'en porte aucune.
+    expect(fromBase.layout).toBeUndefined();
+  });
+
+  it('une nouvelle exécution (reset) repart sans disposition', () => {
+    expect(captureReducer(edited(), { type: 'reset', executionId: 'exec-2' }).layout).toBeUndefined();
+  });
+
+  it('les entrées mal formées d’un état persisté sont écartées', () => {
+    const key = 'croustylift:capture:' + upperA.id + ':2026-11-23';
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        ...edited(),
+        layout: [
+          { kind: 'added', ...curl },
+          { kind: 'added', name: 'Sans id' },
+          { kind: 'inconnu', ...dips },
+          { kind: 'swapped', ...dips },
+          'pas un objet',
+        ],
+      }),
+    );
+
+    // Un remplacement sans cible (`replaces`) n'est pas rejouable : écarté.
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toEqual([{ kind: 'added', ...curl }]);
+  });
+
+  it('un état persisté avant ce champ se restaure sans disposition', () => {
+    const state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
+    persist(state);
+    expect(loadPersisted(upperA, '2026-11-23')?.layout).toBeUndefined();
+  });
+});
+
+// Reprise EN LIGNE d'une exécution que l'appareil tient déjà : la base a
+// répondu, elle fait foi pour ses séries, et les opérations locales encore en
+// attente s'appliquent par-dessus, par identifiant. La fusion « la liste la plus
+// longue gagne » (mergeProgress) ne reste que le repli sans réponse de la base.
+describe('reconcileProgress (la base fait foi, plus les écritures en attente)', () => {
+  const set = (order: number, weightKg = 80) => ({ weightKg, reps: 8, rir: 2, order });
+  const local = (ids: (string | null)[], skipped = false): Record<string, ExerciseProgress> => ({
+    bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids, skipped },
+  });
+  const base = (ids: string[]): Record<string, HydratedProgress> =>
+    ids.length === 0 ? {} : { bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids } };
+  const ids = (progress: Record<string, ExerciseProgress>) => progress.bench?.setIds;
+
+  it('série supprimée depuis le Journal, suppression acquittée : elle ne revient pas en Capture', () => {
+    // Le cache local porte encore deux séries ; la base n'en rend plus qu'une et
+    // rien n'attend en file. Avant : la liste la plus longue (le cache) gagnait.
+    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: [] });
+
+    expect(ids(progress)).toEqual(['s1']);
+    expect(nextSetOrder(progress.bench!, undefined)).toBe(2);
+  });
+
+  it('série loggée hors ligne, pas encore envoyée : elle reste (son insertion attend)', () => {
+    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: ['s2'] });
+
+    expect(ids(progress)).toEqual(['s1', 's2']);
+  });
+
+  it('série écrite ailleurs (journal, autre appareil) : elle arrive, le rang suivant la compte', () => {
+    const progress = reconcileProgress(local(['s1']), base(['s1', 's-ailleurs']), {
+      pendingSetIds: [],
+    });
+
+    expect(ids(progress)).toEqual(['s1', 's-ailleurs']);
+    expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
+  });
+
+  it('toutes les séries d’un exo supprimées ailleurs : l’exo sort du réalisé', () => {
+    expect(reconcileProgress(local(['s1']), base([]), { pendingSetIds: [] })).toEqual({});
+  });
+
+  it('un exo passé reste passé, même sans série', () => {
+    const progress = reconcileProgress(local([], true), base([]), { pendingSetIds: [] });
+    expect(progress.bench).toEqual({ sets: [], setIds: [], skipped: true });
+  });
+
+  it('une série locale sans id (cache d’ancien format) reste si la base n’a rien à ce rang', () => {
+    const progress = reconcileProgress(local([null, null]), base(['s1']), { pendingSetIds: [] });
+    // Rang 1 : la base l'a (avec son id). Rang 2 : inconnu de la base, gardé.
+    expect(ids(progress)).toEqual(['s1', null]);
+  });
+
+  describe('réponse TARDIVE, appliquée à un tableau déjà monté', () => {
+    it('une série loggée pendant le trajet de la lecture est gardée, même déjà acquittée', () => {
+      // Au départ de la lecture : s1. Pendant le trajet : s2 loggée ET acquittée
+      // (absente de la réponse, partie avant ; absente de la file, déjà vidée).
+      const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1'],
+      });
+
+      expect(ids(progress)).toEqual(['s1', 's2']);
+    });
+
+    it('une série annulée pendant le trajet ne revient pas, même si la réponse la porte encore', () => {
+      const progress = reconcileProgress(local(['s1']), base(['s1', 's2']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1', 's2'],
+      });
+
+      expect(ids(progress)).toEqual(['s1']);
+    });
+
+    it('la série écrite ailleurs avant le départ arrive : le rang suivant ne double pas', () => {
+      // A tient s1. B a synchronisé s2. La lecture de A répond après 4 s.
+      const progress = reconcileProgress(local(['s1']), base(['s1', 's2-de-b']), {
+        pendingSetIds: [],
+        knownAtDeparture: ['s1'],
+      });
+
+      expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
+    });
+  });
+
+  it('le reducer applique une réponse tardive sans toucher au reste de l’état', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      executionId: 'exec-1',
+      activeExerciseId: 'bench',
+      progress: local(['s1']),
+      layout: [{ kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
+    };
+
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: base(['s1', 's2-de-b']),
+      pendingSetIds: [],
+      knownAtDeparture: ['s1'],
+    });
+
+    expect(next.progress.bench?.setIds).toEqual(['s1', 's2-de-b']);
+    expect(next.activeExerciseId).toBe('bench');
+    expect(next.layout).toEqual(state.layout);
+    expect(next.executionId).toBe('exec-1');
+  });
+});
+
+// Une série ajoutée depuis le Journal à l'exécution en cours, encore en file :
+// ni la base ni l'état de la Capture ne la portent. Le tableau repris l'ignorait
+// et la série suivante prenait son rang.
+describe('applyQueuedSets (écritures de séries en file appliquées au réalisé)', () => {
+  const ps = (order: number, side?: 'left' | 'right') => ({ weightKg: 80, reps: 8, rir: 2, order, ...(side ? { side } : {}) });
+  const insert = (id: string, setOrder: number, over: Record<string, unknown> = {}) =>
+    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2, ...over }) as const;
+  const tableau = (ids: (string | null)[], skipped = false) => ({
+    bench: { sets: ids.map((_, i) => ps(i + 1)), setIds: ids, skipped },
+  });
+  const nextOrder = (progress: Record<string, { sets: { order: number }[] }>) =>
+    Math.max(0, ...(progress.bench?.sets.map((s) => s.order) ?? [])) + 1;
+
+  it('base muette (hors ligne) : la série du Journal entre, le rang suivant est le 3', () => {
+    // La Capture a loggé le rang 1 ; le Journal a ajouté le rang 2, encore en file.
+    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1), insert('s2-journal', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
+    expect(progress.bench?.sets.map((s) => s.order)).toEqual([1, 2]);
+    expect(nextOrder(progress)).toBe(3);
+  });
+
+  it('base répondue sans la série (pas encore envoyée) : elle entre aussi', () => {
+    // Réalisé réconcilié avec la base : rang 1 seulement.
+    const reconciled = reconcileProgress(tableau(['s1']), { bench: { sets: [ps(1)], setIds: ['s1'] } }, {
+      pendingSetIds: ['s2-journal'],
+    });
+    const progress = applyQueuedSets(reconciled, [insert('s2-journal', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
+    expect(nextOrder(progress)).toBe(3);
+  });
+
+  it('tableau vide, série en file sur un exo jamais ouvert : l’exo apparaît avec sa série', () => {
+    const progress = applyQueuedSets({}, [insert('s1-journal', 1, { exerciseId: 'squat' })], 'exec-1');
+    expect(progress.squat).toEqual({ sets: [ps(1)], setIds: ['s1-journal'], skipped: false });
+  });
+
+  it('une série déjà au tableau n’est pas doublée, et rien ne change', () => {
+    const before = tableau(['s1', 's2']);
+    expect(applyQueuedSets(before, [insert('s1', 1), insert('s2', 2)], 'exec-1')).toBe(before);
+  });
+
+  it('une correction en file (même id, autres valeurs) remplace la série', () => {
+    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1, { weightKg: 85 })], 'exec-1');
+    expect(progress.bench?.sets).toEqual([{ ...ps(1), weightKg: 85 }]);
+    expect(progress.bench?.setIds).toEqual(['s1']);
+  });
+
+  it('ordre de la file : insérée puis supprimée, la série ne revient pas', () => {
+    const before = tableau(['s1']);
+    const progress = applyQueuedSets(before, [insert('s2', 2), { type: 'deleteSet', id: 's2' }], 'exec-1');
+    expect(progress.bench?.setIds).toEqual(['s1']);
+  });
+
+  it('une suppression en file retire une série du tableau ; l’exo vide sort, sauf s’il est passé', () => {
+    expect(applyQueuedSets(tableau(['s1']), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({});
+    expect(applyQueuedSets(tableau(['s1'], true), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({
+      bench: { sets: [], setIds: [], skipped: true },
+    });
+  });
+
+  it('les séries d’une AUTRE exécution ne sont pas prises', () => {
+    const before = tableau(['s1']);
+    expect(applyQueuedSets(before, [insert('ailleurs', 2, { executionId: 'exec-2' })], 'exec-1')).toBe(before);
+  });
+
+  it('unilatéral : retri par rang puis gauche avant droite', () => {
+    const before = {
+      curl: { sets: [ps(1, 'left'), ps(2, 'left')], setIds: ['l1', 'l2'], skipped: false },
+    };
+    const progress = applyQueuedSets(before, [insert('r1', 1, { exerciseId: 'curl', side: 'right' })], 'exec-1');
+    expect(progress.curl?.setIds).toEqual(['l1', 'r1', 'l2']);
+    expect(progress.curl?.sets.map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
+  });
+
+  it('une série sans id (cache d’ancien format) reste en place', () => {
+    const progress = applyQueuedSets(tableau([null]), [insert('s2', 2)], 'exec-1');
+    expect(progress.bench?.setIds).toEqual([null, 's2']);
+  });
+});
+
+describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu est adopté)', () => {
+  const baseNote = { id: 'id-historique', body: 'écrite sous l’ancien client' };
+
+  it('une note de la base que l’état local ignorait est adoptée, avec son id', () => {
+    expect(reconcileDatedNotes({}, { bench: baseNote }, [])).toEqual({ bench: baseNote });
+  });
+
+  it('une édition locale est préservée, la base ne l’écrase pas', () => {
+    const local = { bench: { id: 'id-local', body: 'en cours de saisie' } };
+    const next = reconcileDatedNotes(local, { bench: baseNote }, []);
+    expect(next).toBe(local);
+  });
+
+  it('une note vidée localement reste vidée (un effacement est une édition)', () => {
+    const local = { bench: { id: 'id-local', body: '' } };
+    expect(reconcileDatedNotes(local, { bench: baseNote }, [])).toBe(local);
+  });
+
+  it('une écriture de la note attend en file : la base, déjà périmée, n’est pas adoptée', () => {
+    // Par exo (op actuelle) ou par id de note (op d'effacement d'un bundle antérieur).
+    expect(reconcileDatedNotes({}, { bench: baseNote }, ['bench'])).toEqual({});
+    expect(reconcileDatedNotes({}, { bench: baseNote }, ['id-historique'])).toEqual({});
+  });
+
+  it('chaque exo est jugé séparément', () => {
+    const local = { bench: { id: 'id-local', body: 'la mienne' } };
+    const next = reconcileDatedNotes(
+      local,
+      { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' }, row: { id: 'n-row', body: 'x' } },
+      ['row'],
+    );
+    expect(next).toEqual({
+      bench: { id: 'id-local', body: 'la mienne' },
+      squat: { id: 'n-squat', body: 'talons au sol' },
+    });
+  });
+
+  it('rien à adopter : l’état local est rendu tel quel', () => {
+    const local = { bench: { id: 'id-local', body: 'x' } };
+    expect(reconcileDatedNotes(local, {}, [])).toBe(local);
+  });
+
+  it('le reducer réconcilie les notes avec les séries, sans toucher une note locale', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      executionId: 'exec-1',
+      datedNotes: { bench: { id: 'id-local', body: 'en cours' } },
+    };
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: {},
+      pendingSetIds: [],
+      knownAtDeparture: [],
+      datedNotes: { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' } },
+      pendingNoteKeys: [],
+    });
+    expect(next.datedNotes).toEqual({
+      bench: { id: 'id-local', body: 'en cours' },
+      squat: { id: 'n-squat', body: 'talons au sol' },
+    });
+  });
+
+  it('une réponse tardive sans notes (ancienne forme de l’action) laisse les notes en place', () => {
+    const state: CaptureState = {
+      ...initialState(upperA, '2026-11-23'),
+      datedNotes: { bench: { id: 'id-local', body: 'en cours' } },
+    };
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: {},
+      pendingSetIds: [],
+      knownAtDeparture: [],
+    });
+    expect(next.datedNotes).toBe(state.datedNotes);
+  });
+});
+
+// Le Journal supprime A et décale B et C aux rangs 1 et 2 ; la Capture reprend
+// ces valeurs depuis la file. Une lecture partie AVANT arrive ensuite : elle
+// porte encore A, et B et C aux rangs 2 et 3. Elle défaisait la renumérotation,
+// et la série suivante prenait le rang 4 en laissant un trou.
+describe('réponse tardive et renumérotation faite dans le Journal', () => {
+  const ps = (order: number) => ({ weightKg: 80, reps: 8, rir: 2, order });
+  const insert = (id: string, setOrder: number) =>
+    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2 }) as const;
+  const journal = [{ type: 'deleteSet', id: 'a' } as const, insert('b', 1), insert('c', 2)];
+  /** Le tableau monté, déjà à jour de la file : B au rang 1, C au rang 2. */
+  const mounted = (): CaptureState => ({
+    ...initialState(upperA, '2026-11-24'),
+    executionId: 'exec-1',
+    progress: { bench: { sets: [ps(1), ps(2)], setIds: ['b', 'c'], skipped: false } },
+  });
+  /** La réponse tardive : l'état de la base d'avant les écritures du Journal. */
+  const late = {
+    type: 'reconcile-progress' as const,
+    base: { bench: { sets: [ps(1), ps(2), ps(3)], setIds: ['a', 'b', 'c'] } },
+    pendingSetIds: ['b', 'c'],
+    knownAtDeparture: ['a', 'b', 'c'],
+  };
+  const rangs = (state: CaptureState) =>
+    state.progress.bench?.sets.map((s, i) => `${state.progress.bench?.setIds[i]}@${s.order}`);
+
+  it('sans les écritures en file, la réponse reprend ses rangs d’avant (le défaut)', () => {
+    expect(rangs(captureReducer(mounted(), late))).toEqual(['b@2', 'c@3']);
+  });
+
+  it('les écritures qui chevauchent la lecture sont rejouées : B et C gardent les rangs 1 et 2', () => {
+    const next = captureReducer(mounted(), { ...late, queuedOps: [...journal] });
+    expect(rangs(next)).toEqual(['b@1', 'c@2']);
+    // La série suivante prend le rang 3, sans trou.
+    const logged = captureReducer(next, {
+      type: 'log-set',
+      exerciseId: 'bench',
+      setId: 'd',
+      set: { weightKg: 80, reps: 8, rir: 2 },
+    });
+    expect(rangs(logged)).toEqual(['b@1', 'c@2', 'd@3']);
+  });
+
+  it('même quand l’état local ignorait A : la suppression en file la retire de la réponse', () => {
+    const next = captureReducer(mounted(), { ...late, knownAtDeparture: ['b', 'c'], queuedOps: [...journal] });
+    expect(rangs(next)).toEqual(['b@1', 'c@2']);
+  });
+
+  it('une correction de valeur faite dans le Journal survit aussi à la réponse', () => {
+    const corrected = { ...insert('b', 1), weightKg: 85 };
+    const next = captureReducer(mounted(), { ...late, queuedOps: [journal[0]!, corrected, journal[2]!] });
+    expect(next.progress.bench?.sets[0]).toMatchObject({ weightKg: 85, order: 1 });
+  });
+});
+
+// Adoption tardive d'une exécution trouvée en base : jugée sur l'état COURANT du
+// tableau. Stockage plein, sa copie enregistrée n'a pas suivi et paraissait
+// intacte : l'adoption remontait le tableau en jetant l'exo ouvert ou ajouté.
+describe('canAdoptLateExecution', () => {
+  const board = (): CaptureState => ({ ...initialState(upperA, '2026-11-24'), executionId: 'provisoire' });
+
+  it('tableau intact, rien en file : adoptable', () => {
+    expect(canAdoptLateExecution(board(), 'provisoire', [])).toBe(true);
+  });
+
+  it('exo ouvert en mémoire (jamais enregistré, stockage plein) : pas d’adoption', () => {
+    const current = captureReducer(board(), { type: 'open-exercise', exerciseId: 'bench-press' });
+    expect(canAdoptLateExecution(current, 'provisoire', [])).toBe(false);
+  });
+
+  it('exo ajouté en mémoire : pas d’adoption', () => {
+    const current = captureReducer(board(), {
+      type: 'edit-layout',
+      edit: { kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] },
+    });
+    expect(canAdoptLateExecution(current, 'provisoire', [])).toBe(false);
+  });
+
+  it('série loggée ou création déjà en file sous l’id provisoire : pas d’adoption', () => {
+    const logged = { ...board(), progress: { bench: { sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }], setIds: ['s1'], skipped: false } } };
+    expect(canAdoptLateExecution(logged, 'provisoire', [])).toBe(false);
+    const enFile = [{ type: 'upsertExecution', id: 'provisoire', seanceVersionId: 'v1', performedOn: '2026-11-24' } as const];
+    expect(canAdoptLateExecution(board(), 'provisoire', enFile)).toBe(false);
+    expect(canAdoptLateExecution(null, 'provisoire', enFile)).toBe(false);
+  });
+
+  it('le tableau tient déjà une autre exécution : pas d’adoption', () => {
+    expect(canAdoptLateExecution({ ...board(), executionId: 'autre' }, 'provisoire', [])).toBe(false);
+  });
+
+  it('tableau pas encore monté, rien en file : adoptable', () => {
+    expect(canAdoptLateExecution(null, 'provisoire', [])).toBe(true);
+  });
+});
+
+describe('isPristine (état abandonnable sans rien perdre)', () => {
+  const fresh = (): CaptureState => initialState(upperA, '2026-11-23');
+
+  it('séance neuve tout juste ouverte : intacte', () => {
+    expect(isPristine(fresh())).toBe(true);
+  });
+
+  it('un exo ouvert (son brouillon a pu être réglé) : plus intacte', () => {
+    expect(isPristine(captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' }))).toBe(false);
+  });
+
+  it('un exo ajouté ou remplacé : plus intacte', () => {
+    const edited = captureReducer(fresh(), {
+      type: 'edit-layout',
+      edit: { kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] },
+    });
+    expect(isPristine(edited)).toBe(false);
+  });
+
+  it('un exo passé, une série ou une note : plus intacte', () => {
+    expect(isPristine(captureReducer(fresh(), { type: 'skip-exercise', exerciseId: 'bench-press' }))).toBe(false);
+    expect(
+      isPristine(
+        captureReducer(fresh(), {
+          type: 'log-set',
+          exerciseId: 'bench-press',
+          setId: 's1',
+          set: { weightKg: 80, reps: 8, rir: 2 },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isPristine(
+        captureReducer(fresh(), { type: 'set-dated-note', exerciseId: 'bench-press', noteId: 'n1', body: 'x' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('revenu au sélecteur sans rien avoir fait : de nouveau intacte', () => {
+    let state = captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' });
+    state = captureReducer(state, { type: 'back-to-picker' });
+    expect(isPristine(state)).toBe(true);
   });
 });

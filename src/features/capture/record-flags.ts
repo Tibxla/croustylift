@@ -91,13 +91,17 @@ export function computeRecordFlagsBySide(
 /** Intègre une série dans un record courant (pour faire avancer la comparaison). */
 function absorb(record: PersonalRecord, s: PerformedSet): PersonalRecord {
   const e1rm = estimateE1rm(s.weightKg, s.reps, s.rir);
-  const improvesE1rm = record.bestE1rm === null || e1rm > record.bestE1rm;
+  // Même juge que le badge (`isE1rmRecord`) : une égalité ne déplace pas le
+  // record, et à 0 kg ce sont les reps effectives qui le déplacent.
+  const improvesE1rm = isE1rmRecord(record, s);
   const bestWeightReps = isWeightRepsRecord(record, s)
     ? { weightKg: s.weightKg, reps: s.reps }
     : record.bestWeightReps;
   return {
     bestE1rm: improvesE1rm ? e1rm : record.bestE1rm,
-    bestE1rmSet: improvesE1rm ? { weightKg: s.weightKg, reps: s.reps } : record.bestE1rmSet,
+    bestE1rmSet: improvesE1rm
+      ? { weightKg: s.weightKg, reps: s.reps, rir: s.rir }
+      : record.bestE1rmSet,
     bestWeightReps,
   };
 }

@@ -165,6 +165,8 @@ describe('collectUserData', () => {
 
   it('exercise_overrides est inclus tel quel (user_id, pas owner_id : pas filtré)', async () => {
     const client = fakeClient({
+      // L'exo de base visé est lu avec le catalogue : l'override a son parent.
+      exercises: { data: [{ id: 'base-1', owner_id: null, name: 'Développé couché' }] },
       exercise_overrides: {
         data: [
           { id: 'ov1', user_id: 'me', exercise_id: 'base-1', notes: 'perso' },
@@ -253,7 +255,7 @@ describe('withoutRowsNewerThanTheirParent', () => {
       { id: 's2', execution_id: 'e-arrivee-pendant-export' },
     ];
     data.dated_notes = [{ id: 'n1', execution_id: 'e-arrivee-pendant-export' }];
-    const out = withoutRowsNewerThanTheirParent(data);
+    const out = withoutRowsNewerThanTheirParent(data, new Set());
     expect(out.performed_sets.map((r) => r.id)).toEqual(['s1']);
     expect(out.dated_notes).toEqual([]);
   });
@@ -269,7 +271,7 @@ describe('withoutRowsNewerThanTheirParent', () => {
       { id: 's1', execution_id: 'e1' },
       { id: 's2', execution_id: 'e2' },
     ];
-    const out = withoutRowsNewerThanTheirParent(data);
+    const out = withoutRowsNewerThanTheirParent(data, new Set());
     expect(out.executions.map((r) => r.id)).toEqual(['e2']);
     expect(out.performed_sets.map((r) => r.id)).toEqual(['s2']);
   });
@@ -278,7 +280,92 @@ describe('withoutRowsNewerThanTheirParent', () => {
     const data = empty();
     data.routines = [{ id: 'r1' }];
     data.seances = [{ id: 'se1', routine_id: 'r1' }];
-    expect(withoutRowsNewerThanTheirParent(data)).toEqual(data);
+    expect(withoutRowsNewerThanTheirParent(data, new Set())).toEqual(data);
+  });
+
+  it('exo perso supprimé pendant l’export : ses notes, overrides, prescriptions, séries et notes datées sont écartés', () => {
+    const data = empty();
+    data.seance_versions = [{ id: 'v1', seance_id: 'se1' }];
+    data.seances = [{ id: 'se1', routine_id: 'r1' }];
+    data.routines = [{ id: 'r1' }];
+    data.executions = [{ id: 'e1', seance_version_id: 'v1' }];
+    data.exercise_notes = [
+      { id: 'n-base', exercise_id: 'base-1' },
+      { id: 'n-perdu', exercise_id: 'perso-supprime' },
+    ];
+    data.exercise_overrides = [
+      { id: 'o-base', exercise_id: 'base-1' },
+      { id: 'o-perdu', exercise_id: 'perso-supprime' },
+    ];
+    data.prescriptions = [
+      { id: 'p-perso', seance_version_id: 'v1', exercise_id: 'perso-1' },
+      { id: 'p-perdu', seance_version_id: 'v1', exercise_id: 'perso-supprime' },
+    ];
+    data.performed_sets = [
+      { id: 's-base', execution_id: 'e1', exercise_id: 'base-1' },
+      { id: 's-perdu', execution_id: 'e1', exercise_id: 'perso-supprime' },
+    ];
+    data.dated_notes = [
+      { id: 'd-perso', execution_id: 'e1', exercise_id: 'perso-1' },
+      { id: 'd-perdu', execution_id: 'e1', exercise_id: 'perso-supprime' },
+    ];
+
+    const out = withoutRowsNewerThanTheirParent(data, new Set(['base-1', 'perso-1']));
+
+    expect(out.exercise_notes.map((r) => r.id)).toEqual(['n-base']);
+    expect(out.exercise_overrides.map((r) => r.id)).toEqual(['o-base']);
+    expect(out.prescriptions.map((r) => r.id)).toEqual(['p-perso']);
+    expect(out.performed_sets.map((r) => r.id)).toEqual(['s-base']);
+    expect(out.dated_notes.map((r) => r.id)).toEqual(['d-perso']);
+    // Les parents, eux, restent : seules les lignes orphelines partent.
+    expect(out.executions.map((r) => r.id)).toEqual(['e1']);
+    expect(out.seance_versions.map((r) => r.id)).toEqual(['v1']);
+  });
+});
+
+describe('collectUserData : liens vers les exercices', () => {
+  it('une série sur un exo de base reste : l’exo est lu, même s’il n’est pas exporté', async () => {
+    const client = fakeClient({
+      exercises: {
+        data: [
+          { id: 'base-1', owner_id: null, name: 'Développé couché' },
+          { id: 'perso-1', owner_id: 'me', name: 'Mon exo' },
+        ],
+      },
+      executions: { data: [{ id: 'e1', seance_version_id: null }] },
+      performed_sets: {
+        data: [
+          { id: 's1', execution_id: 'e1', exercise_id: 'base-1' },
+          { id: 's2', execution_id: 'e1', exercise_id: 'perso-1' },
+        ],
+      },
+    });
+
+    const collected = await collectUserData(client);
+
+    expect(collected.exercises.map((r) => r.id)).toEqual(['perso-1']);
+    expect(collected.performed_sets.map((r) => r.id)).toEqual(['s1', 's2']);
+  });
+
+  it('une note liée à un exo perso absent du catalogue lu est écartée : la sauvegarde reste restaurable', async () => {
+    const client = fakeClient({
+      exercises: { data: [{ id: 'base-1', owner_id: null, name: 'Développé couché' }] },
+      executions: { data: [{ id: 'e1', seance_version_id: null }] },
+      exercise_notes: {
+        data: [
+          { id: 'n1', exercise_id: 'base-1' },
+          { id: 'n2', exercise_id: 'perso-supprime-pendant-la-lecture' },
+        ],
+      },
+      performed_sets: {
+        data: [{ id: 's1', execution_id: 'e1', exercise_id: 'perso-supprime-pendant-la-lecture' }],
+      },
+    });
+
+    const collected = await collectUserData(client);
+
+    expect(collected.exercise_notes.map((r) => r.id)).toEqual(['n1']);
+    expect(collected.performed_sets).toEqual([]);
   });
 });
 

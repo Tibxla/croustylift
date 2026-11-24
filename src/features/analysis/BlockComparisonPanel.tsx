@@ -15,6 +15,7 @@
 // `compareBlockSeances`, `defaultComparisonPair`).
 import { useEffect, useMemo, useState } from 'react';
 import type { ExerciseExecution, Block } from '../../domain/types';
+import { blockKey } from '../../domain/block';
 import {
   compareBlockSeances,
   defaultComparisonPair,
@@ -27,7 +28,10 @@ import { blockLabel, seanceRoutineLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
 import { TrendArrow } from './TrendArrow';
-import { trendColor, trendOf } from './trend';
+import { trendColor, trendOf, winnerVerdict } from './trend';
+import { formatRate } from './format';
+import { errorMessage } from '../../lib/error-message';
+import { rateNote } from './unit-label';
 
 /** Sous ce nombre de points, une option n'a pas de pente fiable (cf. weeklyProgressionRate). */
 const MIN_POINTS = 3;
@@ -60,7 +64,7 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
         if (!active) return;
         setLoad({
           phase: 'error',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorMessage(err),
         });
       }
     })();
@@ -221,12 +225,13 @@ function OptionSelect({
         {label}
       </span>
       <select
-        className="field h-11 rounded-xl px-2.5 text-sm text-ink"
+        // 16 px au moins : en dessous, iOS zoome la page au focus d'un champ.
+        className="field h-11 rounded-xl px-2.5 text-base text-ink"
         value={value ?? ''}
         onChange={(e) => onChange(Number(e.target.value))}
       >
         {options.map((o, index) => (
-          <option key={`${o.block.start}:${o.seanceId}`} value={index} disabled={index === exclude}>
+          <option key={`${blockKey(o.block)}:${o.seanceId}`} value={index} disabled={index === exclude}>
             {oneLine(optionLabel(o, seances))}
             {o.pointCount < MIN_POINTS ? ' · trop peu de points' : ''}
           </option>
@@ -279,6 +284,8 @@ function ComparisonResult({
         winner={result.winner}
         firstLabel={oneLine(firstLabel)}
         secondLabel={oneLine(secondLabel)}
+        // Un exo jamais chargé se compare en reps effectives (cf. CurveUnit).
+        unit={result.unit}
       />
 
       <div className="grid grid-cols-2 gap-2">
@@ -295,6 +302,10 @@ function ComparisonResult({
           isWinner={result.winner === 'second'}
         />
       </div>
+
+      {rateNote(result.unit) && (
+        <p className="text-[11px] text-ink-faint">{rateNote(result.unit)}</p>
+      )}
 
       <Verdict
         winner={result.winner}
@@ -321,7 +332,6 @@ function BlockRateCard({
   // Comme ProgressionBadge : flèche (forme) + couleur + signe, jamais la couleur
   // seule (DESIGN.md ; +2,3 vs −3,0 et stagnation vs baisse sinon ambigus).
   const trend = rate === null ? null : trendOf(rate);
-  const sign = rate !== null && rate > 0 ? '+' : ''; // le '−' vient du nombre négatif.
 
   return (
     <div
@@ -339,8 +349,7 @@ function BlockRateCard({
         <p className={`mt-1 flex items-center gap-1 ${trendColor(trend)}`}>
           <TrendArrow trend={trend} />
           <span className="readout text-sm font-medium">
-            {sign}
-            {rate.toFixed(1)}
+            {formatRate(rate)}
             <span className="ml-0.5 text-xs font-normal opacity-80"> %/sem</span>
           </span>
         </p>
@@ -379,16 +388,19 @@ function Verdict({
   if (winner === 'tie') {
     return (
       <p className="text-xs text-ink-muted">
-        Progression équivalente des deux côtés.
+        Pentes équivalentes des deux côtés.
       </p>
     );
   }
 
   const winnerLabel = winner === 'first' ? firstLabel : secondLabel;
+  const winnerRate = (winner === 'first' ? firstSide : secondSide).weeklyRate;
+  // La meilleure pente ne « progresse » que si elle monte : entre deux baisses,
+  // elle recule le moins (cf. `winnerVerdict`). Un gagnant a toujours une pente.
   return (
     <p className="text-xs text-ink">
-      <span className="text-accent-ink">{winnerLabel}</span> progresse le
-      plus vite.
+      <span className="text-accent-ink">{winnerLabel}</span>{' '}
+      {winnerVerdict(winnerRate ?? 0)}.
     </p>
   );
 }

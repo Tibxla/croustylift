@@ -19,19 +19,23 @@ import {
 import {
   upsertDatedNote as upsertDatedNoteRow,
   deleteDatedNoteById,
+  deleteDatedNoteByCouple,
   upsertExerciseNoteRow,
   deleteExerciseNoteByExercise,
 } from '../notes/data';
 import {
-  enqueue,
+  enqueueTracked,
   flush,
-  readQuarantine,
-  readQueue,
+  setFlushRetryRunner,
+  pendingAmong,
+  refusedAmong,
   type FlushResult,
   type OutboxOp,
   type SyncFns,
 } from './outbox';
 import { sessionUserId } from '../../lib/session-identity';
+import { seedRead } from '../../lib/read-cache';
+import { EXERCISE_NOTE_PREFIX } from './plan-copies';
 
 // Exos dont l'historique des séries vient de changer EN BASE (ops acquittées
 // depuis la dernière relecture). `flush` ne dit pas quelles ops sont passées :
@@ -86,6 +90,27 @@ function refreshTouchedHistory(): void {
 }
 
 /**
+ * Une note d'instructions vient d'être acquittée : son corps est posé dans la
+ * copie locale de l'exo. Tant que l'op attendait, la Capture la lisait dans la
+ * file (`applyPendingExerciseNote`) ; une fois sortie de la file, sans cette
+ * écriture, la copie d'avant reprenait la main au remontage suivant. Le seuil
+ * posé avec (`seedRead`) écarte une revalidation partie avant l'acquittement.
+ *
+ * `writer` : le compte de la session, relevé AVANT la requête. La copie n'est
+ * écrite que si l'appareil reconnaît encore ce compte ; sans session lisible
+ * (`null`), rien n'est écrit. Sans lecteur posé (`undefined`, tests), la copie
+ * va au compte reconnu.
+ */
+function rememberExerciseNote(
+  exerciseId: string,
+  body: string,
+  writer: string | null | undefined,
+): void {
+  if (writer === null) return;
+  seedRead(`${EXERCISE_NOTE_PREFIX}${exerciseId}`, body, writer);
+}
+
+/**
  * Les fonctions de sync réelles consommées par `flush` : une par type d'op,
  * toutes idempotentes par id (cf. data.ts). C'est l'unique point de couplage
  * entre l'outbox (logique pure) et Supabase.
@@ -118,13 +143,16 @@ export const syncFns: SyncFns = {
     await deleteSetById(op.id);
     touchDeleted({ setIds: [op.id], executionIds: [] }, op.exerciseIds);
   },
-  updateExecution: (op) =>
-    updateExecution({
+  updateExecution: async (op) => {
+    // Le nombre de lignes touchées n'est pas un critère d'échec (cf. data.ts,
+    // « LIGNES TOUCHÉES ») : 0 = exécution absente de la base, rien à clore.
+    await updateExecution({
       id: op.id,
       bpmAvg: op.bpmAvg,
       durationMin: op.durationMin,
       closedAt: op.closedAt,
-    }),
+    });
+  },
   upsertDatedNote: (op) =>
     upsertDatedNoteRow({
       id: op.id,
@@ -132,51 +160,71 @@ export const syncFns: SyncFns = {
       exerciseId: op.exerciseId,
       body: op.body,
     }),
-  deleteDatedNote: (op) => deleteDatedNoteById(op.id),
+  // Effacement par COUPLE (exécution, exercice), l'identité de la note en base ;
+  // par id pour une op d'un bundle antérieur, qui ne porte que lui.
+  deleteDatedNote: async (op) => {
+    if (op.executionId !== undefined && op.exerciseId !== undefined) {
+      await deleteDatedNoteByCouple(op.executionId, op.exerciseId);
+    } else {
+      await deleteDatedNoteById(op.id);
+    }
+  },
   // Note d'instructions (issue #52, blind F3) : l'`id` de l'op porte l'`exerciseId`
   // (clé idempotente, 1 note par user+exo). Le corps est déjà normalisé en amont.
-  upsertExerciseNote: (op) =>
-    upsertExerciseNoteRow({ exerciseId: op.id, body: op.body }),
-  deleteExerciseNote: (op) => deleteExerciseNoteByExercise(op.id),
+  upsertExerciseNote: async (op) => {
+    const writer = await sessionUserId();
+    await upsertExerciseNoteRow({ exerciseId: op.id, body: op.body });
+    rememberExerciseNote(op.id, op.body, writer);
+  },
+  deleteExerciseNote: async (op) => {
+    const writer = await sessionUserId();
+    await deleteExerciseNoteByExercise(op.id);
+    rememberExerciseNote(op.id, '', writer);
+  },
   deleteExecution: async (op) => {
     await deleteExecutionById(op.id);
     touchDeleted({ setIds: [], executionIds: [op.id] }, op.exerciseIds);
   },
 };
 
+/** Ce qu'il advient d'un lot d'ops soumis par `flushOps`. */
+export interface OpsFlushResult extends FlushResult {
+  /** De NOS ops, celles qui attendent encore en file (réseau, session). */
+  pending: number;
+  /** De NOS ops, celles que la base a refusées (quarantaine) : elles ne partiront pas. */
+  refused: number;
+}
+
 /**
  * Enfile un lot d'ops (dans l'ordre) puis tente un flush immédiat. Les ops sont
  * durables dès l'enqueue (localStorage) : même si le flush échoue (offline),
- * elles remonteront au prochain flush — comme la capture du jour.
+ * elles remonteront au prochain flush, comme la capture du jour.
  *
- * Renvoie un `remaining` qui ne compte QUE NOS ops (les ids qu'on vient
- * d'enfiler) encore présentes après la passe — PAS le `remaining` GLOBAL du
- * `FlushResult` (BUG M4). Pourquoi : `flush` est mémoïsé (un seul flush à la fois,
- * cf. outbox). Si une passe est déjà en vol, `flush(syncFns)` renvoie SA promesse,
- * dont le `remaining` reflète l'état AU LANCEMENT de cette passe — avant qu'on
- * enfile nos ops. Il pourrait donc valoir `0` alors que NOS ops dorment encore en
- * file (faux succès → l'éditeur de séance se fermerait à tort). En recomptant nos
- * propres ids dans `readQueue()` après l'attente, on obtient l'état réel des ops
- * qu'on a soumises, indépendamment de la passe qui a effectivement tourné.
+ * Le résultat ne compte QUE NOS ops, retrouvées par leur identité d'enfilement
+ * (`_uid`), PAS le `remaining` GLOBAL du `FlushResult` (BUG M4). Pourquoi :
+ * `flush` est mémoïsé (un seul flush à la fois, cf. outbox). Si une passe est
+ * déjà en vol, `flush(syncFns)` renvoie SA promesse, dont le `remaining` reflète
+ * l'état AU LANCEMENT de cette passe, avant qu'on enfile nos ops. Il pourrait
+ * donc valoir `0` alors que NOS ops dorment encore en file (faux succès →
+ * l'éditeur de séance se fermerait à tort).
+ *
+ * `pending` et `refused` sont rendus À PART : une correction que la base a
+ * refusée n'est pas une correction qui attend le réseau, et l'écran ne doit pas
+ * dire « pas de réseau » pour elle. `remaining` reste leur somme (rien de nous
+ * n'est en base tant qu'il n'est pas nul). L'identité d'enfilement est un UUID :
+ * avant, nos ops refusées se repéraient par leur POSITION dans la quarantaine, et
+ * une purge faite par un autre onglet pendant la passe pouvait faire passer une
+ * correction refusée pour une sauvegarde réussie.
  * `flushed` reste celui de la passe (best-effort, purement indicatif).
  */
-export async function flushOps(ops: OutboxOp[]): Promise<FlushResult> {
-  const ourIds = new Set(ops.map((op) => op.id));
-  const quarantinedBefore = readQuarantine().length;
-  for (const op of ops) enqueue(op);
+export async function flushOps(ops: OutboxOp[]): Promise<OpsFlushResult> {
+  const ours = ops.map((op) => enqueueTracked(op));
   // On attend la passe (qu'elle soit la nôtre ou une déjà en vol) pour laisser le
   // temps à nos ops d'être tentées, mais on ne se fie pas à son `remaining` global.
   const { flushed } = await flushOutbox();
-  // `remaining` PROPRE : combien de NOS ids restent réellement en file maintenant.
-  // Une de nos ops REJETÉE par la base a quitté la file pour la quarantaine :
-  // elle n'est pas en base non plus, ce n'est pas un succès. Elle compte donc
-  // (la quarantaine ne fait que s'allonger : les entrées d'après notre enfilement).
-  const remaining =
-    readQueue().filter((op) => ourIds.has(op.id)).length +
-    readQuarantine()
-      .slice(quarantinedBefore)
-      .filter((q) => ourIds.has(q.op.id)).length;
-  return { remaining, flushed };
+  const pending = pendingAmong(ours);
+  const refused = refusedAmong(ours);
+  return { remaining: pending + refused, pending, refused, flushed };
 }
 
 /**
@@ -198,3 +246,8 @@ export function flushOutbox() {
   // « acquitté » sans avoir touché de ligne (cf. `runFlushOnce`).
   return flush(syncFns, sessionUserId).finally(refreshTouchedHistory);
 }
+
+// Un essai reprogrammé après un verrou occupé (cf. outbox) passe par le flush de
+// l'app, pour que les copies d'historique acquittées soient relues comme après
+// toute autre passe.
+setFlushRetryRunner(flushOutbox);

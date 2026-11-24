@@ -1,0 +1,36 @@
+/*
+  Polices auto-hébergées, restreintes au sous-ensemble latin.
+
+  Les feuilles `index.css` des paquets fontsource déclarent tous les sous-ensembles
+  (cyrillique, grec, vietnamien, latin étendu). Le navigateur ne télécharge que
+  ceux dont un glyphe est affiché, mais le service worker, lui, précache tous les
+  fichiers émis. L'app est en français : seul `latin` est déclaré ici, avec
+  l'`unicode-range` repris tel quel des paquets (à recopier si un paquet est mis à
+  jour). Il porte tout ce que l'interface écrit en Geist, « œ », « É », « · »,
+  « × » et « − » compris.
+
+  Le latin étendu n'est plus embarqué : aucun texte de l'app n'y puise. Une
+  lettre saisie par l'utilisateur hors du latin (« ł », « č ») s'affiche dans la
+  police du système, comme le font déjà « → », « ≥ », « Σ » ou les exposants de
+  « 1ʳᵉ », absents de Geist dans tous ses sous-ensembles.
+
+  Geist porte le texte, Geist Mono les chiffres mesurés.
+*/
+
+@font-face {
+  font-family: "Geist Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+@font-face {
+  font-family: "Geist Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}

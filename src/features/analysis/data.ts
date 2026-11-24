@@ -11,18 +11,19 @@
 //   - Une `ExerciseExecution` du domaine = les séries d'un exo un jour donné.
 import { supabase } from '../../lib/supabase';
 import { afterId, fetchAllRows, inCreationOrder } from '../../lib/fetch-all';
-import { buildPrimaryCurve } from '../../domain/primary-curve';
+import { buildPrimaryCurve, curveUnit } from '../../domain/primary-curve';
 import { buildSecondaryCurve } from '../../domain/secondary-curve';
-import { weeklyProgressionRate } from '../../domain/progression';
+import { MIN_SLOPE_POINTS, weeklyProgressionRate } from '../../domain/progression';
+import { executionsInBlock } from '../../domain/block-comparison';
 import { detectBlocks } from '../../domain/block';
-import { buildConfigTimeline } from './config-timeline';
+import { buildConfigTimeline, type FirstExecutionRow } from './config-timeline';
 import { orderByPlan, planExerciseOrder } from './exercise-order';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
 import { currentVersionIdBySeance } from '../authoring/duplicate-seance';
 import { resolveCaptureRoutineId } from '../capture/data';
 import { buildRawLog, type RawLogEntry } from './raw-log';
 import { buildSessionMetrics, type SessionMetricPoint } from './session-metrics';
-import type { ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
+import type { CurveUnit, ExerciseExecution, E1rmPoint, Block } from '../../domain/types';
 import { loadExerciseOverrides } from '../exercises/overrides';
 import {
   mergeExerciseOverride,
@@ -57,8 +58,10 @@ export interface TrainedExercise {
  * (séries 2+), dérivées des seules exécutions de cette séance — un même exo n'a
  * pas la même perf selon le contexte de fatigue de la séance (cf. GLOSSARY.md
  * « Référence », même logique que le scope de la Capture).
- * `weeklyRate` vaut `null` sans assez de points pour ajuster une droite ;
  * `secondaryCurve` est `[]` sans série 2+.
+ *
+ * La COURBE couvre tout l'historique de la séance ; la PENTE ne porte que sur le
+ * bloc en cours (cf. `weeklyRate`).
  */
 export interface SeanceCurve {
   /** Id de la séance (toutes versions), ou `null` si la séance n'est plus résoluble. */
@@ -75,9 +78,29 @@ export interface SeanceCurve {
   label: string;
   curve: E1rmPoint[];
   secondaryCurve: E1rmPoint[];
+  /**
+   * Pente %/semaine sur le BLOC EN COURS (ADR 0016, amendement du 2026-11-23) :
+   * les seules exécutions de cette séance lancées depuis le dernier changement
+   * de plan. `null` sans assez de points dans ce bloc ; jamais de repli sur tout
+   * l'historique, qui noierait le plan actuel sous les précédents.
+   */
   weeklyRate: number | null;
+  /** La période que couvre `weeklyRate`, pour l'écrire à côté du chiffre. */
+  ratePeriod: RatePeriod;
   /** Date du dernier point : départage la séance mise en avant (l'accent). */
   lastDate: string;
+}
+
+/** La période d'une pente : depuis quand, et sur combien de séances. */
+export interface RatePeriod {
+  /**
+   * Jour ISO (heure locale) où s'ouvre le bloc en cours. `null` quand le compte
+   * n'a aucun bloc (ni routine activée, ni séance rattachée à une routine) : la
+   * pente couvre alors tout l'historique, et l'écran le dit.
+   */
+  since: string | null;
+  /** Séances de cette courbe dans la période (ses points). */
+  sessions: number;
 }
 
 /**
@@ -85,55 +108,24 @@ export interface SeanceCurve {
  * première entrée est la séance la plus récemment exécutée — c'est ELLE qui
  * porte l'accent, le readout héros, la pente et le graphe secondaire dans l'UI ;
  * les autres se superposent en subordonné. Jamais vide pour un exo entraîné
- * (au moins une série loggée → au moins un point quelque part).
+ * (au moins une série loggée → au moins un point quelque part), sauf le cas
+ * limite d'un exo chargé dont toutes les 1ʳᵉˢ séries sont à 0 kg (cf.
+ * `zeroLoadHoles`).
  */
 export interface ExerciseAnalysis extends TrainedExercise {
   seanceCurves: SeanceCurve[];
-}
-
-// --- Exercices entraînés ------------------------------------------------------
-
-/**
- * Les exercices pour lesquels l'user a au moins une série loggée.
- *
- * On part de `performed_sets` (jointe au nom de l'exo) plutôt que de `exercises`
- * pour ne garder QUE les exos réellement travaillés (un exo du catalogue jamais
- * loggé n'a rien à analyser). On dédoublonne côté client : un même exercise_id
- * revient une fois par série, on n'en garde qu'un. Lecture PAGINÉE (cf.
- * lib/fetch-all) : au-delà du plafond de 1000 lignes, un exo dont aucune série
- * ne tombait dans la première page disparaissait de l'Analyse.
- */
-export async function loadTrainedExercises(): Promise<TrainedExercise[]> {
-  type Row = { id: string; exercise_id: string; exercises: { name: string } | null };
-  const [rows, overrides] = await Promise.all([
-    fetchAllRows<Row>((after, limit) =>
-      afterId(
-        supabase
-          .from('performed_sets')
-          .select('id, exercise_id, exercises ( name )')
-          .order('id')
-          .limit(limit),
-        after,
-      ),
-    ),
-    // Nom personnalisé per-user (issue #50) : l'analyse affiche le même nom que
-    // partout ailleurs (catalogue, Capture, log brut).
-    loadExerciseOverrides(),
-  ]);
-
-  const byId = new Map<string, TrainedExercise>();
-  for (const row of rows) {
-    if (byId.has(row.exercise_id)) continue;
-    byId.set(row.exercise_id, {
-      exerciseId: row.exercise_id,
-      name: overriddenName(
-        row.exercises?.name ?? '(exercice inconnu)',
-        overrides.get(row.exercise_id),
-      ),
-    });
-  }
-
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  /**
+   * L'unité de TOUTES les courbes de la carte (cf. `CurveUnit`) : 'reps' pour un
+   * exo jamais chargé (poids du corps saisi à 0 kg), 'kg' sinon. L'UI s'en sert
+   * pour dire « reps » et non « e1RM ».
+   */
+  unit: CurveUnit;
+  /**
+   * Exécutions absentes des courbes en kilos parce que leur 1ʳᵉ série est à 0 kg
+   * (un trou, pas un zéro). Toujours 0 en 'reps'. L'UI le dit : une donnée
+   * n'est jamais écartée en silence.
+   */
+  zeroLoadHoles: number;
 }
 
 // --- Exécutions passées d'un exo ----------------------------------------------
@@ -153,81 +145,91 @@ export interface LoadedExecutions {
 }
 
 /**
- * Les exécutions passées de l'user pour cet exo, dans la forme du domaine
- * (`ExerciseExecution[]`, une par jour, séries triées par order), chacune
- * portant sa SÉANCE (`seanceId`, via executions → seance_versions → seance_id :
- * les versions sont des retouches du même template) — le scope des courbes par
- * séance (issue #67). Porte aussi `createdAt`/`id` : sans eux le tie-break de
- * `compareCurvePoints` (deux exécutions le même jour) était inopérant côté
- * Analyse. Les noms de séances remontent à part (le domaine reste sans nom).
+ * Une ligne `performed_sets` jointe à son exécution, sa séance et son exo : la
+ * forme lue par l'Analyse, que la lecture porte sur un exo ou sur tous.
  */
-export async function loadExerciseExecutions(
-  exerciseId: string,
-): Promise<LoadedExecutions> {
-  type SetRow = {
-    id: string;
+export interface ExecutionSetRow {
+  id: string;
+  created_at: string;
+  weight_kg: number;
+  reps: number;
+  rir: number;
+  set_order: number;
+  side: string | null;
+  execution_id: string;
+  exercise_id: string;
+  exercises: { name: string } | null;
+  executions: {
+    performed_on: string;
     created_at: string;
-    weight_kg: number;
-    reps: number;
-    rir: number;
-    set_order: number;
-    side: string | null;
-    execution_id: string;
-    executions: {
-      performed_on: string;
-      created_at: string;
-      seance_versions: {
-        seance_id: string;
-        seances: {
-          name: string;
-          routine_id: string;
-          routines: { name: string } | null;
-        } | null;
+    started_at: string | null;
+    seance_versions: {
+      seance_id: string;
+      seances: {
+        name: string;
+        routine_id: string;
+        routines: { name: string } | null;
       } | null;
     } | null;
-  };
-  // Lecture paginée (cf. lib/fetch-all), dans l'ordre de saisie (`created_at`,
-  // départagé par `id` pour un tri total) : un exo très pratiqué dépasse le
-  // plafond de 1000 lignes, et la courbe perdait alors des exécutions.
-  const rows = await fetchAllRows<SetRow>((after, limit) =>
-    afterId(
-      supabase
-        .from('performed_sets')
-        .select(
-          'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, executions ( performed_on, created_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )',
-        )
-        .eq('exercise_id', exerciseId)
-        .order('id')
-        .limit(limit),
-      after,
-    ),
-  );
+  } | null;
+}
 
+const EXECUTION_SET_SELECT =
+  'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )';
+
+/** Les exécutions d'un exo, avec son nom de catalogue (`null` si l'exo a disparu). */
+export interface ExerciseExecutions extends LoadedExecutions {
+  name: string | null;
+}
+
+/**
+ * Répartit des séries lues PAR EXO, dans la forme du domaine : pour chaque exo,
+ * ses `ExerciseExecution[]` (une par exécution, séries dans l'ordre de saisie),
+ * chacune portant sa SÉANCE (`seanceId`, via executions → seance_versions →
+ * seance_id : les versions sont des retouches du même template), le scope des
+ * courbes par séance (issue #67). Porte aussi `createdAt`/`id` (départage de
+ * deux exécutions le même jour, `compareCurvePoints`) et `startedAt` (l'instant
+ * qui rattache l'exécution à son bloc, ADR 0001). Les noms de séances remontent
+ * à part (le domaine reste sans nom). Pure : les lignes peuvent arriver dans
+ * n'importe quel ordre (la pagination trie par id).
+ */
+export function groupExecutionRows(rows: ExecutionSetRow[]): Map<string, ExerciseExecutions> {
+  const byExercise = new Map<string, ExerciseExecutions>();
+  // Une exécution couvre plusieurs exos : la clé est (exo, exécution).
   const byExecution = new Map<string, ExerciseExecution>();
-  const seances = new Map<string, SeanceInfo>();
   for (const row of inCreationOrder(rows)) {
     const execution = row.executions;
-    if (!execution) continue; // garde-fou : exécution orpheline.
+    if (!execution) continue; // garde-fou : série orpheline d'exécution.
+    let exercise = byExercise.get(row.exercise_id);
+    if (!exercise) {
+      exercise = { name: row.exercises?.name ?? null, executions: [], seances: new Map() };
+      byExercise.set(row.exercise_id, exercise);
+    }
     const seanceId = execution.seance_versions?.seance_id;
-    if (seanceId && !seances.has(seanceId)) {
+    if (seanceId && !exercise.seances.has(seanceId)) {
       const seance = execution.seance_versions?.seances;
-      seances.set(seanceId, {
+      exercise.seances.set(seanceId, {
         name: seance?.name ?? '(séance inconnue)',
         routineId: seance?.routine_id ?? null,
         routineName: seance?.routines?.name ?? null,
       });
     }
-    let exec = byExecution.get(row.execution_id);
+    const key = `${row.exercise_id}:${row.execution_id}`;
+    let exec = byExecution.get(key);
     if (!exec) {
       exec = {
         date: execution.performed_on,
-        exerciseId,
+        exerciseId: row.exercise_id,
         sets: [],
         createdAt: execution.created_at,
         id: row.execution_id,
         seanceId,
       };
-      byExecution.set(row.execution_id, exec);
+      // Lancement horodaté (ADR 0011) : l'instant qui rattache l'exécution à son
+      // bloc. `null` sur les exécutions d'avant la colonne -> repli `createdAt`.
+      if (execution.started_at) exec.startedAt = execution.started_at;
+      byExecution.set(key, exec);
+      exercise.executions.push(exec);
     }
     exec.sets.push({
       weightKg: Number(row.weight_kg),
@@ -239,8 +241,31 @@ export async function loadExerciseExecutions(
       side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
     });
   }
+  return byExercise;
+}
 
-  return { executions: [...byExecution.values()], seances };
+/**
+ * Les exécutions passées de l'user pour UN exo (cf. `groupExecutionRows`), pour
+ * la comparaison de blocs d'une carte. Lecture paginée (cf. lib/fetch-all) : un
+ * exo très pratiqué dépasse le plafond de 1000 lignes, et la courbe perdait
+ * alors des exécutions.
+ */
+export async function loadExerciseExecutions(
+  exerciseId: string,
+): Promise<LoadedExecutions> {
+  const rows = await fetchAllRows<ExecutionSetRow>((after, limit) =>
+    afterId(
+      supabase
+        .from('performed_sets')
+        .select(EXECUTION_SET_SELECT)
+        .eq('exercise_id', exerciseId)
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
+  const grouped = groupExecutionRows(rows).get(exerciseId);
+  return { executions: grouped?.executions ?? [], seances: grouped?.seances ?? new Map() };
 }
 
 // --- Composition domaine ------------------------------------------------------
@@ -252,11 +277,16 @@ export async function loadExerciseExecutions(
  * forment un groupe « Hors séance » (jamais de donnée écartée en silence). Tri :
  * la séance la plus récemment exécutée d'abord (elle porte l'accent dans l'UI),
  * libellé en départage pour rester stable. Pure : pas d'accès réseau.
+ *
+ * `currentBlock` est le bloc en cours du compte (`null` s'il n'en a aucun) : la
+ * pente de chaque séance se mesure sur ses exécutions de ce bloc, rattachées par
+ * leur instant de lancement comme dans la comparaison de blocs.
  */
 export function analyzeExecutions(
   exercise: TrainedExercise,
   executions: ExerciseExecution[],
   seances: ReadonlyMap<string, SeanceInfo>,
+  currentBlock: Block | null = null,
 ): ExerciseAnalysis {
   const groups = new Map<string | null, ExerciseExecution[]>();
   for (const execution of executions) {
@@ -266,24 +296,43 @@ export function analyzeExecutions(
     else groups.set(key, [execution]);
   }
 
+  // L'unité se décide sur TOUT l'exo, puis vaut pour chaque séance : les courbes
+  // d'une carte se superposent, elles ne peuvent pas mêler reps et kilos.
+  const unit = curveUnit(executions, exercise.exerciseId);
   const seanceCurves: SeanceCurve[] = [];
   const routineIds = new Set<string>();
+  let pointCount = 0;
   for (const [seanceId, group] of groups) {
-    const curve = buildPrimaryCurve(group, exercise.exerciseId);
+    const curve = buildPrimaryCurve(group, exercise.exerciseId, unit);
+    pointCount += curve.length;
     // Un groupe sans point (exécutions vides / autre exo) n'est pas une courbe.
     if (curve.length === 0) continue;
     const info = seanceId === null ? null : seances.get(seanceId);
     if (info?.routineId) routineIds.add(info.routineId);
     const seanceName =
       seanceId === null ? 'Hors séance' : info?.name ?? '(séance inconnue)';
+    // La pente : le bloc en cours seulement. On filtre les EXÉCUTIONS (par leur
+    // lancement), puis on reconstruit la courbe, plutôt que de couper les points
+    // par date.
+    const blockCurve = currentBlock
+      ? buildPrimaryCurve(
+          executionsInBlock(group, exercise.exerciseId, currentBlock),
+          exercise.exerciseId,
+          unit,
+        )
+      : curve;
     seanceCurves.push({
       seanceId,
       seanceName,
       routineName: info?.routineName ?? null,
       label: seanceName,
       curve,
-      secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId),
-      weeklyRate: weeklyProgressionRate(curve),
+      secondaryCurve: buildSecondaryCurve(group, exercise.exerciseId, unit),
+      weeklyRate: weeklyProgressionRate(blockCurve, MIN_SLOPE_POINTS, unit),
+      ratePeriod: {
+        since: currentBlock?.start ?? null,
+        sessions: blockCurve.length,
+      },
       lastDate: curve[curve.length - 1]?.date ?? '',
     });
   }
@@ -303,7 +352,13 @@ export function analyzeExecutions(
       b.lastDate.localeCompare(a.lastDate) || a.label.localeCompare(b.label, 'fr'),
   );
 
-  return { ...exercise, seanceCurves };
+  // Une exécution réelle (au moins une série) fait un point, sauf si sa 1ʳᵉ
+  // série est à 0 kg sur une courbe en kilos : la différence compte ces trous.
+  const performed = executions.filter(
+    (e) => e.exerciseId === exercise.exerciseId && e.sets.length > 0,
+  ).length;
+
+  return { ...exercise, seanceCurves, unit, zeroLoadHoles: performed - pointCount };
 }
 
 /**
@@ -359,15 +414,28 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
   );
   if (seanceOfVersion.size === 0) return [];
 
-  const prescriptionsRes = await supabase
-    .from('prescriptions')
-    .select('seance_version_id, exercise_id, position')
-    .in('seance_version_id', [...seanceOfVersion.keys()]);
-  if (prescriptionsRes.error) throw prescriptionsRes.error;
+  // Paginé comme les versions : passé 1000 prescriptions sur les versions
+  // courantes, l'ordre du plan perdait des exos en silence.
+  const prescriptions = await fetchAllRows<{
+    id: string;
+    seance_version_id: string;
+    exercise_id: string;
+    position: number;
+  }>((after, limit) =>
+    afterId(
+      supabase
+        .from('prescriptions')
+        .select('id, seance_version_id, exercise_id, position')
+        .in('seance_version_id', [...seanceOfVersion.keys()])
+        .order('id')
+        .limit(limit),
+      after,
+    ),
+  );
 
   return planExerciseOrder(
     seances,
-    (prescriptionsRes.data ?? []).flatMap((p) => {
+    prescriptions.flatMap((p) => {
       const seanceId = seanceOfVersion.get(p.seance_version_id);
       return seanceId ? [{ seanceId, exerciseId: p.exercise_id, position: p.position }] : [];
     }),
@@ -377,24 +445,44 @@ export async function loadPlanExerciseOrder(): Promise<string[]> {
 /**
  * Charge tous les exos entraînés et calcule leur analyse en une passe, dans
  * l'ordre du plan de la routine courante puis par nom (décision du 2026-09-13).
- * Une requête pour la liste, puis une par exo (les requêtes par exo tournent en
- * parallèle). L'UI consomme directement le tableau d'`ExerciseAnalysis`.
+ *
+ * Les blocs du compte sont lus en parallèle : la pente de chaque carte porte sur
+ * le bloc en cours.
+ *
+ * UNE lecture paginée de toutes les séries, regroupée par exo côté client
+ * (`groupExecutionRows`). À ne pas refaire : une requête par exo. Trente exos
+ * coûtaient une trentaine d'allers-retours en parallèle, après une première
+ * lecture de toutes les séries qui ne servait qu'à lister les exos.
+ *
+ * Un exo n'apparaît que s'il a au moins une série loggée (un exo du catalogue
+ * jamais travaillé n'a rien à analyser), sous son nom personnalisé per-user
+ * (issue #50), le même que partout ailleurs.
  */
 export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
-  const [trainedByName, planOrder] = await Promise.all([
-    loadTrainedExercises(),
+  const [rows, overrides, planOrder, blocks] = await Promise.all([
+    fetchAllRows<ExecutionSetRow>((after, limit) =>
+      afterId(
+        supabase.from('performed_sets').select(EXECUTION_SET_SELECT).order('id').limit(limit),
+        after,
+      ),
+    ),
+    loadExerciseOverrides(),
     loadPlanExerciseOrder(),
+    // Le bloc en cours borne la pente de chaque carte (cf. `SeanceCurve.weeklyRate`).
+    loadBlocks(),
   ]);
-  const trained = orderByPlan(trainedByName, planOrder);
+  const currentBlock = blocks.find((block) => block.end === null) ?? null;
 
-  const analyses = await Promise.all(
-    trained.map(async (exercise) => {
-      const { executions, seances } = await loadExerciseExecutions(exercise.exerciseId);
-      return analyzeExecutions(exercise, executions, seances);
-    }),
-  );
+  const grouped = groupExecutionRows(rows);
+  const trainedByName: TrainedExercise[] = [...grouped].map(([exerciseId, exercise]) => ({
+    exerciseId,
+    name: overriddenName(exercise.name ?? '(exercice inconnu)', overrides.get(exerciseId)),
+  }));
 
-  return analyses;
+  return orderByPlan(trainedByName, planOrder).map((exercise) => {
+    const { executions, seances } = grouped.get(exercise.exerciseId)!;
+    return analyzeExecutions(exercise, executions, seances, currentBlock);
+  });
 }
 
 // --- Blocs (config de template inchangée, cf. ADR 0001) -----------------------
@@ -404,14 +492,16 @@ export async function loadAnalyses(): Promise<ExerciseAnalysis[]> {
  * inchangée. On LIT le journal des changements de plan (activations de routine +
  * versions de séances + archivages de séances + le lien séance->routine), on construit la timeline de
  * configs via le module pur `buildConfigTimeline`, puis on la passe à
- * `detectBlocks`. Aucune lecture d'exécution ici : une déviation ne peut pas
- * créer de bloc (cf. ADR 0001). Pas de logique de calcul dans cette couche.
+ * `detectBlocks`. Aucune série n'est lue : une déviation ne peut pas créer de
+ * bloc (cf. ADR 0001). La seule exécution lue est la PREMIÈRE du compte, pour le
+ * bloc implicite d'avant toute activation (cf. `loadFirstExecution`). Pas de
+ * logique de calcul dans cette couche.
  */
 export async function loadBlocks(): Promise<Block[]> {
   // Quatre journaux qui ne font que grossir avec l'âge du compte : lus en entier,
   // page par page (cf. lib/fetch-all), sinon un bloc ancien ou récent sautait
   // en silence passé 1000 lignes.
-  const [activations, versions, seances, archives] = await Promise.all([
+  const [activations, versions, seances, archives, firstExecution] = await Promise.all([
     fetchAllRows<{ id: string; activated_at: string; routine_id: string }>((after, limit) =>
       afterId(
         supabase
@@ -447,6 +537,7 @@ export async function loadBlocks(): Promise<Block[]> {
         after,
       ),
     ),
+    loadFirstExecution(),
   ]);
 
   const timeline = buildConfigTimeline({
@@ -467,9 +558,97 @@ export async function loadBlocks(): Promise<Block[]> {
       seanceId: r.seance_id,
       archived: r.archived,
     })),
+    firstExecution,
   });
 
   return detectBlocks(timeline);
+}
+
+/** Une exécution candidate au rôle de « première du compte », telle que lue. */
+export interface FirstExecutionCandidate {
+  id: string;
+  performed_on: string;
+  created_at: string;
+  started_at: string | null;
+  seance_versions: { seances: { routine_id: string } | null } | null;
+  /** Au moins une série : une exécution née d'une note seule n'est pas une séance faite. */
+  performed_sets: { id: string }[] | null;
+}
+
+/**
+ * L'ouverture du bloc implicite parmi des candidates (au moins une série, une
+ * séance résoluble). Pure.
+ *   - Toutes horodatées : le bloc s'ouvre au plus ANCIEN LANCEMENT, pas au plus
+ *     ancien jour. Les jours peuvent dire l'inverse des instants (Tokyo le 20 à
+ *     00 h 10 est avant Los Angeles le 19 à 22 h 30) : ouvert au lancement de la
+ *     séance du plus ancien jour, le bloc écartait l'autre.
+ *   - Dès qu'une candidate n'a pas de lancement (exécution d'avant la colonne) :
+ *     repli au jour, sans instant, départagé par la création puis l'id. Un bloc
+ *     ouvert au jour contient toutes les séances de ce jour-là et des suivants.
+ * Dans les deux cas le bloc est daté du plus ancien jour des candidates.
+ * `created_at` n'ordonne que le repli ; il n'est jamais rendu comme instant
+ * (c'est l'heure d'arrivée en base : une séance hors ligne lancée à 8 h et
+ * envoyée à 14 h passait derrière celle de 13 h).
+ */
+export function pickFirstExecution(
+  candidates: FirstExecutionCandidate[],
+): FirstExecutionRow | null {
+  const valid = candidates.filter(
+    (row) =>
+      (row.performed_sets?.length ?? 0) > 0 &&
+      Boolean(row.seance_versions?.seances?.routine_id),
+  );
+  const byId = (a: FirstExecutionCandidate, b: FirstExecutionCandidate) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  const allStarted = valid.every((row) => row.started_at);
+  const first = [...valid].sort(
+    allStarted
+      ? (a, b) => Date.parse(a.started_at!) - Date.parse(b.started_at!) || byId(a, b)
+      : (a, b) =>
+          a.performed_on.localeCompare(b.performed_on) ||
+          Date.parse(a.started_at ?? a.created_at) - Date.parse(b.started_at ?? b.created_at) ||
+          byId(a, b),
+  )[0];
+  if (!first) return null;
+  const row: FirstExecutionRow = {
+    date: valid.map((c) => c.performed_on).sort()[0]!,
+    routineId: first.seance_versions!.seances!.routine_id,
+  };
+  if (allStarted) row.startedAt = first.started_at!;
+  return row;
+}
+
+/**
+ * Candidates lues, par jour croissant. Le plus ancien lancement peut porter le
+ * deuxième jour (décalage de fuseau) : vingt lignes couvrent largement les deux
+ * premiers jours distincts d'un compte.
+ */
+const FIRST_EXECUTION_CANDIDATES = 20;
+
+/**
+ * La première séance du compte rattachée à une séance, avec la routine de
+ * celle-ci. Sert au seul bloc implicite : un compte qui a capturé avant
+ * d'activer une routine (la Capture se replie sur la première non archivée)
+ * n'avait aucun bloc pour ces séances-là. On lit les exécutions des tout
+ * premiers jours (quelques lignes), le choix revient à `pickFirstExecution` :
+ * l'ordre « lancement, à défaut création » ne s'écrit pas en PostgREST.
+ */
+async function loadFirstExecution(): Promise<FirstExecutionRow | null> {
+  const { data, error } = await supabase
+    .from('executions')
+    .select(
+      'id, performed_on, created_at, started_at, seance_versions ( seances ( routine_id ) ), performed_sets!inner ( id )',
+    )
+    // Rattachée à une séance : une exécution dont la séance a été supprimée
+    // (`seance_version_id` remis à null) n'a plus de routine à ouvrir.
+    .not('seance_version_id', 'is', null)
+    // Une série suffit à prouver que la séance a été faite (jointure interne).
+    .limit(1, { referencedTable: 'performed_sets' })
+    .order('performed_on')
+    .order('id')
+    .limit(FIRST_EXECUTION_CANDIDATES);
+  if (error) throw error;
+  return pickFirstExecution((data ?? []) as unknown as FirstExecutionCandidate[]);
 }
 
 // --- Comparaison de deux blocs d'un exo (cf. issue #6) ------------------------
@@ -529,6 +708,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     exercises: { name: string } | null;
     executions: {
       performed_on: string;
+      created_at: string;
       bpm_avg: number | null;
       duration_min: number | null;
       seance_versions: {
@@ -546,7 +726,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
         supabase
           .from('performed_sets')
           .select(
-            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
+            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
           )
           .order('id')
           .limit(limit),
@@ -565,6 +745,8 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
         {
           executionId: row.execution_id,
           date: execution.performed_on,
+          // Départage deux exécutions du même jour (la plus récente en tête).
+          createdAt: execution.created_at,
           exerciseId: row.exercise_id,
           exerciseName: overriddenName(
             row.exercises?.name ?? '(exercice inconnu)',
@@ -631,6 +813,7 @@ export async function loadSessionMetrics(): Promise<SessionMetricPoint[]> {
       bpmAvg: row.bpm_avg === null ? null : Number(row.bpm_avg),
       durationMin: row.duration_min === null ? null : Number(row.duration_min),
       hasSets: (row.performed_sets?.[0]?.count ?? 0) > 0,
+      createdAt: row.created_at,
     })),
   );
 }

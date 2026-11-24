@@ -1,14 +1,44 @@
-import type { E1rmPoint } from './types'
+import type { CurveUnit, E1rmPoint } from './types'
 
+/**
+ * Sous ce nombre de points, et d'autant de JOURS distincts, une pente n'est pas
+ * mesurée (cf. `weeklyProgressionRate`).
+ */
+export const MIN_SLOPE_POINTS = 3
+
+/**
+ * Ce qu'on ajoute aux reps effectives pour mesurer une pente en 'reps' : l'e1RM
+ * vaut `charge × (29 + reps effectives) / 30` (ADR 0013).
+ */
+const EPLEY_OFFSET = 29
+
+/**
+ * Pente en % par semaine d'une courbe.
+ *
+ * Sur une courbe en 'reps' (exo jamais chargé), le pourcentage n'est PAS celui
+ * des reps : il se calcule sur `29 + reps effectives`, donc sur l'e1RM à poids du
+ * corps constant, quel que soit ce poids (il se simplifie dans un taux relatif).
+ * Une rep de plus pèse alors autant que sur une barre chargée (environ +2,5 %),
+ * et la pente se compare aux autres cartes et au seuil de stagnation. En reps
+ * brutes, la même rep sur douze pesait +8 %.
+ */
 export function weeklyProgressionRate(
   points: E1rmPoint[],
-  minPoints = 3,
+  minPoints = MIN_SLOPE_POINTS,
+  unit: CurveUnit = 'kg',
 ): number | null {
   if (points.length < minPoints) {
     return null
   }
 
   const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date))
+  // Trois points ne suffisent pas s'ils tiennent sur deux jours (séance reprise
+  // après Clôture, puis le lendemain) : la droite passerait par 24 h et
+  // s'afficherait « +13,9 %/sem ». On exige autant de DATES distinctes que de
+  // points minimaux.
+  if (new Set(sorted.map((p) => p.date)).size < minPoints) {
+    return null
+  }
   const first = sorted[0]
   // Garde indépendante de `minPoints` : un appel `minPoints <= 0` sur un tableau
   // vide franchirait la garde ci-dessus mais n'a aucune pente mesurable.
@@ -19,7 +49,8 @@ export function weeklyProgressionRate(
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000
 
   const xs = sorted.map((p) => (Date.parse(p.date) - t0) / MS_PER_WEEK)
-  const ys = sorted.map((p) => p.e1rm)
+  const offset = unit === 'reps' ? EPLEY_OFFSET : 0
+  const ys = sorted.map((p) => p.e1rm + offset)
   const n = sorted.length
 
   const meanX = xs.reduce((s, x) => s + x, 0) / n
@@ -50,4 +81,15 @@ export function weeklyProgressionRate(
 
   const slope = sxy / sxx // kg / semaine
   return (slope / meanY) * 100
+}
+
+/**
+ * Une pente à la précision de son AFFICHAGE : 0,1 point de %/semaine. Sert à la
+ * fois au formatage et à l'égalité de deux pentes, pour qu'un verdict ne
+ * désigne jamais un gagnant entre deux cartes qui affichent le même chiffre.
+ * Un zéro négatif est ramené à zéro (jamais de « −0,0 »).
+ */
+export function roundRate(rate: number): number {
+  const rounded = Number(rate.toFixed(1))
+  return rounded === 0 ? 0 : rounded
 }

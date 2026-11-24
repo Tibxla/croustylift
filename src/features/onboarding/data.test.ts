@@ -18,7 +18,8 @@ vi.mock('../capture/data', () => ({
   listExercises: vi.fn(async () => []),
 }));
 
-import { createFirstRoutine } from './data';
+import { activeBlockers } from '../../pwa/blockers';
+import { FIRST_ROUTINE_BLOCK, createFirstRoutine } from './data';
 import { STARTER_TEMPLATE } from './template';
 import {
   createRoutine,
@@ -92,5 +93,74 @@ describe('createFirstRoutine — atomicité (résolution AVANT écriture)', () =
     // Pas de modèle : pas de lecture du catalogue ni de version de prescriptions.
     expect(listExercises).not.toHaveBeenCalled();
     expect(saveSeanceVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFirstRoutine, noms validés avant toute écriture', () => {
+  const nothingWritten = () => {
+    expect(createRoutine).not.toHaveBeenCalled();
+    expect(setCurrentRoutine).not.toHaveBeenCalled();
+    expect(createSeance).not.toHaveBeenCalled();
+    expect(saveSeanceVersion).not.toHaveBeenCalled();
+  };
+
+  it('nom de séance trop long : ni routine ni activation (pas de routine courante vide)', async () => {
+    await expect(
+      createFirstRoutine({
+        routineName: 'Ma routine',
+        seanceName: 'x'.repeat(81),
+        withTemplate: false,
+      }),
+    ).rejects.toThrow('Le nom de la séance est trop long (80 caractères au plus).');
+    nothingWritten();
+  });
+
+  it('nom de séance vide : rien n’est écrit', async () => {
+    await expect(
+      createFirstRoutine({ routineName: 'Ma routine', seanceName: '   ', withTemplate: false }),
+    ).rejects.toThrow('Donne un nom à ta séance.');
+    nothingWritten();
+  });
+
+  it('nom de routine hors borne : rien n’est écrit', async () => {
+    await expect(
+      createFirstRoutine({ routineName: 'x'.repeat(81), seanceName: 'Upper', withTemplate: false }),
+    ).rejects.toThrow('Le nom de la routine est trop long (80 caractères au plus).');
+    nothingWritten();
+  });
+
+  it('80 caractères tout rond : accepté', async () => {
+    await createFirstRoutine({
+      routineName: 'x'.repeat(80),
+      seanceName: 'y'.repeat(80),
+      withTemplate: false,
+    });
+    expect(createRoutine).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createFirstRoutine et rechargement automatique', () => {
+  const input = { routineName: 'Ma routine', seanceName: 'Push', withTemplate: false };
+
+  it('bloque le rechargement d’une écriture à l’autre, le rend à la fin', async () => {
+    const seen: string[][] = [];
+    vi.mocked(setCurrentRoutine).mockImplementationOnce(async () => {
+      seen.push(activeBlockers());
+    });
+    vi.mocked(createSeance).mockImplementationOnce(async () => {
+      seen.push(activeBlockers());
+      return { id: 'seance-1', name: 'Push' } as never;
+    });
+    const pending = createFirstRoutine(input);
+    expect(activeBlockers()).toEqual([FIRST_ROUTINE_BLOCK]);
+    await pending;
+    expect(seen).toEqual([[FIRST_ROUTINE_BLOCK], [FIRST_ROUTINE_BLOCK]]);
+    expect(activeBlockers()).toEqual([]);
+  });
+
+  it('rend le rechargement quand une écriture échoue en route', async () => {
+    vi.mocked(createSeance).mockRejectedValueOnce(new Error('réseau'));
+    await expect(createFirstRoutine(input)).rejects.toThrow('réseau');
+    expect(activeBlockers()).toEqual([]);
   });
 });

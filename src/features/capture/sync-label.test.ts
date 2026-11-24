@@ -1,7 +1,13 @@
 // Libellés de l'état de synchro : la quarantaine ne se cache jamais derrière
 // « Synchronisé », et une Déconnexion refusée à cause d'elle dit pourquoi.
 import { describe, it, expect } from 'vitest';
-import { signOutRefusalLabel, syncBannerLabel } from './sync-label';
+import {
+  arrivalGuardLabel,
+  heldWritesNotice,
+  signOutRefusalLabel,
+  syncBannerLabel,
+  unsavedWritesLabel,
+} from './sync-label';
 
 describe('syncBannerLabel', () => {
   it('rien en file, rien en quarantaine : synchronisé, en vert', () => {
@@ -75,5 +81,91 @@ describe('signOutRefusalLabel', () => {
       '2 saisies pas encore synchronisées. Reviens en ligne pour te déconnecter sans rien perdre. ' +
         '1 saisie refusée par le serveur n’a pas pu être enregistrée.',
     );
+  });
+});
+
+describe('unsavedWritesLabel', () => {
+  it('écritures en attente : c’est le réseau, elles partiront', () => {
+    expect(unsavedWritesLabel({ pending: 2, refused: 0 })).toBe(
+      'Pas de réseau pour le moment. Gardé sur l’appareil, envoyé au retour du réseau.',
+    );
+  });
+
+  it('écriture refusée par la base : ne parle pas de réseau', () => {
+    const label = unsavedWritesLabel({ pending: 0, refused: 1 });
+    expect(label).toBe('1 saisie refusée par le serveur : elle n’est pas enregistrée.');
+    expect(label).not.toContain('réseau');
+  });
+
+  it('plusieurs refus : accord au pluriel', () => {
+    expect(unsavedWritesLabel({ pending: 0, refused: 3 })).toBe(
+      '3 saisies refusées par le serveur : elles ne sont pas enregistrées.',
+    );
+  });
+
+  it('les deux à la fois : les deux raisons sont dites', () => {
+    expect(unsavedWritesLabel({ pending: 1, refused: 1 })).toBe(
+      'Pas de réseau pour le moment. Gardé sur l’appareil, envoyé au retour du réseau. ' +
+        '1 saisie refusée par le serveur : elle n’est pas enregistrée.',
+    );
+  });
+});
+
+describe('heldWritesNotice (écran de connexion)', () => {
+  it('rien de retenu : pas d’avis', () => {
+    expect(heldWritesNotice({ own: 0, foreign: 0, email: 'a@exemple.com' })).toBeNull();
+  });
+
+  it('saisies du compte reconnu : il est nommé', () => {
+    expect(heldWritesNotice({ own: 2, foreign: 0, email: 'a@exemple.com' })).toBe(
+      '2 saisies attendent encore la synchronisation pour a@exemple.com. ' +
+        'Connecte-toi avec le compte concerné pour les envoyer.',
+    );
+  });
+
+  it('saisies d’un compte absent, personne de reconnu : dites à part', () => {
+    expect(heldWritesNotice({ own: 0, foreign: 1, email: null })).toBe(
+      '1 saisie attend encore la synchronisation pour un compte déjà passé sur cet appareil. ' +
+        'Connecte-toi avec le compte concerné pour les envoyer.',
+    );
+  });
+
+  it('les deux : chacun son décompte', () => {
+    const notice = heldWritesNotice({ own: 1, foreign: 3, email: 'a@exemple.com' });
+    expect(notice).toContain('1 saisie attend encore la synchronisation pour a@exemple.com.');
+    expect(notice).toContain('3 saisies attendent encore la synchronisation pour un autre compte.');
+  });
+});
+
+describe('arrivalGuardLabel', () => {
+  it('nomme le compte dont les saisies attendent et celui qui arrive', () => {
+    expect(
+      arrivalGuardLabel({ held: 2, heldEmail: 'a@exemple.com', arrivingEmail: 'b@exemple.com' }),
+    ).toBe(
+      '2 saisies de a@exemple.com attendent encore la synchronisation sur cet appareil, ' +
+        'et ce lien ouvre un autre compte (b@exemple.com). ' +
+        'Reviens à la connexion et connecte-toi avec a@exemple.com pour les envoyer.',
+    );
+  });
+});
+
+describe('syncBannerLabel, stockage plein', () => {
+  it('ne dit jamais « Synchronisé » quand les saisies ne tiennent qu’en mémoire', () => {
+    const { tone, label } = syncBannerLabel({
+      pending: 2,
+      quarantined: 0,
+      online: true,
+      unsaved: true,
+    });
+    expect(tone).toBe('warn');
+    expect(label).toBe(
+      'Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte. 2 en attente d’envoi.',
+    );
+  });
+
+  it('file vide mais séance en cours non sauvegardée : l’avertissement reste', () => {
+    expect(
+      syncBannerLabel({ pending: 0, quarantined: 0, online: true, unsaved: true }).label,
+    ).toBe('Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte.');
   });
 });

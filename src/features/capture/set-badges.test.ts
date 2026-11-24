@@ -2,6 +2,7 @@
 // (battu / égalisé / record), priorité Record > battu > égalisé, par côté en
 // unilatéral. e1RM = w × (1 + (reps+rir)/30).
 import { describe, it, expect } from 'vitest';
+import { estimateE1rm } from '../../domain/e1rm';
 import type { PerformedSet, Side } from '../../domain/types';
 import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 import {
@@ -42,6 +43,20 @@ describe('referenceVerdict', () => {
     expect(referenceVerdict(set(100, 5, 1, 1), null)).toBeNull();
   });
 
+  it('égalisé, pas battu, quand deux couples poids/reps donnent le même e1RM', () => {
+    // 87,5 × 5 et 85 × 6 à RIR 0 : 99,1666… kg tous les deux, mais deux
+    // flottants distincts à un bit près. Comparaison exacte, dans les deux sens.
+    expect(referenceVerdict(set(87.5, 5, 0, 1), [set(85, 6, 0, 1)])).toBe('egalise');
+    expect(referenceVerdict(set(85, 6, 0, 1), [set(87.5, 5, 0, 1)])).toBe('egalise');
+  });
+
+  it('battu dès que l’e1RM dépasse, même sous le centième de kg', () => {
+    // 23,25 × 18 (36,425) contre 28,75 × 9 (36,4166…) : un arrondi au centième
+    // les confondait en 36,42 et rendait « égalisé » dans les deux sens.
+    expect(referenceVerdict(set(23.25, 18, 0, 1), [set(28.75, 9, 0, 1)])).toBe('battu');
+    expect(referenceVerdict(set(28.75, 9, 0, 1), [set(23.25, 18, 0, 1)])).toBeNull();
+  });
+
   it('apparie la référence par CÔTÉ en unilatéral (chaque bras vs son historique)', () => {
     const ref = [set(20, 10, 0, 1, 'left'), set(22, 10, 0, 1, 'right')];
     // bras gauche : 22×10 (e1RM 29,33) > 20×10 (26,67) → battu
@@ -65,6 +80,31 @@ describe('computeSetBadges (bilatéral)', () => {
     const ref = [set(100, 5, 1, 1)]; // même série → égalisé sur l’axe référence
     expect(computeSetBadges([set(100, 5, 1, 1)], ref, record)).toEqual([
       { axis: 'record', record: 'both' },
+    ]);
+  });
+
+  it('même e1RM que le record et que la dernière fois : « égalisé », ni record ni battu', () => {
+    // Le record d'e1RM a été posé par 85 × 6, la charge la plus lourde est ailleurs.
+    const record: PersonalRecord = {
+      bestE1rm: estimateE1rm(85, 6, 0),
+      bestE1rmSet: { weightKg: 85, reps: 6 },
+      bestWeightReps: { weightKg: 90, reps: 3 },
+    };
+    expect(computeSetBadges([set(87.5, 5, 0, 1)], [set(85, 6, 0, 1)], record)).toEqual([
+      { axis: 'reference', verdict: 'egalise' },
+    ]);
+  });
+
+  it('même e1RM mais barre plus lourde que jamais : record de CHARGE seulement', () => {
+    // 87,5 kg dépasse la charge record de 85 kg : c'est un vrai record de charge,
+    // pas un record d'e1RM (ni « e1rm » ni « both »).
+    const record: PersonalRecord = {
+      bestE1rm: estimateE1rm(85, 6, 0),
+      bestE1rmSet: { weightKg: 85, reps: 6 },
+      bestWeightReps: { weightKg: 85, reps: 6 },
+    };
+    expect(computeSetBadges([set(87.5, 5, 0, 1)], [set(85, 6, 0, 1)], record)).toEqual([
+      { axis: 'record', record: 'weight-reps' },
     ]);
   });
 
@@ -120,5 +160,68 @@ describe('summarizeBadges', () => {
   it('ignore les séries sans badge', () => {
     const s = summarizeBadges([set(50, 5, 1, 1)], [null]);
     expect(s.total).toEqual({ battu: 0, egalise: 0, record: 0 });
+  });
+});
+
+// Constat D8 de l'audit du 2026-11-22 : un exo au poids du corps saisi à 0 kg
+// avait un e1RM nul, donc « égalisé » quelle que soit la perf.
+describe('exo saisi à 0 kg : la Référence se juge aux reps effectives', () => {
+  // Dernière fois : tractions à 0 kg, 12 reps puis 8 reps.
+  const ref = [set(0, 12, 0, 1), set(0, 8, 0, 2)];
+
+  it('9 reps après 12 : en deçà, plus « égalisé »', () => {
+    expect(referenceVerdict(set(0, 9, 0, 1), ref)).toBeNull();
+  });
+
+  it('11 reps après 8 : battu', () => {
+    expect(referenceVerdict(set(0, 11, 0, 2), ref)).toBe('battu');
+  });
+
+  it('mêmes reps effectives : égalisé, RIR compris (10 @ RIR 2 = 12 @ RIR 0)', () => {
+    expect(referenceVerdict(set(0, 12, 0, 1), ref)).toBe('egalise');
+    expect(referenceVerdict(set(0, 10, 2, 1), ref)).toBe('egalise');
+  });
+
+  it('une série lestée bat la même position faite à 0 kg, et l’inverse reste en deçà', () => {
+    expect(referenceVerdict(set(5, 3, 0, 1), ref)).toBe('battu');
+    expect(referenceVerdict(set(0, 30, 0, 1), [set(5, 3, 0, 1)])).toBeNull();
+  });
+
+  it('par côté en unilatéral : chaque bras face à ses propres reps', () => {
+    const sided = [set(0, 10, 0, 1, 'left'), set(0, 12, 0, 1, 'right')];
+    expect(referenceVerdict(set(0, 11, 0, 1, 'left'), sided)).toBe('battu');
+    expect(referenceVerdict(set(0, 11, 0, 1, 'right'), sided)).toBeNull();
+  });
+
+  it('badges : un seul record par mesure, les reps effectives font avancer le record', () => {
+    // Historique jamais chargé : record tenu par 0 × 12 @ RIR 0.
+    const record: PersonalRecord = {
+      bestE1rm: 0,
+      bestE1rmSet: { weightKg: 0, reps: 12, rir: 0 },
+      bestWeightReps: { weightKg: 0, reps: 12 },
+    };
+    const badges = computeSetBadges(
+      [set(0, 9, 0, 1), set(0, 11, 0, 2), set(0, 13, 0, 3), set(0, 13, 0, 4), set(0, 12, 2, 5)],
+      ref,
+      record,
+    );
+    expect(badges).toEqual([
+      null, // 9 < 12 : ni record ni Référence
+      { axis: 'reference', verdict: 'battu' }, // 11 > 8, mais sous le record
+      { axis: 'record', record: 'both' }, // 13 reps : reps effectives et reps faites
+      null, // 13 égalé : pas un nouveau record, pas de Référence en position 4
+      { axis: 'record', record: 'e1rm' }, // 12 @ RIR 2 = 14 effectives, 12 faites
+    ]);
+  });
+
+  it('une série chargée après un historique à 0 kg : record des deux mesures', () => {
+    const record: PersonalRecord = {
+      bestE1rm: 0,
+      bestE1rmSet: { weightKg: 0, reps: 12, rir: 0 },
+      bestWeightReps: { weightKg: 0, reps: 12 },
+    };
+    expect(computeSetBadges([set(5, 3, 0, 1)], null, record)).toEqual([
+      { axis: 'record', record: 'both' },
+    ]);
   });
 });

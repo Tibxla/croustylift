@@ -17,3 +17,4 @@ Les utilisateurs veulent renommer (« DC » → « DC haltères »), marquer un 
 - Tous les chemins de lecture des champs partagés d'un exo passent par la même règle de fusion pure, jamais réimplémentée.
 - Champs surchargeables limités à `name`, `unilateral`, `primary_muscles` ; `muscle_group` legacy n'est pas personnalisable.
 - `upsert` par (user_id, exercise_id) : ré-éditer écrase l'unique ligne ; la supprimer réinitialise l'exo au partagé.
+- La base refuse un override qui vise autre chose qu'un exo de base (migration 0020) : un exo perso se modifie directement.

@@ -136,4 +136,19 @@ describe('buildRawLog', () => {
   it('renvoie [] pour une entrée vide', () => {
     expect(buildRawLog([])).toEqual([])
   })
+
+  it('deux exécutions le même jour : la plus récemment créée en tête, quel que soit l’ordre d’arrivée', () => {
+    const morning = row({ executionId: 'matin', createdAt: '2026-01-08T07:00:00+00:00' })
+    const evening = row({ executionId: 'soir', createdAt: '2026-01-08T18:00:00+00:00' })
+
+    expect(buildRawLog([morning, evening]).map((e) => e.executionId)).toEqual(['soir', 'matin'])
+    expect(buildRawLog([evening, morning]).map((e) => e.executionId)).toEqual(['soir', 'matin'])
+  })
+
+  it('à date et création égales, l’id départage de façon stable', () => {
+    const a = row({ executionId: 'a', createdAt: '2026-01-08T07:00:00+00:00' })
+    const b = row({ executionId: 'b', createdAt: '2026-01-08T07:00:00+00:00' })
+    expect(buildRawLog([a, b]).map((e) => e.executionId)).toEqual(['b', 'a'])
+    expect(buildRawLog([b, a]).map((e) => e.executionId)).toEqual(['b', 'a'])
+  })
 })

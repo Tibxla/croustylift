@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useAuth } from './auth/useAuth'
 import { PendingWritesError } from './auth/auth-context'
@@ -9,20 +9,73 @@ import { SeancesScreen } from './features/authoring/SeancesScreen'
 import { ExercisesScreen } from './features/exercises/ExercisesScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
+import { requestLeave } from './features/authoring/seance-dirty'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
 import { signOutRefusalLabel } from './features/capture/sync-label'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
+import { blockReloads, unblockReloads } from './pwa/blockers'
+import {
+  captureInProgress,
+  recoverFromChunkFailure,
+  requestReload,
+  setLazyChunkPreloader,
+  takeSurfaceAfterReload,
+  useUpdateReady,
+} from './pwa/register'
+import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
+import { ImportRequests, type SurfaceName } from './pwa/update'
+import { switchSurface } from './surface-switch'
+import { openDiag } from './viewport/watch'
+import { APP_VERSION_LABEL } from './version'
+import { errorMessage } from './lib/error-message'
 
 // L'Analyse est la seule surface qui tire recharts (lib lourde). On la charge en
 // PARESSEUX pour la sortir du chunk critique de la Capture (surface par défaut,
 // « zéro-friction ») : recharts n'est téléchargé qu'à l'ouverture de l'onglet.
-const AnalysisScreen = lazy(() =>
-  import('./features/analysis/AnalysisScreen').then((m) => ({ default: m.AnalysisScreen })),
-)
+//
+// Si le fichier du chunk est introuvable (build remplacé sous la page, cache vidé
+// par le système), la suite dépend de ce que fait l'utilisateur À CE MOMENT :
+// - il est encore sur l'Analyse et un rechargement est permis : on recharge une
+//   fois pour retrouver un shell et des chunks cohérents, et on rouvre l'Analyse
+//   (la promesse reste en suspens, le Suspense tient jusqu'au rechargement) ;
+// - sa demande est périmée (il a quitté l'onglet, ou s'est déconnecté) : on ne
+//   recharge pas sous ses pieds, et on oublie l'échec (`React.lazy` le
+//   garderait) pour retenter s'il y revient ;
+// - sinon (hors ligne, séance en cours, déjà tenté) : l'erreur remonte à la
+//   frontière d'erreur, qui l'explique.
+const importAnalysis = () => import('./features/analysis/AnalysisScreen')
 
-type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
+/**
+ * La demande d'import de l'Analyse en cours : ouverte quand l'import démarre,
+ * périmée par AuthenticatedApp dès que l'utilisateur quitte l'onglet ou que
+ * l'app authentifiée est démontée.
+ */
+const analysisRequests = new ImportRequests()
+
+function createAnalysisScreen() {
+  return lazy(() => {
+    const request = analysisRequests.begin()
+    return importAnalysis()
+      .then((m) => ({ default: m.AnalysisScreen }))
+      .catch((err: unknown) => {
+        const action = recoverFromChunkFailure('analysis', analysisRequests.isActive(request))
+        if (action === 'reload') return new Promise<never>(() => {})
+        if (action === 'ignore') AnalysisScreen = createAnalysisScreen()
+        throw err
+      })
+  })
+}
+let AnalysisScreen = createAnalysisScreen()
+
+// Une mise à jour s'annonce : le chunk de l'Analyse est chargé en mémoire tant
+// que l'ancien précache existe encore (voir `setLazyChunkPreloader`).
+setLazyChunkPreloader(() => {
+  void importAnalysis().catch(() => {})
+})
+
+type Surface = SurfaceName
 
 /**
  * Joue une mise à jour d'état derrière l'API native View Transitions : le passage
@@ -30,8 +83,23 @@ type Surface = 'capture' | 'analysis' | 'seances' | 'exercises'
  * force React à appliquer le changement DANS la transition pour que l'ancien et
  * le nouvel écran soient capturés. Désactivé sous `prefers-reduced-motion` et là
  * où l'API n'existe pas (fallback : mise à jour directe, instantanée).
+ *
+ * Champ en cours de saisie : on lui retire le focus et on se passe de transition.
+ * Sinon le champ est démonté pendant que le clavier descend et que le navigateur
+ * photographie la page, ce qui sur iPhone peut laisser la fenêtre d'affichage
+ * faussée et les barres du bas décrochées (registre R4).
  */
 function withViewTransition(update: () => void): void {
+  const focused = typeof document === 'undefined' ? null : document.activeElement
+  if (
+    focused instanceof HTMLInputElement ||
+    focused instanceof HTMLTextAreaElement ||
+    focused instanceof HTMLSelectElement
+  ) {
+    focused.blur()
+    update()
+    return
+  }
   const reduce =
     typeof window !== 'undefined' &&
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -56,6 +124,21 @@ function withViewTransition(update: () => void): void {
 function App() {
   const { session, user, loading, signOut, isPasswordRecovery, localAccount, offlineRecognized } =
     useAuth()
+
+  // Récupération de mot de passe : aucun rechargement automatique tant que le
+  // flux n'est pas terminé (le lien ne sert qu'une fois). Un premier blocage est
+  // posé dès l'arrivée par le lien (pwa/blockers.ts, avant que Supabase ne
+  // nettoie l'URL) et levé si le lien n'aboutit pas (pwa/recovery-watch.ts).
+  // S'il aboutit, l'écran de nouveau mot de passe tient ici le sien, et les deux
+  // sont levés quand il se referme.
+  useEffect(() => {
+    if (!isPasswordRecovery) return
+    blockReloads(RECOVERY_SCREEN_BLOCK)
+    return () => {
+      unblockReloads(RECOVERY_SCREEN_BLOCK)
+      unblockReloads(RECOVERY_LINK_BLOCK)
+    }
+  }, [isPasswordRecovery])
 
   if (loading) {
     return <FullScreenSpinner label="Chargement" />
@@ -106,7 +189,16 @@ function AuthenticatedApp({
 
   const [check, setCheck] = useState<RoutineCheck>({ phase: 'checking' })
   const [reloadKey, setReloadKey] = useState(0)
-  const [surface, setSurface] = useState<Surface>('capture')
+  // Après un rechargement décidé par l'app (mise à jour, chunk introuvable), on
+  // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
+  const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
+  const updateReady = useUpdateReady()
+  // La demande d'import de l'Analyse ne vaut que tant que cet écran la porte :
+  // elle est périmée au départ de l'onglet et au démontage (déconnexion).
+  useEffect(() => {
+    if (surface !== 'analysis') return
+    return () => analysisRequests.invalidate()
+  }, [surface])
   // Déconnexion refusée (ADR 0012) : le bandeau sous le header porte le choix
   // explicite — revenir en ligne pour ne rien perdre, ou forcer en connaissance.
   const [signOutIssue, setSignOutIssue] = useState<
@@ -138,9 +230,7 @@ function AuthenticatedApp({
           phase: 'error',
           message: offline
             ? "Hors connexion, et aucune copie locale de ton compte sur cet appareil. Repasse en ligne une fois pour l'amorcer."
-            : err instanceof Error
-              ? err.message
-              : String(err),
+            : errorMessage(err),
         })
       }
     })()
@@ -292,6 +382,29 @@ function AuthenticatedApp({
                   )}
                 </div>
               ) : null}
+              {/* Version du build : le déploiement est manuel, c'est ici qu'on
+                  vérifie depuis le téléphone quel commit tourne. Si une version
+                  plus récente attend, elle s'installe au prochain changement
+                  d'onglet ; le bouton évite d'avoir à le deviner. */}
+              <p className="readout mt-1 text-xs text-ink-faint">Version {APP_VERSION_LABEL}</p>
+              {updateReady && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm text-ink-muted">
+                    {captureInProgress()
+                      ? 'Mise à jour prête, installée après ta séance.'
+                      : 'Mise à jour prête.'}
+                  </p>
+                  {!captureInProgress() && (
+                    <button
+                      type="button"
+                      onClick={() => requestReload('manual', 'analysis')}
+                      className="btn btn-secondary h-9 shrink-0 rounded-lg px-3 text-sm"
+                    >
+                      Mettre à jour
+                    </button>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -309,7 +422,7 @@ function AuthenticatedApp({
                       }
                       setSignOutIssue({
                         kind: 'error',
-                        message: err instanceof Error ? err.message : String(err),
+                        message: errorMessage(err),
                       })
                     }
                   })()
@@ -325,7 +438,16 @@ function AuthenticatedApp({
 
       <BottomNav
         surface={surface}
-        onSelect={(s) => withViewTransition(() => setSurface(s))}
+        onSelect={(s) => {
+          // Garde de sortie d'abord (modifications non enregistrées), puis
+          // rechargement sur une nouvelle version si une attend, puis l'onglet :
+          // l'ordre et ses raisons sont dans surface-switch.ts.
+          switchSurface(s, surface, {
+            requestLeave,
+            requestReload,
+            show: (next) => withViewTransition(() => setSurface(next)),
+          })
+        }}
       />
     </main>
   )
@@ -343,7 +465,10 @@ function FullScreenSpinner({ label }: { label: string }) {
   )
 }
 
-// --- Navigation entre les deux surfaces (zone du pouce, bas d'écran) ---------
+// --- Navigation entre les surfaces (zone du pouce, bas d'écran) ---------------
+
+/** Durée de l'appui long sur la barre d'onglets qui ouvre le relevé de diagnostic. */
+const DIAG_LONG_PRESS_MS = 1500
 
 function BottomNav({
   surface,
@@ -352,12 +477,39 @@ function BottomNav({
   surface: Surface
   onSelect: (s: Surface) => void
 }) {
+  // Appui long sur la barre d'onglets : ouvre le relevé de diagnostic (registre
+  // R4). C'est le seul geste disponible sur tous les écrans de l'app installée,
+  // qui n'a pas de barre d'adresse pour `?diag=1`. Le clic qui suit le relâcher
+  // est avalé, pour ne pas changer d'onglet en ouvrant le relevé.
+  const pressTimer = useRef<number | undefined>(undefined)
+  const longPressed = useRef(false)
+  const cancelPress = () => window.clearTimeout(pressTimer.current)
+
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-hair bg-bg/80 backdrop-blur-md"
+      className="fixed inset-x-0 bottom-0 z-30 select-none border-t border-hair bg-bg/80 backdrop-blur-md"
+      style={{ WebkitTouchCallout: 'none' }}
       aria-label="Navigation principale"
+      onPointerDown={() => {
+        longPressed.current = false
+        cancelPress()
+        pressTimer.current = window.setTimeout(() => {
+          longPressed.current = true
+          openDiag()
+        }, DIAG_LONG_PRESS_MS)
+      }}
+      onPointerUp={cancelPress}
+      onPointerCancel={cancelPress}
+      onPointerLeave={cancelPress}
+      onContextMenu={(event) => event.preventDefault()}
+      onClickCapture={(event) => {
+        if (!longPressed.current) return
+        longPressed.current = false
+        event.preventDefault()
+        event.stopPropagation()
+      }}
     >
-      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[env(safe-area-inset-bottom,0)]">
+      <div className="mx-auto grid w-full max-w-md grid-cols-4 pb-[var(--safe-bottom)]">
         <TabButton
           label="Capture"
           active={surface === 'capture'}

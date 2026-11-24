@@ -10,9 +10,11 @@
 // bouton primaire), tap-targets >= 44px, aucun tiret long (—) dans le texte, pas
 // de clavier custom (les noms sont du texte libre, <input> légitime).
 import { useState } from 'react';
+import { errorMessage } from '../../lib/error-message';
 import {
   createFirstRoutine,
   DEFAULT_ROUTINE_NAME,
+  FIRST_NAME_MAX_LENGTH,
   STARTER_TEMPLATE,
   type FirstRoutineResult,
 } from './data';
@@ -50,7 +52,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
       });
       // En cas de succès, App recharge et démonte cet écran : pas de reset d'état.
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -190,6 +192,7 @@ function Field({
         placeholder={placeholder}
         autoFocus={autoFocus}
         enterKeyHint="next"
+        maxLength={FIRST_NAME_MAX_LENGTH}
         onChange={(e) => onChange(e.target.value)}
         className="field h-[54px] w-full rounded-[14px] px-4 text-[17px] font-medium"
       />

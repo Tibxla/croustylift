@@ -7,6 +7,7 @@
 // Aucun tiret long (—) dans le texte affiché.
 import { useEffect, useRef, useState } from 'react';
 import { downloadUserData, exportFilename } from './data';
+import { errorMessage } from '../../lib/error-message';
 
 type Status =
   | { phase: 'idle' }
@@ -42,7 +43,7 @@ export function ExportButton({
       await onExport();
       setStatus({ phase: 'done', filename });
     } catch (err) {
-      setStatus({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
+      setStatus({ phase: 'error', message: errorMessage(err) });
     }
   }
 
