@@ -83,3 +83,13 @@ export function cardTimeAxis(
 ): TimeAxis | null {
   return timeAxis([...shown.map((sc) => sc.curve), shown[0]?.secondaryCurve ?? []])
 }
+
+/**
+ * Le dernier point d'une courbe bat-il le précédent ? C'est le seul point que
+ * le signal marque (« mieux que la dernière fois »), sur le graphe comme dans le
+ * relevé de la page d'un exo.
+ */
+export function lastBeatsPrevious(curve: readonly E1rmPoint[]): boolean {
+  const n = curve.length
+  return n > 1 && curve[n - 1]!.e1rm > curve[n - 2]!.e1rm
+}
