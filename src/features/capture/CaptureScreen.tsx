@@ -112,7 +112,7 @@ import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
-import { buildSessionRecap } from './session-recap';
+import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
@@ -1177,7 +1177,7 @@ function CaptureBoard({
   }, []);
 
   // Phase locale de fin de séance + durée chronométrée. Déclarés AVANT les callbacks
-  // qui les utilisent (handleReset/handleNewSession/openFinish) : sinon `setPhase` est
+  // qui les utilisent (handleNewSession/openFinish) : sinon `setPhase` est
   // référencé avant sa déclaration, ce qui empêche la mémoïsation d'openFinish d'être
   // préservée (React Compiler). `phase` : capture (sélecteur + panneaux) -> finishing
   // (clôture, BPM optionnel). `durationMin` null = cas dégénéré (startedAt absent).
@@ -1226,7 +1226,7 @@ function CaptureBoard({
   }, [session, date, onExitToLaunch]);
 
   // --- Flux de fin de séance ------------------------------------------------
-  // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
+  // `phase`/`durationMin` sont déclarés plus haut (avant handleNewSession/openFinish).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
   // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
   // La semaine (séries par muscle contre le prévu) se lit à l'ouverture de la
@@ -1245,11 +1245,7 @@ function CaptureBoard({
   );
 
   const recap = buildSessionRecap(session, state);
-  const today = session.exercises.map((ex) => ({
-    unilateral: ex.unilateral ?? false,
-    primaryMuscles: ex.primaryMuscles ?? [],
-    sets: getProgress(state, ex.exerciseId).sets,
-  }));
+  const today = performedToday(session, state);
 
   // La séance reprise est-elle celle d'un jour PASSÉ (restée ouverte) ? `date` est
   // figée au montage ; « hier » ou plus (cf. `formatRelativeDay`).

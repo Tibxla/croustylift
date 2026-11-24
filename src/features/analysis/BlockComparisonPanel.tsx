@@ -25,8 +25,7 @@ import {
 import { EmptyState, List, Row, Sheet, Status } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
-import { seanceRoutineLabel } from './block-label';
-import { shortDay } from './chart-time';
+import { blockPeriodLabel, seanceRoutineLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
 import { formatRate } from './format';
@@ -82,10 +81,6 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
 const seanceOf = (o: BlockSeanceProgression, seances: ReadonlyMap<string, SeanceInfo>) =>
   seanceRoutineLabel(seances.get(o.seanceId));
 
-/** « du 28/03 au 23/11 », « depuis le 23/11 » : la période d'un bloc en mots. */
-const periodOf = (block: Block) =>
-  block.end === null ? `depuis le ${shortDay(block.start)}` : `du ${shortDay(block.start)} au ${shortDay(block.end)}`;
-
 /**
  * Le nom d'une option : sa séance, et sa période dès qu'une autre option porte
  * le même nom (même séance de la même routine dans deux blocs, le cas courant).
@@ -96,7 +91,7 @@ function optionName(
   seances: ReadonlyMap<string, SeanceInfo>,
 ): string {
   const name = seanceOf(o, seances);
-  return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${periodOf(o.block)}` : name;
+  return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${blockPeriodLabel(o.block)}` : name;
 }
 
 /** La période en méta d'une option, sauf si son nom la porte déjà (« du 28/03 au 23/11 · »). */
@@ -105,7 +100,7 @@ function datesOf(
   options: readonly BlockSeanceProgression[],
   seances: ReadonlyMap<string, SeanceInfo>,
 ): string {
-  return optionName(o, options, seances) === seanceOf(o, seances) ? `${periodOf(o.block)} · ` : '';
+  return optionName(o, options, seances) === seanceOf(o, seances) ? `${blockPeriodLabel(o.block)} · ` : '';
 }
 
 /** La pente d'une option en signe + mot, ou ce qui lui manque. */
@@ -179,7 +174,7 @@ export function ComparisonView({
               </>
             }
             onClick={() => setPicking(side)}
-            ariaLabel={`Option ${side.toUpperCase()} : ${optionName(o, options, seances)}, ${periodOf(o.block)}. Changer`}
+            ariaLabel={`Option ${side.toUpperCase()} : ${optionName(o, options, seances)}, ${blockPeriodLabel(o.block)}. Changer`}
           />
         ))}
       </List>

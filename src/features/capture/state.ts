@@ -9,9 +9,6 @@ import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
 import { logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
-/** Statut d'un exercice dans l'exécution courante (dérivable, mais pratique à porter). */
-export type ExerciseStatus = 'todo' | 'in-progress' | 'done' | 'skipped';
-
 /**
  * Brouillon d'une NOTE DATÉE (issue #26) : le contexte d'une perf le jour de la
  * séance, par exo. `id` est l'UUID client de la ligne `dated_notes` (stable tant
@@ -220,8 +217,6 @@ export type CaptureAction =
     }
   // Geste d'édition de la séance (exo ajouté ou remplacé), ajouté au journal.
   | { type: 'edit-layout'; edit: LayoutEdit }
-  // `executionId` : nouvelle exécution (UUID client) pour la séance neuve.
-  | { type: 'reset'; executionId: string }
   // Réancre le chrono (ADR 0011) : pose `startedAt` (epoch ms fourni par le
   // caller). Sert à l'expiration d'un lancement (1er set >1h après le lancement →
   // on réancre sur ce set) sans toucher au réalisé ni à l'exécution.
@@ -259,13 +254,6 @@ export function getDatedNote(
   exerciseId: string,
 ): DatedNoteDraft | null {
   return state.datedNotes[exerciseId] ?? null;
-}
-
-export function statusOf(progress: ExerciseProgress, prescribedMin: number): ExerciseStatus {
-  if (progress.skipped) return 'skipped';
-  if (progress.sets.length === 0) return 'todo';
-  if (progress.sets.length >= prescribedMin) return 'done';
-  return 'in-progress';
 }
 
 /** Le plus grand `order` déjà loggé, ou 0 si aucune série. */
@@ -1206,25 +1194,6 @@ export function captureReducer(state: CaptureState, action: CaptureAction): Capt
       // Réancre le chrono (ADR 0011, expiration d'un lancement) : on ne touche QUE
       // `startedAt`, le réalisé et l'exécution restent intacts.
       return { ...state, startedAt: action.startedAt };
-
-    case 'reset':
-      // Nouvelle séance = nouveau chrono ET nouvelle exécution (id client neuf,
-      // fourni par le caller). L'exécution précédente reste en base. On lève la
-      // clôture : la séance neuve repart « en cours ».
-      return {
-        ...state,
-        executionId: action.executionId,
-        startedAt: Date.now(),
-        activeExerciseId: null,
-        progress: {},
-        datedNotes: {},
-        // La disposition appartient à l'exécution abandonnée.
-        layout: undefined,
-        // Le suivi repart vide, le compteur continue : un relevé pris avant
-        // la séance neuve ne doit pas masquer les gestes qui la suivent.
-        sinceLoad: state.sinceLoad ? { seq: state.sinceLoad.seq, removed: {}, edited: {} } : undefined,
-        closedAt: null,
-      };
 
     default:
       return state;

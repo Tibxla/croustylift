@@ -67,7 +67,7 @@ export type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 /**
  * Mappe la colonne `side` (DB : `string | null`) vers le type domaine
  * (`Side | undefined`) : null = bilatéral, traduit en `undefined` pour que le
- * domaine (PerformedSet.side, weakSideE1rm) ne voie jamais qu'un côté valide.
+ * domaine (PerformedSet.side, firstSeriesWeakSet) ne voie jamais qu'un côté valide.
  * Toute autre valeur (jamais émise, le check DB la refuse) tombe sur `undefined`.
  */
 function toSide(raw: string | null | undefined): Side | undefined {
@@ -500,7 +500,7 @@ export type PerformedSetWithExecutionRow = {
  *
  * Regroupe les séries par exécution (une ExerciseExecution = un jour). Le `side`
  * est porté jusqu'au domaine : la courbe primaire d'un exo unilatéral suit le
- * côté faible (cf. weakSideE1rm), donc l'analyse a besoin des deux côtés. Le
+ * côté faible (cf. firstSeriesWeakSet), donc l'analyse a besoin des deux côtés. Le
  * `created_at` est porté aussi : il départage deux exécutions à `performed_on`
  * égal (cf. `lastReference`). L'`execution_id` (clé de regroupement) est posé
  * comme `id` : tie-break FINAL stable des dérivées quand `performed_on` ET

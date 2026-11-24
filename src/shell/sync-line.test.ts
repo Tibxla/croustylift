@@ -25,4 +25,23 @@ describe('syncLine', () => {
   it('le stockage plein prime sur tout', () => {
     expect(syncLine({ pending: 3, refused: 1, offline: true, unsaved: true })?.title).toBe('Stockage plein');
   });
+
+  // Reportés de l'ancienne bannière (`syncBannerLabel`).
+  it('des saisies refusées ne se cachent jamais, en ligne ou non, file vide ou non', () => {
+    for (const pending of [0, 1, 5]) {
+      for (const offline of [true, false]) {
+        const line = syncLine({ ...base, pending, offline, refused: 2 });
+        expect(line).not.toBeNull();
+        expect(`${line!.title} ${line!.detail}`).toMatch(/[Rr]efusé/);
+      }
+    }
+    expect(syncLine({ ...base, offline: true, refused: 1 })?.detail).toBe('les saisies restent sur cet appareil · 1 saisie refusée');
+  });
+
+  it('stockage plein, file vide : l’avertissement reste (la séance en cours ne tient qu’en mémoire)', () => {
+    expect(syncLine({ ...base, unsaved: true })).toEqual({
+      title: 'Stockage plein',
+      detail: 'tes saisies ne sont pas gardées ici, laisse l’app ouverte',
+    });
+  });
 });

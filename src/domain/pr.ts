@@ -6,7 +6,7 @@
 //                      pris sur TOUTES les séries — un record est une perf
 //                      démontrée, quel que soit le rang de la série. La courbe
 //                      e1RM d'analyse, elle, reste sur la 1ʳᵉ série de chaque
-//                      exécution (weakSideE1rm) pour la comparabilité jour à
+//                      exécution (firstSeriesWeakSet) pour la comparabilité jour à
 //                      jour : le record peut donc dépasser le sommet de la courbe.
 //   - bestWeightReps : le record de CHARGE — la série la plus lourde jamais
 //                      faite (toutes séries confondues), les reps départageant

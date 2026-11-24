@@ -131,29 +131,6 @@ function decideWinner(
   return a > b ? 'first' : 'second'
 }
 
-/**
- * Compare deux blocs d'un même exercice par vitesse de progression e1RM.
- * Découpe les exécutions par fenêtre de bloc, mesure la pente %/semaine de
- * chacun, puis désigne le plus rapide (ou `null` faute de données).
- */
-export function compareBlocks(
-  executions: ExerciseExecution[],
-  exerciseId: string,
-  first: Block,
-  second: Block,
-): BlockComparison {
-  const unit = curveUnit(executions, exerciseId)
-  const firstProgression = progressionOf(executions, exerciseId, first, unit)
-  const secondProgression = progressionOf(executions, exerciseId, second, unit)
-
-  return {
-    first: firstProgression,
-    second: secondProgression,
-    unit,
-    winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
-  }
-}
-
 // --- Couples bloc + séance (ADR 0016) -----------------------------------------
 //
 // Une option de comparaison est un bloc lu dans UNE séance. Deux routines se
@@ -222,7 +199,11 @@ export function summarizeBlockSeances(
   )
 }
 
-/** Compare deux couples bloc + séance par vitesse de progression e1RM. */
+/**
+ * Compare deux couples bloc + séance par vitesse de progression e1RM. Découpe
+ * les exécutions de chaque séance par fenêtre de bloc, mesure la pente
+ * %/semaine de chacun, puis désigne le plus rapide (ou `null` faute de données).
+ */
 export function compareBlockSeances(
   executions: ExerciseExecution[],
   exerciseId: string,

@@ -237,7 +237,7 @@ export function groupExecutionRows(rows: ExecutionSetRow[]): Map<string, Exercis
       rir: row.rir,
       order: row.set_order,
       // Côté unilatéral (issue #46) : la courbe primaire suit le côté faible
-      // (weakSideE1rm) -> le domaine a besoin des deux côtés. null = bilatéral.
+      // (firstSeriesWeakSet) -> le domaine a besoin des deux côtés. null = bilatéral.
       side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
     });
   }

@@ -765,7 +765,7 @@ export function pendingCount(): number {
 // l'UI puisse la signaler. Elle n'en sort que par un geste : renvoi ou abandon
 // de la saisie (`retryRefused`, `abandonRefused`), annulation de sa séance
 // (`purgeByExecution`), ou `clearQueue` (Déconnexion forcée, forçage de purge).
-// Les gardes d'auth la comptent via `heldCount`.
+// Les gardes d'auth la comptent via `heldCounts`.
 
 const QUARANTINE_KEY = `${STORAGE_KEY}:quarantine`;
 
@@ -805,22 +805,17 @@ export function quarantineCount(): number {
 }
 
 /**
- * Tout ce que l'appareil retient d'écritures non remontées : la file ET la
- * quarantaine. C'est ce que protègent les gardes d'auth (ADR 0012 : rien ne se
- * perd sans geste explicite). L'indicateur de synchro, lui, reste sur
- * `pendingCount` : une op en quarantaine n'est plus « en attente d'envoi ».
- */
-export function heldCount(): number {
-  return pendingCount() + quarantineCount();
-}
-
-/**
- * Ce que l'appareil retient, PAR COMPTE (ADR 0019) : la file est commune, mais
+ * Ce que l'appareil retient d'écritures non remontées, file ET quarantaine :
+ * ce que protègent les gardes d'auth (ADR 0012 : rien ne se perd sans geste
+ * explicite). L'indicateur de synchro, lui, reste sur `pendingCount` : une op
+ * en quarantaine n'est plus « en attente d'envoi ».
+ *
+ * PAR COMPTE (ADR 0019) : la file est commune, mais
  * les écritures d'un compte absent ne sont pas celles du compte présent. `own` :
  * file et quarantaine du compte reconnu (une op sans compte, d'un bundle
  * antérieur, est tenue pour la sienne) ; `ownRefused` : la part en quarantaine ;
- * `foreign` : ce que retiennent d'autres comptes. Avant, `heldCount` comptait
- * tout ensemble : le compte présent ne pouvait se déconnecter qu'en forçant, ce
+ * `foreign` : ce que retiennent d'autres comptes. Compter tout ensemble (l'ancien
+ * total unique) laissait le compte présent ne se déconnecter qu'en forçant, ce
  * qui jetait les saisies de l'autre.
  */
 export function heldCounts(): { own: number; ownRefused: number; foreign: number } {
@@ -1230,7 +1225,7 @@ function belongsToExecution(op: OutboxOp, executionId: string): boolean {
 /**
  * Pendant de `purgeByExecution` côté QUARANTAINE : les ops refusées de
  * l'exécution abandonnée n'ont plus d'objet, et les garder bloquerait la
- * Déconnexion (`heldCount`) pour une séance que l'utilisateur a lui-même
+ * Déconnexion (`heldCounts`) pour une séance que l'utilisateur a lui-même
  * annulée. Seulement celles du compte reconnu (ou sans compte) : la quarantaine
  * d'un autre compte ne se purge pas d'ici.
  */
