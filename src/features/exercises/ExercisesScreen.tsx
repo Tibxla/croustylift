@@ -37,7 +37,7 @@
 // Suppression SÛRE : la couche data (deletePersonalExercise) compte d'abord les
 // références (prescriptions + séries faites) et REFUSE avec un message lisible si
 // l'exo est encore utilisé, au lieu de laisser la base lever une violation de FK.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Confirm,
@@ -75,6 +75,7 @@ import {
 } from './overrides';
 import { isOverridden } from '../../domain/exercise-override';
 import { ExerciseForm, type ExerciseFormValue } from './ExerciseForm';
+import { scrollStep } from './page-scroll';
 
 /** Un champ d'exercice (nom / muscles / unilatéral) diffère-t-il des valeurs courantes ?
     Sert à n'écrire un override d'exo de base QUE si l'utilisateur a vraiment
@@ -233,6 +234,9 @@ type Page =
   | { kind: 'new'; prefill?: string }
   | { kind: 'edit'; id: string };
 
+/** Profondeur d'une page : liste, puis fiche ou création, puis modification. */
+const pageDepth = (p: Page) => (p.kind === 'list' ? 0 : p.kind === 'edit' ? 2 : 1);
+
 /** Raison du blocage de rechargement tenu par une note d'exo en cours d'écriture. */
 const NOTE_DRAFT_BLOCK = 'brouillon-note-exercice';
 
@@ -266,12 +270,23 @@ export function ExercisesView({
   // page où il mène ; effacée à la navigation suivante.
   const [flash, setFlash] = useState<string | null>(null);
 
-  // Changer de page : instantané, sans animation (geste fréquent), et la
-  // nouvelle page s'ouvre sur son en-tête.
+  // Changer de page : instantané, sans animation (geste fréquent). Une page
+  // plus profonde s'ouvre sur son en-tête, un retour retrouve la position
+  // quittée (comme l'Analyse), sauf s'il porte un message : la page s'ouvre
+  // alors en haut, sur la phrase (page-scroll.ts).
+  const scrolls = useRef<number[]>([]);
+  const pendingScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingScroll.current === null) return;
+    window.scrollTo(0, pendingScroll.current);
+    pendingScroll.current = null;
+  }, [page]);
   const go = (next: Page, message: string | null = null) => {
+    const step = scrollStep(scrolls.current, pageDepth(page), pageDepth(next), window.scrollY, message !== null);
+    scrolls.current = step.stack;
+    pendingScroll.current = step.target;
     setPage(next);
     setFlash(message);
-    if (typeof window !== 'undefined') window.scrollTo(0, 0);
   };
 
   const byId = (id: string) => exercises.find((e) => e.id === id);
