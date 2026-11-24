@@ -147,24 +147,13 @@ describe('acquittement d’une écriture du réalisé', () => {
 });
 
 describe('acquittement fait dans un autre onglet', () => {
-  it('le Journal monté ici est marqué, relu, et sa lecture en vol n’écrit plus la copie', async () => {
-    await loadDated(JOURNAL_VIEW, async () => ['exec-supprimee'], { offline: false, now: () => 1000 });
+  it('le message d’un autre onglet relit le Journal monté ici (la marque et la génération, l’émetteur les a posées : cf. lib/acquittement-onglets.test.ts)', async () => {
     const refresh = vi.fn();
     const unmount = mountView(JOURNAL_VIEW, refresh);
-    // Lecture de CET onglet, partie avant que l'autre acquitte le DELETE.
-    let answer: (v: string[]) => void = () => {};
-    const late = loadDated(JOURNAL_VIEW, () => new Promise<string[]>((ok) => (answer = ok)), { offline: false, now: () => 1500 });
-
     const other = new BroadcastChannel(ACK_CHANNEL);
     other.postMessage({ userId: 'user-1', prefixes: [JOURNAL_VIEW] });
     await new Promise((resolve) => setTimeout(resolve, 20));
-
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(peekFreshRead(JOURNAL_VIEW)).toBeNull();
-    answer(['exec-supprimee', 'lue avant le DELETE']);
-    await late;
-    await settle();
-    expect(peekRead<{ value: string[] }>(JOURNAL_VIEW)?.value).toEqual(['exec-supprimee']);
     other.close();
     unmount();
   });

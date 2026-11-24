@@ -31,6 +31,10 @@
 //     restent, se montrent d'abord, et leur revalidation les remplace ; une
 //     lecture partie avant l'acquittement n'écrit plus la copie, et les vues
 //     montées sont relues, dans cet onglet et dans les autres (BroadcastChannel).
+//     La garde des lectures parties avant est une génération d'acquittement
+//     partagée dans le stockage (read-cache), vérifiée juste avant d'écrire :
+//     elle vaut dans tous les onglets dès l'acquittement, sans attendre le
+//     message.
 //     Sans elle, la relecture que le retour du réseau lance en parallèle du
 //     flush pouvait atteindre la base avant un DELETE et garder la séance
 //     supprimée au Journal ;
@@ -91,7 +95,11 @@ function ackBus(): BroadcastChannel | null {
     ackChannel.onmessage = (event: MessageEvent) => {
       const data = event.data as { userId?: unknown; prefixes?: unknown } | null;
       if (!Array.isArray(data?.prefixes) || data.userId !== loadLocalAccount()?.userId) return;
-      applyAck(data.prefixes.filter((p): p is string => typeof p === 'string'));
+      // L'onglet émetteur a déjà marqué les copies et changé la génération
+      // partagée : ici, on relit seulement les vues montées. Marquer de
+      // nouveau risquerait de reflaguer une copie que l'émetteur vient de
+      // réécrire fraîche.
+      refreshMounted(data.prefixes.filter((p): p is string => typeof p === 'string'));
     };
     // Sous Node (tests), le canal ne retient pas le processus.
     (ackChannel as { unref?: () => void }).unref?.();
@@ -105,8 +113,7 @@ export function closeAckChannel(): void {
   ackChannel = null;
 }
 
-function applyAck(prefixes: readonly string[]): void {
-  markToRefresh(prefixes);
+function refreshMounted(prefixes: readonly string[]): void {
   for (const [key, refreshers] of mounted) {
     if (prefixes.some((p) => key.startsWith(p))) for (const refresh of [...refreshers]) refresh();
   }
@@ -123,7 +130,8 @@ function applyAck(prefixes: readonly string[]): void {
  * Journal d'un autre onglet doit être relu de même.
  */
 export function viewsAcknowledged(prefixes: readonly string[]): void {
-  applyAck(prefixes);
+  markToRefresh(prefixes);
+  refreshMounted(prefixes);
   const userId = loadLocalAccount()?.userId;
   if (userId) ackBus()?.postMessage({ userId, prefixes: [...prefixes] });
 }

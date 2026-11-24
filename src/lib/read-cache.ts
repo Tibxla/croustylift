@@ -230,10 +230,16 @@ async function guardedFetch<T>(
   readSeq += 1;
   const seq = readSeq;
   const gen = purgeGen;
+  const scope = fullKey(userId, '');
+  const ackAt = ackGeneration(userId, storageKey.slice(scope.length));
   if (raisesFloor) floor.set(storageKey, seq);
   const value = await fetcher();
+  // Vérifiée JUSTE avant d'écrire (rien d'asynchrone entre les deux) : une
+  // écriture acquittée depuis le départ, dans cet onglet ou un autre, a changé
+  // la génération partagée ; la réponse décrit la base d'avant, elle est jetée.
   if (
     gen === purgeGen &&
+    ackGeneration(userId, storageKey.slice(scope.length)) === ackAt &&
     seq >= (floor.get(storageKey) ?? 0) &&
     seq > (lastWritten.get(storageKey) ?? 0) &&
     !departedBeforeInvalidation(storageKey, seq) &&
@@ -347,6 +353,37 @@ export function invalidateReads(prefixes: readonly string[]): void {
 }
 
 /**
+ * GÉNÉRATIONS D'ACQUITTEMENT, partagées par les onglets (stockage) : par
+ * compte, un compteur par préfixe de clé, que `markToRefresh` incrémente quand
+ * une écriture est acquittée. Une lecture note la génération de sa clé à son
+ * départ ; sa réponse n'écrit la copie que si elle n'a pas changé. Sans elle,
+ * la garde d'écriture était propre à chaque onglet et ne prenait effet qu'à la
+ * réception du message : un autre onglet, dont la lecture partie avant un
+ * DELETE répondait avant le message, écrasait la copie fraîche.
+ */
+const ACK_GEN_PREFIX = 'croustylift:ackgen';
+
+function ackGenerations(userId: string): Record<string, number> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(`${ACK_GEN_PREFIX}:${userId}`) ?? '{}');
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** La génération d'une clé : celles des préfixes qui la couvrent. */
+function ackGeneration(userId: string, key: string): string {
+  const gens = ackGenerations(userId);
+  return Object.keys(gens)
+    .filter((prefix) => key.startsWith(prefix))
+    .sort()
+    .map((prefix) => `${prefix}=${gens[prefix]}`)
+    .join('|');
+}
+
+/**
  * Marque À RAFRAÎCHIR les copies dont la clé commence par un des préfixes : une
  * écriture vient d'être ACQUITTÉE (ici ou dans un autre onglet) et les rend
  * fausses. Contrairement à `invalidateReads`, la copie se montre encore
@@ -359,7 +396,15 @@ export function invalidateReads(prefixes: readonly string[]): void {
 export function markToRefresh(prefixes: readonly string[]): void {
   const account = loadLocalAccount();
   if (!account || typeof localStorage === 'undefined') return;
+  // Garde locale, et génération partagée avec les autres onglets.
   for (const prefix of prefixes) invalidatedAt.set(fullKey(account.userId, prefix), readSeq);
+  const gens = ackGenerations(account.userId);
+  for (const prefix of prefixes) gens[prefix] = (gens[prefix] ?? 0) + 1;
+  try {
+    localStorage.setItem(`${ACK_GEN_PREFIX}:${account.userId}`, JSON.stringify(gens));
+  } catch {
+    // Stockage plein : la garde locale tient seule pour cet onglet.
+  }
   for (const prefix of prefixes) {
     for (const key of cachedKeys(prefix)) {
       const storageKey = fullKey(account.userId, key);
@@ -525,7 +570,7 @@ export function clearReadCache(): void {
     const doomed: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key !== null && key.startsWith(`${PREFIX}:`)) doomed.push(key);
+      if (key !== null && (key.startsWith(`${PREFIX}:`) || key.startsWith(`${ACK_GEN_PREFIX}:`))) doomed.push(key);
     }
     for (const key of doomed) localStorage.removeItem(key);
   } catch {
