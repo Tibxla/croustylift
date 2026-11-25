@@ -17,10 +17,10 @@
 // et la rangée RIR reste au-dessus de la barre sans défiler.
 //
 // Toucher une case loggée de la bande ouvre la feuille de correction de CETTE
-// série (SetEditSheet) ; ses gestes (corriger, supprimer) remontent au parent,
-// qui les écrit. La feuille est rendue hors de la zone de saisie : ses
-// événements, qui remontent à travers le portail, ne marquent pas le brouillon
-// comme touché.
+// série (SetEditSheet) ; ses gestes (corriger, changer de côté, supprimer)
+// remontent au parent, qui les écrit. La feuille est rendue hors de la zone de
+// saisie : ses événements, qui remontent à travers le portail, ne marquent pas
+// le brouillon comme touché.
 //
 // Les libellés « e1RM » (mesure du brouillon) et « RIR » (rangée) se touchent :
 // une feuille basse dit en une phrase ce que veut dire chaque mot
@@ -84,6 +84,8 @@ interface ExerciseCaptureProps {
   onSaveExerciseNote: (body: string) => void;
   /** Corrige la série d'id `setId` (poids, reps, RIR). */
   onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
+  /** Passe la ligne d'id `setId` de l'autre côté (unilatéral, cf. `changeSetSide`). */
+  onChangeSetSide: (setId: string, side: Side) => void;
   /** Supprime la série de la ligne d'id `setId` (les deux côtés en unilatéral). */
   onDeleteSet: (setId: string) => void;
 }
@@ -128,6 +130,7 @@ export function ExerciseCapture({
   onSaveDatedNote,
   onSaveExerciseNote,
   onCorrectSet,
+  onChangeSetSide,
   onDeleteSet,
 }: ExerciseCaptureProps) {
   const { prescription, reference, perExerciseNote } = exercise;
@@ -151,6 +154,10 @@ export function ExerciseCapture({
   // un log/annulation (même déclencheur que le brouillon : exerciseId + loggedCount),
   // pour reproposer le côté qui reste à faire sans jamais le FORCER (l'utilisateur
   // peut basculer). Bilatéral : pas de côté, l'état n'est pas affiché.
+  // Une série passée de l'autre côté (feuille de correction) ne change pas leur
+  // nombre mais la série en cours : la clé porte aussi les côtés, pour que le
+  // sélecteur repropose le côté qui manque (une gauche devenue droite redemande
+  // la gauche).
   //
   // Exception : quand le nombre de séries a bougé par une RÉPONSE TARDIVE de la
   // base (`historyEpoch`, série arrivée d'ailleurs) et non par un geste, le côté
@@ -174,7 +181,8 @@ export function ExerciseCapture({
     sideChosenRef.current = true;
     setSelectedSide(side);
   }, []);
-  const sideKey = `${exercise.exerciseId}:${loggedCount}:${unilateral}`;
+  const sidesKey = unilateral ? progress.sets.map((s) => `${s.order}${s.side ?? ''}`).join(',') : '';
+  const sideKey = `${exercise.exerciseId}:${loggedCount}:${unilateral}:${sidesKey}`;
   const sideKeyRef = useRef(sideKey);
   const sideEpochRef = useRef(historyEpoch);
   useEffect(() => {
@@ -627,6 +635,7 @@ export function ExerciseCapture({
           progress={progress}
           setId={editId}
           onSave={(values) => onCorrectSet(editId, values)}
+          onChangeSide={(side) => onChangeSetSide(editId, side)}
           onDelete={() => {
             onDeleteSet(editId);
             setEditId(null);
