@@ -1,16 +1,27 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type ComponentType, type LazyExoticComponent } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type CSSProperties,
+  type LazyExoticComponent,
+} from 'react'
 import { useAuth } from './auth/useAuth'
 import { LoginScreen } from './auth/LoginScreen'
 import { ResetPasswordScreen } from './auth/ResetPasswordScreen'
 import { CaptureScreen } from './features/capture/CaptureScreen'
 import { FirstLaunchScreen } from './features/onboarding/FirstLaunchScreen'
 import { listRoutines } from './features/authoring/data'
-import { requestLeave } from './features/authoring/seance-dirty'
 import { isFirstLaunch } from './features/onboarding/template'
 import { flushOutbox } from './features/capture/sync'
 import { networkFirstRead, revalidateReadCache } from './lib/read-cache'
 import { ErrorBoundary } from './ErrorBoundary'
-import { blockReloads, unblockReloads } from './pwa/blockers'
+import { activeBlockers, blockReloads, unblockReloads } from './pwa/blockers'
 import {
   recoverFromChunkFailure,
   requestReload,
@@ -21,7 +32,8 @@ import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
 import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
 import { SurfaceNav } from './shell/SurfaceNav'
-import { SurfaceNavigationContext } from './shell/navigation'
+import { hasSurfaceIntent, SurfaceActiveContext, SurfaceNavigationContext } from './shell/navigation'
+import { draftSignOutRefusal, openMemory, surfaceKey, switchMemory, type SurfaceMemory } from './shell/surface-memory'
 import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
 import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
@@ -122,15 +134,13 @@ setLazyChunkPreloader(() => {
 type Surface = SurfaceName
 
 /**
- * Affiche une autre surface, instantanément : le geste revient des dizaines de
- * fois par jour, aucune animation ne s'y justifie (DESIGN.md, Mouvement).
- *
- * Champ en cours de saisie : on lui retire d'abord le focus. Sinon le champ est
- * démonté pendant que le clavier descend, ce qui sur iPhone peut laisser la
+ * Avant d'afficher une autre surface, instantanément (le geste revient des
+ * dizaines de fois par jour, aucune animation ne s'y justifie, DESIGN.md,
+ * Mouvement) : un champ en cours de saisie perd d'abord le focus. Sinon il est
+ * caché pendant que le clavier descend, ce qui sur iPhone peut laisser la
  * fenêtre d'affichage faussée et les barres du bas décrochées (registre R4).
- * Puis on revient en haut : la nouvelle surface s'ouvre sur son en-tête.
  */
-function showSurface(update: () => void): void {
+function blurFocusedField(): void {
   const focused = typeof document === 'undefined' ? null : document.activeElement
   if (
     focused instanceof HTMLInputElement ||
@@ -139,8 +149,25 @@ function showSurface(update: () => void): void {
   ) {
     focused.blur()
   }
-  update()
-  if (typeof window !== 'undefined') window.scrollTo(0, 0)
+}
+
+// Une surface visitée reste montée (shell/surface-memory.ts). Affichée, son
+// enveloppe ne fait pas de boîte : ses enfants sont ceux de la colonne, comme
+// avant. Cachée, elle sort de la mise en page sans changer de largeur : hors du
+// flux, de hauteur nulle, invisible et `inert` (ni focus, ni toucher, ni
+// lecteur d'écran). Pas de `display: none` : les écrans qui se mesurent
+// (courbes, poids de la Salle) liraient une largeur nulle et se redessineraient
+// au retour. Rien n'y est `fixed` : tout s'y découpe.
+const SHOWN: CSSProperties = { display: 'contents' }
+const PARKED: CSSProperties = {
+  position: 'absolute',
+  insetInline: 0,
+  top: 0,
+  height: 0,
+  overflow: 'hidden',
+  visibility: 'hidden',
+  display: 'flex',
+  flexDirection: 'column',
 }
 
 // La navigation est une ligne de cinq mots en HAUT de l'écran (shell/SurfaceNav),
@@ -187,8 +214,12 @@ function App() {
     return <LoginScreen />
   }
 
+  // Une clé par compte : si le compte change sans repasser par l'écran de
+  // connexion (session arrivée par un lien), toutes les vues mémorisées des
+  // onglets partent avec l'ancien (shell/surface-memory.ts).
   return (
     <AuthenticatedApp
+      key={user?.id ?? localAccount?.userId ?? 'local'}
       email={user?.email ?? localAccount?.email ?? undefined}
       onSignOut={signOut}
     />
@@ -219,8 +250,19 @@ function AuthenticatedApp({
   const [check, setCheck] = useState<RoutineCheck>({ phase: 'checking' })
   const [reloadKey, setReloadKey] = useState(0)
   // Après un rechargement décidé par l'app (mise à jour, chunk introuvable), on
-  // rouvre l'onglet que l'utilisateur visait ; sinon la Capture.
-  const [surface, setSurface] = useState<Surface>(() => takeSurfaceAfterReload() ?? 'capture')
+  // rouvre l'onglet que l'utilisateur visait ; sinon la Capture. Les onglets
+  // visités restent montés, chacun avec son défilement (shell/surface-memory.ts).
+  const [memory, setMemory] = useState<SurfaceMemory>(() => openMemory(takeSurfaceAfterReload() ?? 'capture'))
+  const surface = memory.current
+  // La frontière d'erreur de chaque surface montée, interrogée au départ.
+  const boundaries = useRef(new Map<Surface, ErrorBoundary>())
+  // Le défilement à rendre une fois la surface affichée (avant la peinture).
+  const restoreScroll = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    if (restoreScroll.current === null) return
+    window.scrollTo(0, restoreScroll.current)
+    restoreScroll.current = null
+  }, [memory])
   // La demande d'import d'un écran paresseux ne vaut que tant que l'onglet le
   // porte : elle est périmée au départ de l'onglet et au démontage (déconnexion).
   useEffect(() => {
@@ -232,18 +274,49 @@ function AuthenticatedApp({
     return () => screen.requests.invalidate()
   }, [surface])
   // Le seul chemin d'une surface à l'autre, pour la navigation comme pour tout
-  // écran (shell/navigation.ts) : garde de sortie d'abord (modifications non
-  // enregistrées), puis rechargement sur une nouvelle version si une attend, puis
-  // la surface. L'ordre et ses raisons sont dans surface-switch.ts.
+  // écran (shell/navigation.ts) : rechargement sur une nouvelle version si une
+  // attend, puis la surface (surface-switch.ts). La surface quittée reste montée,
+  // son défilement noté ; la surface visée retrouve le sien, sauf intention en
+  // attente (« Voir au Journal ») ou plantage (shell/surface-memory.ts).
   const goTo = useCallback(
     (next: Surface) => {
-      switchSurface(next, surface, {
-        requestLeave,
+      switchSurface(next, memory.current, {
         requestReload,
-        show: (target) => showSurface(() => setSurface(target)),
+        show: (target) => {
+          blurFocusedField()
+          const failed = memory.mounted.filter((s) => boundaries.current.get(s)?.failed() ?? false)
+          const result = switchMemory(memory, {
+            to: target,
+            scrollY: window.scrollY,
+            failed,
+            intent: hasSurfaceIntent(target),
+          })
+          if (result.memory === memory) {
+            // Tap sur l'onglet affiché : retour en haut, comme avant.
+            window.scrollTo(0, result.scrollTo)
+            return
+          }
+          restoreScroll.current = result.scrollTo
+          setMemory(result.memory)
+        },
       })
     },
-    [surface],
+    [memory],
+  )
+  const registerBoundary = useCallback((s: Surface, boundary: ErrorBoundary | null) => {
+    if (boundary) boundaries.current.set(s, boundary)
+    else boundaries.current.delete(s)
+  }, [])
+  // Se déconnecter démonte tous les onglets : refusé tant qu'un écran, même
+  // caché, tient un brouillon (la raison s'affiche sous le bouton des Réglages).
+  // Le forçage, lui, ne sert qu'aux écritures retenues, déjà passé ce point.
+  const guardedSignOut = useCallback(
+    async (options?: { force?: boolean }) => {
+      const refusal = options?.force ? null : draftSignOutRefusal(activeBlockers())
+      if (refusal) throw new Error(refusal)
+      await onSignOut(options)
+    },
+    [onSignOut],
   )
   // Emplacement des feuilles basses du kit (src/ui/sheet.tsx), dernier enfant
   // de la racine, collé au bas de la fenêtre.
@@ -320,12 +393,6 @@ function AuthenticatedApp({
     return () => window.removeEventListener('online', flushAndRevalidate)
   }, [])
 
-  const { analysis, seances, exercises, reglages } = lazyScreens
-  const AnalysisScreen = analysis.Component
-  const SeancesScreen = seances.Component
-  const ExercisesScreen = exercises.Component
-  const ReglagesScreen = reglages.Component
-
   if (check.phase === 'checking') {
     return <FullScreenSpinner label="Chargement" />
   }
@@ -349,7 +416,7 @@ function AuthenticatedApp({
           onCreated={() => {
             // La routine existe désormais : on recharge l'aiguillage et on ouvre
             // la capture sur la séance fraîchement créée.
-            setSurface('capture')
+            setMemory(openMemory('capture'))
             setReloadKey((k) => k + 1)
           }}
         />
@@ -366,10 +433,11 @@ function AuthenticatedApp({
         <SheetSlotContext.Provider value={sheetSlot}>
           {/* Colonne flexible de la hauteur de la fenêtre (sous la navigation) :
               une barre collée en bas d'écran y reste même quand le contenu est
-              court. Frontière par surface (`key={surface}` la réarme au
-              changement) : un crash de rendu d'une surface n'efface pas la
-              navigation, l'utilisateur peut basculer pour s'en sortir. Le
-              Suspense couvre le chargement paresseux de l'Analyse. */}
+              court. Une frontière par surface : un crash de rendu d'une surface
+              n'efface pas la navigation, l'utilisateur peut basculer pour s'en
+              sortir, et la surface plantée est remontée à neuf quand il y
+              revient (shell/surface-memory.ts). Le Suspense couvre le
+              chargement paresseux des surfaces hors Salle. */}
           <div className="flex min-h-surface flex-col">
             {/* Ligne de synchro sous la navigation, sur toutes les surfaces sauf
                 la Salle, qui garde la sienne tant que l'écran de capture n'est
@@ -378,18 +446,17 @@ function AuthenticatedApp({
             {surface !== 'capture' && (
               <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />
             )}
-            <ErrorBoundary key={surface} surface={surface}>
-              <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
-                {surface === 'capture' && <CaptureScreen />}
-                {surface === 'analysis' && <AnalysisScreen />}
-                {surface === 'seances' && <SeancesScreen />}
-                {surface === 'exercises' && <ExercisesScreen />}
-                {/* Compte (e-mail, Déconnexion), version et mise à jour vivent ici,
-                    au calme : rien de tout cela n'a sa place dans le chrome
-                    permanent ni en salle. App reste propriétaire de l'auth. */}
-                {surface === 'reglages' && <ReglagesScreen email={email} onSignOut={onSignOut} />}
-              </Suspense>
-            </ErrorBoundary>
+            {memory.mounted.map((s) => (
+              <SurfaceSlot
+                key={surfaceKey(memory, s)}
+                surface={s}
+                shown={s === surface}
+                sheetSlot={sheetSlot}
+                email={email}
+                onSignOut={guardedSignOut}
+                onBoundary={registerBoundary}
+              />
+            ))}
           </div>
           {/* Montée à la première ouverture seulement : son chunk n'est demandé
               qu'à ce moment. Un échec de chargement ne casse pas l'app (frontière
@@ -416,6 +483,58 @@ function AuthenticatedApp({
     </main>
   )
 }
+
+/**
+ * Une surface montée, affichée ou cachée (shell/surface-memory.ts). Mémoïsée :
+ * l'app authentifiée se rend à chaque changement de la file d'écritures (une
+ * série loggée), et les surfaces cachées n'ont pas à se rendre avec elle.
+ */
+const SurfaceSlot = memo(function SurfaceSlot({
+  surface,
+  shown,
+  sheetSlot,
+  email,
+  onSignOut,
+  onBoundary,
+}: {
+  surface: Surface
+  shown: boolean
+  sheetSlot: HTMLElement | null
+  email: string | undefined
+  onSignOut: (options?: { force?: boolean }) => Promise<void>
+  onBoundary: (surface: Surface, boundary: ErrorBoundary | null) => void
+}) {
+  // Lu au rendu : après un import échoué et oublié, le composant paresseux est
+  // neuf (`lazySurface`), et la surface remontée le redemande.
+  const { analysis, seances, exercises, reglages } = lazyScreens
+  const AnalysisScreen = analysis.Component
+  const SeancesScreen = seances.Component
+  const ExercisesScreen = exercises.Component
+  const ReglagesScreen = reglages.Component
+  const boundaryRef = useCallback((boundary: ErrorBoundary | null) => onBoundary(surface, boundary), [onBoundary, surface])
+  return (
+    <div style={shown ? SHOWN : PARKED} inert={!shown} aria-hidden={shown ? undefined : true}>
+      <SurfaceActiveContext.Provider value={shown}>
+        {/* Une feuille d'une surface cachée ne s'affiche pas par-dessus une
+            autre : sans emplacement, elle attend son retour. */}
+        <SheetSlotContext.Provider value={shown ? sheetSlot : null}>
+          <ErrorBoundary ref={boundaryRef} surface={surface}>
+            <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
+              {surface === 'capture' && <CaptureScreen />}
+              {surface === 'analysis' && <AnalysisScreen />}
+              {surface === 'seances' && <SeancesScreen />}
+              {surface === 'exercises' && <ExercisesScreen />}
+              {/* Compte (e-mail, Déconnexion), version et mise à jour vivent ici,
+                  au calme : rien de tout cela n'a sa place dans le chrome
+                  permanent ni en salle. App reste propriétaire de l'auth. */}
+              {surface === 'reglages' && <ReglagesScreen email={email} onSignOut={onSignOut} />}
+            </Suspense>
+          </ErrorBoundary>
+        </SheetSlotContext.Provider>
+      </SurfaceActiveContext.Provider>
+    </div>
+  )
+})
 
 function FullScreenSpinner({ label }: { label: string }) {
   // Une phrase plutôt qu'une toupie (kit E, `Loading`).

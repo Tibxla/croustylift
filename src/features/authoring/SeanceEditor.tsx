@@ -413,8 +413,8 @@ export function SeanceEditorView({
       setNoteFor(null);
       setMenuOpen(false);
       setPendingLeave(() => proceed);
-    });
-    return () => setLeaveGuard(null);
+    }, 'seances');
+    return () => setLeaveGuard(null, 'seances');
   }, [unsaved]);
 
   // Tant que l'éditeur porte une saisie non enregistrée (prescriptions ou note),
@@ -432,7 +432,7 @@ export function SeanceEditorView({
   /** Quitte sans repasser par la garde (abandon confirmé). Archiver ou supprimer
    *  la séance démonte l'éditeur : la garde et le blocage tombent avec lui. */
   function leaveNow(proceed: () => void) {
-    setLeaveGuard(null);
+    setLeaveGuard(null, 'seances');
     releaseDraft();
     proceed();
   }
@@ -538,7 +538,7 @@ export function SeanceEditorView({
       // Laisse la confirmation visible un instant, puis retour. Par la garde de
       // sortie : s'il reste le brouillon d'une note, elle demande avant de partir.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
-      backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
+      backTimerRef.current = setTimeout(() => requestLeave(onBack, 'seances'), 900);
     } catch (err) {
       if (leavingRef.current) return; // la sortie en cours rapporte l'échec elle-même
       setSave(saveFailed(errorMessage(err)));

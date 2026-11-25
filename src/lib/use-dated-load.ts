@@ -3,6 +3,7 @@
 // dit quand la date de la copie doit s'afficher.
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { loadDated, mountView, watchDated, type DatedState } from './dated-read';
+import { useSurfaceActive } from '../shell/navigation';
 
 /** Au-delà, une copie montrée en ligne sans relecture arrivée se date à l'écran
  *  (réseau de salle qui répond mal sans être coupé). */
@@ -27,7 +28,21 @@ export function useOnline(): boolean {
 }
 
 /**
- * Lit la vue `key` (rien tant que `key` est `null`). `reload` repasse par
+ * La vue réellement suivie : aucune tant que la surface de l'écran est cachée.
+ * Une surface quittée reste montée (shell/surface-memory.ts) ; sans cela, une
+ * Analyse cachée relirait tout le Journal après chaque série loggée en salle
+ * (acquittement d'un flush, `mountView`) ou au retour du réseau, ce que
+ * dated-read.ts interdit. La vue garde ce qu'elle montrait ; au retour sur
+ * l'onglet, la clé revient et la vue se relit comme à une ouverture (copie
+ * d'abord, puis la revalidation), sans repasser par « chargement ».
+ */
+export function liveViewKey(key: string | null, surfaceActive: boolean): string | null {
+  return surfaceActive ? key : null;
+}
+
+/**
+ * Lit la vue `key` (rien tant que `key` est `null`, ni tant que la surface de
+ * l'écran est cachée, cf. `liveViewKey`). `reload` repasse par
  * « chargement » (Réessayer) ; `refresh` relit en gardant l'affichage (après une
  * écriture, que l'appelant a déjà fait marquer périmée). `fetcher` doit être
  * stable (module, `useCallback`).
@@ -37,7 +52,8 @@ export function useOnline(): boolean {
  * n'est arrivée en `COPY_LATE_MS`. En ligne, une relecture rapide remplace la
  * copie sans que la date ait clignoté.
  */
-export function useDatedLoad<T>(key: string | null, fetcher: () => Promise<T>) {
+export function useDatedLoad<T>(viewKey: string | null, fetcher: () => Promise<T>) {
+  const key = liveViewKey(viewKey, useSurfaceActive());
   const online = useOnline();
   const [state, setState] = useState<DatedState<T>>({ phase: 'loading' });
   const [tick, setTick] = useState(0);

@@ -168,25 +168,35 @@ export function leavePrompt(unsaved: {
 // --- Garde de sortie ----------------------------------------------------------
 //
 // Un écran qui porte des modifications non enregistrées pose une garde ; toute
-// navigation qui le ferait disparaître (retour, changement d'onglet) passe par
-// `requestLeave`. La garde reçoit la suite (`proceed`) et choisit de l'appeler,
-// tout de suite ou après une confirmation affichée par l'écran lui-même (jamais
-// `window.confirm`). Une seule garde à la fois : un seul écran d'édition est
-// monté. État de module volontaire, pour que la navigation n'ait pas à connaître
-// l'écran.
+// navigation qui le ferait disparaître DANS sa surface (retour différé, copie
+// ouverte, intention « Voir au Journal ») passe par `requestLeave`. La garde
+// reçoit la suite (`proceed`) et choisit de l'appeler, tout de suite ou après
+// une confirmation affichée par l'écran lui-même (jamais `window.confirm`).
+//
+// Le changement d'onglet n'y passe plus : la surface quittée reste montée,
+// cachée, avec son brouillon (shell/surface-memory.ts). Du coup l'éditeur de
+// Séances et la correction d'une séance passée (Analyse) peuvent tenir chacun
+// un brouillon en même temps : une garde PAR SURFACE, pour que l'une n'écrase
+// ni n'efface l'autre. État de module volontaire, pour que la navigation n'ait
+// pas à connaître l'écran.
 
 /** Reçoit la navigation demandée et décide de la laisser passer. */
 export type LeaveGuard = (proceed: () => void) => void;
 
-let guard: LeaveGuard | null = null;
+/** Les surfaces qui portent un écran d'édition gardé. */
+export type GuardedSurface = 'seances' | 'analysis';
 
-/** Pose la garde de l'écran courant, ou la retire (`null`). */
-export function setLeaveGuard(next: LeaveGuard | null): void {
-  guard = next;
+const guards = new Map<GuardedSurface, LeaveGuard>();
+
+/** Pose la garde de l'écran d'édition de `surface`, ou la retire (`null`). */
+export function setLeaveGuard(next: LeaveGuard | null, surface: GuardedSurface): void {
+  if (next) guards.set(surface, next);
+  else guards.delete(surface);
 }
 
-/** Demande à quitter l'écran : passe par la garde s'il y en a une, sinon sort. */
-export function requestLeave(proceed: () => void): void {
+/** Demande à quitter l'écran d'édition de `surface` : par sa garde s'il y en a une, sinon on sort. */
+export function requestLeave(proceed: () => void, surface: GuardedSurface): void {
+  const guard = guards.get(surface);
   if (guard) guard(proceed);
   else proceed();
 }

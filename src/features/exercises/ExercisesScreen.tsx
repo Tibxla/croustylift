@@ -98,6 +98,7 @@ import {
   type ListExercise,
 } from './exercises-list';
 import { errorMessage } from '../../lib/error-message';
+import { useSurfaceReturn } from '../../shell/navigation';
 
 // =====================================================================
 // Conteneur : chargement + mutations
@@ -112,6 +113,10 @@ export function ExercisesScreen() {
   const [load, setLoad] = useState<Load>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
+  // Retour sur l'onglet : les Exos sont restés montés, cachés, avec leur fiche,
+  // leur filtre et leur recherche (shell/surface-memory.ts). La liste se relit
+  // sans repasser par « chargement » (un exo créé depuis la Salle y entre).
+  useSurfaceReturn(reload);
 
   useEffect(() => {
     let active = true;
