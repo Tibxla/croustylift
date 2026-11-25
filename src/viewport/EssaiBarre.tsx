@@ -10,14 +10,24 @@ import { useEffect, useState } from 'react'
  * la fenêtre et la position réelle de la ligne collée. Le SHA et l'heure du build
  * disent si le service worker sert bien ce build-ci.
  *
+ * Un appui le replie en une pastille « essai » (mémorisé), pour libérer les
+ * boutons du bas en Salle ; un autre appui le rouvre.
+ *
  * `position: fixed`, par exception à la règle du kit : c'est un calque de
- * diagnostic qui ne reçoit aucun toucher (`pointer-events: none`), n'entre pas
- * dans le flux et n'existe que dans ce build d'essai. Il reste étroit (moins de la
- * moitié de la largeur) et loin du milieu des bords, là où WebKit cherche une
- * boîte pleine largeur pour décider du flou.
+ * diagnostic qui n'entre pas dans le flux et n'existe que dans ce build d'essai.
+ * Il reste étroit (moins de la moitié de la largeur) et loin du milieu des bords,
+ * là où WebKit cherche une boîte pleine largeur pour décider du flou.
  */
+const CLE_REPLI = 'croustylift:essai-barre:replie'
+
 export default function EssaiBarre() {
   const [lignes, setLignes] = useState<string[]>(() => mesurer())
+  const [replie, setReplie] = useState(() => localStorage.getItem(CLE_REPLI) === '1')
+  const basculer = () => {
+    const suivant = !replie
+    setReplie(suivant)
+    localStorage.setItem(CLE_REPLI, suivant ? '1' : '0')
+  }
 
   useEffect(() => {
     const maj = () => setLignes(mesurer())
@@ -34,18 +44,24 @@ export default function EssaiBarre() {
   }, [])
 
   return (
-    <div
+    <button
+      type="button"
       data-essai-barre
-      aria-hidden="true"
-      className="pointer-events-none fixed left-1 z-[80] w-[46vw] max-w-[190px] rounded-[4px] bg-black/85 px-1.5 py-1 font-sans text-[10px] leading-[1.35] tabular-nums text-ink"
+      aria-label={replie ? 'Ouvrir le relevé d’essai' : 'Replier le relevé d’essai'}
+      onClick={basculer}
+      className={`fixed left-1 z-[80] rounded-[4px] bg-black/85 px-1.5 py-1 text-left font-sans text-[10px] leading-[1.35] tabular-nums text-ink ${
+        replie ? '' : 'w-[46vw] max-w-[190px]'
+      }`}
       style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 4px)' }}
     >
-      {lignes.map((ligne) => (
-        <div key={ligne} className="break-words">
-          {ligne}
-        </div>
-      ))}
-    </div>
+      {replie
+        ? 'essai'
+        : lignes.map((ligne) => (
+            <span key={ligne} className="block break-words">
+              {ligne}
+            </span>
+          ))}
+    </button>
   )
 }
 
