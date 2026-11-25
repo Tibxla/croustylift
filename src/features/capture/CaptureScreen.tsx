@@ -119,7 +119,7 @@ import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { applySetGesture as applyGesture } from './apply-set-gesture';
-import { changeSetSide, correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
+import { changeSetSide, correctSet, deleteSet, undoLastSet, type SetEntry, type SetGesture } from './set-gestures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
 import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
 
@@ -1044,29 +1044,6 @@ function CaptureBoard({
     [enqueueExecutionOnce],
   );
 
-  const handleUndo = useCallback(
-    (exerciseId: string) => {
-      // Id de la dernière série encore loggée localement : c'est elle qu'on annule.
-      // On lit la projection (stateRef) pour viser la BONNE dernière série même
-      // après des logs synchrones non encore re-rendus (cohérent avec handleLog).
-      const current = stateRef.current;
-      const prev = getProgress(current, exerciseId);
-      const lastId = prev.setIds[prev.setIds.length - 1] ?? null;
-      const action = { type: 'undo-last-set', exerciseId } as const;
-      dispatch(action);
-      stateRef.current = captureReducer(current, action);
-      // Une série réhydratée porte DÉSORMAIS son id réel (bug H2/F1) → on enfile un
-      // `deleteSet` qui retire la ligne en base. `null` ne subsiste que pour un
-      // cache d'ANCIEN format (série sans id) : rien à enfiler (le delete par id ne
-      // saurait quoi viser), on annule en local seulement (rare, assumé).
-      if (lastId) {
-        // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
-        enqueueAndFlush({ type: 'deleteSet', id: lastId, exerciseIds: [exerciseId] });
-      }
-    },
-    [],
-  );
-
   // Corriger, changer de côté ou supprimer une série quelconque de l'exo affiché
   // (set-gestures.ts). Même enchaînement qu'un log : le geste se calcule sur la
   // PROJECTION, l'action est dispatchée et la projection avancée du même pas,
@@ -1083,6 +1060,16 @@ function CaptureBoard({
       });
     },
     [enqueueExecutionOnce],
+  );
+  // Annuler la dernière série (le pied de l'instrument) : même enchaînement que
+  // les autres gestes (`undoLastSet`, set-gestures.ts). On lit la projection
+  // (stateRef) pour viser la BONNE dernière série même après des logs
+  // synchrones non encore re-rendus (cohérent avec handleLog). Une série
+  // réhydratée porte son id réel (bug H2/F1) : un `deleteSet` la retire en base ;
+  // un cache d'ANCIEN format (série sans id) s'annule en local seulement.
+  const handleUndo = useCallback(
+    (exerciseId: string) => applySetGesture(undoLastSet(stateRef.current, exerciseId)),
+    [applySetGesture],
   );
   const handleCorrectSet = useCallback(
     (exerciseId: string, setId: string, values: Partial<SetEntry>) =>
