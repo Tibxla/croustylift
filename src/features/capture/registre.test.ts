@@ -1526,6 +1526,36 @@ describe('voie 1 : appareil plein, un refus qui ne peut pas s’écrire arrête 
     expect(hasUnpersistedOps()).toBe(false);
   });
 
+  it('scénario R1 des relectures : insertion refusée écrite, puis enregistrement seul impossible à écrire, suppression refusée et saisie indépendante', async () => {
+    enqueue(insert('s1'));
+    await flush(base({ refuses: () => '23514' }).fns);
+    // Seul l'enregistrement (et la sonde) est refusé : la boîte d'entrée reçoit encore les gestes.
+    const setItem = localStorage.setItem.bind(localStorage);
+    let full = true;
+    localStorage.setItem = (k: string, v: string) => {
+      if (full && k.startsWith(REGISTRY_KEY) && !k.startsWith(`${REGISTRY_KEY}:in:`)) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    enqueue(del('s1'));
+    enqueue(insert('s9', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
+
+    const b = base({ refuses: (op) => (op.type === 'deleteSet' ? '42501' : null) });
+    for (let i = 0; i < 4; i += 1) await flush(b.fns);
+
+    // Avant : 504 essais par passe. Une seule question. La suppression a écarté
+    // l'ancien refus de la même série (règle de lignée) ; elle et la saisie
+    // indépendante sont toujours sur l'appareil.
+    expect(b.tried).toEqual(['deleteSet:s1']);
+    expect(storedWrites().map((w) => `${w.op.type}:${w.op.id}:${w.fate}`)).toEqual(['deleteSet:s1:pending', 'insertSet:s9:pending']);
+    expect(storageFailing()).toBe(true);
+
+    full = false;
+    await flush(b.fns);
+    expect(listRefused().map((r) => `${r.op.type}:${r.op.id}`)).toEqual(['deleteSet:s1']);
+    expect(b.sent).toEqual(['insertSet:s9']);
+    expect(storageFailing()).toBe(false);
+  });
+
   it('l’écriture qui arrêtait la passe est annulée avec sa séance : la suite part sans attendre la place', async () => {
     enqueue(insert('refusée'));
     enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
