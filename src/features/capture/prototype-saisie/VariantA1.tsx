@@ -23,24 +23,30 @@ import { ExerciseIndex } from '../ExerciseIndex';
 import { formatRange } from '../format';
 import { SetBand, UniSetBand } from '../SetBand';
 import type { VariantProps } from './ProtoSaisie';
+import { useVariant } from './variant';
 import { ProtoWeight, SideChoice, setText, WeightRuler } from './parts';
 
-/** `&vif=1` : le ▲ du brouillon passe au signal (voir `Indicator`). */
-const VIF = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('vif') === '1';
+/** ▲ du brouillon au signal ? Choix de l'utilisateur du 25/11 : OUI dans A4
+ *  (« je préfère le jaune »), en connaissance du risque de gonfler le RIR. A1 à
+ *  A3 restent sobres. `&vif=1` force le jaune, `&vif=0` la version sobre. */
+function useVif(): boolean {
+  const variant = useVariant();
+  const q = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('vif');
+  return q === '1' ? true : q === '0' ? false : variant === 'A4';
+}
 
 /** L'écart du BROUILLON à un repère, en direct : signe + écart + mot.
  *
- *  ADR 0010 et draft-e1rm.ts : sur le brouillon, pas de verdict (« battue »,
- *  « battrait ») ni de badge qui s'allume, sinon un RIR gonflé d'un cran suffit à
- *  « battre » et l'auto-évaluation se fausse. On écrit donc une POSITION, pas un
- *  exploit : « au-dessus », « à égalité », « en dessous », avec l'écart exact
- *  dans la mesure du juge (e1RM, ou reps effectives à 0 kg). Le signe suit la
- *  triade, mais en blanc cassé : le signal reste au verdict de la série faite,
- *  dans la bande. `&vif=1` montre l'autre option (▲ au signal dès le réglage)
- *  pour que l'utilisateur tranche. */
+ *  Les mots disent une POSITION, pas un exploit (« au-dessus », « à égalité »,
+ *  « en dessous »), avec l'écart exact dans la mesure du juge (e1RM, ou reps
+ *  effectives à 0 kg) : le verdict « battue » reste à la série faite (ADR 0010).
+ *  La teinte du ▲ : blanc cassé dans A1 à A3 (draft-e1rm.ts, aucun badge qui
+ *  s'allume sur le brouillon), au SIGNAL dans A4, par choix de l'utilisateur du
+ *  25/11 malgré le risque de gonfler le RIR (`useVif`). ▬ blanc cassé, ▼ gris. */
 function Indicator({ sign, gap }: { sign: -1 | 0 | 1; gap: string }) {
   const word = sign > 0 ? 'au-dessus' : sign === 0 ? 'à égalité' : 'en dessous';
-  const tone = sign > 0 ? (VIF ? 'text-sig' : 'text-ink') : sign === 0 ? 'text-ink' : 'text-muted';
+  const vif = useVif();
+  const tone = sign > 0 ? (vif ? 'text-sig' : 'text-ink') : sign === 0 ? 'text-ink' : 'text-muted';
   return (
     <span className={`inline-flex items-center gap-1 whitespace-nowrap text-[14px] ${tone}`}>
       <Sign v={sign > 0 ? 'up' : sign === 0 ? 'eq' : 'down'} size={10} />
