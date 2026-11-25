@@ -76,6 +76,12 @@
         "role": "neutral",
         "displayName": "Groupe en feuille",
         "canonical": "#28241f"
+      },
+      "status-done": {
+        "role": "semantic",
+        "displayName": "Fait",
+        "canonical": "var(--sig)",
+        "note": "Provisoire : le signal, en attendant le choix de l'utilisateur ; texte noir chaud dessus."
       }
     },
     "typographyMeta": {
@@ -154,6 +160,16 @@
         "name": "sheet-radius",
         "value": "16px",
         "purpose": "Rayon haut des feuilles basses."
+      },
+      {
+        "name": "cell-radius",
+        "value": "10px",
+        "purpose": "Pastille de sélection : série en cours de la bande, chiffre choisi, mot actif de la navigation ; pastille d'état d'un exo."
+      },
+      {
+        "name": "plate-radius",
+        "value": "18px",
+        "purpose": "Plaques de réglage de la Salle (groupes arrondis), retrait de 12 px (8 sous 360 px)."
       }
     ],
     "shadows": [],
@@ -313,6 +329,11 @@
       {
         "name": "The No Nested Block Rule",
         "body": "Un groupe arrondi ne contient jamais un autre bloc arrondi de fond différent ; ce qui vit dedans prend le fond du groupe.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Selection Pill Rule",
+        "body": "Ce qui est choisi ou en cours se pose dans une pastille arrondie de 10 px (aplat de filet ou fond de groupe), jamais soulignée, jamais au signal.",
         "section": "shapes"
       }
     ],

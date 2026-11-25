@@ -4,7 +4,7 @@
 // de l'écran (la zone du pouce) appartient en entier à l'action du moment
 // (logger, exo suivant, enregistrer). Pourquoi des mots : cinq surfaces tiennent
 // en une ligne lisible sans icône à deviner, et rien ne se cache derrière un
-// menu. Le mot actif est en demi-gras souligné, les autres en gris. La ligne est
+// menu. Le mot actif est en demi-gras dans une pastille arrondie, les autres en gris. La ligne est
 // dans le flux (elle défile avec la page) : ni `fixed` ni `sticky`, rien qui
 // dépende de la mesure de la fenêtre par WebKit.
 //
@@ -76,7 +76,7 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
             aria-current={active ? 'page' : undefined}
             onClick={() => onSelect(s.id)}
             className={`h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
-              active ? 'font-semibold text-ink underline decoration-2 underline-offset-[7px]' : 'text-muted active:text-ink'
+              active ? 'rounded-cell bg-surface font-semibold text-ink' : 'text-muted active:text-ink'
             }`}
           >
             {s.label}

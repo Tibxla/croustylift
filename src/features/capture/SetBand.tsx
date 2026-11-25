@@ -12,7 +12,10 @@
 // la série d'avant entière : « 2 G » et « 2 D » restent ensemble). Recadrage
 // instantané (aucune animation : il suit chaque log).
 //
-// Case en cours : le brouillon en gris, soulignée d'un trait épais. Une case
+// Case en cours : le brouillon en gris, dans une pastille arrondie (fond de
+// groupe, `rounded-cell` ; la sélection du traitement « Doux » retenue le 25/11)
+// et soulignée d'un trait épais. La pastille déborde de 8 px à gauche, sans
+// rien pousser : la bande garde sa hauteur. Une case
 // loggée se touche : elle ouvre la feuille de correction de CETTE ligne
 // (SetEditSheet), visée par son id. Sa valeur est soulignée d'un filet gris
 // (« ça se touche ») ; une case à faire ne se touche pas, une série sans id (cache
@@ -109,11 +112,11 @@ export function SetBand({
                 {body}
               </button>
             ) : (
-              <div className="rounded-cell pb-1.5 pr-1.5">{body}</div>
+              <div className={`rounded-cell pb-1.5 pr-1.5 ${c.state === 'current' ? '-ml-2 bg-surface pl-2' : ''}`}>{body}</div>
             )}
             <span
               aria-hidden
-              className={`pointer-events-none absolute bottom-0 left-0 right-2 ${
+              className={`pointer-events-none absolute bottom-0 left-0 right-2 rounded-[2px] ${
                 c.state === 'current' ? 'h-[3px] bg-ink' : c.state === 'logged' ? 'h-px bg-muted' : 'h-px bg-line'
               }`}
             />

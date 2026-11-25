@@ -641,10 +641,10 @@ export function ExerciseCapture({
   );
 }
 
-/** Une plaque de réglage : fond levé, rayon et retrait latéral en jetons du
- *  thème (`--radius-plate`, `--plate-inset`, src/index.css), à 0 tant que le
- *  traitement d'arrondi n'est pas choisi. Aucun rayon en dur. */
-const PLATE = 'overflow-hidden rounded-plate bg-raise mx-(--plate-inset)';
+/** Une plaque de réglage : un groupe arrondi (fond `bg-surface`), rayon et
+ *  retrait latéral en jetons du thème (`--radius-plate`, `--plate-inset`,
+ *  src/index.css). Aucun rayon en dur ; la règle est rognée aux coins. */
+const PLATE = 'overflow-hidden rounded-plate bg-surface mx-(--plate-inset)';
 
 /** Air entre deux groupes de l'instrument : un plancher, puis une part de la
  *  hauteur libre, plafonnée ou non. Aucune animation : la répartition suit la

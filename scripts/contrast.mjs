@@ -39,6 +39,9 @@ const pairs = [
   { fg: tokens.bg, bg: tokens.ink, label: 'bg / ink', required: true },
   { fg: tokens['on-ink'], bg: tokens.ink, label: 'on-ink / ink', required: true },
   { fg: tokens.bg, bg: tokens.muted, label: 'bg / muted', required: true },
+  // Pastille « fait » du Sommaire (`--status-done`, le signal en attendant le
+  // choix de l'utilisateur) : texte noir chaud sur la couleur pleine.
+  ...presets.map((p) => ({ fg: tokens.bg, bg: p.hex, label: `fait : bg / ${p.name}`, required: true })),
   ...presets.flatMap((p) =>
     BACKGROUNDS.map((bg) => ({ fg: p.hex, bg: tokens[bg], label: `signal ${p.name} / ${bg}`, required: true })),
   ),

@@ -39,7 +39,7 @@ import {
   ScreenHeader,
   SecondaryButton,
   Sheet,
-  StateMark,
+  StatePill,
   Status,
   TextLink,
   type ExoState,
@@ -350,12 +350,16 @@ function SommaireMeta({
           {tail}
         </span>
       ) : (
-        <StateMark state={state} size={14} className={state === 'skipped' ? 'text-muted' : 'font-medium text-ink'}>
-          {state === 'skipped' && EXO_STATE_WORD.skipped}
-          {state === 'partial' && ['en cours', count > 0 ? `${series(count)} sur ${min}` : null, side].filter(Boolean).join(' · ')}
-          {state === 'done' && ['fait', series(count), side].filter(Boolean).join(' · ')}
+        // Pastille d'état (kit, `StatePill`) : « fait » en couleur pleine, « en
+        // cours » en contour, « passé » barré. L'origine reste hors pastille.
+        <>
+          <StatePill state={state}>
+            {state === 'skipped' && EXO_STATE_WORD.skipped}
+            {state === 'partial' && ['en cours', count > 0 ? `${series(count)} sur ${min}` : null, side].filter(Boolean).join(' · ')}
+            {state === 'done' && ['fait', series(count), side].filter(Boolean).join(' · ')}
+          </StatePill>
           {tail}
-        </StateMark>
+        </>
       )}
       {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
     </span>

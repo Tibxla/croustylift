@@ -62,7 +62,7 @@ export { PrimaryButton, SecondaryButton, TextLink } from './buttons';
 export { ActionNote, ActionRow, Confirm, Disclosure } from './confirm';
 export { Choice, Stepper, Switch } from './controls';
 export { CheckBox, FieldError, ImplicitSubmit, Notice, PasswordField, RadioMark, TextArea, TextField } from './fields';
-export { Icon, IconButton, StateIcon, StateMark, type ExoState } from './icons';
+export { Icon, IconButton, StateIcon, StateMark, StatePill, type ExoState } from './icons';
 export { BottomBar, EmptyState, GROUP, GROUP_ROW, GROUP_RULE, List, Row, Screen, ScreenHeader, SectionTitle } from './layout';
 export { NumberRow } from './number-row';
 export { Ruler } from './ruler';

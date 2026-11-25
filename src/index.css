@@ -33,12 +33,13 @@
   --radius-note: 14px;      /* avis, alertes, ligne de synchro */
   --radius-group: 18px;     /* groupe arrondi d'une liste */
   --radius-sheet: 16px;     /* haut des feuilles basses */
-  /* Instrument de la Salle (variante A4) : jetons à 0 tant que le traitement
-     d'arrondi n'est pas choisi ; le changer ici suffit, l'écran n'a aucun rayon
-     en dur. `rounded-plate` : les trois plaques de réglage ; `rounded-cell` :
-     une case de la bande des séries (son fond de pression). */
-  --radius-plate: 0px;
-  --radius-cell: 0px;
+  /* Instrument de la Salle (variante A4), aux groupes arrondis : l'écran n'a
+     aucun rayon en dur, tout passe par ces jetons. `rounded-plate` : les trois
+     plaques de réglage (le rayon des groupes) ; `rounded-cell` : la pastille
+     d'une case de la bande des séries, d'un chiffre choisi, du mot actif de la
+     navigation (sélection reprise du traitement « Doux », R3). */
+  --radius-plate: 18px;
+  --radius-cell: 10px;
 
   /* Courbes (DESIGN.md, Mouvement) : enfoncement et élan, tiroir des feuilles. */
   --ease-press: cubic-bezier(0.23, 1, 0.32, 1);
@@ -51,16 +52,23 @@
   /* Fond d'un groupe arrondi : `group` sur le fond, `group-sheet` dans une
      feuille (le panneau de `Sheet` repose `--surface`). En Tailwind : `bg-surface`. */
   --color-surface: var(--surface);
+  /* État « fait » d'un exo (pastille du Sommaire et de l'index de la Salle). */
+  --color-status-done: var(--status-done);
 }
 
 :root {
-  /* Retrait latéral des plaques de réglage de la Salle : 0, elles vont bord à
-     bord ; un traitement en « bulles » les détachera des bords d'ici. */
-  --plate-inset: 0px;
+  /* Retrait latéral des plaques de réglage de la Salle : 12 px, un peu moins que
+     les groupes (16 px), pour laisser sa largeur à la règle. */
+  --plate-inset: 12px;
   /* Signal par défaut (Jaune), remplacé au démarrage par le choix enregistré. */
   --sig: #f6d236;
   /* Fond des groupes arrondis, relu par `bg-surface` ; une feuille le change. */
   --surface: var(--color-group);
+  /* Couleur de l'état « fait » (pastille pleine, texte noir chaud dessus). EN
+     ATTENDANT le choix de l'utilisateur : le signal. Une valeur ici suffit à la
+     changer partout ; le contraste du noir chaud dessus se prouve dans
+     scripts/contrast.mjs. */
+  --status-done: var(--sig);
 
   /* Encoches du système, lues une seule fois ici : tout le calcul de hauteur
      passe par ces deux variables (et les tests peuvent les surcharger, Chromium
@@ -159,6 +167,14 @@ body {
      ouverte assombrit aussi la bande, sans bande plus claire sous l'heure. */
   z-index: 25;
   pointer-events: none;
+}
+
+/* Sous 360 px, les plaques ne se retirent que de 8 px : à 12, une case de
+   Reps ou de RIR tombait à 42 px de large (cible de 44 px au moins). */
+@media (max-width: 359px) {
+  :root {
+    --plate-inset: 8px;
+  }
 }
 
 @media (display-mode: standalone) {

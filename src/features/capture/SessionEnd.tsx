@@ -43,7 +43,7 @@ import {
   ScreenHeader,
   SectionTitle,
   Sign,
-  StateMark,
+  StatePill,
   Status,
   Stepper,
   TextLink,
@@ -342,9 +342,11 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
         )
       }
       value={
-        <StateMark state={STATUS_MARK[e.status]} size={15} className={`text-[15px] ${worked ? 'font-medium text-ink' : 'font-normal text-muted'}`}>
-          {STATUS_WORD[e.status]}
-        </StateMark>
+        // La pastille d'état du Sommaire (kit) : « fait » en couleur, « en
+        // cours » en contour, le reste en gris.
+        <span className="text-[15px]">
+          <StatePill state={STATUS_MARK[e.status]}>{STATUS_WORD[e.status]}</StatePill>
+        </span>
       }
     />
   );

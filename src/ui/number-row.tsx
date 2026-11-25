@@ -3,7 +3,8 @@ import { useLayoutEffect, useRef } from 'react';
 
 /** Rangée de numéros touchables, de `min` à `max` (l'appelant borne la plage : reps
  *  1 à 50, RIR 0 à 10 en salle, élargie si la valeur courante en sort). Un tap = une valeur ; la fourchette du plan est
- *  soulignée d'un filet, la valeur choisie d'un trait épais, la Référence d'un
+ *  soulignée d'un filet, la valeur choisie dans une pastille arrondie (`rounded-cell`,
+ *  aplat de filet, sous le carré de la Référence qui reste visible), la Référence d'un
  *  petit carré (« réf. » à l'écran).
  *
  *  DÉFILEMENT. La rangée court d'un bord de l'écran à l'autre et défile au pouce
@@ -261,14 +262,13 @@ export function NumberRow({
             style={ligne ? { scrollSnapAlign: 'start' } : { flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
           >
             <span
-              className={`tnum flex h-full items-center justify-center text-[22px] tracking-[-0.01em] ${
-                sel ? 'font-bold text-ink' : inPlan ? 'text-ink' : 'text-faint'
+              className={`tnum flex items-center justify-center text-[22px] tracking-[-0.01em] ${
+                sel ? 'mx-1 mb-1 mt-2.5 h-[calc(100%-14px)] rounded-cell bg-line font-bold text-ink' : `h-full ${inPlan ? 'text-ink' : 'text-faint'}`
               }`}
             >
               {n}
             </span>
             {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
-            {sel && <span className="absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
             {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
           </button>
         );
