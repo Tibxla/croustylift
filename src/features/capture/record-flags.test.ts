@@ -113,15 +113,20 @@ describe('currentRecord', () => {
     expect(currentRecord([set(87.5, 10, 1, 1), set(105, 5, 1, 2)], record)?.bestE1rmSet).toEqual({ weightKg: 105, reps: 5, rir: 1 });
   });
 
-  it('premier passage : null tant que rien n’est fait, puis le record se construit des séries du jour', () => {
+  it('premier passage : aucun record de toute la séance, comme les badges, qui n’en donnent pas la première fois', () => {
     expect(currentRecord([], null)).toBeNull();
-    expect(currentRecord([set(60, 8, 2, 1), set(62.5, 8, 2, 2)], null)?.bestE1rmSet).toEqual({ weightKg: 62.5, reps: 8, rir: 2 });
+    expect(currentRecord([set(60, 8, 2, 1), set(62.5, 8, 2, 2)], null)).toBeNull();
+    const virgin: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null };
+    expect(currentRecord([set(60, 8, 2, 1)], virgin)).toBe(virgin);
   });
 
   it('unilatéral : seul le côté visé compte, l’autre bras garde son propre record', () => {
     const left: PersonalRecord = { bestE1rm: estimateE1rm(20, 10, 1), bestE1rmSet: { weightKg: 20, reps: 10, rir: 1 }, bestWeightReps: { weightKg: 20, reps: 10 } };
     const sets = [sided(24, 10, 'right', 1), sided(18, 10, 'left', 1)];
     expect(currentRecord(sets, left, 'left')?.bestE1rmSet).toEqual({ weightKg: 20, reps: 10, rir: 1 });
-    expect(currentRecord(sets, null, 'right')?.bestE1rmSet).toEqual({ weightKg: 24, reps: 10, rir: 1 });
+    // Côté droit vierge : pas de record tant que ce bras n'a pas d'historique.
+    expect(currentRecord(sets, null, 'right')).toBeNull();
+    const right: PersonalRecord = { bestE1rm: estimateE1rm(22, 10, 1), bestE1rmSet: { weightKg: 22, reps: 10, rir: 1 }, bestWeightReps: { weightKg: 22, reps: 10 } };
+    expect(currentRecord(sets, right, 'right')?.bestE1rmSet).toEqual({ weightKg: 24, reps: 10, rir: 1 });
   });
 });

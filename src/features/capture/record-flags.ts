@@ -89,18 +89,24 @@ export function computeRecordFlagsBySide(
 }
 
 /**
- * Le record COURANT : l'historique (`historical`, `null` au premier passage)
- * avancé par les séries du jour, avec la règle des marqueurs (`absorb` : une
- * égalité ne le déplace pas). En unilatéral, `side` ne garde que les séries de ce
- * côté (une ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`) et
- * `historical` est le record de ce côté. C'est le repère « Record » de
- * l'instrument, face auquel le brouillon se situe en direct (draft-score.ts).
- * `null` : aucun record, ni historique ni du jour.
+ * Le record COURANT : l'historique (`historical`) avancé par les séries du jour,
+ * avec la règle des marqueurs (`absorb` : une égalité ne le déplace pas). En
+ * unilatéral, `side` ne garde que les séries de ce côté (une ligne sans côté
+ * compte à gauche, comme `computeRecordFlagsBySide`) et `historical` est le
+ * record de ce côté. C'est le repère « Record » de l'instrument, face auquel le
+ * brouillon se situe en direct (draft-score.ts).
+ *
+ * PREMIER PASSAGE (historique nul ou vierge, exo jamais fait ou côté jamais
+ * fait) : l'historique est rendu tel quel, sans les séries du jour. Les badges
+ * ne donnent pas de record la première fois (`computeRecordFlags`) ; « Record »
+ * dit donc « aucun encore » toute la séance, et l'indicateur d'avant le log
+ * n'annonce jamais un dépassement que le badge d'après ne confirmerait pas
+ * (relecture du 25/11).
  */
 export function currentRecord(sets: readonly PerformedSet[], historical: PersonalRecord | null, side?: Side): PersonalRecord | null {
+  if (historical === null || (historical.bestE1rm === null && historical.bestWeightReps === null)) return historical;
   const mine = side ? sets.filter((s) => (s.side === 'right' ? 'right' : 'left') === side) : sets;
-  if (mine.length === 0) return historical;
-  return mine.reduce(absorb, historical ?? { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null });
+  return mine.reduce(absorb, historical);
 }
 
 /** Intègre une série dans un record courant (pour faire avancer la comparaison). */
