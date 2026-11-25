@@ -372,8 +372,8 @@ export function ExerciseCapture({
   const weightSize = tight ? 48 : compact ? (unilateral ? 56 : 64) : 72;
   const rulerHeight = tight ? 44 : compact ? 48 : 58;
   // Air : 14 px au moins entre les groupes, 10 sur écran bas, 6 très bas (les
-  // 14 px du prototype ne tiennent pas avec la marge de navigation de l'app
-  // installée, 14 px de plus en haut).
+  // 14 px du prototype ne tenaient pas avec l'ancienne marge de navigation de
+  // l'app installée, 14 px de plus en haut, aujourd'hui à 0).
   const airMin = tight ? 6 : compact ? 10 : 14;
   const plannedTotal = Math.max(prescription.sets.max, rank);
 

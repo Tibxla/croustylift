@@ -171,11 +171,12 @@ const PARKED: CSSProperties = {
 }
 
 // La navigation est une ligne de cinq mots en HAUT de l'écran (shell/SurfaceNav),
-// dans le flux : le bas appartient à l'action du moment, dans des barres collées
-// en `sticky` qui portent elles-mêmes l'encoche basse (DESIGN.md, Layout). La
-// surface occupe `min-h-surface` (index.css) : la fenêtre moins l'encoche haute
-// et la ligne de navigation, pour que le document ne défile pas quand le contenu
-// tient (registre R4).
+// dans le flux : collée en haut dans l'app installée (elle coupe le flou d'iOS
+// 26), elle défile avec la page dans un onglet. Le bas appartient à l'action du
+// moment, dans des barres collées en `sticky` qui portent elles-mêmes l'encoche
+// basse (DESIGN.md, Layout). La surface occupe `min-h-surface` (index.css) : la
+// fenêtre moins l'encoche haute et la ligne de navigation, pour que le document
+// ne défile pas quand le contenu tient (registre R4).
 
 function App() {
   const { session, user, loading, signOut, isPasswordRecovery, localAccount, offlineRecognized } =

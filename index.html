@@ -2,11 +2,11 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <!-- viewport-fit=cover : en mode standalone iOS (status bar black-translucent),
-         le contenu passe SOUS l'encoche ; combiné aux env(safe-area-inset-*) en CSS
+    <!-- viewport-fit=cover : l'app occupe aussi l'encoche basse (barre d'accueil)
+         et les côtés en paysage ; combiné aux env(safe-area-inset-*) en CSS
          (bande collée en haut, .safe-top-scrim ; encoche basse portée par les
-         barres collées),
-         l'UI reste dégagée. -->
+         barres collées), l'UI reste dégagée. Avec une barre d'état opaque
+         (ci-dessous), la webview commence sous la barre d'état et safe-top vaut 0. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Croustylift</title>
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -15,7 +15,24 @@
     <!-- apple-mobile-web-app-capable active le mode "standalone" sur iOS :
          l'app s'ouvre sans la barre Safari une fois ajoutee a l'ecran d'accueil. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- Barre d'état OPAQUE (`black`), jamais `black-translucent`.
+         iOS 26 floute le haut d'une app installée (effet de bord de défilement de
+         Liquid Glass, une quarantaine de points). Il ne s'en abstient qu'à deux
+         conditions réunies :
+         1. une barre d'état non translucide (`black` ou `default`) : la webview
+            commence SOUS la barre d'état ; en `black-translucent`, rien ne coupe
+            le flou ;
+         2. une boîte opaque, collée (`sticky`, ou `fixed`), sans flou
+            d'arrière-plan, sur toute la largeur et plus de 10 px de haut, au bord
+            haut de la page : la ligne de navigation (.surface-nav-bar), ou la
+            bande du bord (.top-edge-band) sur les écrans sans navigation
+            (index.css). iOS peint alors la barre d'état de sa couleur.
+         `black` plutôt que `default` : glyphes blancs garantis sur le fond sombre.
+         Vérifié sur l'iPhone, app installée, le 25 novembre 2026.
+         iOS fige cette valeur à l'installation : une icône déjà sur l'écran
+         d'accueil garde l'ancien style (et le flou) tant qu'elle n'est pas
+         supprimée puis réajoutée. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Croustylift" />
     <!-- Icone pour l'ecran d'accueil iOS (180x180 recommande pour iPhone retina) -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />

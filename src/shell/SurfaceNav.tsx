@@ -4,9 +4,10 @@
 // de l'écran (la zone du pouce) appartient en entier à l'action du moment
 // (logger, exo suivant, enregistrer). Pourquoi des mots : cinq surfaces tiennent
 // en une ligne lisible sans icône à deviner, et rien ne se cache derrière un
-// menu. Le mot actif est en demi-gras dans une pastille arrondie, les autres en gris. La ligne est
-// dans le flux (elle défile avec la page) : ni `fixed` ni `sticky`, rien qui
-// dépende de la mesure de la fenêtre par WebKit.
+// menu. Le mot actif est en demi-gras dans une pastille arrondie, les autres en
+// gris. Dans un onglet de navigateur, la ligne est dans le flux (elle défile avec
+// la page). Dans l'app installée, elle est COLLÉE en haut (`sticky`, jamais
+// `fixed`), voir HAUT DE L'ÉCRAN.
 //
 // Aucune animation au changement de surface : le geste revient des dizaines de
 // fois par jour, le retour est instantané.
@@ -18,12 +19,17 @@
 // prend 11 px de marge : le premier mot commence à 20 px, comme les titres.
 //
 // HAUT DE L'ÉCRAN (iPhone, iOS 26) : en app installée, iOS floute le haut de la
-// webview sur une bande qui dépasse la barre d'état d'une quinzaine de points
-// (effet de bord de défilement du système, pas notre bande `.safe-top-scrim`).
-// Collés en haut, les mots tombaient dans ce flou. Dans l'app installée, la
-// ligne prend donc `--nav-gap` de plus en haut (`.pt-safe-nav`, index.css),
-// encoche ou non (iOS 26.1 peut ouvrir la webview sous la barre d'état, safe-top
-// à 0) ; dans un onglet de navigateur, rien ne change.
+// webview sur une quarantaine de points (effet de bord de défilement de Liquid
+// Glass, pas notre bande `.safe-top-scrim`). Il s'en abstient quand une boîte
+// collée, opaque et pleine largeur tient le bord haut, et que la barre d'état
+// n'est pas translucide (index.html). Cette boîte, c'est la ligne : le conteneur
+// `.surface-nav-bar` (index.css) porte le fond plein sur toute la largeur, la
+// ligne de mots reste à `max-w-md` dedans. Elle se pose ainsi juste sous la
+// barre d'état, sans marge. Les écrans sans cette ligne ont leur propre boîte,
+// la bande du bord (`.top-edge-band`, main.tsx). La pastille du mot actif, même
+// sous le point que WebKit sonde au milieu du bord, ne gêne pas : il ignore la
+// couleur des boîtes de moins de 90 % de la largeur et ne retient que celle du
+// conteneur collé (LocalFrameView::fixedContainerEdges).
 //
 // DIAGNOSTIC : un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage
 // (registre R4, src/viewport/). C'est le seul geste disponible sur tous les
@@ -44,45 +50,47 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
   const cancelPress = () => window.clearTimeout(pressTimer.current);
 
   return (
-    <nav
-      aria-label="Surfaces"
-      className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2 pt-safe-nav min-[380px]:px-[11px]"
-      style={{ WebkitTouchCallout: 'none' }}
-      onPointerDown={() => {
-        longPressed.current = false;
-        cancelPress();
-        pressTimer.current = window.setTimeout(() => {
-          longPressed.current = true;
-          openDiag();
-        }, DIAG_LONG_PRESS_MS);
-      }}
-      onPointerUp={cancelPress}
-      onPointerCancel={cancelPress}
-      onPointerLeave={cancelPress}
-      onContextMenu={(event) => event.preventDefault()}
-      onClickCapture={(event) => {
-        if (!longPressed.current) return;
-        longPressed.current = false;
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-    >
-      {SURFACE_NAV.map((s) => {
-        const active = s.id === current;
-        return (
-          <button
-            key={s.id}
-            type="button"
-            aria-current={active ? 'page' : undefined}
-            onClick={() => onSelect(s.id)}
-            className={`h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
-              active ? 'rounded-cell bg-surface font-semibold text-ink' : 'text-muted active:text-ink'
-            }`}
-          >
-            {s.label}
-          </button>
-        );
-      })}
-    </nav>
+    <div className="surface-nav-bar">
+      <nav
+        aria-label="Surfaces"
+        className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2 pt-safe-nav min-[380px]:px-[11px]"
+        style={{ WebkitTouchCallout: 'none' }}
+        onPointerDown={() => {
+          longPressed.current = false;
+          cancelPress();
+          pressTimer.current = window.setTimeout(() => {
+            longPressed.current = true;
+            openDiag();
+          }, DIAG_LONG_PRESS_MS);
+        }}
+        onPointerUp={cancelPress}
+        onPointerCancel={cancelPress}
+        onPointerLeave={cancelPress}
+        onContextMenu={(event) => event.preventDefault()}
+        onClickCapture={(event) => {
+          if (!longPressed.current) return;
+          longPressed.current = false;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
+        {SURFACE_NAV.map((s) => {
+          const active = s.id === current;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              aria-current={active ? 'page' : undefined}
+              onClick={() => onSelect(s.id)}
+              className={`h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
+                active ? 'rounded-cell bg-surface font-semibold text-ink' : 'text-muted active:text-ink'
+              }`}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
   );
 }

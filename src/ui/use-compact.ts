@@ -7,7 +7,8 @@
 //     `useCompactTight`, en plus du premier. Poids à 48 px, règle et rangées de
 //     44 px, air de 6 px, et plus d'index des exos : sans cela, la variante A4
 //     passait 15 px sous le pied (mesuré le 25/11, barre d'état de 20 px et
-//     marge de navigation de 14 px comprises).
+//     ancienne marge de navigation de 14 px comprises ; cette marge est à 0
+//     depuis que la navigation est collée sous la barre d'état).
 import { useSyncExternalStore } from 'react';
 
 const QUERY = '(max-height: 800px)';

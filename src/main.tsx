@@ -31,6 +31,13 @@ createRoot(document.getElementById('root')!).render(
         dessous. Premier enfant de #root, sinon `sticky` ne tient pas. Hauteur
         nulle hors encoche (index.css, .safe-top-scrim). */}
     <div className="safe-top-scrim" aria-hidden="true" />
+    {/* Bande du bord haut, pour les écrans SANS ligne de navigation (connexion,
+        premier lancement, chargement, erreur) : dans l'app installée, iOS 26 ne
+        floute plus le haut de la page quand une boîte collée et opaque y tient
+        le bord (index.css, .top-edge-band). Nulle dès que la navigation est là,
+        qui joue ce rôle, et dans un onglet. Enfant de #root, comme la bande de
+        l'encoche, sinon `sticky` ne tient pas. */}
+    <div className="top-edge-band" aria-hidden="true" />
     <ErrorBoundary>
       <AuthProvider>
         <App />
