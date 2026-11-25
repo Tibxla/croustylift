@@ -118,7 +118,8 @@ import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
-import { correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
+import { applySetGesture as applyGesture } from './apply-set-gesture';
+import { changeSetSide, correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
 import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
 
@@ -1066,26 +1067,31 @@ function CaptureBoard({
     [],
   );
 
-  // Corriger ou supprimer une série quelconque de l'exo affiché (set-gestures.ts).
-  // Même enchaînement qu'un log : le geste se calcule sur la PROJECTION, l'action
-  // est dispatchée et la projection avancée du même pas, puis les écritures sont
-  // enfilées une à une, dans l'ordre rendu (suppressions d'abord, puis les
-  // renumérotations), EN UNE FOIS (`enqueueAll`). Une écriture de série exige l'exécution en base :
-  // elle y est dès qu'une série existe, ré-affirmée ici une fois par montage
-  // (insertion seule, le lancement ne bouge pas).
+  // Corriger, changer de côté ou supprimer une série quelconque de l'exo affiché
+  // (set-gestures.ts). Même enchaînement qu'un log : le geste se calcule sur la
+  // PROJECTION, l'action est dispatchée et la projection avancée du même pas,
+  // puis les écritures sont enfilées dans l'ordre rendu (suppressions d'abord,
+  // puis les renumérotations), EN UNE FOIS (`enqueueAll`), cf.
+  // apply-set-gesture.ts. Une écriture de série exige l'exécution en base : elle
+  // y est dès qu'une série existe, ré-affirmée une fois par montage.
   const applySetGesture = useCallback(
     (gesture: SetGesture | null) => {
-      if (gesture === null) return;
-      dispatch(gesture.action);
-      stateRef.current = captureReducer(stateRef.current, gesture.action);
-      if (gesture.ops.some((op) => op.type === 'insertSet' || op.type === 'patchSet')) enqueueExecutionOnce();
-      enqueueGestureAndFlush(gesture.ops);
+      stateRef.current = applyGesture(stateRef.current, gesture, {
+        dispatch,
+        ensureExecution: enqueueExecutionOnce,
+        enqueueGesture: enqueueGestureAndFlush,
+      });
     },
     [enqueueExecutionOnce],
   );
   const handleCorrectSet = useCallback(
     (exerciseId: string, setId: string, values: Partial<SetEntry>) =>
       applySetGesture(correctSet(stateRef.current, exerciseId, setId, values)),
+    [applySetGesture],
+  );
+  const handleChangeSetSide = useCallback(
+    (exerciseId: string, setId: string, side: Side) =>
+      applySetGesture(changeSetSide(stateRef.current, exerciseId, setId, side)),
     [applySetGesture],
   );
   const handleDeleteSet = useCallback(
@@ -1370,6 +1376,7 @@ function CaptureBoard({
           onSaveDatedNote={(body) => handleSaveDatedNote(activeExercise.exerciseId, body)}
           onSaveExerciseNote={(body) => handleSaveExerciseNote(activeExercise.exerciseId, body)}
           onCorrectSet={(setId, values) => handleCorrectSet(activeExercise.exerciseId, setId, values)}
+          onChangeSetSide={(setId, side) => handleChangeSetSide(activeExercise.exerciseId, setId, side)}
           onDeleteSet={(setId) => handleDeleteSet(activeExercise.exerciseId, setId)}
         />
       ) : (
@@ -1457,6 +1464,7 @@ function CapturePanel({
   onSaveDatedNote,
   onSaveExerciseNote,
   onCorrectSet,
+  onChangeSetSide,
   onDeleteSet,
 }: {
   exercise: SessionExercise;
@@ -1482,6 +1490,7 @@ function CapturePanel({
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
   onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
+  onChangeSetSide: (setId: string, side: Side) => void;
   onDeleteSet: (setId: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre du bas puisse
@@ -1566,7 +1575,22 @@ function CapturePanel({
         onSaveExerciseNote={onSaveExerciseNote}
         onCorrectSet={(setId, values) => {
           onCorrectSet(setId, values);
-          setAnnounce(`Série corrigée : ${values.weightKg} kilos, ${values.reps} répétitions, RIR ${values.rir}.`);
+          // Les valeurs de la série après correction : `values` ne porte que ce
+          // qui a été réglé (« undefined kilos » sinon).
+          const set = progress.sets[progress.setIds.indexOf(setId)];
+          const after = set ? { ...set, ...values } : null;
+          setAnnounce(
+            after
+              ? `Série corrigée : ${after.weightKg} kilos, ${after.reps} répétitions, RIR ${after.rir}.`
+              : 'Série corrigée.',
+          );
+        }}
+        onChangeSetSide={(setId, side) => {
+          onChangeSetSide(setId, side);
+          // Le rang lu dans la bande (rangs distincts, triés), comme la feuille.
+          const order = progress.sets[progress.setIds.indexOf(setId)]?.order;
+          const n = [...new Set(progress.sets.map((s) => s.order))].sort((a, b) => a - b).indexOf(order ?? -1) + 1;
+          setAnnounce(`Série ${n}, ${sideLabel(side)}.`);
         }}
         onDeleteSet={(setId) => {
           onDeleteSet(setId);

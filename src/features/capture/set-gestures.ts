@@ -74,7 +74,7 @@ import type { PerformedSet, Side } from '../../domain/types';
 import type { OutboxOp, PatchSetOp } from './outbox';
 import { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
-import { getProgress, type CaptureAction, type CaptureState } from './state';
+import { getProgress, type CaptureAction, type CaptureState, type ExerciseProgress } from './state';
 
 /** Ce qu'un geste demande à l'écran : une action pour le réducteur, des écritures pour la file. */
 export interface SetGesture {
@@ -160,6 +160,21 @@ export function correctSet(
 }
 
 /**
+ * Le côté où la ligne d'id `setId` peut passer : l'AUTRE côté de son rang, s'il
+ * est libre (cf. `changeSetSide`). `null` pour une ligne inconnue, sans id, sans
+ * côté (exo bilatéral) ou dont l'autre côté est déjà pris. C'est la règle que
+ * lit la feuille de correction pour proposer, ou non, « Gauche · Droite ».
+ */
+export function switchableSide(progress: ExerciseProgress, setId: string): Side | null {
+  const index = progress.setIds.indexOf(setId);
+  const current = index === -1 ? undefined : progress.sets[index];
+  if (current?.side === undefined) return null;
+  const other: Side = current.side === 'left' ? 'right' : 'left';
+  const taken = progress.sets.some((set, i) => i !== index && set.order === current.order && set.side === other);
+  return taken ? null : other;
+}
+
+/**
  * Change le CÔTÉ de la ligne d'id `setId` (exo unilatéral : une série saisie à
  * gauche l'était à droite). Seul le côté est écrit, en base comme à l'écran
  * (`patchSet` avec `only: 'side'`) : son rang et ses valeurs ne bougent pas.
@@ -177,11 +192,8 @@ export function changeSetSide(
   side: Side,
 ): SetGesture | null {
   const progress = getProgress(state, exerciseId);
-  const index = progress.setIds.indexOf(setId);
-  const current = index === -1 ? undefined : progress.sets[index];
-  if (current === undefined || current.side === undefined || current.side === side) return null;
-  const taken = progress.sets.some((set, i) => i !== index && set.order === current.order && set.side === side);
-  if (taken) return null;
+  if (switchableSide(progress, setId) !== side) return null;
+  const current = progress.sets[progress.setIds.indexOf(setId)] as PerformedSet;
   return {
     action: { type: 'change-set-side', exerciseId, setId, side },
     ops: [writeSetOp(state, exerciseId, setId, { ...current, side }, 'side')],

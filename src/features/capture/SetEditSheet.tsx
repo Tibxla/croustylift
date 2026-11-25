@@ -13,17 +13,25 @@
 // quand elles forment une paire sans ambiguïté (sinon le côté touché seul). Le
 // message suit la règle du geste (`deletionPreview`, set-ranks.ts).
 //
+// Côté (unilatéral) : « Gauche · Droite » en tête, à la place du libellé de la
+// Référence, quand la série a été saisie du mauvais côté. Proposé seulement si
+// l'autre côté du même rang est libre (`switchableSide`, la règle du geste
+// `changeSetSide`) ; sinon rien, pas même grisé. Le côté se règle comme une
+// valeur : le titre, la Référence et le badge suivent aussitôt, et rien n'est
+// écrit avant « Enregistrer », qui écrit le côté seul (son rang et ses valeurs
+// ne bougent pas) puis, s'il y a lieu, les valeurs corrigées.
+//
 // La série est visée par son id, jamais par sa place : si elle disparaît pendant
 // que la feuille est ouverte (réponse tardive de la base), le parent ne la monte
 // plus. Montée par clé (id de la ligne) : ses valeurs repartent de la série.
 import { useMemo, useState } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { NumberRow, PrimaryButton, Ruler, SecondaryButton, Sheet, Status, TextLink } from '../../ui';
+import { Choice, NumberRow, PrimaryButton, Ruler, SecondaryButton, Sheet, Status, TextLink } from '../../ui';
 import type { SessionExercise } from './fixtures';
 import { formatWeight } from './format';
 import { badgeStatus, computeSetBadges, computeSetBadgesBySide } from './set-badges';
-import type { SetEntry } from './set-gestures';
+import { switchableSide, type SetEntry } from './set-gestures';
 import { deletionPreview } from './set-ranks';
 import type { ExerciseProgress } from './state';
 import { roundWeightKg } from './stepper-utils';
@@ -36,6 +44,10 @@ const RULER_MAX_KG = 500;
 
 const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
 const values = (s: SetEntry) => `${formatWeight(s.weightKg)} × ${s.reps} · RIR ${s.rir}`;
+const SIDE_OPTIONS: { value: Side; label: string }[] = [
+  { value: 'left', label: 'Gauche' },
+  { value: 'right', label: 'Droite' },
+];
 
 
 export function SetEditSheet({
@@ -43,6 +55,7 @@ export function SetEditSheet({
   progress,
   setId,
   onSave,
+  onChangeSide,
   onDelete,
   onClose,
 }: {
@@ -52,6 +65,8 @@ export function SetEditSheet({
   setId: string;
   /** Enregistre ce que l'utilisateur a RÉGLÉ, et cela seul (le parent ne fait rien si rien ne change). */
   onSave: (values: Partial<SetEntry>) => void;
+  /** Passe la série de l'autre côté (unilatéral, l'autre côté du rang libre). */
+  onChangeSide: (side: Side) => void;
   /** Supprime la série de cette ligne (les deux côtés d'une paire unilatérale). */
   onDelete: () => void;
   onClose: () => void;
@@ -72,15 +87,22 @@ export function SetEditSheet({
 
   const unilateral = exercise.unilateral ?? false;
   const side = orig.side ?? null;
+  // L'autre côté, s'il est libre à ce rang ; le choix ne s'affiche qu'alors. Une
+  // réponse tardive qui le remplit pendant que la feuille est ouverte retire le
+  // choix, et le côté réglé retombe sur celui de la ligne.
+  const otherSide = unilateral ? switchableSide(progress, setId) : null;
+  const [pickedSide, setPickedSide] = useState<Side | null>(null);
+  const shownSide = otherSide !== null && pickedSide === otherSide ? otherSide : side;
+  const sideChanged = shownSide !== side;
   // Le rang LU est la place de la série dans la bande (rangs distincts, triés),
   // comme la bande le numérote ; la Référence et le badge se lisent sur `order`,
   // comme `computeSetBadges`. Les deux coïncident sauf trou laissé ailleurs.
   const rank = [...new Set(progress.sets.map((s) => s.order))].sort((a, b) => a - b).indexOf(orig.order) + 1;
-  const ref = exercise.reference?.find((r) => r.order === orig.order && r.side === orig.side) ?? null;
+  const ref = exercise.reference?.find((r) => r.order === orig.order && r.side === (shownSide ?? undefined)) ?? null;
 
   // Le badge APRÈS correction : les séries de l'exo, celle-ci aux valeurs réglées.
   const badge = useMemo(() => {
-    const sets = progress.sets.map((s, i) => (i === index ? { ...s, ...v } : s));
+    const sets = progress.sets.map((s, i) => (i === index ? { ...s, ...v, ...(shownSide ? { side: shownSide } : {}) } : s));
     const badges = unilateral
       ? computeSetBadgesBySide(
           sets,
@@ -92,13 +114,13 @@ export function SetEditSheet({
         )
       : computeSetBadges(sets, exercise.reference ?? null, exercise.personalRecord ?? null);
     return badgeStatus(badges[index] ?? null);
-  }, [progress.sets, index, v, unilateral, exercise.reference, exercise.personalRecord, exercise.personalRecordBySide]);
+  }, [progress.sets, index, v, shownSide, unilateral, exercise.reference, exercise.personalRecord, exercise.personalRecordBySide]);
 
   // Ce que la suppression emporte, selon la règle du geste (`deletionPreview`) :
   // ses deux côtés seulement pour une paire sans ambiguïté, et les suivantes ne
   // remontent que si le rang se vide.
   const { bothSides, movedRanks: later } = deletionPreview(progress.sets, index);
-  const what = side ? `Série ${rank}, ${sideWord(side)}` : `Série ${rank}`;
+  const what = shownSide ? `Série ${rank}, ${sideWord(shownSide)}` : `Série ${rank}`;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
   const { majorEvery, midEvery } = weightGraduations(stepKg);
 
@@ -120,9 +142,10 @@ export function SetEditSheet({
         ask ? undefined : (
           <PrimaryButton
             meta={values(v)}
-            ariaLabel={`Enregistrer la série ${rank}${side ? ` ${sideWord(side)}` : ''}, ${values(v)}`}
+            ariaLabel={`Enregistrer la série ${rank}${shownSide ? ` ${sideWord(shownSide)}` : ''}, ${values(v)}`}
             onClick={() => {
               if (changed) onSave(edits);
+              if (sideChanged && shownSide) onChangeSide(shownSide);
               onClose();
             }}
           >
@@ -146,6 +169,30 @@ export function SetEditSheet({
         </div>
       ) : (
         <div className="pb-1">
+          {otherSide !== null && shownSide ? (
+            // Comme sur l'instrument : le côté à gauche, la Référence de ce côté
+            // à droite, sur la même ligne.
+            <div className="flex min-h-11 items-center justify-between gap-3 px-5">
+              <Choice
+                label="Côté de la série"
+                options={SIDE_OPTIONS}
+                value={shownSide}
+                onChange={setPickedSide}
+                wrap={false}
+                className="-ml-2.5 flex-none"
+              />
+              {ref ? (
+                <p className="min-w-0 text-right leading-tight">
+                  <span className="block truncate text-[13px] text-muted">réf. série {rank}</span>
+                  <span className="tnum block whitespace-nowrap text-[14px] font-medium text-ink">{values(ref)}</span>
+                </p>
+              ) : (
+                <p className="min-w-0 text-right text-[14px] leading-tight text-muted">
+                  {exercise.reference ? `Série ${rank} : rien à battre` : 'Pas encore de réf. dans cette séance'}
+                </p>
+              )}
+            </div>
+          ) : (
           <p className="flex items-baseline justify-between gap-3 px-5 text-[14px]">
             {ref ? (
               <>
@@ -158,6 +205,7 @@ export function SetEditSheet({
               </span>
             )}
           </p>
+          )}
           <WeightReadout value={v.weightKg} onChange={(kg) => setV((p) => ({ ...p, weightKg: roundWeightKg(kg) }))} />
           <div className="mt-1">
             <Ruler
