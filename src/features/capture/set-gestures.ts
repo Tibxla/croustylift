@@ -229,3 +229,20 @@ export function deleteSet(state: CaptureState, exerciseId: string, setId: string
     ops: [...deletes, ...rewrites],
   };
 }
+
+/**
+ * Annule la DERNIÈRE ligne loggée de l'exo (« Annuler » du pied de la Salle) :
+ * un côté en unilatéral. L'action retire la ligne de l'état ; l'écriture efface
+ * la ligne en base par son id. Une série sans id (cache d'ancien format) s'annule
+ * en local seulement : rien à viser en base. `null` sans série.
+ */
+export function undoLastSet(state: CaptureState, exerciseId: string): SetGesture | null {
+  const progress = getProgress(state, exerciseId);
+  if (progress.sets.length === 0) return null;
+  const lastId = progress.setIds[progress.setIds.length - 1] ?? null;
+  return {
+    action: { type: 'undo-last-set', exerciseId },
+    // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
+    ops: lastId === null ? [] : [{ type: 'deleteSet', id: lastId, exerciseIds: [exerciseId] }],
+  };
+}
