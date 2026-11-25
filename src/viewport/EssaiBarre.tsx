@@ -37,11 +37,11 @@ export default function EssaiBarre() {
     <div
       data-essai-barre
       aria-hidden="true"
-      className="pointer-events-none fixed left-1 z-[80] max-w-[46vw] rounded-[4px] bg-black/70 px-1.5 py-1 font-sans text-[10px] leading-[1.35] tabular-nums text-ink"
+      className="pointer-events-none fixed left-1 z-[80] w-[46vw] max-w-[190px] rounded-[4px] bg-black/85 px-1.5 py-1 font-sans text-[10px] leading-[1.35] tabular-nums text-ink"
       style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 4px)' }}
     >
       {lignes.map((ligne) => (
-        <div key={ligne} className="whitespace-nowrap">
+        <div key={ligne} className="break-words">
           {ligne}
         </div>
       ))}
@@ -63,17 +63,17 @@ function mesurer(): string[] {
   const meta =
     document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-status-bar-style"]')?.content ??
     'absent'
-  const piste = meta === 'black-translucent' ? 'translucide (ancienne)' : `opaque ${meta} + ligne collée`
+  const piste = meta === 'black-translucent' ? 'translucide (ancienne)' : `${meta} + ligne collée`
 
   const installee = window.matchMedia('(display-mode: standalone)').matches
   const navStandalone = (navigator as Navigator & { standalone?: boolean }).standalone
 
   const barre = document.querySelector('.surface-nav-bar')
-  let ligneNav = 'ligne absente (écran sans nav)'
+  let ligneNav = 'ligne absente'
   if (barre) {
     const rect = barre.getBoundingClientRect()
     const cs = getComputedStyle(barre)
-    ligneNav = `ligne ${cs.position} · haut ${arrondi(rect.top)} · h ${arrondi(rect.height)} · l ${arrondi(rect.width)}`
+    ligneNav = `ligne ${cs.position} · y ${arrondi(rect.top)} · ${arrondi(rect.width)}×${arrondi(rect.height)}`
   }
 
   const ua = navigator.userAgent
@@ -82,14 +82,16 @@ function mesurer(): string[] {
   const heureBuild = __APP_BUILT_AT__.slice(11, 16)
 
   return [
-    `essai barre-ile · ${__APP_COMMIT__} · ${heureBuild} UTC`,
+    `essai ${__APP_COMMIT__} · ${heureBuild} UTC`,
     `meta ${meta}`,
     `piste ${piste}`,
-    `display-mode ${installee ? 'standalone' : 'navigateur'} · nav.standalone ${String(navStandalone)}`,
-    `safe-top ${safeHaut} · safe-bottom ${safeBas}`,
-    `fenêtre ${window.innerWidth}×${window.innerHeight} · écran ${window.screen.width}×${window.screen.height}`,
+    `display-mode ${installee ? 'standalone' : 'navigateur'}`,
+    `nav.standalone ${String(navStandalone)}`,
+    `safe-top ${safeHaut} · bas ${safeBas}`,
+    `fenêtre ${window.innerWidth}×${window.innerHeight}`,
+    `écran ${window.screen.width}×${window.screen.height}`,
     ligneNav,
-    `défilement ${arrondi(window.scrollY)} · OS ${os} · Version ${safari}`,
+    `défil. ${arrondi(window.scrollY)} · OS ${os} · V ${safari}`,
   ]
 }
 
