@@ -2,15 +2,24 @@
 //
 // UNE LIGNE SOUS CHAQUE NUMÉRO (demande de l'utilisateur du 25/11 : « enlève ce
 // qu'il y a après la virgule, pour pouvoir quand même mettre le RIR »). Sous le
-// numéro, « 171×8 R1 » : le poids SANS décimales, tronqué (171,25 donne 171,
-// 82,5 donne 82, jamais arrondi vers le haut), puis « ×reps », une espace fine,
-// puis « R » et le RIR, en gris. La valeur exacte reste dans le nom lu
-// (« 171,25 kilos, 8 reps, RIR 1 ») et dans la feuille de correction, qui
-// s'ouvre au toucher de la case.
-//   Mesuré le 25/11 dans la case rendue : « 126×12 R4 » fait 73 px à 14 px, la
-//   case en laisse 74 à 360 px d'écran (quatre cases), 78 à 375, 82 à 393 ; à
-//   320 px (trois cases, 15 px), 78 pour 87. « 126×12 · R4 » (82 px) débordait
-//   dès 375 px.
+// numéro, « 171,2×8 R1 » : le poids, puis « ×reps », une espace fine, puis « R »
+// et le RIR, en gris. La valeur exacte reste dans le nom lu (« 171,25 kilos, 8
+// reps, RIR 1 ») et dans la feuille de correction, qui s'ouvre au toucher de la
+// case.
+//
+// LE POIDS EN QUATRE CHIFFRES AU PLUS (second retour du 25/11 : « ne pas bloquer
+// à pas de chiffres après la virgule, mais après un certain nombre de chiffres en
+// tout »). Les décimales s'affichent tant que le poids tient en `BAND_DIGITS`
+// chiffres ; au-delà elles sont TRONQUÉES, jamais arrondies vers le haut, et un
+// zéro final tombe : 82,5 → « 82,5 », 171,25 → « 171,2 », 22,25 → « 22,25 »,
+// 7,5 → « 7,5 », 100 → « 100 ».
+//   Mesuré le 25/11 dans la case rendue (place utile, cases de la bande) : 86 px
+//   à 393 px d'écran, 82 à 375, 78 à 360 (quatre cases), 91 à 320 (trois cases).
+//   « 171,2×12 R4 » fait 86,5 px à 14 px : la ligne passe à 13 px dès 360 px
+//   (75,6 px) et à 14 px sous 360 (86,5 px), au lieu de 14 et 15. À trois
+//   chiffres, 14 px tenait (« 82,5×12 R4 » 77,6 px) mais 171,25 restait « 171 ».
+//   Un RIR de 10 ne tient qu'à 393 px (83,5 px) : ailleurs la case le rogne en
+//   « … » (déjà le cas avant, dès 375 px).
 //
 // LES CASES. Bilatéral : une case par série prévue (borne haute du plan), plus la
 // série en cours si on la dépasse. Unilatéral : une case par CÔTÉ (« 2 G »,
@@ -41,13 +50,27 @@ export interface BandCell {
 
 type Values = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
-/** Les deux parts de la ligne : la charge (« 171×8 », poids tronqué à l'entier)
- *  et le RIR (« R1 »), que la case écrit en gris. */
-export function bandParts({ weightKg, reps, rir }: Values): { load: string; rir: string } {
-  return { load: `${Math.trunc(weightKg)}×${reps}`, rir: `R${rir}` };
+/** Chiffres du poids dans la bande, partie entière et décimales comprises. */
+export const BAND_DIGITS = 4;
+
+/** Le poids de la bande : `BAND_DIGITS` chiffres au plus, décimales tronquées
+ *  au-delà (jamais arrondies vers le haut), sans zéro final. Calcul en
+ *  centièmes entiers : `Math.trunc(0.29 * 100)` donnerait 28. */
+export function bandWeight(kg: number): string {
+  const hundredths = Math.round(kg * 100);
+  const whole = Math.trunc(Math.abs(hundredths) / 100);
+  const decimals = Math.max(0, Math.min(2, BAND_DIGITS - String(whole).length));
+  const unit = 10 ** (2 - decimals);
+  return formatWeight(Math.trunc(hundredths / unit) * unit / 100);
 }
 
-/** La ligne entière, « 171×8 R1 » (espace fine). */
+/** Les deux parts de la ligne : la charge (« 171,2×8 », poids en quatre
+ *  chiffres au plus) et le RIR (« R1 »), que la case écrit en gris. */
+export function bandParts({ weightKg, reps, rir }: Values): { load: string; rir: string } {
+  return { load: `${bandWeight(weightKg)}×${reps}`, rir: `R${rir}` };
+}
+
+/** La ligne entière, « 171,2×8 R1 » (espace fine). */
 export function bandValue(values: Values): string {
   const { load, rir } = bandParts(values);
   return `${load}\u2009${rir}`;

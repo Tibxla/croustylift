@@ -1,7 +1,9 @@
 // Bande des séries de l'exo affiché (variante A4 de la Salle, 25/11) : une case
 // par série prévue, une par CÔTÉ en unilatéral (« 2 G », « 2 D »), modèle pur
 // dans set-band.ts. Sous le numéro et son statut (▲ record, ▲ battue, ▬ égalée),
-// UNE ligne : « 171×8 R1 », poids tronqué à l'entier, reps, et le RIR en gris.
+// UNE ligne : « 171,2×8 R1 », poids en quatre chiffres au plus (décimales
+// tronquées au-delà, set-band.ts), reps, et le RIR en gris, en 13 px dès 360 px
+// d'écran, 14 px en dessous (trois cases plus larges).
 // La valeur exacte est dans le nom lu et dans la feuille de correction. En
 // unilatéral, l'en-tête « 6 G » ne garde que le signe du statut (le mot ne tient
 // pas à 375 px) : le mot est dans le nom lu, comme dans l'ancienne bande.
@@ -15,14 +17,16 @@
 // Une valeur plus large que sa case (reps à trois chiffres, RIR de 10 ou plus)
 // se rogne en « … » dans la case au lieu de déborder sur la voisine ; la valeur
 // exacte reste dans le nom lu. La boîte rognée mord de 4 px sur la marge droite
-// de la case (« 126×12 R4 » fait 74 px pour 74 utiles à 360 px : sans ce jeu, un
-// rendu à peine plus large l'aurait rognée) et descend de 2 px (compensés, la
-// bande garde sa hauteur) pour ne pas couper le filet souligné.
+// de la case (78 px utiles au lieu de 74 à 360 px : « 171,2×12 R4 » y fait
+// 75,6 px à 13 px) et descend de 2 px (compensés, la bande garde sa hauteur)
+// pour ne pas couper le filet souligné.
 //
 // Case en cours : le brouillon en gris, dans une pastille arrondie (fond de
 // groupe, `rounded-cell` ; la sélection du traitement « Doux » retenue le 25/11)
-// et soulignée d'un trait épais. La pastille déborde de 8 px à gauche, sans
-// rien pousser : la bande garde sa hauteur. Une case
+// et soulignée d'un trait épais. La pastille déborde de 4 px à gauche, sans
+// rien pousser : la bande garde sa hauteur. À 8 px (avant le 25/11 au soir),
+// elle couvrait la fin d'une valeur longue de la case d'avant (« 22,25×12 R4 »
+// à 360 px) ; à 4 px, 76 px restent libres à 360 px pour 75,6. Une case
 // loggée se touche : elle ouvre la feuille de correction de CETTE ligne
 // (SetEditSheet), visée par son id. Sa valeur est soulignée d'un filet gris
 // (« ça se touche ») ; une case à faire ne se touche pas, une série sans id (cache
@@ -87,7 +91,7 @@ export function SetBand({
             </span>
             <span
               aria-hidden
-              className={`tnum -mb-0.5 -mr-1 mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[14px] font-medium leading-5 tracking-[-0.01em] [@media(max-width:359px)]:text-[15px] ${
+              className={`tnum -mb-0.5 -mr-1 mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[13px] font-medium leading-5 tracking-[-0.01em] [@media(max-width:359px)]:text-[14px] ${
                 c.state === 'logged' ? 'text-ink' : c.state === 'current' ? 'text-muted' : 'text-faint'
               }`}
             >
@@ -119,7 +123,7 @@ export function SetBand({
                 {body}
               </button>
             ) : (
-              <div className={`rounded-cell pb-1.5 pr-1.5 ${c.state === 'current' ? '-ml-2 bg-surface pl-2' : ''}`}>{body}</div>
+              <div className={`rounded-cell pb-1.5 pr-1.5 ${c.state === 'current' ? '-ml-1 bg-surface pl-1' : ''}`}>{body}</div>
             )}
             <span
               aria-hidden

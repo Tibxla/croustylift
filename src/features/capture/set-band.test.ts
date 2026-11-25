@@ -1,26 +1,60 @@
 // La bande des séries de la Salle, en modèle pur : quelles cases, dans quel
-// ordre, et ce qui s'écrit sous chaque numéro (une ligne, poids tronqué, RIR).
+// ordre, et ce qui s'écrit sous chaque numéro (une ligne, poids en quatre
+// chiffres au plus, RIR).
 import { describe, expect, it } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
-import { bandCells, bandFirstShown, bandName, bandParts, bandValue } from './set-band';
+import { BAND_DIGITS, bandCells, bandFirstShown, bandName, bandParts, bandValue, bandWeight } from './set-band';
 
-describe('bandValue : une ligne sous le numéro', () => {
-  it('le poids sans ses décimales, tronqué, puis les reps, une espace fine et le RIR', () => {
-    expect(bandValue({ weightKg: 171.25, reps: 8, rir: 1 })).toBe('171×8\u2009R1');
-    expect(bandValue({ weightKg: 82.5, reps: 10, rir: 2 })).toBe('82×10\u2009R2');
-    expect(bandValue({ weightKg: 126.75, reps: 12, rir: 4 })).toBe('126×12\u2009R4');
+describe('bandWeight : quatre chiffres au plus, décimales tronquées au-delà', () => {
+  it('la limite est de quatre chiffres', () => {
+    expect(BAND_DIGITS).toBe(4);
   });
 
-  it('tronqué, jamais arrondi vers le haut ; un poids entier reste tel quel', () => {
-    expect(bandValue({ weightKg: 99.9, reps: 5, rir: 0 })).toBe('99×5\u2009R0');
+  it('les décimales restent tant que le poids tient en quatre chiffres', () => {
+    expect(bandWeight(82.5)).toBe('82,5');
+    expect(bandWeight(22.25)).toBe('22,25');
+    expect(bandWeight(7.5)).toBe('7,5');
+    expect(bandWeight(7.25)).toBe('7,25');
+    expect(bandWeight(102.5)).toBe('102,5');
+  });
+
+  it('au-delà, tronquées, jamais arrondies vers le haut', () => {
+    expect(bandWeight(171.25)).toBe('171,2');
+    expect(bandWeight(126.75)).toBe('126,7');
+    expect(bandWeight(99.99)).toBe('99,99');
+    expect(bandWeight(1000.5)).toBe('1000');
+  });
+
+  it('sans zéro final ; un entier reste entier', () => {
+    expect(bandWeight(100)).toBe('100');
+    expect(bandWeight(140.05)).toBe('140');
+    expect(bandWeight(0)).toBe('0');
+    expect(bandWeight(0.25)).toBe('0,25');
+  });
+
+  it('calcul en centièmes : un flottant comme 0,29 ne perd pas un centième', () => {
+    expect(bandWeight(0.29)).toBe('0,29');
+    expect(bandWeight(1.15)).toBe('1,15');
+    expect(bandWeight(60.3)).toBe('60,3');
+  });
+});
+
+describe('bandValue : une ligne sous le numéro', () => {
+  it('le poids en quatre chiffres au plus, puis les reps, une espace fine et le RIR', () => {
+    expect(bandValue({ weightKg: 171.25, reps: 8, rir: 1 })).toBe('171,2×8\u2009R1');
+    expect(bandValue({ weightKg: 82.5, reps: 10, rir: 2 })).toBe('82,5×10\u2009R2');
+    expect(bandValue({ weightKg: 126.75, reps: 12, rir: 4 })).toBe('126,7×12\u2009R4');
+  });
+
+  it('un poids entier reste tel quel', () => {
     expect(bandValue({ weightKg: 100, reps: 5, rir: 0 })).toBe('100×5\u2009R0');
     expect(bandValue({ weightKg: 0, reps: 15, rir: 3 })).toBe('0×15\u2009R3');
   });
 });
 
 describe('bandParts : la charge et le RIR, écrits en deux teintes', () => {
-  it('« 126×12 » puis « R4 »', () => {
-    expect(bandParts({ weightKg: 126.25, reps: 12, rir: 4 })).toEqual({ load: '126×12', rir: 'R4' });
+  it('« 126,2×12 » puis « R4 »', () => {
+    expect(bandParts({ weightKg: 126.25, reps: 12, rir: 4 })).toEqual({ load: '126,2×12', rir: 'R4' });
   });
 });
 
