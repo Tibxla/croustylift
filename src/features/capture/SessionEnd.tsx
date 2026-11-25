@@ -1,12 +1,14 @@
 // Fin de séance (la Clôture), en deux temps sur la même page.
 //
-//   1. Avant « Ranger la séance » : le récap de l'exécution (`buildSessionRecap`,
+//   1. Avant « Ranger la séance » : en tête, sous le titre, les mesures à
+//      saisir (demande du 25/11 : on ne descend pas tout le récap pour les
+//      noter) : la durée chronométrée, corrigeable par crans de 5 min
+//      (`nudgeDuration`), et le BPM moyen facultatif, réglé à la règle (jamais
+//      de clavier). Puis le récap de l'exécution (`buildSessionRecap`,
 //      session-recap.ts) : séries, battues, kg soulevés, nouveaux records ; les
 //      exos un par un, y compris en cours, passés ou pas faits ; les séries par
 //      muscle de la SEMAINE civile contre le prévu de la routine
-//      (`weekSetsByMuscle`, lu par week-muscles.ts) ; la durée chronométrée,
-//      corrigeable par crans de 5 min (`nudgeDuration`) ; le BPM moyen
-//      facultatif, réglé à la règle (jamais de clavier).
+//      (`weekSetsByMuscle`, lu par week-muscles.ts).
 //   2. Après : « Séance rangée », le récap court, le lien « Voir au
 //      Journal » et « Nouvelle séance ». La Clôture est transitoire (ADR
 //      0009) : remontée, la page ne revient pas. Le lien ouvre l'Analyse sur
@@ -175,21 +177,8 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
     >
       <ScreenHeader title="Fin de séance" meta={`${recap.sessionName} · ${fmtDay(dateIso)}`} back={{ label: 'Séance', onClick: onBack }} />
 
-      <Figures recap={recap} />
-
-      <section aria-labelledby="fin-exos">
-        <SectionTitle id="fin-exos" aside={exosAside(recap.counts)}>
-          Exos
-        </SectionTitle>
-        <List label="Exercices de la séance">
-          {recap.exercises.map((e, i) => (
-            <ExoLine key={e.exerciseId} e={e} i={i} />
-          ))}
-        </List>
-      </section>
-
-      <MuscleWeek today={today} week={week} dateIso={dateIso} />
-
+      {/* Les mesures d’abord, sous le titre : à la fin d’une séance, on ne
+          descend pas tout le récap pour noter le BPM. */}
       <section aria-labelledby="fin-mesures">
         <SectionTitle id="fin-mesures">Durée et cardio</SectionTitle>
         <div className={GROUP}>
@@ -262,6 +251,21 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
         </div>
       </section>
 
+      <Figures recap={recap} />
+
+      <section aria-labelledby="fin-exos">
+        <SectionTitle id="fin-exos" aside={exosAside(recap.counts)}>
+          Exos
+        </SectionTitle>
+        <List label="Exercices de la séance">
+          {recap.exercises.map((e, i) => (
+            <ExoLine key={e.exerciseId} e={e} i={i} />
+          ))}
+        </List>
+      </section>
+
+      <MuscleWeek today={today} week={week} dateIso={dateIso} />
+
       {error && (
         <Alert label="Échec de l’enregistrement" className="mx-4 mt-4">
           {error}
@@ -283,7 +287,7 @@ function exosAside(c: Record<ExerciseStatus, number>): string {
 function Figures({ recap }: { recap: SessionRecap }) {
   const records = recap.records.length;
   return (
-    <dl className="grid grid-cols-3 gap-3 px-5">
+    <dl className="grid grid-cols-3 gap-3 px-5 pt-7">
       <div>
         <dt className="text-[13px] text-muted">Séries</dt>
         <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">{recap.setsLogged}</dd>
