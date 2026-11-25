@@ -17,7 +17,7 @@
 //   - Les rangées ne montrent que des chiffres ENTIERS (six cases calées sur le
 //     plan, jamais de chiffre coupé au bord) ; elles défilent au doigt pour les
 //     autres valeurs et se recalent sur une case entière.
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { IconButton, Sign } from '../../../ui';
 import { ExerciseIndex } from '../ExerciseIndex';
 import { formatRange } from '../format';
@@ -103,7 +103,7 @@ export function Air({ min, max = 24, grow = 1 }: { min: number; max?: number; gr
 }
 
 /** Le haut commun aux déclinaisons de A : ce qui se lit. */
-export function HautA({ s, exercise, progress, index, exoPos, compact, tight, onPick, onEdit, onNotes, hasNote }: VariantProps) {
+export function HautA({ s, exercise, progress, index, exoPos, compact, tight, onPick, onEdit, onNotes, hasNote, bandSlot }: VariantProps & { bandSlot?: ReactNode }) {
   const { prescription } = exercise;
   const draft = { order: s.rank, weightKg: s.weightKg, reps: s.reps, rir: s.rir, side: s.side ?? undefined };
   return (
@@ -130,11 +130,11 @@ export function HautA({ s, exercise, progress, index, exoPos, compact, tight, on
 
       <Air min={tight ? 8 : 14} max={30} />
       <div>
-        {s.unilateral ? (
+        {bandSlot ?? (s.unilateral ? (
           <UniSetBand sets={progress.sets} setIds={progress.setIds} badges={s.badges} draft={draft} side={s.side ?? 'left'} plannedMax={s.plannedMax} onEdit={onEdit} />
         ) : (
           <SetBand sets={progress.sets} setIds={progress.setIds} badges={s.badges} draft={draft} plannedMax={s.plannedMax} onEdit={onEdit} />
-        )}
+        ))}
       </div>
 
       {/* Le tableau de marque : l'e1RM de la série en cours, puis la dernière

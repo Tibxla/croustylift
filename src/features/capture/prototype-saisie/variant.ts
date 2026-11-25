@@ -11,6 +11,7 @@ export const VARIANTS = [
   { key: 'A1', name: 'Allégée' },
   { key: 'A2', name: 'Côte à côte' },
   { key: 'A3', name: 'Pied léger' },
+  { key: 'A4', name: 'Pied léger, aéré' },
 ] as const;
 export type VariantKey = (typeof VARIANTS)[number]['key'];
 

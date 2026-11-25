@@ -28,6 +28,7 @@ import { protoSay, type VariantKey } from './variant';
 import { VariantA } from './VariantA';
 import { VariantA1 } from './VariantA1';
 import { VariantA2 } from './VariantA2';
+import { VariantA4 } from './VariantA4';
 
 export interface VariantProps {
   s: Saisie;
@@ -143,9 +144,10 @@ export function ProtoSaisie({
       {variant === 'A2' && <VariantA2 {...vp} />}
       {/* A3 : le corps de A1, seul le pied change (plus bas). */}
       {variant === 'A3' && <VariantA1 {...vp} />}
+      {variant === 'A4' && <VariantA4 {...vp} />}
 
       <div data-zone="pied" className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
-        {variant === 'A3' ? (
+        {variant === 'A3' || variant === 'A4' ? (
           // Pied léger : deux liens soulignés à place fixe (cibles de 44 px),
           // Annuler au milieu ; seul Logger reste un bloc plein.
           <div className="mb-1 grid h-11 grid-cols-[1fr_auto_1fr] items-center gap-2">
