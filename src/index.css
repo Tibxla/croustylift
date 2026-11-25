@@ -140,7 +140,7 @@ body {
 }
 
 .pt-safe-nav {
-  box-sizing: content-box;
+  height: var(--nav-height);
   padding-top: var(--nav-gap);
 }
 
