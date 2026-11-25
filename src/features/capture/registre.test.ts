@@ -1526,6 +1526,23 @@ describe('voie 1 : appareil plein, un refus qui ne peut pas s’écrire arrête 
     expect(hasUnpersistedOps()).toBe(false);
   });
 
+  it('l’écriture qui arrêtait la passe est annulée avec sa séance : la suite part sans attendre la place', async () => {
+    enqueue(insert('refusée'));
+    enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
+    await flush(base({ cuts: () => true }).fns);
+    deviceFull();
+    const b = refusing();
+    await flush(b.fns);
+    expect(storageFailing()).toBe(true);
+
+    purgeByExecution('exec-1');
+    await flush(b.fns);
+
+    expect(b.tried).toEqual(['insertSet:refusée', 'insertSet:indépendante']);
+    expect(pendingCount()).toBe(0);
+    expect(storageFailing()).toBe(false);
+  });
+
   it('après un rechargement pendant l’arrêt, rien n’est perdu : les deux saisies sont toujours sur l’appareil', async () => {
     enqueue(del('refusée'));
     enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
@@ -1576,7 +1593,6 @@ describe('voie 1 : les gestes de la feuille des refus disent quand l’appareil 
 
     expect(removed).toEqual([]);
     expect(listRefused()).toHaveLength(2);
-    expect(storageFailing()).toBe(true);
 
     device.free();
     expect(await abandonRefused(first!.refusalId, (ops) => removed.push(...ops))).toBe('done');

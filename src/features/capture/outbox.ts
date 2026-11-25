@@ -577,12 +577,13 @@ function settleLegacy(read: ReadonlySet<string> | null, record: RegistryRecord |
 //     pour cette page, et s'écrit à la prochaine transition sous verrou, qui est
 //     demandée aussitôt (`persistSoon`). Il reste différé tant qu'il n'est pas
 //     écrit ;
-//   - `stalled` : la place qui a manqué à la dernière transition refusée par
-//     l'appareil. Tant qu'elle n'est pas revenue, la passe n'envoie rien
-//     (`roomBack`) : sans cela, chaque déclencheur renverrait la même écriture.
+//   - `stalled` : l'écriture dont la passe n'a pas pu écrire le sort, et la
+//     place qui a manqué. Tant que cette écriture attend et que la place n'est
+//     pas revenue, la passe n'envoie rien (`roomBack`) : sans cela, chaque
+//     déclencheur la renverrait. Un fait sur l'appareil, pas une transition.
 let memory: { storage: Storage; boxes: Entry[][] } | null = null;
 let deferred: { storage: Storage; log: Transition[] } | null = null;
-let stalled: { storage: Storage; need: number } | null = null;
+let stalled: { storage: Storage; uid: string; need: number } | null = null;
 
 function memoryBoxes(): Entry[][] {
   if (memory === null || typeof localStorage === 'undefined') return [];
@@ -594,10 +595,10 @@ function activeDeferred(): Transition[] {
   return deferred.storage === localStorage ? deferred.log : [];
 }
 
-/** La place qui manque encore à l'appareil (cf. `stalled`), 0 si rien n'est arrêté. */
-function missingRoom(): number {
-  if (stalled === null || typeof localStorage === 'undefined') return 0;
-  return stalled.storage === localStorage ? stalled.need : 0;
+/** L'arrêt de la passe (cf. `stalled`), s'il vaut pour ce stockage. */
+function activeStall(): { uid: string; need: number } | null {
+  if (stalled === null || typeof localStorage === 'undefined') return null;
+  return stalled.storage === localStorage ? stalled : null;
 }
 
 /** Tient en mémoire le geste `box`, que l'appareil n'a pas pu écrire. */
@@ -784,9 +785,10 @@ function persist(record: RegistryRecord): boolean {
 
 /**
  * Écrit le brouillon. SOUS LE VERROU seulement : c'est la seule
- * lecture-modification-écriture de l'enregistrement. Rend vrai si la
- * transition est ÉCRITE sur l'appareil ; sinon elle N'A PAS LIEU : rien n'est
- * tenu en mémoire pour plus tard, la lecture suivante rend l'état d'avant.
+ * lecture-modification-écriture de l'enregistrement. Rend 0 si la transition
+ * est ÉCRITE sur l'appareil ; sinon elle N'A PAS LIEU (rien n'est tenu en
+ * mémoire pour plus tard, la lecture suivante rend l'état d'avant) et le
+ * nombre rendu est la place qui a manqué.
  *
  * Si l'appareil refuse l'enregistrement entier : les écritures ACQUITTÉES
  * cèdent d'abord la place (elles ne servent qu'aux lectures en vol), puis les
@@ -795,8 +797,8 @@ function persist(record: RegistryRecord): boolean {
  * SANS GRANDIR, chaque écriture restant où elle est (`settleInPlace`). Sous
  * une version plus récente, RIEN n'est écrit.
  */
-function commit(opened: Opened): boolean {
-  if (typeof localStorage === 'undefined' || opened.outdated) return false;
+function commit(opened: Opened): number {
+  if (typeof localStorage === 'undefined' || opened.outdated) return 1;
   const { draft } = opened;
   let written = persist(draft.record);
   if (!written) {
@@ -814,13 +816,11 @@ function commit(opened: Opened): boolean {
     deferred = null;
     removeKeys(opened.inbox.map((box) => box.key));
     settleLegacy(opened.legacyRead, draft.record, true);
-    return true;
+    return 0;
   }
-  if (settleInPlace(opened)) return true;
-  // Refusée : la place qu'il aurait fallu est retenue (cf. `stalled`).
-  const need = JSON.stringify(draft.record).length - (localStorage.getItem(REGISTRY_KEY)?.length ?? 0);
-  stalled = { storage: localStorage, need: Math.max(need, 1) };
-  return false;
+  if (settleInPlace(opened)) return 0;
+  // Refusée : la place qu'il aurait fallu.
+  return Math.max(JSON.stringify(draft.record).length - (localStorage.getItem(REGISTRY_KEY)?.length ?? 0), 1);
 }
 
 /**
@@ -875,16 +875,17 @@ function settleInPlace(opened: Opened): boolean {
 /**
  * UNE transition du registre, SOUS LE VERROU : lecture, modification, écriture,
  * sans rendre la main entre les trois. Ce que la boîte d'entrée et la mémoire
- * portaient est écrit du même coup. `change` rend ce qu'il veut ; `written`
- * dit si la transition est sur l'appareil (vrai aussi quand il n'y avait rien
- * à écrire). Faux : elle n'a pas eu lieu, l'appelant s'arrête là.
+ * portaient est écrit du même coup. `change` rend ce qu'il veut ; `need` vaut
+ * 0 si la transition est sur l'appareil (aussi quand il n'y avait rien à
+ * écrire). Sinon elle n'a pas eu lieu, l'appelant s'arrête là : c'est la
+ * place qui a manqué.
  */
-function transact<T>(change: (draft: Draft) => T): { result: T; written: boolean } {
+function transact<T>(change: (draft: Draft) => T): { result: T; need: number } {
   const opened = open();
   const result = change(opened.draft);
   highestSeq = Math.max(highestSeq, opened.draft.record.seq);
   const dirty = opened.draft.log.length > 0 || activeDeferred().length > 0;
-  return { result, written: !dirty || commit(opened) };
+  return { result, need: dirty ? commit(opened) : 0 };
 }
 
 /**
@@ -972,11 +973,12 @@ export function registryOutdated(): boolean {
 
 /**
  * Vrai tant que le stockage de l'appareil refuse quelque chose au registre : une
- * saisie ne tient qu'en mémoire, une transition n'a pas pu être écrite (l'envoi
- * est arrêté, cf. `stalled`), ou l'ancienne file n'a pas reçu son verrou.
+ * saisie ne tient qu'en mémoire, la passe n'a pas pu écrire le sort d'une
+ * écriture (l'envoi est arrêté, cf. `stalled`), ou l'ancienne file n'a pas
+ * reçu son verrou.
  */
 export function storageFailing(): boolean {
-  return missingRoom() > 0 || legacyUnguarded || (memoryBoxes().length > 0 && !registryOutdated());
+  return activeStall() !== null || legacyUnguarded || (memoryBoxes().length > 0 && !registryOutdated());
 }
 
 /** Les écritures enfilées que l'appareil n'a écrites nulle part, et que le registre retient encore. */
@@ -1036,14 +1038,21 @@ export function retryPersistQueue(): boolean {
 }
 
 /**
- * La place qui a manqué à la dernière transition refusée est-elle revenue ?
- * Sondée par une écriture de cette taille, aussitôt retirée, en faisant céder
- * les copies de lecture non essentielles au besoin. Vrai si rien n'est arrêté.
+ * La passe peut-elle repartir (cf. `stalled`) ? Oui si rien ne l'arrête, si
+ * l'écriture qui l'arrêtait n'attend plus (purgée, réglée par un autre onglet),
+ * ou si la place qui a manqué est revenue : sondée par une écriture de cette
+ * taille, aussitôt retirée, en faisant céder les copies de lecture non
+ * essentielles au besoin.
  */
 function roomBack(): boolean {
-  const need = missingRoom();
-  if (need === 0) return true;
-  const back = writeMakingRoom(() => trySet(PROBE_KEY, ' '.repeat(need)));
+  const stall = activeStall();
+  if (stall === null) return true;
+  const record = view();
+  const waiting = record.entries.find((e) => e.uid === stall.uid);
+  const back =
+    waiting === undefined ||
+    !isAwaiting(record, waiting) ||
+    writeMakingRoom(() => trySet(PROBE_KEY, ' '.repeat(stall.need)));
   removeKeys([PROBE_KEY]);
   if (back) stalled = null;
   return back;
@@ -1484,12 +1493,12 @@ function ownRefusal(record: RegistryRecord, refusalId: string): Entry | undefine
  */
 export function retryRefused(refusalId: string): Promise<GestureOutcome> {
   return underGestureLock(() => {
-    const { result, written } = transact<GestureOutcome>((draft) => {
+    const { result, need } = transact<GestureOutcome>((draft) => {
       const entry = ownRefusal(draft.record, refusalId);
       if (!entry || entry.fate !== 'refused') return 'gone';
       return retry(draft, refusalId) === 'done' ? 'done' : 'gone';
     });
-    return result === 'done' && !written ? 'unsaved' : result;
+    return result === 'done' && need > 0 ? 'unsaved' : result;
   });
 }
 
@@ -1510,13 +1519,19 @@ export function abandonRefused(
   onRemoved?: (ops: OutboxOp[]) => void,
 ): Promise<GestureOutcome> {
   return underGestureLock(() => {
-    const { result: gone, written } = transact((draft) =>
+    const { result: gone, need } = transact((draft) =>
       ownRefusal(draft.record, refusalId) ? abandon(draft, refusalId) : [],
     );
     if (gone.length === 0) return 'gone';
     // Pas écrit : rien n'est parti, le tableau n'a rien à oublier.
-    if (!written) return 'unsaved';
+    if (need > 0) return 'unsaved';
     onRemoved?.(gone.map((e) => e.op));
+    // Abandonner libère de la place : si la passe était arrêtée faute de place,
+    // elle est relancée (une fois), sans attendre une saisie ou le réseau.
+    if (activeStall() !== null && lockRetryRunner !== null) {
+      const run = lockRetryRunner;
+      setTimeout(() => void run().catch(() => {}).finally(notifyChanged), 0);
+    }
     return 'done';
   });
 }
@@ -1683,6 +1698,12 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
   const settled: SettledWrite[] = [];
   let flushed = 0;
   const done = (): FlushResult => ({ remaining: pendingCount(), flushed, settled });
+  /** Le sort de `uid` n'a pas pu être écrit : la passe s'arrête, et le reste tant que la place manque. */
+  const stall = (uid: string, need: number): FlushResult => {
+    // Sous une version plus récente rien ne s'écrit : ce n'est pas un stockage plein.
+    if (!registryOutdated()) stalled = { storage: localStorage, uid, need };
+    return done();
+  };
 
   // Sous le verrou : la boîte d'entrée, la mémoire, et ce qu'un onglet de
   // l'ancienne version a laissé dans ses clés entrent au registre avant tout
@@ -1728,7 +1749,7 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
       if (isPermanentRejection(err) && (!who || (await who()) === user)) {
         const code = (err as { code: string }).code;
         const message = (err as { message?: unknown }).message;
-        const { result: outcome, written } = transact((draft) =>
+        const { result: outcome, need } = transact((draft) =>
           refuse(
             draft,
             entry.uid,
@@ -1740,7 +1761,7 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
         // Le refus n'a pas pu être écrit (stockage plein) : il n'a pas lieu.
         // L'écriture reste en attente, rien n'est retiré, et la passe s'arrête
         // (cf. `stalled` : elle ne repartira qu'une fois la place revenue).
-        if (!written) return done();
+        if (need > 0) return stall(entry.uid, need);
         if (outcome === 'done') {
           console.error(
             `[outbox] « ${entry.op.type} » (id ${entry.op.id}) rejetée par la base, mise de côté :`,
@@ -1769,12 +1790,12 @@ async function runFlush(fns: SyncFns, who?: SessionReader): Promise<FlushResult>
     // Succès : l'écriture est acquittée, si elle est encore là (un « Annuler la
     // séance » ou une purge a pu la retirer pendant la requête : rien à faire).
     const noEffect = effect === 'kept' || effect === 'absent';
-    const { result: acked, written } = transact((draft) =>
+    const { result: acked, need } = transact((draft) =>
       acknowledge(draft, entry.uid, sent, noEffect ? 'none' : 'applied'),
     );
     // L'acquittement n'a pas pu être écrit, même en retirant l'écriture de sa
     // source : elle reste en attente (la rejouer est sans effet), la passe s'arrête.
-    if (!written) return done();
+    if (need > 0) return stall(entry.uid, need);
     if (acked) {
       flushed += 1;
       settled.push({
