@@ -1,10 +1,8 @@
 /// <reference types="vitest/config" />
 import { configDefaults, defineConfig } from 'vitest/config'
-import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
-import { barreEtatVoulue } from './scripts/barre-etat.mjs'
 import { buildCommit } from './scripts/build-commit.mjs'
 
 /** Nom du paquet npm d'un module (`@scope/nom` ou `nom`), ou null hors node_modules. */
@@ -16,33 +14,12 @@ function packageOf(id: string): string | null {
   return first.startsWith('@') ? `${first}/${second}` : first
 }
 
-/**
- * Remplace au build la valeur du meta de barre d'état iOS (index.html, `black`)
- * par `VITE_BARRE_ETAT` s'il est donné (scripts/barre-etat.mjs) : un essai en
- * `default` ne coûte qu'un rebuild. iOS lit ce meta à l'installation, d'où une
- * variable de build et non un réglage à chaud.
- */
-function barreEtat(): Plugin {
-  const voulu = barreEtatVoulue()
-  return {
-    name: 'croustylift-barre-etat',
-    transformIndexHtml(html) {
-      if (voulu === undefined) return html
-      return html.replace(
-        /(<meta name="apple-mobile-web-app-status-bar-style" content=")[^"]*(")/,
-        `$1${voulu}$2`,
-      )
-    },
-  }
-}
-
 export default defineConfig({
   define: {
     __APP_COMMIT__: JSON.stringify(buildCommit()),
     __APP_BUILT_AT__: JSON.stringify(new Date().toISOString()),
   },
   plugins: [
-    barreEtat(),
     react(),
     tailwindcss(),
     VitePWA({

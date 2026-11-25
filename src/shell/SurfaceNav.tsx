@@ -25,7 +25,8 @@
 // n'est pas translucide (index.html). Cette boîte, c'est la ligne : le conteneur
 // `.surface-nav-bar` (index.css) porte le fond plein sur toute la largeur, la
 // ligne de mots reste à `max-w-md` dedans. Elle se pose ainsi juste sous la
-// barre d'état, sans marge.
+// barre d'état, sans marge. Les écrans sans cette ligne ont leur propre boîte,
+// la bande du bord (`.top-edge-band`, main.tsx).
 //
 // DIAGNOSTIC : un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage
 // (registre R4, src/viewport/). C'est le seul geste disponible sur tous les

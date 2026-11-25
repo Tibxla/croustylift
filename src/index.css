@@ -50,13 +50,16 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* Hauteur de la ligne des cinq surfaces, en haut de l'écran (shell, App.tsx). */
-  /* Marge haute de la ligne de navigation (SurfaceNav). Elle valait 14 px dans
-     l'app installée pour sortir les mots du flou que iOS 26 pose en haut de la
-     webview ; la ligne, collée et opaque (.surface-nav-bar), coupe désormais ce
-     flou elle-même et se pose juste sous la barre d'état. Gardée à 0 comme point
-     de réglage. */
+  /* Marge haute de la ligne de navigation (SurfaceNav, `.pt-safe-nav`), nulle
+     partout : collée et opaque dans l'app installée (.surface-nav-bar), la ligne
+     coupe elle-même le flou d'iOS 26 et se pose juste sous la barre d'état. Elle
+     n'a donc plus à s'en écarter (elle prenait 14 px pour sortir du flou). */
   --nav-gap: 0px;
   --nav-height: calc(3rem + var(--nav-gap));
+
+  /* Hauteur de la bande du bord haut (.top-edge-band) : 12 px dans l'app
+     installée sur un écran sans navigation, nulle sinon. */
+  --edge-band: 0px;
 }
 
 html,
@@ -73,21 +76,24 @@ body {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* L'encoche haute n'est pas un padding de `body` : la bande collée
-     `.safe-top-scrim` (premier enfant de #root) l'occupe dans le flux. */
+  /* L'encoche haute n'est pas un padding de `body` : les bandes collées
+     `.safe-top-scrim` et `.top-edge-band` (premiers enfants de #root)
+     l'occupent dans le flux. */
 }
 
 /*
   Hauteur des écrans : le document ne doit PAS défiler quand le contenu tient.
 
   La bande de l'encoche haute (`.safe-top-scrim`) occupe déjà `--safe-top` en
-  tête du document. Un écran à `100vh` dessous donnait
+  tête du document, et la bande du bord (`.top-edge-band`) `--edge-band` sur un
+  écran sans navigation. Un écran à `100vh` dessous donnait
   un document plus haut que la fenêtre (100vh + encoche), donc défilable même
   vide. Sur iPhone en mode écran d'accueil, un document défilable laisse WebKit
   le décaler pour dégager un champ à l'ouverture du clavier, état qu'il ne
   restaure pas toujours : les barres du bas restaient alors décrochées
   (diagnostic du 22 novembre 2026, cause 1). On retire donc l'encoche de la
-  hauteur minimale, et on mesure en `dvh` (repli `vh` pour les moteurs anciens).
+  hauteur minimale (et la bande du bord), et on mesure en `dvh` (repli `vh`
+  pour les moteurs anciens).
 
   Règles hors couche : elles priment sur les utilitaires Tailwind du même nom.
   - `.min-h-screen` : écran entier (connexion, premier lancement, chargement).
@@ -95,8 +101,8 @@ body {
     barres basses y sont collées en `sticky` et portent l'encoche basse elles-mêmes.
 */
 .min-h-screen {
-  min-height: calc(100vh - var(--safe-top));
-  min-height: calc(100dvh - var(--safe-top));
+  min-height: calc(100vh - var(--safe-top) - var(--edge-band));
+  min-height: calc(100dvh - var(--safe-top) - var(--edge-band));
 }
 .min-h-surface {
   min-height: calc(100vh - var(--safe-top) - var(--nav-height));
@@ -122,15 +128,16 @@ body {
   }
 }
 
-/* Bande de la barre d'état (standalone iOS) : `viewport-fit=cover` et la status
-   bar translucide font passer la webview sous l'heure et la batterie
-   (index.html). Cette bande opaque, dans la teinte de l'app, réserve l'encoche
-   au-dessus de tout écran et couvre ce qui défile dessous. Avec la barre d'état
-   opaque (`black`, index.html), la webview commence sous la barre : env() vaut
-   0 et la bande est nulle ; elle reste pour une installation ancienne, faite en
-   `black-translucent`. Hauteur nulle sans encoche.
+/* Bande de l'encoche haute. Avec la barre d'état opaque (`black`, index.html),
+   la webview commence SOUS la barre d'état : safe-top vaut 0 et la bande est
+   nulle. Elle sert encore à une icône installée avant le passage à `black`
+   (barre translucide, webview sous l'heure et la batterie) : opaque, dans la
+   teinte de l'app, elle y réserve l'encoche au-dessus de tout écran et couvre ce
+   qui défile dessous. Nulle aussi dans un onglet de navigateur.
    COLLÉE, jamais fixe (règle du kit) : premier enfant du conteneur qui défile
-   (#root, ou un écran plein écran qui défile seul), `sticky; top: 0`. */
+   (#root), `sticky; top: 0`. Ce n'est PAS elle qui coupe le flou d'iOS 26 (trop
+   basse, sans toucher) : c'est la ligne de navigation ou la bande du bord,
+   ci-dessous. */
 .safe-top-scrim {
   position: sticky;
   top: 0;
@@ -143,31 +150,58 @@ body {
   pointer-events: none;
 }
 
-/* Ligne de navigation dans l'app installée : COLLÉE en haut, opaque, pleine
-   largeur. C'est la boîte que WebKit cherche au bord haut (iOS 26, effet de bord
-   de défilement de Liquid Glass) : collée ou fixe, opaque, sans flou d'arrière-
-   plan, au moins 90 % de la largeur et plus de 10 px de haut. Il la trouve, il
-   peint la barre d'état de sa couleur et ne floute plus le haut de la page. Sans
-   elle, les mots tombaient dans le flou. Ne mettre ni transparence ni
-   `backdrop-filter` sur ce fond.
-   `sticky`, pas `fixed` (règle du kit) : enfant de <main>, qui couvre toute la
-   page. `top: var(--safe-top)` et non 0 : sur une installation translucide, elle
-   se colle sous la bande de l'encoche au lieu de passer dessous. Même étage que
-   la bande (au-dessus des barres basses z-10 et z-20, sous les voiles des
-   feuilles). Dans un onglet de navigateur, la ligne défile avec la page, comme
-   avant. */
+/* Bord haut de l'app installée (iOS 26). iOS floute le haut de la page (effet
+   de bord de défilement de Liquid Glass) sauf s'il trouve au bord haut une boîte
+   COLLÉE (ou fixe), opaque, sans flou d'arrière-plan, sur au moins 90 % de la
+   largeur et plus de 10 px de haut ; il peint alors la barre d'état de sa
+   couleur. Il faut en plus la barre d'état opaque (index.html). Vérifié sur
+   l'iPhone le 25 novembre 2026. Ne mettre ni transparence ni `backdrop-filter`
+   sur ces fonds.
+
+   - Écran à navigation : la ligne elle-même (.surface-nav-bar, SurfaceNav),
+     collée juste sous la barre d'état. Dans un onglet de navigateur, elle reste
+     dans le flux et défile avec la page.
+   - Écran sans navigation (connexion, premier lancement, chargement, erreur) :
+     la bande du bord (.top-edge-band, main.tsx), 12 px au fond de l'app, posée
+     dans le flux au-dessus de l'écran : elle ne recouvre rien à l'arrêt. Nulle
+     dès que la ligne de navigation est là, et dans un onglet.
+
+   `sticky`, pas `fixed` (règle du kit) : la ligne est enfant de <main>, la bande
+   de #root, qui couvrent toute la page. `top: var(--safe-top)` et non 0 : sur une
+   icône encore translucide, elles se collent sous la bande de l'encoche au lieu
+   de passer dessous. Même étage que cette bande (au-dessus des barres basses z-10
+   et z-20, sous les voiles des feuilles). */
+.top-edge-band {
+  position: sticky;
+  top: var(--safe-top);
+  height: var(--edge-band);
+  background-color: var(--color-bg);
+  z-index: 25;
+}
 @media (display-mode: standalone) {
+  :root {
+    --edge-band: 12px;
+  }
   .surface-nav-bar {
     position: sticky;
     top: var(--safe-top);
     z-index: 25;
     background-color: var(--color-bg);
   }
-  /* Un champ ramené à l'écran (focus, clavier) s'arrête sous la ligne collée au
-     lieu de passer dessous. */
+  /* Un champ ramené à l'écran (focus, clavier) s'arrête sous ce qui est collé en
+     haut au lieu de passer dessous. */
   html {
+    scroll-padding-top: calc(var(--safe-top) + var(--edge-band));
+  }
+  html:has(.surface-nav-bar) {
     scroll-padding-top: calc(var(--safe-top) + var(--nav-height));
   }
+}
+/* La ligne de navigation tient déjà le bord haut : pas de bande en plus (elle
+   décalerait la ligne de 12 px sous l'île). Hors de la media query pour primer
+   sur elle (spécificité de `:root:has()` supérieure à `:root`). */
+:root:has(.surface-nav-bar) {
+  --edge-band: 0px;
 }
 .pt-safe-nav {
   height: var(--nav-height);
