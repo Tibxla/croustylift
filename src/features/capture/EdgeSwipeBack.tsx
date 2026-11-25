@@ -132,12 +132,14 @@ export function EdgeSwipeBack({ onBack, children }: { onBack: () => void; childr
           const { g: next, outcome } = edgeUp(g.current, { pointerId: e.pointerId, x: e.clientX, t: e.timeStamp }, width);
           g.current = next;
           if (outcome === 'tap') {
-            // Un toucher sur place : rendu à ce qui est sous la bande.
+            // Un toucher sur place : rendu à la cible touchable sous la bande
+            // (une icône SVG renvoie à son bouton).
             const el = strip.current;
             if (el) el.style.pointerEvents = 'none';
             const hit = document.elementFromPoint(e.clientX, e.clientY);
             if (el) el.style.pointerEvents = '';
-            if (hit instanceof HTMLElement) hit.click();
+            const target = hit?.closest('button, a, [role="radio"], [role="button"]');
+            if (target instanceof HTMLElement) target.click();
           } else if (outcome === 'back' || outcome === 'stay') {
             settle(outcome === 'back');
           }
