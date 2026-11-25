@@ -50,11 +50,11 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* Hauteur de la ligne des cinq surfaces, en haut de l'écran (shell, App.tsx). */
-  /* Marge haute de la ligne de navigation (SurfaceNav) dans l'app installée :
-     hors du flou que iOS 26 pose en haut de la webview. Elle ne dépend PAS de
-     l'encoche : depuis iOS 26.1, l'app installée peut s'ouvrir SOUS la barre
-     d'état avec safe-top à 0 (WebKit 301994), et le flou reste là. Nulle dans
-     un onglet de navigateur. */
+  /* Marge haute de la ligne de navigation (SurfaceNav). Elle valait 14 px dans
+     l'app installée pour sortir les mots du flou que iOS 26 pose en haut de la
+     webview ; la ligne, collée et opaque (.surface-nav-bar), coupe désormais ce
+     flou elle-même et se pose juste sous la barre d'état. Gardée à 0 comme point
+     de réglage. */
   --nav-gap: 0px;
   --nav-height: calc(3rem + var(--nav-gap));
 }
@@ -125,9 +125,10 @@ body {
 /* Bande de la barre d'état (standalone iOS) : `viewport-fit=cover` et la status
    bar translucide font passer la webview sous l'heure et la batterie
    (index.html). Cette bande opaque, dans la teinte de l'app, réserve l'encoche
-   au-dessus de tout écran et couvre ce qui défile dessous ; repasser la status
-   bar en `black` laisserait iOS peindre du noir pur (#000), visiblement plus
-   sombre que le fond sur un OLED. Hauteur nulle sans encoche : env() vaut 0.
+   au-dessus de tout écran et couvre ce qui défile dessous. Avec la barre d'état
+   opaque (`black`, index.html), la webview commence sous la barre : env() vaut
+   0 et la bande est nulle ; elle reste pour une installation ancienne, faite en
+   `black-translucent`. Hauteur nulle sans encoche.
    COLLÉE, jamais fixe (règle du kit) : premier enfant du conteneur qui défile
    (#root, ou un écran plein écran qui défile seul), `sticky; top: 0`. */
 .safe-top-scrim {
@@ -142,9 +143,30 @@ body {
   pointer-events: none;
 }
 
+/* Ligne de navigation dans l'app installée : COLLÉE en haut, opaque, pleine
+   largeur. C'est la boîte que WebKit cherche au bord haut (iOS 26, effet de bord
+   de défilement de Liquid Glass) : collée ou fixe, opaque, sans flou d'arrière-
+   plan, au moins 90 % de la largeur et plus de 10 px de haut. Il la trouve, il
+   peint la barre d'état de sa couleur et ne floute plus le haut de la page. Sans
+   elle, les mots tombaient dans le flou. Ne mettre ni transparence ni
+   `backdrop-filter` sur ce fond.
+   `sticky`, pas `fixed` (règle du kit) : enfant de <main>, qui couvre toute la
+   page. `top: var(--safe-top)` et non 0 : sur une installation translucide, elle
+   se colle sous la bande de l'encoche au lieu de passer dessous. Même étage que
+   la bande (au-dessus des barres basses z-10 et z-20, sous les voiles des
+   feuilles). Dans un onglet de navigateur, la ligne défile avec la page, comme
+   avant. */
 @media (display-mode: standalone) {
-  :root {
-    --nav-gap: 14px;
+  .surface-nav-bar {
+    position: sticky;
+    top: var(--safe-top);
+    z-index: 25;
+    background-color: var(--color-bg);
+  }
+  /* Un champ ramené à l'écran (focus, clavier) s'arrête sous la ligne collée au
+     lieu de passer dessous. */
+  html {
+    scroll-padding-top: calc(var(--safe-top) + var(--nav-height));
   }
 }
 .pt-safe-nav {

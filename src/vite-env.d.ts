@@ -9,6 +9,8 @@ declare const __APP_BUILT_AT__: string
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string
   readonly VITE_SUPABASE_PUBLISHABLE_KEY: string
+  /** `1` : build d'essai, avec le relevé de la barre d'état (viewport/EssaiBarre). */
+  readonly VITE_ESSAI?: string
 }
 
 interface ImportMeta {
