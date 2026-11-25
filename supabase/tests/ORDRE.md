@@ -79,7 +79,7 @@ Elle passe AVANT le déploiement du client qui l'appelle (`reorderSeances`, `src
 3. Test de contrôle `supabase/tests/0026_reorder_seances_revision.sql` : aucune ligne `ECHEC`.
 4. Déployer le client.
 
-Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé ; ajout pendant un réordonnancement : attend puis va en fin ; trois séances en position 0 puis un ajout : en fin, et le réordonnancement d'avant l'ajout est refusé ; désarchivage en fin). PAS encore appliquée en prod.
+Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé ; ajout pendant un réordonnancement : attend puis va en fin ; trois séances en position 0 puis un ajout : en fin, et le réordonnancement d'avant l'ajout est refusé ; désarchivage en fin). Appliquée en prod le 2026-11-25 vers 10 h (contrôle préalable conforme, test de contrôle sans `ECHEC`), avant le client qui l'appelle.
 
 ## 0027 : créer une séance en une transaction
 
@@ -92,4 +92,4 @@ Elle passe AVANT le déploiement du client qui l'appelle (`createSeance` et `dup
 3. Test de contrôle `supabase/tests/0027_creer_seance.sql` : aucune ligne `ECHEC`.
 4. Déployer le client (après 0026 et 0027).
 
-Passée au banc local le 2026-11-24 (création avec sa version et ses prescriptions, en fin de routine ; rejeu du même id sans doublon ; même id pour une autre séance refusé ; autre compte refusé, rien de créé ; nom en double refusé en 23505, ni séance ni version orpheline ; appel sans compte refusé). PAS encore appliquée en prod.
+Passée au banc local le 2026-11-24 (création avec sa version et ses prescriptions, en fin de routine ; rejeu du même id sans doublon ; même id pour une autre séance refusé ; autre compte refusé, rien de créé ; nom en double refusé en 23505, ni séance ni version orpheline ; appel sans compte refusé). Appliquée en prod le 2026-11-25 vers 10 h, après 0026 (contrôle préalable vide, test de contrôle sans `ECHEC`), avant le client qui l'appelle.
