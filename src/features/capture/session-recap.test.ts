@@ -147,6 +147,25 @@ describe('buildSessionRecap', () => {
     expect(recap.records).toHaveLength(1);
   });
 
+  it('statuts de chaque exo, ceux du récap d’exo : une série record seule se voit, l’unilatéral compte en côtés', () => {
+    // bench : série 1 record, série 2 égalée (la 3, en deçà, ne dit rien).
+    expect(of('bench').statuses).toEqual([
+      { v: 'up', word: 'record' },
+      { v: 'eq', word: '1 égalée' },
+    ]);
+    // curl : gauche battue, droite égalée, gauche de la série 2 sans référence.
+    expect(of('curl').statuses).toEqual([
+      { v: 'up', word: '1 côté battu' },
+      { v: 'eq', word: '1 côté égalé' },
+    ]);
+    expect(of('row').statuses).toEqual([]);
+  });
+
+  it('une seule série, qui bat le record : le statut n’est pas vide', () => {
+    const solo = buildSessionRecap(session, state({ bench: done([ps(85, 8, 2, 1)]) }));
+    expect(solo.exercises.find((e) => e.exerciseId === 'bench')!.statuses).toEqual([{ v: 'up', word: 'record' }]);
+  });
+
   it('nouveaux records : l’exo et son meilleur e1RM du jour parmi les séries qui battent le record', () => {
     const record = {
       exerciseId: 'bench',

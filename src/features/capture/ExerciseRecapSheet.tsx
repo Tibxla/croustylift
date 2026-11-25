@@ -10,16 +10,14 @@
 import type { PerformedSet } from '../../domain/types';
 import { PrimaryButton, SecondaryButton, Sheet, Status } from '../../ui';
 import { formatRange, formatSetCount } from './format';
-import { recordWord, summarizeBadges, type SetBadge, type VerdictCounts } from './set-badges';
+import { recordWord, summarizeBadges, verdictWords, type SetBadge, type VerdictCounts } from './set-badges';
 
-/** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé. */
+/** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé, en
+ *  mots de `verdictWords` (la même source que le Sommaire et la fin de séance).
+ *  Une ligne « Gauche » ou « Droite » compte les séries de CE côté : ses mots
+ *  restent en séries. */
 function Verdicts({ counts, record }: { counts: VerdictCounts; record: 'record' | 'record charge' }) {
-  const [noun, kind] = record === 'record charge' ? ['record', ' charge'] : ['record', ''];
-  const parts = [
-    counts.record > 0 && <Status key="r" v="up" word={`${counts.record} ${noun}${counts.record > 1 ? 's' : ''}${kind}`} />,
-    counts.battu > 0 && <Status key="b" v="up" word={`${counts.battu} battue${counts.battu > 1 ? 's' : ''}`} />,
-    counts.egalise > 0 && <Status key="e" v="eq" word={`${counts.egalise} égalée${counts.egalise > 1 ? 's' : ''}`} />,
-  ].filter(Boolean);
+  const parts = verdictWords(counts, record, false).map((s) => <Status key={s.word} v={s.v} word={s.word} />);
   return parts.length ? <span className="flex flex-wrap items-center gap-x-3">{parts}</span> : <span className="text-muted">rien de battu</span>;
 }
 

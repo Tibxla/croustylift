@@ -46,6 +46,7 @@ import {
 } from '../../ui';
 import type { Side } from '../../domain/types';
 import { buildSessionRecap } from './session-recap';
+import type { VerdictWord } from './set-badges';
 import { EXO_STATE_WORD, exoState, logicalSetsDone } from './salle-progress';
 
 interface ExercisePickerProps {
@@ -195,7 +196,7 @@ export function ExercisePicker({
                       plan={plan}
                       origin={deviation === 'added' ? 'ajouté' : deviation === 'swapped' ? 'remplacé' : null}
                       openSide={recapById.get(ex.exerciseId)?.openSide ?? null}
-                      beaten={recapById.get(ex.exerciseId)?.beaten ?? 0}
+                      statuses={recapById.get(ex.exerciseId)?.statuses ?? []}
                     />
                   }
                   trailing={
@@ -329,7 +330,7 @@ function SommaireMeta({
   plan,
   origin,
   openSide,
-  beaten,
+  statuses,
 }: {
   state: ExoState;
   count: number;
@@ -337,7 +338,9 @@ function SommaireMeta({
   plan: string;
   origin: string | null;
   openSide: Side | null;
-  beaten: number;
+  /** Les statuts de l'exo, ceux du récap d'exo (`verdictWords`) : record, puis
+   *  battues, puis égalées ; en côtés pour un exo unilatéral. */
+  statuses: VerdictWord[];
 }) {
   const series = (n: number) => `${n} série${n > 1 ? 's' : ''}`;
   const side = openSide ? `${openSide === 'left' ? 'gauche' : 'droite'} faite` : null;
@@ -361,7 +364,9 @@ function SommaireMeta({
           {tail}
         </>
       )}
-      {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
+      {statuses.map((st) => (
+        <Status key={st.word} v={st.v} word={st.word} />
+      ))}
     </span>
   );
 }

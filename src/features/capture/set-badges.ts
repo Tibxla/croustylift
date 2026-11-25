@@ -88,6 +88,45 @@ export function summarizeBadges(sets: PerformedSet[], badges: SetBadge[]): Badge
   return summary;
 }
 
+/** Un statut d'exo en signe + mot (triade : ▲ au signal, ▬ blanc cassé). */
+export interface VerdictWord {
+  v: 'up' | 'eq';
+  word: string;
+}
+
+/**
+ * Les statuts d'un exo en mots, la SEULE source pour le récap d'exo, la ligne du
+ * Sommaire et la fin de séance : record, puis battues, puis égalées (même
+ * priorité que les badges : une série record n'est comptée qu'en record).
+ * « record » seul pour un record, « n records » au-delà ; « charge » quand tous
+ * sont des records de charge (`recordWord`). En unilatéral, les badges se
+ * comptent par CÔTÉ (une ligne par bras), alors que les séries se comptent par
+ * paire : le mot dit l'unité (« 3 côtés battus »), sinon « 2 séries ▲ 3
+ * battues » se contredisait (défaut du 25/11).
+ */
+export function verdictWords(counts: VerdictCounts, record: 'record' | 'record charge', unilateral: boolean): VerdictWord[] {
+  const words: VerdictWord[] = [];
+  const s = (n: number) => (n > 1 ? 's' : '');
+  if (counts.record > 0) {
+    const kind = record === 'record charge' ? ' charge' : '';
+    words.push({
+      v: 'up',
+      word: unilateral
+        ? `${counts.record} côté${s(counts.record)} en record${kind}`
+        : counts.record === 1
+          ? `record${kind}`
+          : `${counts.record} records${kind}`,
+    });
+  }
+  if (counts.battu > 0) {
+    words.push({ v: 'up', word: unilateral ? `${counts.battu} côté${s(counts.battu)} battu${s(counts.battu)}` : `${counts.battu} battue${s(counts.battu)}` });
+  }
+  if (counts.egalise > 0) {
+    words.push({ v: 'eq', word: unilateral ? `${counts.egalise} côté${s(counts.egalise)} égalé${s(counts.egalise)}` : `${counts.egalise} égalée${s(counts.egalise)}` });
+  }
+  return words;
+}
+
 /**
  * Le mot d'un record selon son type : « record charge » pour un record de charge
  * seule (`weight-reps`), « record » pour un record d'e1RM (seul ou avec la

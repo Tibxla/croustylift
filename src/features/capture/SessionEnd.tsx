@@ -330,8 +330,11 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
               {e.status === 'en-cours' && ` sur ${e.setsPlanned.min}`}
               {side && `, ${side}`}
             </span>
-            {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
-            {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
+            {/* Battues et égalées en mots partagés (`verdictWords`, en côtés pour
+                un exo unilatéral) ; les records suivent, avec leur valeur. */}
+            {e.statuses.slice(e.verdicts.record > 0 ? 1 : 0).map((st) => (
+              <Status key={st.word} v={st.v} word={st.word} />
+            ))}
             {e.newRecords.map((r) => (
               <Status key={`${r.axis}-${r.side ?? ''}`} v="up" word={`${recordNoun(r)}${r.side ? ` ${sideWord(r.side)}` : ''} ${recordValue(r)}`} />
             ))}
