@@ -97,9 +97,10 @@ import { flushOutbox } from './sync';
 import { boundSetValues } from './stepper-utils';
 import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
-import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import { EdgeSwipeBack } from './EdgeSwipeBack';
+import { footUndo, logLabel, logRank } from './salle-foot';
 import type { IndexItem } from './ExerciseIndex';
 import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
@@ -1412,27 +1413,9 @@ function SalleSync() {
   return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
 }
 
-/** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
- *  au-delà du plan. L'info tient au TEXTE, jamais à la couleur seule. */
-function logLabel(side: Side | null, rank: number, plannedMax: number): string {
-  if (side) return `Logger ${side === 'left' ? 'gauche' : 'droite'} · série ${rank}`;
-  return rank > plannedMax ? 'Logger une de plus' : `Logger la série ${rank}`;
-}
-
-/** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
- *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales).
- *  Sous 340 px (320) : marges de 8 px et titre à 15 px, sinon « Sommai… » et
- *  « Exo sui… » (cf. la colonne du milieu, `BAR_GRID`). */
-const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line [@media(max-width:339px)]:px-2';
-/** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
-const BAR_TITLE =
-  'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink [@media(max-width:339px)]:text-[15px]';
-/** Rangée du haut : colonne du milieu (Annuler) à largeur bornée, Sommaire et
- *  Exo suivant gardent la même largeur, qu'Annuler soit là ou non ; resserrée
- *  sous 340 px pour laisser leurs titres entiers. */
-const BAR_GRID =
-  'mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2 [@media(max-width:339px)]:grid-cols-[1fr_minmax(48px,60px)_1fr]';
+/** Un lien du pied de l'instrument : souligné, cible de 44 px, sans enfoncement
+ *  (le fond ne change pas : un lien s'éclaircit seul quand on le presse). */
+const FOOT_LINK = 'flex h-11 min-w-0 items-center whitespace-nowrap px-2 text-[16px] text-ink active:opacity-70 [@media(max-width:339px)]:text-[15px]';
 
 function CapturePanel({
   exercise,
@@ -1497,15 +1480,10 @@ function CapturePanel({
   const currentSide: Side | null = unilateral
     ? draft?.side ?? pendingSide(progress) ?? 'left'
     : null;
-  // SÉRIES complètes : en unilatéral, une série = gauche + droite au même order
-  // (blind F4) ; bilatéral = une saisie par série.
-  const completedSets = unilateral
-    ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
-    : progress.sets.length;
   // Le rang que dit « Logger » : en unilatéral, la série que vise le côté
-  // choisi (la case en cours de la bande, `targetSlotForSide`).
-  const rank = currentSide ? targetSlotForSide(progress.sets, currentSide) + 1 : completedSets + 1;
-  const lastSet = progress.sets[progress.sets.length - 1] ?? null;
+  // choisi (la case en cours de la bande, `targetSlotForSide`) ; en bilatéral,
+  // la série qui suit les séries faites (salle-foot.ts).
+  const rank = logRank(progress, currentSide);
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
@@ -1539,11 +1517,7 @@ function CapturePanel({
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
   const values = draft ? `${formatWeight(draft.weightKg)} × ${draft.reps} · RIR ${draft.rir}` : '';
   // Annuler retire la DERNIÈRE ligne loggée : un côté en unilatéral (décision 2b).
-  const undoWhat = lastSet
-    ? lastSet.side
-      ? { aria: `Annuler le côté ${sideLabel(lastSet.side)} de la série ${lastSet.order}`, sub: sideLabel(lastSet.side) }
-      : { aria: `Annuler la série ${lastSet.order}`, sub: `série ${lastSet.order}` }
-    : null;
+  const undoWhat = footUndo(progress);
 
   // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
@@ -1553,7 +1527,8 @@ function CapturePanel({
   const openRefused = useOpenRefusedWrites();
 
   return (
-    <>
+    // Glissé depuis le bord gauche : retour au Sommaire (EdgeSwipeBack.tsx).
+    <EdgeSwipeBack onBack={() => dispatch({ type: 'back-to-picker' })}>
       <SyncBanner line={alarm} action={refusedAction(sync.refused, openRefused)} />
       <ExerciseCapture
         exercise={exercise}
@@ -1602,26 +1577,28 @@ function CapturePanel({
         {announce}
       </p>
 
-      {/* Zone du pouce, collée en bas (`sticky`, fond plein, encoche comprise ;
-          jamais `position: fixed`). Rangée du haut : Sommaire, Annuler, Exo
-          suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
-          geste répété, toujours au même endroit, sans enfoncement. Rien ne change
-          de place quand le minimum du plan est atteint (décision du 23/11). */}
+      {/* Pied léger, collé en bas (`sticky`, fond plein, encoche comprise ;
+          jamais `position: fixed`), variante A4 du 25/11. Rangée du haut, trois
+          liens soulignés à place fixe : « ‹ Sommaire » et la progression à
+          gauche, « Annuler » au milieu, « Exo suivant › » (ou « Terminer ›») à
+          droite. Rangée du bas : Logger, le seul bloc plein, le geste répété,
+          toujours au même endroit, sans enfoncement. Rien ne change de place
+          quand le minimum du plan est atteint (décision du 23/11). */}
       <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
-        <div className={BAR_GRID}>
+        <div className="mb-1 grid h-11 grid-cols-[1fr_auto_1fr] items-center gap-1">
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
               detail.alarm ? `, ${detail.text}` : ''
             }`}
-            className={BAR_BTN}
+            className={`${FOOT_LINK} -ml-2 justify-self-start`}
           >
-            <span className={BAR_TITLE}>Sommaire</span>
+            <span className="underline decoration-1 underline-offset-4">‹ Sommaire</span>
             {/* La progression, toujours (sommaire-detail.ts) ; une alarme (stockage
                 plein, refus) prend sa place, en blanc cassé demi-gras. */}
-            <span className={`tnum w-full truncate text-[13px] leading-tight ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
-              {detail.text}
+            <span className={`tnum ml-1.5 min-w-0 truncate text-[14px] ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
+              {detail.alarm ? detail.text : `${done}/${total}`}
             </span>
           </button>
           {undoWhat ? (
@@ -1632,10 +1609,9 @@ function CapturePanel({
                 setAnnounce(`${undoWhat.aria.replace('Annuler', 'Annulé :')}.`);
               }}
               aria-label={undoWhat.aria}
-              className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
+              className={`${FOOT_LINK} justify-self-center text-[15px] text-muted underline decoration-1 underline-offset-4`}
             >
-              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4 [@media(max-width:339px)]:text-[15px]">Annuler</span>
-              <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
+              Annuler
             </button>
           ) : (
             <span aria-hidden />
@@ -1645,15 +1621,18 @@ function CapturePanel({
               type="button"
               onClick={() => dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
               aria-label={`Exo suivant, ${next.name}${next.resume ? `, reprise ${next.resume}` : ''}`}
-              className={BAR_BTN}
+              className={`${FOOT_LINK} -mr-2 justify-self-end underline decoration-1 underline-offset-4`}
             >
-              <span className={BAR_TITLE}>Exo suivant</span>
-              <span className="w-full truncate text-[13px] leading-tight text-muted">{next.name}</span>
+              Exo suivant ›
             </button>
           ) : canFinish ? (
-            <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>
-              <span className={BAR_TITLE}>Terminer</span>
-              <span className="truncate text-[13px] leading-tight text-muted">la séance</span>
+            <button
+              type="button"
+              onClick={onFinish}
+              aria-label="Terminer la séance"
+              className={`${FOOT_LINK} -mr-2 justify-self-end underline decoration-1 underline-offset-4`}
+            >
+              Terminer ›
             </button>
           ) : (
             <span aria-hidden />
@@ -1670,6 +1649,6 @@ function CapturePanel({
           <span className="tnum">{values}</span>
         </PrimaryButton>
       </div>
-    </>
+    </EdgeSwipeBack>
   );
 }

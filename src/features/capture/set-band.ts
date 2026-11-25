@@ -16,6 +16,7 @@
 import type { PerformedSet, Side } from '../../domain/types';
 import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { formatWeight } from './format';
+import { badgeStatus, type SetBadge } from './set-badges';
 
 export interface BandCell {
   key: string;
@@ -97,4 +98,16 @@ export function bandCells({
     }
   }
   return cells;
+}
+
+const sideWord = (c: BandCell) => (c.side === 'left' ? ', gauche' : c.side === 'right' ? ', droite' : '');
+
+/** Le nom lu d'une case : rang, côté, valeurs EXACTES, statut ; ou « à faire ». */
+export function bandCellName(c: BandCell, badges: readonly SetBadge[], draft: Values): string {
+  if (c.state === 'logged' && c.set) {
+    const st = badgeStatus(badges[c.index] ?? null);
+    return `Série ${c.rank}${sideWord(c)}, ${bandName(c.set)}${st ? `, ${st.word}` : ''}`;
+  }
+  if (c.state === 'current') return `Série ${c.rank} en cours${sideWord(c)}, ${bandName(draft)}`;
+  return `Série ${c.rank}${sideWord(c)}, à faire`;
 }
