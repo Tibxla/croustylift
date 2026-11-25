@@ -44,6 +44,12 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ error: null })
   }
 
+  /** La frontière tient-elle un plantage ? Le shell démonte alors la surface
+   *  quand on la quitte, pour la remonter à neuf au retour (surface-memory.ts). */
+  failed(): boolean {
+    return this.state.error !== null
+  }
+
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Pas de service de reporting (local-first, 0 €) : on trace en console pour le
     // diagnostic. Les logs navigateur font le reste.

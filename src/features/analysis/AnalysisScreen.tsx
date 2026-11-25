@@ -14,7 +14,9 @@
 // (lib/dated-read) : hors ligne, la dernière copie avec sa date, ou une phrase
 // sans « Erreur » quand l'appareil n'en a pas.
 // Les sous-pages s'empilent dans l'écran (pile locale) : « ‹ Analyse » revient
-// d'un cran, à la position de défilement quittée. Changer de surface les vide.
+// d'un cran, à la position de défilement quittée. Changer d'onglet les garde :
+// l'Analyse reste montée, cachée, et se retrouve telle quelle (shell/surface-memory.ts),
+// sauf « Voir au Journal », qui la rouvre sur le Journal.
 //
 // L'écran sépare le CHARGEMENT (Supabase) de la PRÉSENTATION : `ExerciseList`,
 // `ExercisePage`, `RawLogView`, `SessionPage` sont purs, montables sans réseau.
@@ -24,7 +26,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Choice, CopyNote, EmptyState, OfflineState, Screen, ScreenHeader, SecondaryButton } from '../../ui';
 import { invalidateViews, JOURNAL_VIEW, OVERVIEW_VIEW } from '../../lib/dated-read';
 import { useDatedLoad } from '../../lib/use-dated-load';
-import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface } from '../../shell/navigation';
+import { clearSurfaceIntent, peekSurfaceIntent, useGoToSurface, useSurfaceReturn } from '../../shell/navigation';
+import { requestLeave } from '../authoring/seance-dirty';
 import { getCurrentRoutineId, listRoutines } from '../authoring/data';
 import { resolveCaptureRoutineId } from '../capture/data';
 import { loadAnalyses, loadPlanExerciseOrder, loadRawLog, loadSessionMetrics, type ExerciseAnalysis } from './data';
@@ -96,7 +99,7 @@ const loadOverview = async (): Promise<Overview> => {
 export function AnalysisScreen() {
   // Arrivée par « Voir au Journal » (Séance rangée) : l'onglet Journal d'emblée,
   // la séance rangée en tête (le plus récent d'abord). Intention lue au rendu,
-  // effacée au montage (navigation.ts).
+  // effacée au montage (navigation.ts) ; déjà montée, au retour (plus bas).
   const [openOnJournal] = useState(() => peekSurfaceIntent('analysis')?.open === 'journal');
   useEffect(() => clearSurfaceIntent('analysis'), []);
   const [tab, setTab] = useState<Tab>(openOnJournal ? 'journal' : 'exos');
@@ -141,6 +144,23 @@ export function AnalysisScreen() {
     setTab(t);
     if (t === 'journal') setJournalWanted(true);
   };
+  // « Voir au Journal » alors que l'Analyse était déjà montée, cachée sur une
+  // autre vue : l'intention prime sur la vue mémorisée. Retour à l'index, onglet
+  // Journal, en haut. Une correction en cours passe d'abord par sa confirmation
+  // (elle seule tient un brouillon dans cette pile).
+  useSurfaceReturn(() => {
+    const wanted = peekSurfaceIntent('analysis')?.open === 'journal';
+    clearSurfaceIntent('analysis');
+    if (!wanted) return;
+    const openJournal = () => {
+      scrolls.current = [];
+      pendingScroll.current = 0;
+      setStack([{ page: 'index' }]);
+      chooseTab('journal');
+    };
+    if (view.page === 'edit') requestLeave(openJournal, 'analysis');
+    else openJournal();
+  });
   // Une correction ou une suppression change le journal ET les courbes, les
   // mesures de séance comprises (un point de durée périmé restait affiché).
   // Leurs copies sont périmées : la relecture passe par le réseau.

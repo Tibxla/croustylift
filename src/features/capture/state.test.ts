@@ -532,6 +532,13 @@ describe('mergeProgress', () => {
     const merged = mergeProgress(supa({}), local({}));
     expect(merged.closedAt).toBeNull();
   });
+
+  // L'app tuée par iOS en pleine série se rouvre sur l'instrument de l'exo
+  // ouvert, pas sur le Sommaire : la base ne connaît pas l'écran, l'appareil oui.
+  it('l’exo ouvert vient du LOCAL : la Salle rouvre l’instrument après un rechargement', () => {
+    expect(mergeProgress(supa({}), local({ activeExerciseId: 'bench-press' })).activeExerciseId).toBe('bench-press');
+    expect(mergeProgress(supa({}), local({ activeExerciseId: null })).activeExerciseId).toBeNull();
+  });
 });
 
 // --- clearCaptureState (purge à la déconnexion) ------------------------------

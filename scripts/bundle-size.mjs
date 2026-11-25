@@ -33,7 +33,7 @@ const BUDGETS = {
   'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
   'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
   'seance-meta-load.js': 910, // « dernière fois mardi » de « Quelle séance ? », lu à part (mesuré : 821 aux correctifs d'intégration, amorce depuis la copie et réponses sous garde d'ordre ; 800 avant)
-  'use-dated-load.js': 620, // copies datées des écrans au calme, partagées par Séances et l'Analyse (mesuré : 556 aux correctifs d'intégration, vues montées relues à l'acquittement, délai rendu à « Réessayer » ; 525 avant)
+  'seance-dirty.js': 1_650, // copies datées des écrans au calme et garde de sortie des éditeurs, partagées par Séances et l'Analyse ; Rollup nomme ce chunk d'après la garde depuis que le shell ne l'importe plus (retour à l'endroit quitté, 25/11 : 1 506 ; avant, use-dated-load.js seul : 556 aux correctifs d'intégration, 525 avant)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 

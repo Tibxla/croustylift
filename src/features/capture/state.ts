@@ -621,6 +621,10 @@ export function mergeProgress(a: CaptureState, b: CaptureState): CaptureState {
     // La disposition aussi : seul l'état local la connaît (cf. `layout`).
     layout: b.layout,
     startedAt: b.startedAt,
+    // L'exo ouvert aussi : la base ne connaît pas l'écran. L'app tuée par le
+    // système en pleine série se rouvre sur l'instrument, pas sur le Sommaire.
+    // Un exo absent de la séance rejouée retombe sur le Sommaire au rendu.
+    activeExerciseId: b.activeExerciseId,
     progress,
     datedNotes,
     closedAt: null,

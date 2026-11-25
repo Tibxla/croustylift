@@ -149,6 +149,7 @@ export function SeancesScreen() {
               { kind: 'editor', seance: copy, ctx: { ...ctx, executed: false, takenNames: [...ctx.takenNames, copy.name] } },
               { text: `Copie de ${seance.name} créée. Elle part sans historique.` },
             ),
+            'seances',
           );
         }}
         onArchive={async () => {

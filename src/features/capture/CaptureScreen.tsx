@@ -104,7 +104,7 @@ import type { IndexItem } from './ExerciseIndex';
 import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
-import { useGoToSurface } from '../../shell/navigation';
+import { useGoToSurface, useSurfaceReturn } from '../../shell/navigation';
 import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
@@ -463,8 +463,8 @@ export function CaptureScreen() {
     [lateBox],
   );
 
-  // Au montage (et à chaque retour sur l'onglet Capture, qui REMONTE l'écran),
-  // on lit la routine courante : si elle a des séances, on en propose le choix.
+  // Au montage (et au retour sur l'onglet quand aucune séance n'est ouverte, cf.
+  // plus bas), on lit la routine courante : si elle a des séances, on en propose le choix.
   // Sinon (aucune routine courante, ou routine courante sans séance), on ne crée
   // PLUS rien en silence (l'ancien fallback ensureStarterSeance est supprimé) :
   // on affiche un état vide. Un user totalement neuf ne passe pas par ici, App
@@ -530,6 +530,15 @@ export function CaptureScreen() {
       alive = false;
     };
   }, [reloadKey, loadSeance]);
+
+  // Retour sur l'onglet : la Salle est restée montée, cachée (shell/surface-memory.ts).
+  // Une séance ouverte se retrouve telle quelle (exo, série visée, côté,
+  // brouillon). Sans séance ouverte (choix, rien à logger, erreur), on relit
+  // comme l'ancien remontage : une séance créée entre-temps dans Séances
+  // apparaît, et une séance en cours reprend.
+  useSurfaceReturn(() => {
+    if (load.phase === 'choosing' || load.phase === 'empty' || load.phase === 'error') setReloadKey((k) => k + 1);
+  });
 
   // Clic sur une séance proposée : on la résout (version courante) et on charge.
   const chooseSeance = useCallback(

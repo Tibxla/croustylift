@@ -14,10 +14,11 @@
 // d'écriture, aucune mutation des autres jours : chaque op porte l'id de SA
 // ligne, scopée à cette exécution.
 //
-// Un brouillon ne se perd pas en silence : quitter l'écran (retour, ou un mot de
-// la navigation, par la garde `setLeaveGuard`) passe par une confirmation, et
-// aucun rechargement automatique n'a lieu tant qu'il existe
-// (`useReloadBlockWhile`).
+// Un brouillon ne se perd pas en silence : quitter l'écran (retour, ou « Voir au
+// Journal » qui rouvre l'Analyse, par la garde `setLeaveGuard`) passe par une
+// confirmation, et aucun rechargement automatique n'a lieu tant qu'il existe
+// (`useReloadBlockWhile`). Changer d'onglet ne le quitte pas : l'Analyse reste
+// montée, cachée, avec lui.
 import { useEffect, useMemo, useState } from 'react';
 import { Icon, IconButton, NumberRow, PrimaryButton, Ruler, ScreenHeader, SecondaryButton, SectionTitle, Sheet, Screen, TextLink } from '../../ui';
 import { useReglages } from '../../settings/reglages';
@@ -212,8 +213,8 @@ export function PastSessionEditor({
       setEditing(null);
       setDel({ phase: 'idle' });
       setPendingLeave(() => proceed);
-    });
-    return () => setLeaveGuard(null);
+    }, 'analysis');
+    return () => setLeaveGuard(null, 'analysis');
   }, [dirty]);
 
   /** Retour gardé : confirmation sur un brouillon, sortie directe sinon. */
