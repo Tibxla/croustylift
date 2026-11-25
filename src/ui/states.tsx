@@ -13,8 +13,8 @@ export function Loading({ label }: { label: string }) {
   );
 }
 
-/** Message d'alerte ou d'état, entre deux filets (jamais de bande latérale ni de
- *  couleur d'alerte). `label` en demi-gras en tête (« Erreur », par défaut) ;
+/** Message d'alerte ou d'état, dans un bloc levé arrondi (jamais de bande
+ *  latérale ni de couleur d'alerte). `label` en demi-gras en tête (« Erreur », par défaut) ;
  *  `null` pour un simple compte rendu (`role="status"`). */
 export function Alert({
   children,
@@ -30,14 +30,14 @@ export function Alert({
   className?: string;
 }) {
   return (
-    <p id={id} role={role} className={`break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink ${className}`}>
+    <p id={id} role={role} className={`break-words rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-ink ${className}`}>
       {label && <span className="font-semibold">{label} : </span>}
       {children}
     </p>
   );
 }
 
-/** Échec d'un chargement : « Erreur : » puis la phrase, entre deux filets, puis « Réessayer ». */
+/** Échec d'un chargement : « Erreur : » puis la phrase (`Alert`), puis « Réessayer ». */
 export function LoadError({ intro, message, onRetry }: { intro: string; message: string; onRetry?: () => void }) {
   return (
     <div className="px-5 pt-4">

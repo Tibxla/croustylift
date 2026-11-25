@@ -187,7 +187,7 @@ export function SessionPage({
           sur téléphone, deux rangées de deux (durée et BPM, puis volume),
           quatre colonnes de 75 px les coupaient ou les faisaient déborder ;
           une seule rangée dès qu'il y a la place. */}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-line px-5 py-3 sm:grid-cols-4">
+      <dl className="mx-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-group bg-surface px-4 py-3 sm:grid-cols-4">
         <Fact label="Durée" value={s.durationMin !== null ? formatDuration(s.durationMin) : null} />
         <Fact label="BPM" value={s.bpmAvg !== null ? String(s.bpmAvg) : null} />
         <Fact label="Séries" value={formatCount(s.setCount)} />

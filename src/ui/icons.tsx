@@ -25,9 +25,18 @@
 //   passé     cercle barré            écarté par le geste « Passer », rien d'autre
 //   à faire   aucune marque           l'absence se lit, une 4ᵉ forme serait du bruit
 // Teintes : blanc cassé (fait, en cours) et gris (passé), toutes deux à 8:1 au
-// moins sur le fond (registre U35). Jamais le signal (réservé à « mieux que la
-// Référence »), jamais le filet. Pas d'animation : la marque change à chaque
-// série loggée.
+// moins sur le fond (registre U35), jamais le filet. Pas d'animation : la marque
+// change à chaque série loggée.
+//
+// PASTILLE D'ÉTAT (`StatePill` : Sommaire, index de la Salle, fin de séance ;
+// demande du 25/11). Signe + mot + couleur, la triade :
+//   fait      pastille pleine vert sauge (`status-done`), coche, texte noir chaud
+//   en cours  pastille pleine bleu ardoise (`status-current`), cercle à moitié
+//             plein, texte noir chaud
+//   à faire   gris, sans pastille
+//   passé     gris barré, sans pastille
+// Ces deux couleurs n'ont qu'un sens chacune, comme le signal (« mieux que »).
+// Noir chaud dessus : 8,8:1 et 7,6:1 (`npm run contrast`).
 import type { ReactNode } from 'react';
 
 export type IconName =
@@ -152,6 +161,37 @@ export function StateMark({
   return (
     <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
       <StateIcon state={state} size={size} />
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
+
+/** Pastille d'état d'un exo (voir l'en-tête) : la marque et son mot dans une
+ *  pastille arrondie (`rounded-cell`), vert sauge pour « fait », bleu ardoise
+ *  pour « en cours » ; « à faire » et « passé » restent du texte gris. */
+export function StatePill({
+  state,
+  children,
+  size = 14,
+  compact = false,
+}: {
+  state: ExoState;
+  children: ReactNode;
+  size?: number;
+  /** Interligne de 20 px au lieu de 24 (index de l'instrument, ligne de 20 px). */
+  compact?: boolean;
+}) {
+  const look =
+    state === 'done'
+      ? 'rounded-cell bg-status-done px-2 font-semibold text-bg'
+      : state === 'partial'
+        ? 'rounded-cell bg-status-current px-2 font-semibold text-bg'
+        : state === 'skipped'
+          ? 'text-muted line-through decoration-1'
+          : 'text-muted';
+  return (
+    <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 ${compact ? 'leading-5' : 'leading-6'} ${look}`}>
+      <StateIcon state={state} size={size} className={state === 'skipped' ? '' : 'flex-none'} />
       <span className="min-w-0">{children}</span>
     </span>
   );

@@ -59,7 +59,16 @@ import type { PerformedSet, Range, Side } from '../../domain/types';
 import { currentSetOrder, sidesDoneAt } from '../../domain/unilateral';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import type { ExerciseOrigin, Session, SessionExercise } from './fixtures';
-import { computeSetBadges, computeSetBadgesBySide, dayRecords, summarizeBadges } from './set-badges';
+import {
+  computeSetBadges,
+  computeSetBadgesBySide,
+  dayRecords,
+  recordWord,
+  summarizeBadges,
+  verdictWords,
+  type VerdictCounts,
+  type VerdictWord,
+} from './set-badges';
 import { getProgress, type CaptureState, type ExerciseProgress } from './state';
 import { SESSION_DURATION_MAX_MIN } from './summary';
 
@@ -114,6 +123,11 @@ export interface ExerciseRecap {
   beaten: number;
   /** Séries (lignes) qui égalent la dernière fois. */
   matched: number;
+  /** Les décomptes des badges de l'exo (lignes : par côté en unilatéral). */
+  verdicts: VerdictCounts;
+  /** Ses statuts en mots, ceux du récap d'exo (`verdictWords`) : record, puis
+   *  battues, puis égalées ; en côtés pour un exo unilatéral. */
+  statuses: VerdictWord[];
   /** Les nouveaux records du jour de cet exo, par axe et par côté (cf. en-tête). */
   newRecords: RecapRecord[];
   /** kg soulevés sur cet exo. */
@@ -210,6 +224,8 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
     setsPlanned: exercise.prescription.sets,
     beaten: verdicts.battu,
     matched: verdicts.egalise,
+    verdicts,
+    statuses: verdictWords(verdicts, recordWord(badges), unilateral),
     newRecords,
     liftedKg: liftedKg(progress.sets),
     openSide,

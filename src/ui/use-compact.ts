@@ -1,10 +1,14 @@
-// Kit E · écran bas : la Salle se resserre pour garder la rangée RIR au-dessus
-// de la barre du pouce sans défiler. Deux paliers :
-//   - bas (hauteur ≤ 800 px, ex. 360×780) : `useCompact` ;
+// Kit E · écran bas : la Salle se resserre pour garder ses plaques de réglage
+// (poids, Reps, RIR) au-dessus du pied sans défiler. Deux paliers :
+//   - bas (hauteur ≤ 800 px, ex. 360×780, et l'iPhone de l'utilisateur en écran
+//     d'accueil, 393×793) : `useCompact`. Poids à 64 px (56 en unilatéral),
+//     règle de 48 px, air de 10 px ;
 //   - très bas (hauteur ≤ 700 px, ex. iPhone SE en écran d'accueil, 375×667) :
-//     `useCompactTight`, en plus du premier. Poids à 48 px, bande et barre plus
-//     serrées : au premier palier seul, la rangée RIR y passait 13 px sous la
-//     barre (audit UI du 24/11).
+//     `useCompactTight`, en plus du premier. Poids à 48 px, règle et rangées de
+//     44 px, air de 6 px, et plus d'index des exos : sans cela, la variante A4
+//     passait 15 px sous le pied (mesuré le 25/11, barre d'état de 20 px et
+//     ancienne marge de navigation de 14 px comprises ; cette marge est à 0
+//     depuis que la navigation est collée sous la barre d'état).
 import { useSyncExternalStore } from 'react';
 
 const QUERY = '(max-height: 800px)';

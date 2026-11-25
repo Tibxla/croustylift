@@ -143,13 +143,16 @@ describe('hasUnsavedEdits (garde de sortie et blocage de rechargement)', () => {
 })
 
 // Garde de sortie : un écran aux modifications non enregistrées s'interpose
-// avant qu'on le quitte (retour, changement d'onglet).
+// avant qu'on le quitte (retour dans l'écran, intention qui le remplace).
 describe('garde de sortie', () => {
-  afterEach(() => setLeaveGuard(null))
+  afterEach(() => {
+    setLeaveGuard(null, 'seances')
+    setLeaveGuard(null, 'analysis')
+  })
 
   it('sans garde, on sort tout de suite', () => {
     const proceed = vi.fn()
-    requestLeave(proceed)
+    requestLeave(proceed, 'seances')
     expect(proceed).toHaveBeenCalledOnce()
   })
 
@@ -158,18 +161,41 @@ describe('garde de sortie', () => {
     let pending: (() => void) | null = null
     setLeaveGuard((go) => {
       pending = go
-    })
-    requestLeave(proceed)
+    }, 'seances')
+    requestLeave(proceed, 'seances')
     expect(proceed).not.toHaveBeenCalled()
     pending!()
     expect(proceed).toHaveBeenCalledOnce()
   })
 
   it('la garde retirée, on sort de nouveau tout de suite', () => {
-    setLeaveGuard(() => {})
-    setLeaveGuard(null)
+    setLeaveGuard(() => {}, 'seances')
+    setLeaveGuard(null, 'seances')
     const proceed = vi.fn()
-    requestLeave(proceed)
+    requestLeave(proceed, 'seances')
+    expect(proceed).toHaveBeenCalledOnce()
+  })
+
+  // Les onglets restent montés : l'éditeur de Séances et la correction d'une
+  // séance passée (Analyse) peuvent tenir chacun un brouillon en même temps.
+  it('une garde par surface : celle de l’Analyse n’écrase ni n’efface celle de Séances', () => {
+    let seancesAsked = 0
+    let analysisAsked = 0
+    setLeaveGuard(() => {
+      seancesAsked += 1
+    }, 'seances')
+    setLeaveGuard(() => {
+      analysisAsked += 1
+    }, 'analysis')
+    requestLeave(() => {}, 'seances')
+    expect([seancesAsked, analysisAsked]).toEqual([1, 0])
+    // La correction se referme : la garde de Séances tient toujours.
+    setLeaveGuard(null, 'analysis')
+    const proceed = vi.fn()
+    requestLeave(proceed, 'seances')
+    expect(seancesAsked).toBe(2)
+    expect(proceed).not.toHaveBeenCalled()
+    requestLeave(proceed, 'analysis')
     expect(proceed).toHaveBeenCalledOnce()
   })
 })

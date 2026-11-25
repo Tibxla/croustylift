@@ -1,7 +1,8 @@
 // Kit E · bandeau de synchro, une seule ligne (il ne doit pas pousser
 // l'instrument). Le shell le pose sous la navigation ; il ne s'affiche que s'il
 // y a quelque chose à dire (src/shell/sync-line.ts). Un mot en blanc cassé, le
-// détail en gris, entre deux filets ; jamais de couleur d'alerte.
+// détail en gris, dans un bloc levé arrondi retiré des bords ; jamais de
+// couleur d'alerte.
 //
 // `action` (saisies refusées) : toute la ligne devient un bouton qui ouvre
 // l'écran des saisies refusées, son libellé souligné au bout (« 2 refusées ») :
@@ -27,18 +28,18 @@ export function SyncBanner({
   );
   if (!action) {
     return (
-      <div role="status" className="flex items-baseline gap-2 whitespace-nowrap border-y border-line px-5 py-2 text-[14px]">
+      <div role="status" className="mx-4 flex items-baseline gap-2 whitespace-nowrap rounded-note bg-surface px-4 py-2 text-[14px]">
         {content}
       </div>
     );
   }
   return (
-    <div role="status" className="border-y border-line">
+    <div role="status" className="mx-4">
       <button
         type="button"
         onClick={action.onClick}
         aria-label={`${line.detail ? `${line.title}, ${line.detail}` : line.title}. Voir les saisies refusées`}
-        className="relative flex w-full items-baseline gap-2 whitespace-nowrap px-5 py-2 text-left text-[14px] before:absolute before:inset-x-0 before:-bottom-1 before:-top-1 active:bg-line"
+        className="relative flex w-full items-baseline gap-2 whitespace-nowrap rounded-note bg-surface px-4 py-2 text-left text-[14px] before:absolute before:inset-x-0 before:-bottom-1 before:-top-1 active:bg-line"
       >
         {content}
         <span className="ml-auto flex-none pl-2 text-ink underline decoration-1 underline-offset-4">{line.detail ? action.label : 'Voir'}</span>

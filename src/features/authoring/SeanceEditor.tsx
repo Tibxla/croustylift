@@ -80,6 +80,9 @@ import {
   Alert,
   Choice,
   EmptyState,
+  GROUP,
+  GROUP_ROW,
+  GROUP_RULE,
   Icon,
   IconButton,
   List,
@@ -410,8 +413,8 @@ export function SeanceEditorView({
       setNoteFor(null);
       setMenuOpen(false);
       setPendingLeave(() => proceed);
-    });
-    return () => setLeaveGuard(null);
+    }, 'seances');
+    return () => setLeaveGuard(null, 'seances');
   }, [unsaved]);
 
   // Tant que l'éditeur porte une saisie non enregistrée (prescriptions ou note),
@@ -429,7 +432,7 @@ export function SeanceEditorView({
   /** Quitte sans repasser par la garde (abandon confirmé). Archiver ou supprimer
    *  la séance démonte l'éditeur : la garde et le blocage tombent avec lui. */
   function leaveNow(proceed: () => void) {
-    setLeaveGuard(null);
+    setLeaveGuard(null, 'seances');
     releaseDraft();
     proceed();
   }
@@ -535,7 +538,7 @@ export function SeanceEditorView({
       // Laisse la confirmation visible un instant, puis retour. Par la garde de
       // sortie : s'il reste le brouillon d'une note, elle demande avant de partir.
       if (backTimerRef.current != null) clearTimeout(backTimerRef.current);
-      backTimerRef.current = setTimeout(() => requestLeave(onBack), 900);
+      backTimerRef.current = setTimeout(() => requestLeave(onBack, 'seances'), 900);
     } catch (err) {
       if (leavingRef.current) return; // la sortie en cours rapporte l'échec elle-même
       setSave(saveFailed(errorMessage(err)));
@@ -782,7 +785,7 @@ export function SeanceEditorView({
         />
       ) : (
         <>
-          <ul aria-label="Exos de la séance" className="border-t border-line">
+          <ul aria-label="Exos de la séance" className={GROUP}>
             {rows.map((row, i) => {
               if (reorder) {
                 return (
@@ -925,12 +928,13 @@ function ItemBlock({
   const name = row.exerciseName;
   const hasNote = !isBlankNote(note);
   return (
-    <li id={`exo-${row.rowId}`} className="relative scroll-mt-[calc(var(--safe-top)+0.5rem)] border-b border-line">
+    <li id={`exo-${row.rowId}`} className={`${GROUP_ROW} scroll-mt-[calc(var(--safe-top)+0.5rem)]`}>
       <button
         type="button"
+        data-row-hit
         aria-expanded={open}
         onClick={onToggle}
-        className="flex min-h-16 w-full items-start gap-3 px-5 py-3 text-left active:opacity-70"
+        className="flex min-h-16 w-full items-start gap-3 px-4 py-3 text-left"
       >
         <span className="tnum w-6 flex-none pt-px text-[15px] text-faint">{rank}</span>
         <span className="min-w-0 flex-1">
@@ -949,12 +953,12 @@ function ItemBlock({
       </button>
       {open && (
         <div className="pb-3">
-          <div className="border-t border-line">
+          <div className={GROUP_RULE}>
             {(['sets', 'reps', 'rir'] as const).map((k) => (
               <FieldEditor key={k} k={k} value={row[k]} onChange={(f) => onField(k, f)} />
             ))}
           </div>
-          <div className="px-5 pt-2">
+          <div className="px-4 pt-2">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <p className="text-[15px] font-semibold text-ink">Note d’instructions</p>
               <IconButton icon="edit" tone="muted" className="-mr-2.5" onClick={onNote} label={`${hasNote ? 'Modifier' : 'Ajouter'} la note de ${name}`} />
@@ -970,7 +974,7 @@ function ItemBlock({
               </TextLink>
             )}
           </div>
-          <div className="mt-3 flex border-t border-line px-5 pt-3">
+          <div className={`${GROUP_RULE} mt-3 flex px-4 pt-3`}>
             <SecondaryButton size="sm" onClick={onRemove} ariaLabel={`Retirer ${name} de la séance`}>
               Retirer
             </SecondaryButton>
@@ -989,7 +993,6 @@ function FieldEditor({ k, value, onChange }: { k: FieldKey; value: FieldValue; o
   const mode = (
     <Choice
       label={`${label}, type de prescription`}
-      className="-ml-2.5 mt-0.5"
       value={value.mode}
       onChange={(m) => {
         if (m !== value.mode) onChange(toggleMode(value));
@@ -1001,11 +1004,11 @@ function FieldEditor({ k, value, onChange }: { k: FieldKey; value: FieldValue; o
     />
   );
   if (value.mode === 'fixe') {
-    return <Stepper label={label} meta={mode} value={value.min} min={floor} max={ceil} onChange={(n) => onChange(setMin(value, n, floor))} />;
+    return <Stepper label={label} below={mode} value={value.min} min={floor} max={ceil} onChange={(n) => onChange(setMin(value, n, floor))} />;
   }
   return (
     <>
-      <Stepper label={`${label} min`} meta={mode} value={value.min} min={floor} max={value.max} onChange={(n) => onChange(setMin(value, n, floor))} />
+      <Stepper label={`${label} min`} below={mode} value={value.min} min={floor} max={value.max} onChange={(n) => onChange(setMin(value, n, floor))} />
       <Stepper label={`${label} max`} value={value.max} min={value.min} max={ceil} onChange={(n) => onChange(setMax(value, n, floor))} />
     </>
   );
@@ -1032,15 +1035,15 @@ function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows
     <section aria-label="Décompte des séries prévues">
       <SectionTitle aside={dirty && total !== totalBefore ? `${total} au total · avant ${totalBefore}` : `${total} au total`}>Séries prévues</SectionTitle>
       {muscles.length === 0 ? (
-        <p className="border-t border-line px-5 pt-2.5 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
+        <p className="mx-4 rounded-note bg-surface px-4 py-3 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
       ) : (
-        <dl className="grid grid-cols-2 border-t border-line">
+        <dl className="mx-4 grid grid-cols-2 rounded-group bg-surface py-1">
           {muscles.map((m, i) => {
             const v = fmtCountRange(now.byMuscle[m] ?? zero);
             const b = fmtCountRange(before.byMuscle[m] ?? zero);
             const changed = dirty && v !== b;
             return (
-              <div key={m} className={`border-b border-line py-2.5 ${i % 2 === 0 ? 'border-r pl-5 pr-3' : 'pl-4 pr-5'}`}>
+              <div key={m} className={`py-2 ${i % 2 === 0 ? 'pl-4 pr-3' : 'pl-3 pr-4'}`}>
                 <dt className="text-[14px] text-muted">{muscleLabel(m)}</dt>
                 <dd className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
                   <span className={`text-[22px] leading-tight tracking-[-0.01em] text-ink ${changed ? 'font-semibold' : 'font-medium'}`}>{v}</span>
@@ -1121,7 +1124,7 @@ function CatalogSheet({
       <div className="px-5 pb-1">
         <TextField type="search" label="Chercher un exo" hideLabel placeholder="Chercher un exo" value={q} onChange={setQ} enterKeyHint="search" />
       </div>
-      <div className="overflow-x-auto px-3" style={{ scrollbarWidth: 'none' }}>
+      <div className="overflow-x-auto px-4" style={{ scrollbarWidth: 'none' }}>
         <Choice
           label="Muscle"
           wrap={false}
@@ -1131,7 +1134,7 @@ function CatalogSheet({
         />
       </div>
       {shown.length === 0 ? (
-        <p className="border-t border-line px-5 py-6 text-[15px] text-muted">
+        <p className="mx-4 rounded-note bg-surface px-4 py-6 text-[15px] text-muted">
           Aucun exo ne correspond{q.trim() ? ` à « ${q.trim()} »` : ''}
           {muscle !== ALL ? ` dans ${muscleLabel(muscle)}` : ''}.
         </p>

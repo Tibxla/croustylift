@@ -1,8 +1,10 @@
 // Index des exos en haut de l'instrument : un numéro par exo, sa marque d'état
 // (fait, en cours, passé) et une jauge de ses séries. Toucher un numéro ouvre
 // l'exo (alternance, superset). Le mot de l'état est dans le nom accessible :
-// la colonne est trop étroite pour lui.
-import { StateIcon, type ExoState } from '../../ui';
+// la colonne est trop étroite pour lui. Le numéro et sa marque prennent la
+// pastille d'état du Sommaire (`StatePill`, kit) : vert sauge pour un exo fait,
+// bleu ardoise pour un exo entamé ; la ligne garde sa hauteur.
+import { StatePill, type ExoState } from '../../ui';
 import { EXO_STATE_WORD } from './salle-progress';
 
 export interface IndexItem {
@@ -39,9 +41,12 @@ export function ExerciseIndex({
             onClick={() => onPick(it.exerciseId)}
             className="flex h-11 min-w-0 flex-col justify-center px-2"
           >
-            <span className={`tnum flex h-5 items-center gap-1 text-left text-[14px] ${active ? 'font-semibold text-ink' : 'text-muted'}`}>
-              {i + 1}
-              <StateIcon state={it.state} size={14} />
+            <span className={`tnum flex h-5 items-center text-left text-[14px] ${active ? 'font-semibold' : ''}`}>
+              <span className={it.state === 'done' || it.state === 'partial' ? '-ml-2' : ''}>
+                <StatePill state={it.state} size={13} compact>
+                  <span className={it.state === 'todo' && active ? 'text-ink' : ''}>{i + 1}</span>
+                </StatePill>
+              </span>
             </span>
             {it.state === 'skipped' ? (
               <span className="mt-1.5 block h-[3px] w-full border-t-[3px] border-dashed border-dim" />

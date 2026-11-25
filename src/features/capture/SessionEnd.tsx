@@ -1,12 +1,14 @@
 // Fin de séance (la Clôture), en deux temps sur la même page.
 //
-//   1. Avant « Ranger la séance » : le récap de l'exécution (`buildSessionRecap`,
+//   1. Avant « Ranger la séance » : en tête, sous le titre, les mesures à
+//      saisir (demande du 25/11 : on ne descend pas tout le récap pour les
+//      noter) : la durée chronométrée, corrigeable par crans de 5 min
+//      (`nudgeDuration`), et le BPM moyen facultatif, réglé à la règle (jamais
+//      de clavier). Puis le récap de l'exécution (`buildSessionRecap`,
 //      session-recap.ts) : séries, battues, kg soulevés, nouveaux records ; les
 //      exos un par un, y compris en cours, passés ou pas faits ; les séries par
 //      muscle de la SEMAINE civile contre le prévu de la routine
-//      (`weekSetsByMuscle`, lu par week-muscles.ts) ; la durée chronométrée,
-//      corrigeable par crans de 5 min (`nudgeDuration`) ; le BPM moyen
-//      facultatif, réglé à la règle (jamais de clavier).
+//      (`weekSetsByMuscle`, lu par week-muscles.ts).
 //   2. Après : « Séance rangée », le récap court, le lien « Voir au
 //      Journal » et « Nouvelle séance ». La Clôture est transitoire (ADR
 //      0009) : remontée, la page ne revient pas. Le lien ouvre l'Analyse sur
@@ -31,6 +33,9 @@ import { useSyncState } from '../../shell/useSyncState';
 import { setSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import {
   Alert,
+  type ExoState,
+  GROUP,
+  GROUP_ROW,
   IconButton,
   List,
   PrimaryButton,
@@ -40,11 +45,10 @@ import {
   ScreenHeader,
   SectionTitle,
   Sign,
+  StatePill,
   Status,
-  StateMark,
   Stepper,
   TextLink,
-  type ExoState,
 } from '../../ui';
 import { formatCount, formatE1rm, formatWeight } from './format';
 import {
@@ -173,24 +177,11 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
     >
       <ScreenHeader title="Fin de séance" meta={`${recap.sessionName} · ${fmtDay(dateIso)}`} back={{ label: 'Séance', onClick: onBack }} />
 
-      <Figures recap={recap} />
-
-      <section aria-labelledby="fin-exos">
-        <SectionTitle id="fin-exos" aside={exosAside(recap.counts)}>
-          Exos
-        </SectionTitle>
-        <List label="Exercices de la séance">
-          {recap.exercises.map((e, i) => (
-            <ExoLine key={e.exerciseId} e={e} i={i} />
-          ))}
-        </List>
-      </section>
-
-      <MuscleWeek today={today} week={week} dateIso={dateIso} />
-
+      {/* Les mesures d’abord, sous le titre : à la fin d’une séance, on ne
+          descend pas tout le récap pour noter le BPM. */}
       <section aria-labelledby="fin-mesures">
         <SectionTitle id="fin-mesures">Durée et cardio</SectionTitle>
-        <div className="border-t border-line">
+        <div className={GROUP}>
           {durOpen ? (
             <>
               <Stepper
@@ -204,7 +195,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
                 onChange={(v) => setDuration((d) => nudgeDuration(d, v > (d ?? 0) ? 1 : -1))}
                 valueWidth={56}
               />
-              <div className="flex justify-end border-b border-line px-5">
+              <div className={`${GROUP_ROW} flex justify-end px-4`}>
                 {duration !== durationMin ? (
                   <TextLink tone="muted" onClick={() => setDuration(durationMin)}>
                     Revenir au chrono
@@ -225,8 +216,8 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
             />
           )}
           {bpmOn ? (
-            <div className="border-b border-line pb-1 pt-3">
-              <p className="tnum px-5 text-center text-[32px] font-[650] leading-none tracking-[-0.03em] text-ink" aria-hidden>
+            <div className={`${GROUP_ROW} pb-1 pt-3`}>
+              <p className="tnum px-4 text-center text-[32px] font-[650] leading-none tracking-[-0.03em] text-ink" aria-hidden>
                 {bpm}
                 <span className="ml-1.5 text-[17px] font-medium text-muted">bpm</span>
               </p>
@@ -243,7 +234,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
                   onChange={(s) => setBpm(s + BPM_MIN)}
                 />
               </div>
-              <div className="flex justify-end px-5">
+              <div className="flex justify-end px-4">
                 <TextLink tone="muted" onClick={() => setBpmOn(false)}>
                   Retirer le BPM moyen
                 </TextLink>
@@ -260,8 +251,23 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
         </div>
       </section>
 
+      <Figures recap={recap} />
+
+      <section aria-labelledby="fin-exos">
+        <SectionTitle id="fin-exos" aside={exosAside(recap.counts)}>
+          Exos
+        </SectionTitle>
+        <List label="Exercices de la séance">
+          {recap.exercises.map((e, i) => (
+            <ExoLine key={e.exerciseId} e={e} i={i} />
+          ))}
+        </List>
+      </section>
+
+      <MuscleWeek today={today} week={week} dateIso={dateIso} />
+
       {error && (
-        <Alert label="Échec de l’enregistrement" className="mx-5 mt-4">
+        <Alert label="Échec de l’enregistrement" className="mx-4 mt-4">
           {error}
         </Alert>
       )}
@@ -281,7 +287,7 @@ function exosAside(c: Record<ExerciseStatus, number>): string {
 function Figures({ recap }: { recap: SessionRecap }) {
   const records = recap.records.length;
   return (
-    <dl className="grid grid-cols-3 gap-3 px-5">
+    <dl className="grid grid-cols-3 gap-3 px-5 pt-7">
       <div>
         <dt className="text-[13px] text-muted">Séries</dt>
         <dd className="tnum mt-1 text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">{recap.setsLogged}</dd>
@@ -328,8 +334,11 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
               {e.status === 'en-cours' && ` sur ${e.setsPlanned.min}`}
               {side && `, ${side}`}
             </span>
-            {e.beaten > 0 && <Status v="up" word={`${e.beaten} battue${e.beaten > 1 ? 's' : ''}`} />}
-            {e.matched > 0 && <Status v="eq" word={`${e.matched} égalée${e.matched > 1 ? 's' : ''}`} />}
+            {/* Battues et égalées en mots partagés (`verdictWords`, en côtés pour
+                un exo unilatéral) ; les records suivent, avec leur valeur. */}
+            {e.statuses.slice(e.verdicts.record > 0 ? 1 : 0).map((st) => (
+              <Status key={st.word} v={st.v} word={st.word} />
+            ))}
             {e.newRecords.map((r) => (
               <Status key={`${r.axis}-${r.side ?? ''}`} v="up" word={`${recordNoun(r)}${r.side ? ` ${sideWord(r.side)}` : ''} ${recordValue(r)}`} />
             ))}
@@ -340,9 +349,11 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
         )
       }
       value={
-        <StateMark state={STATUS_MARK[e.status]} size={15} className={`text-[15px] ${worked ? 'font-medium text-ink' : 'font-normal text-muted'}`}>
-          {STATUS_WORD[e.status]}
-        </StateMark>
+        // La pastille d'état du Sommaire (kit) : « fait » en couleur, « en
+        // cours » en contour, le reste en gris.
+        <span className="text-[15px]">
+          <StatePill state={STATUS_MARK[e.status]}>{STATUS_WORD[e.status]}</StatePill>
+        </span>
       }
     />
   );
@@ -351,7 +362,7 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
 /** Ligne de mesure repliée : libellé, méta, valeur, action à droite. */
 function MeasureLine({ label, meta, value, action }: { label: string; meta: string; value: ReactNode; action: ReactNode }) {
   return (
-    <div className="flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
+    <div className={`${GROUP_ROW} flex min-h-16 items-center gap-3 px-4 py-2`}>
       <span className="min-w-0 flex-1">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
         <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>
@@ -425,7 +436,7 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
         {context}
       </p>
       <Legend />
-      <ul aria-label="Séries par muscle, semaine" className="border-t border-line">
+      <ul aria-label="Séries par muscle, semaine" className={GROUP}>
         {shown.map((r) => (
           <MuscleLine key={r.muscle} r={r} scale={scale} planKnown={week?.planned != null} />
         ))}
@@ -466,7 +477,7 @@ function MuscleLine({ r, scale, planKnown }: { r: WeekMuscleRow; scale: number; 
   const name = r.muscle.charAt(0).toUpperCase() + r.muscle.slice(1);
   return (
     <li
-      className="border-b border-line px-5 py-3"
+      className={`${GROUP_ROW} px-4 py-3`}
       aria-label={`${name} : ${tally(r.total)} séries cette semaine, dont ${tally(r.today)} aujourd’hui.${
         r.planned ? ` Prévu ${tally(r.planned.min)} à ${tally(r.planned.max)}, ${fit}.` : planKnown ? ' Hors du prévu de la routine.' : ''
       }`}
@@ -549,7 +560,7 @@ function SessionDone({
   return (
     <Screen bottom={<PrimaryButton onClick={onNewSession}>Nouvelle séance</PrimaryButton>}>
       <ScreenHeader title="Séance rangée" meta={`${recap.sessionName} · ${fmtDay(dateIso)}${span ? `, ${span}` : ''}`} />
-      <dl className="border-t border-line">
+      <dl className={GROUP}>
         {values.durationMin !== undefined && <Fact label="Durée" value={fmtDur(values.durationMin)} />}
         <Fact
           label="Séries"
@@ -583,7 +594,7 @@ function SessionDone({
  *  au besoin, « nouveau record » dessous, la valeur à droite en signal. */
 function RecordFact({ r }: { r: RecapRecord }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+    <div className={`${GROUP_ROW} flex min-h-12 items-center justify-between gap-4 px-4 py-2.5`}>
       <dt className="min-w-0">
         <span className="block break-words text-[16px] leading-[1.3] text-ink">
           {r.name}
@@ -600,7 +611,7 @@ function RecordFact({ r }: { r: RecapRecord }) {
 
 function Fact({ label, value, aside }: { label: string; value: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+    <div className={`${GROUP_ROW} flex min-h-12 items-center justify-between gap-4 px-4 py-2.5`}>
       <dt className="flex min-w-0 items-center gap-3">
         <span className="truncate text-[16px] text-muted">{label}</span>
         {aside && <span className="flex-none text-[14px]">{aside}</span>}

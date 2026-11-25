@@ -39,13 +39,14 @@ import {
   ScreenHeader,
   SecondaryButton,
   Sheet,
-  StateMark,
+  StatePill,
   Status,
   TextLink,
   type ExoState,
 } from '../../ui';
 import type { Side } from '../../domain/types';
 import { buildSessionRecap } from './session-recap';
+import type { VerdictWord } from './set-badges';
 import { EXO_STATE_WORD, exoState, logicalSetsDone } from './salle-progress';
 
 interface ExercisePickerProps {
@@ -150,10 +151,9 @@ export function ExercisePicker({
 
         {/* Séance d'un jour passé restée ouverte : on le dit, avec ses sorties. */}
         {staleSince && (
-          // Entre deux filets, sans trait latéral (plancher : aucune barre sur
-          // un seul côté d'un bloc) : le filet haut ici, le bas est celui qui
-          // ouvre la liste juste dessous (un seul trait, pas deux).
-          <div role="status" className="mx-5 border-t border-line pb-4 pt-3">
+          // Un avis dans un bloc levé arrondi, sans trait latéral (plancher :
+          // aucune barre sur un seul côté d'un bloc), au-dessus de la liste.
+          <div role="status" className="mx-4 mb-4 rounded-note bg-surface px-4 pb-4 pt-3">
             <p className="text-[15px] leading-[1.45] text-ink">Cette séance date d’{staleSince} et n’a pas été terminée.</p>
             <p className="mt-1 text-[14px] leading-[1.45] text-muted">
               {canFinish
@@ -196,7 +196,7 @@ export function ExercisePicker({
                       plan={plan}
                       origin={deviation === 'added' ? 'ajouté' : deviation === 'swapped' ? 'remplacé' : null}
                       openSide={recapById.get(ex.exerciseId)?.openSide ?? null}
-                      beaten={recapById.get(ex.exerciseId)?.beaten ?? 0}
+                      statuses={recapById.get(ex.exerciseId)?.statuses ?? []}
                     />
                   }
                   trailing={
@@ -330,7 +330,7 @@ function SommaireMeta({
   plan,
   origin,
   openSide,
-  beaten,
+  statuses,
 }: {
   state: ExoState;
   count: number;
@@ -338,7 +338,9 @@ function SommaireMeta({
   plan: string;
   origin: string | null;
   openSide: Side | null;
-  beaten: number;
+  /** Les statuts de l'exo, ceux du récap d'exo (`verdictWords`) : record, puis
+   *  battues, puis égalées ; en côtés pour un exo unilatéral. */
+  statuses: VerdictWord[];
 }) {
   const series = (n: number) => `${n} série${n > 1 ? 's' : ''}`;
   const side = openSide ? `${openSide === 'left' ? 'gauche' : 'droite'} faite` : null;
@@ -351,14 +353,20 @@ function SommaireMeta({
           {tail}
         </span>
       ) : (
-        <StateMark state={state} size={14} className={state === 'skipped' ? 'text-muted' : 'font-medium text-ink'}>
-          {state === 'skipped' && EXO_STATE_WORD.skipped}
-          {state === 'partial' && ['en cours', count > 0 ? `${series(count)} sur ${min}` : null, side].filter(Boolean).join(' · ')}
-          {state === 'done' && ['fait', series(count), side].filter(Boolean).join(' · ')}
+        // Pastille d'état (kit, `StatePill`) : « fait » en couleur pleine, « en
+        // cours » en contour, « passé » barré. L'origine reste hors pastille.
+        <>
+          <StatePill state={state}>
+            {state === 'skipped' && EXO_STATE_WORD.skipped}
+            {state === 'partial' && ['en cours', count > 0 ? `${series(count)} sur ${min}` : null, side].filter(Boolean).join(' · ')}
+            {state === 'done' && ['fait', series(count), side].filter(Boolean).join(' · ')}
+          </StatePill>
           {tail}
-        </StateMark>
+        </>
       )}
-      {beaten > 0 && <Status v="up" word={`${beaten} battue${beaten > 1 ? 's' : ''}`} />}
+      {statuses.map((st) => (
+        <Status key={st.word} v={st.v} word={st.word} />
+      ))}
     </span>
   );
 }
@@ -501,11 +509,11 @@ function CatalogList({
         />
       </div>
       {pickError && (
-        <Alert className="mx-5 mb-3">{pickError}</Alert>
+        <Alert className="mx-4 mb-3">{pickError}</Alert>
       )}
       {loadError ? (
-        <div role="alert" className="px-5 py-4">
-          <p className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+        <div role="alert" className="px-4 py-4">
+          <p className="break-words rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-ink">
             <span className="font-semibold">Erreur : </span>
             {loadError}
           </p>

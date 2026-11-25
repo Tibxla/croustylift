@@ -1,14 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { requestLeave, setLeaveGuard } from './features/authoring/seance-dirty'
+import { setLeaveGuard } from './features/authoring/seance-dirty'
 import { switchSurface, type SurfaceSwitchEffects } from './surface-switch'
 
-/** Effets espions, branchés sur la VRAIE garde de sortie. */
+/** Effets espions. */
 function effects(): { calls: string[]; fx: SurfaceSwitchEffects } {
   const calls: string[] = []
   return {
     calls,
     fx: {
-      requestLeave,
       requestReload: (trigger, target) => {
         calls.push(`reload:${trigger}:${target}`)
         return false
@@ -18,35 +17,24 @@ function effects(): { calls: string[]; fx: SurfaceSwitchEffects } {
   }
 }
 
-afterEach(() => setLeaveGuard(null))
+afterEach(() => setLeaveGuard(null, 'seances'))
 
 describe('switchSurface', () => {
-  it('sans garde : demande le rechargement puis affiche l’onglet', () => {
+  it('demande le rechargement puis affiche l’onglet', () => {
     const { calls, fx } = effects()
     switchSurface('analysis', 'capture', fx)
     expect(calls).toEqual(['reload:surface-change:analysis', 'show:analysis'])
   })
 
-  it('l’utilisateur refuse de quitter : ni rechargement, ni changement d’onglet', () => {
+  it('un éditeur qui porte un brouillon ne retient pas le changement d’onglet : il reste monté, caché', () => {
     const { calls, fx } = effects()
-    // La garde garde la suite sans jamais l'appeler (« Continuer l'édition »).
-    setLeaveGuard(() => {})
-    switchSurface('analysis', 'seances', fx)
-    expect(calls).toEqual([])
-  })
-
-  it('rien ne se passe AVANT la réponse ; une fois la sortie acceptée, rechargement puis onglet', () => {
-    const { calls, fx } = effects()
-    let accept: (() => void) | null = null
-    setLeaveGuard((proceed) => {
-      accept = proceed
-    })
-    switchSurface('exercises', 'seances', fx)
-    expect(calls).toEqual([])
-    // « Quitter » : l'écran retire sa garde, puis laisse passer.
-    setLeaveGuard(null)
-    accept!()
-    expect(calls).toEqual(['reload:surface-change:exercises', 'show:exercises'])
+    let asked = false
+    setLeaveGuard(() => {
+      asked = true
+    }, 'seances')
+    switchSurface('reglages', 'seances', fx)
+    expect(asked).toBe(false)
+    expect(calls).toEqual(['reload:surface-change:reglages', 'show:reglages'])
   })
 
   it('affiche l’onglet même si le rechargement est accepté (il peut tarder)', () => {
@@ -55,28 +43,10 @@ describe('switchSurface', () => {
     expect(calls).toEqual(['show:analysis'])
   })
 
-  it('tap sur l’onglet déjà affiché : pas de garde, pas de rechargement', () => {
+  it('tap sur l’onglet déjà affiché : pas de rechargement', () => {
     const { calls, fx } = effects()
-    let asked = false
-    setLeaveGuard(() => {
-      asked = true
-    })
     switchSurface('seances', 'seances', fx)
-    expect(asked).toBe(false)
     expect(calls).toEqual(['show:seances'])
-  })
-
-  it('vers les Réglages : la garde de sortie passe d’abord, puis rechargement et onglet', () => {
-    const { calls, fx } = effects()
-    let accept: (() => void) | null = null
-    setLeaveGuard((proceed) => {
-      accept = proceed
-    })
-    switchSurface('reglages', 'seances', fx)
-    expect(calls).toEqual([])
-    setLeaveGuard(null)
-    accept!()
-    expect(calls).toEqual(['reload:surface-change:reglages', 'show:reglages'])
   })
 
   it('depuis les Réglages vers la Salle : la demande de rechargement vise la Salle', () => {

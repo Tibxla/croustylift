@@ -179,7 +179,7 @@ export function SetEditSheet({
                 value={shownSide}
                 onChange={setPickedSide}
                 wrap={false}
-                className="-ml-2.5 flex-none"
+                className="flex-none"
               />
               {ref ? (
                 <p className="min-w-0 text-right leading-tight">

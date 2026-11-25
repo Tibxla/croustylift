@@ -238,3 +238,16 @@ Même cause : `ackedInMeta` part en fin de passe (`sync.ts`), alors que le regis
 - Deux onglets : l'onglet qui montre « Quelle séance ? » peut recalculer sur l'événement `storage` du registre et afficher un instant la date d'une séance supprimée dans l'autre onglet, jusqu'au prochain changement de file. Piste : faire écouter aussi `salle-acquittees` et `ackgen` à `onQueueChanged`, ou poser `ackedInMeta` au moment de l'acquittement.
 - Rechargement en pleine passe : le `settled` est perdu, la ligne garde l'ancienne date hors ligne jusqu'à la première relecture en ligne. Les séries ne sont pas touchées.
 - Sélecteur monté en pleine passe : la date est fausse le temps de la passe, la fin de passe la corrige.
+
+### Instrument A4 de la Salle (2026-11-25), relecture
+
+- **Rang et ordre de la Référence, décalés au premier trou** (mineur, antérieur à
+  A4). « Dernière fois » cherche la Référence par POSITION dans la bande (le rang
+  que vise la saisie, `ExerciseCapture.tsx`), le badge d'une série loggée par son
+  ORDRE réel (`referenceVerdict`, set-badges.ts). Tant que les ordres se suivent
+  sans trou ni doublon, c'est la même série ; après un doublon venu d'un autre
+  appareil ou un trou de rang, les deux visent des Références différentes. Avec
+  la position en direct (ADR 0010, amendement du 2026-11-25), le décalage se
+  voit : l'indicateur d'avant le log peut dire « ▲ au-dessus » d'une série que
+  le badge d'après ne compare pas. Piste : une seule fonction « Référence de la
+  série visée », par ordre, pour l'instrument comme pour les badges.

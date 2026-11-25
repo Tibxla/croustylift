@@ -1,56 +1,66 @@
-// L'instrument de la Salle (refonte E « Signal ») : un seul exo à l'écran.
+// L'instrument de la Salle (refonte E « Signal », variante A4 « Pied léger,
+// aéré » validée par l'utilisateur le 25/11) : un seul exo à l'écran, en deux
+// zones. Le pied (Sommaire, Annuler, Exo suivant, Logger) vit dans CaptureScreen.
 //
-// De haut en bas : l'index des exos (toucher un numéro ouvre l'exo), le nom et
-// UNE ligne (le plan, puis le bilan dès le minimum de séries), l'icône Notes,
-// la bande des séries, la ligne « réf. série n » (ou le choix du côté en
-// unilatéral), le poids lu en grand (toucher = saisie précise au clavier), la
-// règle de poids à élan (pas réglé dans Réglages), la mesure du brouillon,
-// l'écart à la Référence et le record, puis reps et RIR en un tap. La barre du
-// bas (Sommaire, Annuler, Exo suivant, Logger) vit dans CaptureScreen.
+// HAUT, ce qui se LIT : l'index des exos (toucher un numéro ouvre l'exo), le nom,
+// « Série n sur N » et le plan (puis le bilan dès le minimum de séries, qui
+// rouvre le récap), l'icône Notes, la bande des séries sur une ligne
+// (SetBand.tsx), puis le bloc toujours visible : « Cette série » et la mesure du
+// brouillon en grand, puis « Dernière fois » (la Référence du même rang et du
+// même côté) et « Record » (le record e1RM courant), chacun avec la position du
+// brouillon en direct (« ▲ +3,2 au-dessus », « ▬ à égalité », « ▼ −6,3 en
+// dessous », draft-score.ts). En unilatéral, Gauche · Droite prend la place de
+// « Cette série », sur la même ligne.
 //
-// RYTHME VERTICAL (retour du 25/11, « tout est serré ») : cinq groupes, les
-// repères de l'exo, la Référence avec le poids et la règle, les mesures, Reps,
-// RIR. L'instrument est une colonne qui remplit la hauteur au-dessus de la barre
-// du pouce, et la hauteur libre se répartit à parts égales ENTRE les groupes
-// (`Air`), plafonnée ; à l'intérieur d'un groupe, les écarts restent fixes. Sur un
-// écran bas, il n'y a rien à répartir : les planchers sont les écarts d'avant,
-// et la rangée RIR reste au-dessus de la barre sans défiler.
+// BAS, ce qui se RÈGLE, en trois plaques au fond levé séparées par le fond noir :
+// le poids (« 140 kg » centré en entier sur l'aiguille, toucher = saisie précise
+// au clavier) et sa règle à élan (pas réglé dans Réglages), la rangée Reps, la
+// rangée RIR. Les rangées glissent (l'utilisateur y tient) ; entre deux zones
+// tactiles de plaques voisines, 16 px au moins de rien.
+//
+// RYTHME VERTICAL. L'instrument est une colonne qui remplit la hauteur au-dessus
+// du pied. Entre les groupes du haut, l'air se répartit, plafonné ; tout le
+// surplus va entre le haut et le bas, pour que les plaques restent dans la zone
+// du pouce, juste au-dessus du pied. Sur un écran bas (≤ 800 px, dont l'iPhone
+// de l'utilisateur en écran d'accueil, 393 × 793) puis très bas (≤ 700 px), les
+// tailles se resserrent (`useCompact`, `useCompactTight`) : rien ne défile.
+//
+// SIGNAL. Le ▲ du brouillon au-dessus de la Référence ou du Record prend le
+// signal dès le réglage (choix de l'utilisateur du 25/11, risque de gonfler le
+// RIR accepté, cf. draft-e1rm.ts et l'amendement du 2026-11-25 de l'ADR 0010) ;
+// ▬ en blanc cassé, ▼ en gris. Des mots de position, jamais un verdict :
+// « battue », « égalée » et « record » ne portent que sur des séries faites.
+// À 0 kg, la mesure est en reps effectives (`perfReadout`, ADR 0013).
 //
 // Toucher une case loggée de la bande ouvre la feuille de correction de CETTE
-// série (SetEditSheet) ; ses gestes (corriger, changer de côté, supprimer)
+// ligne (SetEditSheet) ; ses gestes (corriger, changer de côté, supprimer)
 // remontent au parent, qui les écrit. La feuille est rendue hors de la zone de
 // saisie : ses événements, qui remontent à travers le portail, ne marquent pas
 // le brouillon comme touché.
 //
-// Les libellés « e1RM » (mesure du brouillon) et « RIR » (rangée) se touchent :
-// une feuille basse dit en une phrase ce que veut dire chaque mot
+// Les libellés « e1RM » (« Cette série ») et « RIR » (rangée) se touchent : une
+// feuille basse dit en une phrase ce que veut dire chaque mot
 // (src/lib/glossary-text.ts), sans ligne de plus sur l'instrument.
-//
-// Mesure du brouillon : un chiffre seul, jamais un verdict « battrait » (cf.
-// draft-e1rm.ts) : l'écart se lit sans signe ni couleur. Les statuts en signal
-// (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
-// À 0 kg, la mesure est en reps effectives (`perfReadout`, ADR 0013).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { effectiveReps, isZeroLoad } from '../../domain/e1rm';
-import { isRepsRecord } from '../../domain/pr';
 import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrder, targetSlotForSide } from '../../domain/unilateral';
 import { isBlankNote } from '../../domain/notes';
-import type { PerformedSet, Side } from '../../domain/types';
+import type { Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact, useCompactTight } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, Sign, StateMark, Status, TONE, useCompact, useCompactTight } from '../../ui';
 import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
 import { loggedSetsKey, seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
-import { formatPerf, perfReadout } from './perf-readout';
-import { draftE1rm } from './draft-e1rm';
+import { draftScore, type DraftScore, type Standing } from './draft-score';
 import { ExerciseIndex, type IndexItem } from './ExerciseIndex';
 import { ExerciseRecapSheet } from './ExerciseRecapSheet';
 import { NotesSheet } from './NotesSheet';
-import { SetBand, UniSetBand } from './SetBand';
+import { currentRecord } from './record-flags';
+import { bandCells } from './set-band';
+import { SetBand } from './SetBand';
 import { WeightReadout } from './WeightReadout';
 import { computeSetBadges, computeSetBadgesBySide, recordWord, summarizeBadges, type SetBadge } from './set-badges';
-import { formatE1rm, formatRange, formatWeight } from './format';
+import { formatRange, formatWeight } from './format';
 import { roundWeightKg } from './stepper-utils';
 import { SetEditSheet } from './SetEditSheet';
 import type { SetEntry } from './set-gestures';
@@ -95,26 +105,6 @@ const REPS_ROW_MAX = 50;
 const RIR_ROW_MAX = 10;
 /** La règle de poids court jusqu'à 500 kg (au-delà : saisie au clavier). */
 const RULER_MAX_KG = 500;
-
-/** Écart signé, virgule, signe moins typographique : « +2,3 », « −1 », « 0 ». */
-function signed(n: number, decimals: number): string {
-  const r = Math.round(n * 10 ** decimals) / 10 ** decimals;
-  if (r === 0) return '0';
-  return `${r > 0 ? '+' : '−'}${Math.abs(r).toFixed(decimals).replace('.', ',')}`;
-}
-
-/** Écart du brouillon à la Référence, dans la mesure du juge (e1RM, ou reps
- *  effectives à 0 kg des deux côtés), avec le nom de cette mesure : un « +3,3 kg »
- *  sans nom se lisait comme 3,3 kg à ajouter sur la barre. Null si les deux ne se
- *  comparent pas. */
-function gapToRef(draft: PerformedSet, ref: PerformedSet): { measure: 'e1RM' | 'reps eff.'; value: string; unit: string } | null {
-  if (isZeroLoad(draft.weightKg) && isZeroLoad(ref.weightKg)) {
-    return { measure: 'reps eff.', value: signed(effectiveReps(draft.reps, draft.rir) - effectiveReps(ref.reps, ref.rir), 0), unit: 'reps' };
-  }
-  const a = draftE1rm(draft.weightKg, draft.reps, draft.rir);
-  const b = draftE1rm(ref.weightKg, ref.reps, ref.rir);
-  return a === null || b === null ? null : { measure: 'e1RM', value: signed(a - b, 1), unit: 'kg' };
-}
 
 export function ExerciseCapture({
   exercise,
@@ -294,13 +284,6 @@ export function ExerciseCapture({
     onDraftChange?.({ weightKg, reps, rir, side: currentSide ?? undefined });
   }, [weightKg, reps, rir, currentSide, onDraftChange]);
 
-  // Le record AFFICHÉ en repère : le record all-time de l'exo (toutes séances,
-  // cf. GLOSSARY.md « Record personnel »), lu PAR CÔTÉ pour un unilatéral (le
-  // bras visé au sélecteur, chaque bras tenant son propre record — ADR 0010).
-  const displayRecord = unilateral
-    ? exercise.personalRecordBySide?.[selectedSide] ?? null
-    : exercise.personalRecord ?? null;
-
   // La série « à battre » à la position courante (co-roi). En unilatéral (ADR
   // 0010), on l'apparie par (position, CÔTÉ CHOISI) : le repère suit le bras que
   // tu t'apprêtes à logger — sa dernière fois à lui. Bilatéral : par position.
@@ -312,12 +295,19 @@ export function ExerciseCapture({
   const refToBeat = unilateral
     ? reference?.find((s) => s.order === rank && s.side === currentSide) ?? null
     : reference?.find((s) => s.order === rank) ?? null;
-  // Sa mesure : l'e1RM, ou les reps effectives à 0 kg (cf. perf-readout.ts).
 
-  // Mesure du BROUILLON, recalculée à chaque réglage, pour viser avant la série.
-  // Un chiffre seul, jamais un verdict « battrait » : un badge qui s'allumerait à
-  // +1 de RIR pousserait à gonfler l'auto-évaluation (cf. draft-e1rm.ts).
-  const livePerf = perfReadout(weightKg, reps, rir);
+  // Le record en repère : le record all-time de l'exo (toutes séances, cf.
+  // GLOSSARY.md « Record personnel »), lu PAR CÔTÉ pour un unilatéral (le bras
+  // visé au sélecteur, chaque bras tenant son propre record, ADR 0010), et
+  // AVANCÉ par les séries du jour de ce côté : c'est le record COURANT, celui
+  // que la prochaine série devra passer pour porter « record ».
+  const historicalRecord = unilateral ? exercise.personalRecordBySide?.[selectedSide] ?? null : exercise.personalRecord ?? null;
+  const record = currentRecord(progress.sets, historicalRecord, currentSide ?? undefined);
+
+  // « Cette série », « Dernière fois », « Record » : la mesure du brouillon et sa
+  // position en direct face aux deux repères, recalculées à chaque réglage
+  // (draft-score.ts ; décision et risque accepté en tête de draft-e1rm.ts).
+  const score = draftScore({ draft: { weightKg, reps, rir }, refSet: refToBeat, hasReference: reference != null, record });
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
   // complètes (une série unilatérale = gauche + droite).
@@ -360,22 +350,14 @@ export function ExerciseCapture({
   const openWords = useCallback(() => setWordsOpen(true), []);
   const closeWords = useCallback(() => setWordsOpen(false), []);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
-  // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
+  // reste au-dessus du pied, unilatéral et nom long compris.
   const compact = useCompact();
   // Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : un cran de plus.
   const tight = useCompactTight();
   const hasNote =
     !isBlankNote(datedNote) || !isBlankNote(perExerciseNote) || !!(exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body));
-  const draft: PerformedSet = { order: rank, weightKg, reps, rir, side: currentSide ?? undefined };
-  const gap = refToBeat ? gapToRef(draft, refToBeat) : null;
-  // Le record se lit en reps effectives quand il est tenu à 0 kg (exo jamais chargé).
-  const recordValue =
-    displayRecord?.bestE1rm != null && displayRecord.bestE1rmSet
-      ? isRepsRecord(displayRecord)
-        ? { value: `${effectiveReps(displayRecord.bestE1rmSet.reps, displayRecord.bestE1rmSet.rir ?? 0)}`, unit: 'reps' }
-        : { value: formatE1rm(displayRecord.bestE1rm), unit: 'kg' }
-      : null;
-  const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
+  const draft = { weightKg, reps, rir };
+  const cells = bandCells({ sets: progress.sets, setIds: progress.setIds, plannedMax: prescription.sets.max, unilateral, side: currentSide });
   // Graduations de la règle en CRANS du pas réglé : les étiquettes tombent sur
   // des poids ronds (weight-graduations.ts).
   const { majorEvery, midEvery } = weightGraduations(stepKg);
@@ -385,41 +367,48 @@ export function ExerciseCapture({
   const doneSides = unilateral ? sidesDoneAt(progress.sets, currentOrder) : [];
   const doneRank = slotOfOrder(progress.sets, currentOrder) + 1;
 
-  // Air entre les groupes (cf. `Air`) : les planchers sont les écarts des paliers
-  // bas, qui tiennent la rangée RIR au-dessus de la barre du pouce.
-  const groupGap = compact ? 4 : 8;
+  // Paliers de hauteur : le poids, la règle et les rangées se resserrent d'un
+  // cran sur écran bas, de deux sur écran très bas. L'air a ses planchers.
+  const weightSize = tight ? 48 : compact ? (unilateral ? 56 : 64) : 72;
+  const rulerHeight = tight ? 44 : compact ? 48 : 58;
+  // Air : 14 px au moins entre les groupes, 10 sur écran bas, 6 très bas (les
+  // 14 px du prototype ne tenaient pas avec l'ancienne marge de navigation de
+  // l'app installée, 14 px de plus en haut, aujourd'hui à 0).
+  const airMin = tight ? 6 : compact ? 10 : 14;
+  const plannedTotal = Math.max(prescription.sets.max, rank);
 
   return (
-    // Colonne qui prend toute la hauteur au-dessus de la barre du pouce : la
-    // hauteur libre se répartit entre les groupes (`Air`) au lieu de s'entasser
-    // sous la rangée RIR. Écran très bas : sans marge haute (2 × 4 px rendus).
-    <div className={`flex flex-1 flex-col ${tight ? '' : 'pt-1'}`}>
-      <ExerciseIndex items={index} activeId={exercise.exerciseId} onPick={onPick} />
+    // Colonne qui prend toute la hauteur au-dessus du pied : l'air du haut se
+    // répartit (plafonné), le surplus va entre le haut et les plaques.
+    <div className="flex flex-1 flex-col pt-1">
+      {/* Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : pas d'index,
+          sinon les plaques passent sous le pied. Le Sommaire et « Exo suivant »
+          restent à un toucher. */}
+      {!tight && <ExerciseIndex items={index} activeId={exercise.exerciseId} onPick={onPick} />}
 
-      {/* Nom et UNE ligne : le plan, puis le bilan dès le minimum de séries (il
-          rouvre le récap). Notes à droite, sans hauteur en plus. */}
-      <div className={`relative px-5 ${tight ? '' : 'pt-1'}`}>
-        {/* Un nom long descend d'un cran plutôt que de pousser l'instrument sous la
-            barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
+      {/* Nom et UNE ligne : « Série n sur N » et le plan, puis le bilan dès le
+          minimum de séries (il rouvre le récap). Notes à droite, sans hauteur en plus. */}
+      <header className={`relative px-5 ${tight ? '' : compact ? 'pt-1' : 'pt-2'}`}>
+        {/* Un nom long descend d'un cran plutôt que de pousser les plaques sous le
+            pied ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
-          className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
+          className={`truncate pr-10 font-[650] leading-[1.1] tracking-[-0.03em] text-ink ${
             tight
-              ? // Écran très bas : tout nom au cran de 22 px, sur sa propre hauteur.
-                'text-[22px]'
+              ? 'text-[22px]'
               : compact
                 ? exercise.name.length <= 18
                   ? 'text-[28px]'
-                  : 'text-[22px] leading-[29px]'
-              : exercise.name.length <= 18
-                ? 'text-[32px]'
-                : exercise.name.length <= 24
-                  ? 'text-[28px]'
-                  : 'text-[22px] leading-[35px]'
+                  : 'text-[22px] leading-[31px]'
+                : exercise.name.length <= 18
+                  ? 'text-[32px]'
+                  : exercise.name.length <= 24
+                    ? 'text-[28px]'
+                    : 'text-[22px] leading-[35px]'
           }`}
         >
           {exercise.name}
         </h2>
-        <div className="mt-0.5 flex h-[22px] items-center pr-12 text-[15px] text-muted">
+        <div className="mt-1 flex h-[22px] items-center pr-2 text-[15px] text-muted">
           {reachedMin ? (
             <button
               type="button"
@@ -452,11 +441,15 @@ export function ExerciseCapture({
             </button>
           ) : (
             <span className="truncate">
-              {formatRange(prescription.sets)} séries · {formatRange(prescription.reps)} reps · RIR {formatRange(prescription.rir)}
+              <span className="font-semibold text-ink">
+                Série {rank} sur {plannedTotal}
+              </span>
+              {' · '}
+              {formatRange(prescription.reps)} reps · RIR {formatRange(prescription.rir)}
             </span>
           )}
         </div>
-        <div className="absolute bottom-[-11px] right-2.5">
+        <div className="absolute right-2.5 top-0">
           <IconButton
             icon="note"
             tone="muted"
@@ -465,168 +458,137 @@ export function ExerciseCapture({
             onClick={() => setNotesOpen(true)}
           />
         </div>
-      </div>
+      </header>
 
-      {/* Repères de l'exo : l'index, le nom, puis la bande, un peu détachée. */}
-      <Air min={groupGap} max={16} grow={0.5} />
-      <div>
-        {unilateral ? (
-          <UniSetBand
-            sets={progress.sets}
-            setIds={progress.setIds}
-            badges={badges}
-            draft={draft}
-            side={currentSide ?? 'left'}
-            plannedMax={prescription.sets.max}
-            onEdit={setEditId}
-          />
-        ) : (
-          <SetBand sets={progress.sets} setIds={progress.setIds} badges={badges} draft={draft} plannedMax={prescription.sets.max} onEdit={setEditId} />
-        )}
-      </div>
-
-      {/* Unilatéral : le choix du côté suit la bande sans plancher (ses 44 px de
-          cible font déjà l'écart). */}
-      <Air min={unilateral ? 0 : groupGap} max={AIR_MAX} />
+      <Air min={airMin} max={30} />
+      <SetBand cells={cells} badges={badges} draft={draft} unilateral={unilateral} onEdit={setEditId} />
+      <Air min={airMin} max={30} />
 
       {/* Toute interaction dans la zone de saisie marque le brouillon touché,
           AVANT qu'une valeur soit validée (événements pris en capture). La zone
           ne fait pas de boîte (`contents`) : ses groupes et l'air entre eux
           restent des enfants de la colonne. */}
       <div className="contents" onPointerDownCapture={touchDraft} onKeyDownCapture={touchDraft} onFocusCapture={touchDraft} onInputCapture={touchDraft}>
-        {unilateral && currentSide ? (
-          <div className="flex min-h-11 items-center justify-between gap-2 px-5">
-            <div role="radiogroup" aria-label="Côté à logger" className="-ml-2.5 flex flex-none">
-              {(['left', 'right'] as const).map((sd) => {
-                const sel = sd === currentSide;
-                const done = doneSides.includes(sd);
-                return (
-                  <button
-                    key={sd}
-                    type="button"
-                    role="radio"
-                    aria-checked={sel}
-                    aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
-                    onClick={() => chooseSide(sd)}
-                    className={`h-11 flex-none px-2.5 text-[17px] ${
-                      sel ? 'font-semibold text-ink underline decoration-[3px] underline-offset-[8px]' : done ? 'text-faint' : 'text-muted active:text-ink'
-                    }`}
-                  >
-                    {sd === 'left' ? 'Gauche' : 'Droite'}
-                    {done && <span className="ml-1 text-[13px] text-faint">faite</span>}
-                  </button>
-                );
-              })}
+        <section aria-label="Cette série" className={`mx-5 border-t border-line ${tight ? 'pt-1.5' : compact ? 'pt-2' : 'pt-3'}`}>
+          <div className="flex min-h-7 items-center justify-between gap-3">
+            {unilateral && currentSide ? (
+              <div role="radiogroup" aria-label="Côté à logger" className="-my-2 -ml-2.5 flex flex-none">
+                {(['left', 'right'] as const).map((sd) => {
+                  const sel = sd === currentSide;
+                  const done = doneSides.includes(sd);
+                  return (
+                    <button
+                      key={sd}
+                      type="button"
+                      role="radio"
+                      aria-checked={sel}
+                      aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
+                      onClick={() => chooseSide(sd)}
+                      className={`h-11 flex-none px-2.5 text-[17px] ${
+                        sel ? 'rounded-cell bg-surface font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
+                      }`}
+                    >
+                      {sd === 'left' ? 'Gauche' : 'Droite'}
+                      {done && <span className="ml-1 text-[13px] text-faint">faite</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <span className="text-[15px] text-muted">Cette série</span>
+            )}
+            <LiveMeasure live={score.live} onWord={openWords} />
+          </div>
+          <dl className="mt-2 grid grid-cols-2">
+            <Marker term="Dernière fois">
+              {score.last.kind === 'set' ? (
+                <>
+                  <dd className="tnum mt-0.5 truncate text-[16px] font-medium text-ink [@media(max-width:359px)]:text-[14px]">
+                    {formatWeight(score.last.set.weightKg)} × {score.last.set.reps} · RIR {score.last.set.rir}
+                  </dd>
+                  <Position standing={score.last.standing} />
+                </>
+              ) : (
+                <Absent>{score.last.word}</Absent>
+              )}
+            </Marker>
+            <Marker term="Record" right>
+              {score.record.kind === 'record' ? (
+                <>
+                  <dd className="tnum mt-0.5 truncate text-[16px] font-medium text-ink [@media(max-width:359px)]:text-[14px]">
+                    {score.record.label} {score.record.value}
+                  </dd>
+                  <Position standing={score.record.standing} />
+                </>
+              ) : (
+                <Absent>{score.record.word}</Absent>
+              )}
+            </Marker>
+          </dl>
+        </section>
+
+        {/* Le surplus de hauteur : les plaques restent au-dessus du pied, dans la zone du pouce. */}
+        <Air min={airMin} />
+
+        {/* Trois plaques, séparées par le fond : entre deux zones tactiles
+            voisines, 4 + écart + 4 px de rien (16 px au moins). */}
+        <div className="flex flex-col" style={{ gap: tight ? 8 : compact ? 10 : 14 }}>
+          <div data-plate="poids" className={`${PLATE} pb-1.5 ${tight ? 'pt-2' : 'pt-3'}`}>
+            <WeightReadout value={weightKg} kg="bloc" size={weightSize} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
+            <div className={tight ? 'mt-1' : 'mt-2'}>
+              <Ruler
+                key={stepKg}
+                label="Poids"
+                steps={weightKg / stepKg /* fractionnaire hors pas : l'aiguille tombe entre deux crans */}
+                max={Math.max(Math.round(RULER_MAX_KG / stepKg), Math.ceil(weightKg / stepKg))}
+                pxPerStep={Math.max(8, 11.2 * stepKg) /* un petit pas reste lisible : 8 px au moins entre deux crans */}
+                isMajor={(st) => st % majorEvery === 0}
+                isMid={(st) => midEvery > 0 && st % midEvery === 0}
+                majorLabel={(st) => formatWeight(st * stepKg)}
+                format={(st) => `${formatWeight(roundWeightKg(st * stepKg))} kg`}
+                onChange={(st) => setWeightKg(roundWeightKg(st * stepKg))}
+                height={rulerHeight}
+                compact={compact}
+              />
             </div>
-            <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} compact />
           </div>
-        ) : (
-          <div className="px-5">
-            <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} />
+          {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
+          <div data-plate="reps" className={`${PLATE} py-1`}>
+            <NumberRow
+              key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
+              layout="ligne"
+              label="Reps"
+              min={1}
+              max={Math.max(REPS_ROW_MAX, reps, prescription.reps.max)}
+              value={reps}
+              presc={[prescription.reps.min, prescription.reps.max]}
+              refValue={refToBeat?.reps ?? null}
+              onPick={setReps}
+              compact={tight}
+            />
           </div>
-        )}
-
-        <div>
-          <WeightReadout value={weightKg} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
+          <div data-plate="rir" className={`${PLATE} py-1`}>
+            <NumberRow
+              key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
+              layout="ligne"
+              label="RIR"
+              min={0}
+              max={Math.max(RIR_ROW_MAX, rir, prescription.rir.max)}
+              value={rir}
+              presc={[prescription.rir.min, prescription.rir.max]}
+              refValue={refToBeat?.rir ?? null}
+              onPick={setRir}
+              compact={tight}
+              onLabel={openWords}
+              labelHint="RIR, ce que ça veut dire"
+            />
+          </div>
         </div>
-
-        <div className={tight ? 'mt-0.5' : compact ? 'mt-1' : 'mt-2'}>
-          <Ruler
-            key={stepKg}
-            label="Poids"
-            steps={weightKg / stepKg /* fractionnaire hors pas : l'aiguille tombe entre deux crans */}
-            max={Math.max(Math.round(RULER_MAX_KG / stepKg), Math.ceil(weightKg / stepKg))}
-            pxPerStep={Math.max(8, 11.2 * stepKg) /* un petit pas reste lisible : 8 px au moins entre deux crans */}
-            isMajor={(s) => s % majorEvery === 0}
-            isMid={(s) => midEvery > 0 && s % midEvery === 0}
-            majorLabel={(s) => formatWeight(s * stepKg)}
-            format={(s) => `${formatWeight(roundWeightKg(s * stepKg))} kg`}
-            onChange={(s) => setWeightKg(roundWeightKg(s * stepKg))}
-            height={compact ? 44 : 56}
-            compact={compact}
-          />
-        </div>
-
-        {/* Mesures : détachées des étiquettes de la règle dès qu'il y a la place. */}
-        <Air min={compact && !tight ? 2 : 0} max={AIR_MAX} />
-
-        {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
-        {/* Écran bas : une ligne, sans « kg » (le libellé nomme la mesure) ; le
-            milieu prend la place que les deux bords laissent, pour que « Écart
-            e1RM » et son chiffre ne touchent pas « Record » (360 px). */}
-        <dl className={`grid gap-3 px-5 ${compact ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-3'}`}>
-          <Measure
-            compact={compact}
-            label={livePerf?.label ?? 'e1RM'}
-            live
-            // « reps eff. » à 0 kg : ce n'est pas l'e1RM, pas sa définition.
-            onLabel={(livePerf?.label ?? 'e1RM') === 'e1RM' ? openWords : undefined}
-            labelHint="e1RM, ce que ça veut dire"
-          >
-            {livePerf ? <Figure value={livePerf.value} unit={livePerf.unit} compact={compact} /> : <Missing compact={compact}>·</Missing>}
-          </Measure>
-          {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
-              couleur ni ▲ (ADR 0010, draft-e1rm.ts). */}
-          <Measure
-            compact={compact}
-            center
-            // Sous 340 px (320), « Écart e1RM » et son chiffre ne tiennent pas
-            // entre leurs voisines : « Écart » seul, le chiffre n'y porte pas « kg ».
-            label={
-              <>
-                Écart<span className={compact ? '[@media(max-width:339px)]:hidden' : ''}> {gap?.measure ?? 'e1RM'}</span>
-              </>
-            }
-          >
-            {gap ? (
-              <Figure value={gap.value} unit={gap.unit} compact={compact} />
-            ) : (
-              <Missing compact={compact}>{compact ? 'sans réf.' : 'aucune réf.'}</Missing>
-            )}
-          </Measure>
-          {/* Écran bas : « Record » seul, le côté se lit juste au-dessus (Gauche · Droite). */}
-          <Measure compact={compact} right label={unilateral && currentSide && !compact ? `Record ${sideWord(currentSide)}` : 'Record'}>
-            {recordValue ? (
-              <Figure value={recordValue.value} unit={recordValue.unit} compact={compact} muted />
-            ) : (
-              <Missing compact={compact}>aucun</Missing>
-            )}
-          </Measure>
-        </dl>
-
-        <Air min={groupGap} max={AIR_MAX} />
-
-        {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
-        <NumberRow
-          key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
-          label="Reps"
-          min={1}
-          max={Math.max(REPS_ROW_MAX, reps, prescription.reps.max)}
-          value={reps}
-          presc={[prescription.reps.min, prescription.reps.max]}
-          refValue={refToBeat?.reps ?? null}
-          onPick={setReps}
-          compact={compact}
-        />
-        <Air min={2} max={AIR_MAX} />
-        <NumberRow
-          key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
-          label="RIR"
-          min={0}
-          max={Math.max(RIR_ROW_MAX, rir, prescription.rir.max)}
-          value={rir}
-          presc={[prescription.rir.min, prescription.rir.max]}
-          refValue={refToBeat?.rir ?? null}
-          onPick={setRir}
-          compact={compact}
-          onLabel={openWords}
-          labelHint="RIR, ce que ça veut dire"
-        />
       </div>
 
-      {/* Le reste de la hauteur, au-dessus de la barre du pouce : RIR s'en
-          détache autant que les groupes entre eux, sans plafond. */}
-      <Air min={0} />
+      {/* Au-dessus du pied : 8 px au moins, donc 16 px de rien entre la rangée
+          RIR et les liens du pied (marge de plaque et du pied comprises). */}
+      <Air min={8} max={12} />
 
       {editId !== null && progress.setIds.includes(editId) && (
         <SetEditSheet
@@ -679,68 +641,74 @@ export function ExerciseCapture({
   );
 }
 
-/** Plafond de l'air entre deux groupes : au-delà (grand écran, ordinateur), le
- *  surplus reste au-dessus de la barre du pouce. */
-const AIR_MAX = 40;
+/** Une plaque de réglage : un groupe arrondi (fond `bg-surface`), rayon et
+ *  retrait latéral en jetons du thème (`--radius-plate`, `--plate-inset`,
+ *  src/index.css). Aucun rayon en dur ; la règle est rognée aux coins. */
+const PLATE = 'overflow-hidden rounded-plate bg-surface mx-(--plate-inset)';
 
-/** Air entre deux groupes de l'instrument : un plancher (l'écart des paliers bas,
- *  qui tient la rangée RIR au-dessus de la barre du pouce sans défiler), puis une
- *  part de la hauteur libre, plafonnée. Les parts sont égales (`grow` 1) : dès
- *  qu'il y a de la place, les groupes s'espacent d'un même pas. Un écart
- *  INTÉRIEUR à un groupe prend une demi-part et un plafond bas, pour rester
- *  sous l'écart entre groupes. Aucune animation : la répartition suit la hauteur
- *  de l'écran, pas les gestes. */
-function Air({ min, max, grow = 1 }: { min: number; max?: number; grow?: number }) {
-  return <div aria-hidden style={{ flex: `${grow} 0 0px`, minHeight: min, maxHeight: max }} />;
+/** Air entre deux groupes de l'instrument : un plancher, puis une part de la
+ *  hauteur libre, plafonnée ou non. Aucune animation : la répartition suit la
+ *  hauteur de l'écran, pas les gestes. */
+function Air({ min, max }: { min: number; max?: number }) {
+  return <div aria-hidden style={{ flex: '1 0 0px', minHeight: min, maxHeight: max }} />;
 }
 
-/** Une mesure sous la règle : son nom, puis le chiffre (sur la même ligne en
- *  écran bas). */
-function Measure({
-  label,
-  compact,
-  right = false,
-  center = false,
-  live = false,
-  onLabel,
-  labelHint,
-  children,
-}: {
-  label: ReactNode;
-  compact: boolean;
-  right?: boolean;
-  /** Écran bas : centrée entre ses deux voisines. */
-  center?: boolean;
-  live?: boolean;
-  /** Le libellé se touche et ouvre la définition du mot (glossary-text.ts). */
-  onLabel?: () => void;
-  labelHint?: string;
-  children: ReactNode;
-}) {
+/** « e1RM 220 » à droite de « Cette série » : la mesure du brouillon, en direct.
+ *  Le mot « e1RM » se touche et ouvre sa définition ; « reps eff. » (0 kg) non. */
+function LiveMeasure({ live, onWord }: { live: DraftScore['live']; onWord: () => void }) {
   return (
-    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : center && compact ? 'justify-center' : ''} min-w-0`}>
-      <dt className="flex-none text-[13px] text-muted">
-        {onLabel ? (
-          <button
-            type="button"
-            onClick={onLabel}
-            aria-label={labelHint}
-            className="-mx-2 min-w-11 px-2 text-left underline decoration-dim decoration-1 underline-offset-[3px] active:opacity-70"
-          >
-            {label}
-          </button>
-        ) : (
-          label
-        )}
-      </dt>
+    <p aria-live="polite" className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+      {live?.label === 'reps eff.' ? (
+        <span className="text-[15px] text-muted">reps eff.</span>
+      ) : (
+        <button
+          type="button"
+          onClick={onWord}
+          aria-label="e1RM, ce que ça veut dire"
+          className="-my-2 min-h-11 px-1 text-[15px] text-muted underline decoration-dim decoration-1 underline-offset-[3px] active:opacity-70"
+        >
+          e1RM
+        </button>
+      )}
+      <span className="tnum text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">{live ? live.value : '·'}</span>
+    </p>
+  );
+}
+
+/** Une colonne du bloc : « Dernière fois » ou « Record », filet entre les deux. */
+function Marker({ term, right = false, children }: { term: string; right?: boolean; children: ReactNode }) {
+  return (
+    <div className={`min-w-0 ${right ? 'border-l border-line pl-3' : 'pr-3'}`}>
+      <dt className="text-[13px] text-muted">{term}</dt>
       {children}
     </div>
   );
 }
 
+function Absent({ children }: { children: ReactNode }) {
+  return <dd className="mt-0.5 truncate text-[16px] text-muted [@media(max-width:359px)]:text-[14px]">{children}</dd>;
+}
+
+/** La position du brouillon face au repère, en direct : signe + écart + mot,
+ *  dans la teinte de la triade (▲ au signal, ▬ blanc cassé, ▼ gris). Une ligne
+ *  toujours réservée : rien ne bouge quand elle apparaît. */
+function Position({ standing }: { standing: Standing | null }) {
+  return (
+    <dd className="mt-0.5 h-5">
+      {standing && (
+        <span className={`inline-flex items-center gap-1 whitespace-nowrap text-[14px] leading-5 ${TONE[standing.v]}`}>
+          <Sign v={standing.v} size={10} />
+          {standing.gap && <span className="tnum font-medium">{standing.gap}</span>}
+          {standing.word}
+        </span>
+      )}
+    </dd>
+  );
+}
+
 /** Les deux mots de l'instrument expliqués, en une feuille basse (rien ne pousse
- *  la rangée RIR sous la barre) : une phrase chacun, la même source que le
- *  premier lancement et l'Analyse (glossary-text.ts). */
+ *  les plaques sous le pied) : une phrase chacun, la même source que le premier
+ *  lancement et l'Analyse (glossary-text.ts). */
 function WordsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Sheet open={open} title="RIR et e1RM" onClose={onClose}>
@@ -753,60 +721,5 @@ function WordsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
         ))}
       </div>
     </Sheet>
-  );
-}
-
-function Figure({ value, unit, compact, muted = false }: { value: string; unit: string | null; compact: boolean; muted?: boolean }) {
-  return (
-    <dd className={`tnum whitespace-nowrap font-medium leading-none tracking-[-0.01em] ${muted ? 'text-muted' : 'text-ink'} ${compact ? 'text-[17px]' : 'mt-1 text-[22px]'}`}>
-      {value}
-      {unit && !(compact && unit === 'kg') && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
-    </dd>
-  );
-}
-
-function Missing({ compact, children }: { compact: boolean; children: ReactNode }) {
-  return <dd className={`whitespace-nowrap text-muted ${compact ? 'text-[14px]' : 'mt-1 text-[16px] leading-[22px]'}`}>{children}</dd>;
-}
-
-/** La ligne de Référence de la série en cours : « réf. série 2 » et ses valeurs
- *  avec leur mesure (`formatPerf`), ou ce qui manque. `compact` : à droite du
- *  choix du côté, sur deux lignes serrées. */
-function RefValue({
-  rank,
-  refSet,
-  hasReference,
-  compact = false,
-}: {
-  rank: number;
-  refSet: PerformedSet | null;
-  hasReference: boolean;
-  compact?: boolean;
-}) {
-  if (!refSet) {
-    return (
-      <p className={`text-[14px] text-muted ${compact ? 'text-right' : ''}`}>
-        {hasReference ? `Série ${rank} : rien à battre` : 'Pas encore de réf. dans cette séance'}
-      </p>
-    );
-  }
-  const values = `${formatWeight(refSet.weightKg)} × ${refSet.reps} · RIR ${refSet.rir}`;
-  const perf = formatPerf(refSet);
-  if (compact) {
-    return (
-      <p className="min-w-0 text-right leading-tight">
-        <span className="block truncate text-[13px] text-muted">réf. série {rank}</span>
-        <span className="tnum block whitespace-nowrap text-[14px] font-medium text-ink">{values}</span>
-      </p>
-    );
-  }
-  return (
-    <p className="flex items-baseline justify-between gap-3 text-[14px]">
-      <span className="shrink-0 whitespace-nowrap text-muted">réf. série {rank}</span>
-      <span className="tnum min-w-0 truncate font-medium text-ink">
-        {values}
-        {perf && <span className="font-normal text-muted"> · {perf}</span>}
-      </span>
-    </p>
   );
 }

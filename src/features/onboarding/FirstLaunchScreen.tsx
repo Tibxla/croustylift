@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { errorMessage } from '../../lib/error-message';
 import { formatRange } from '../capture/format';
 import { glossaryLine } from '../../lib/glossary-text';
-import { FieldError, PrimaryButton, RadioMark, Screen, ScreenHeader, SectionTitle, TextField } from '../../ui';
+import { FieldError, GROUP, GROUP_ROW, PrimaryButton, RadioMark, Screen, ScreenHeader, SectionTitle, TextField } from '../../ui';
 import { firstNameProblem } from './template';
 import {
   createFirstRoutine,
@@ -113,7 +113,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
           />
 
           <SectionTitle id="depart-titre">Point de départ</SectionTitle>
-          <div role="radiogroup" aria-labelledby="depart-titre" className="border-t border-line">
+          <div role="radiogroup" aria-labelledby="depart-titre" className={GROUP}>
             <StartOption
               selected={withTemplate}
               title="Modèle de départ"
@@ -121,8 +121,8 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
               onSelect={() => setWithTemplate(true)}
             />
             {withTemplate && (
-              <div className="border-b border-line">
-                <ol aria-label="Exercices du modèle" className="py-1.5 pl-[62px] pr-5">
+              <div>
+                <ol aria-label="Exercices du modèle" className="py-1.5 pl-[58px] pr-4">
                   {STARTER_TEMPLATE.exercises.map(({ name, prescription: p }) => (
                     <li key={name} className="flex items-baseline justify-between gap-3 py-1 text-[15px] leading-[1.3]">
                       <span className="min-w-0 text-ink">{name}</span>
@@ -133,7 +133,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
                   ))}
                 </ol>
                 {/* Première apparition du RIR : une phrase, sans plus. */}
-                <p className="pb-2.5 pl-[62px] pr-5 text-[14px] leading-[1.4] text-muted">{glossaryLine('rir')}</p>
+                <p className="pb-2.5 pl-[58px] pr-4 text-[14px] leading-[1.4] text-muted">{glossaryLine('rir')}</p>
               </div>
             )}
             <StartOption
@@ -191,7 +191,7 @@ function StartOption({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className="flex min-h-16 w-full items-start gap-4 border-b border-line px-5 py-3.5 text-left active:bg-line"
+      className={`${GROUP_ROW} flex min-h-16 w-full items-start gap-4 px-4 py-3.5 text-left active:bg-line`}
     >
       <span className="pt-0.5">
         <RadioMark checked={selected} />

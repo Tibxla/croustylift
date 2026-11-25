@@ -8,7 +8,7 @@
 // Seules les alarmes prennent la place (et passent en demi-gras) : un stockage
 // plein (fermer l'app perdrait des saisies) ou des saisies refusées par le
 // serveur, qui demandent un geste. L'instrument n'a pas de ligne de plus : elle
-// pousserait la rangée RIR sous la barre du pouce. Pur.
+// pousserait les plaques de réglage sous le pied. Pur.
 //
 // Les deux formes du stockage plein (ADR 0025 : saisies en mémoire seulement,
 // ou envoi arrêté) et la version dépassée par un autre onglet (plus rien ne

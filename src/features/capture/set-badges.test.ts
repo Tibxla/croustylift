@@ -12,6 +12,7 @@ import {
   recordWord,
   referenceVerdict,
   summarizeBadges,
+  verdictWords,
 } from './set-badges';
 
 const set = (
@@ -251,5 +252,40 @@ describe('badgeStatus et recordWord : le mot suit le type de record', () => {
     expect(recordWord([{ axis: 'record', record: 'weight-reps' }, { axis: 'record', record: 'e1rm' }])).toBe('record');
     expect(recordWord([{ axis: 'record', record: 'both' }])).toBe('record');
     expect(recordWord([null])).toBe('record');
+  });
+});
+
+// Défaut signalé le 25/11 : une seule série, record, ne laissait aucune trace
+// dans le Sommaire (il n'affichait que les battues, et une série record n'est
+// comptée qu'en record). Et en unilatéral, « 2 séries ▲ 3 battues » mêlait des
+// séries (paires) et des côtés : le mot dit maintenant l'unité.
+describe('verdictWords : les statuts d’un exo en mots, record > battues > égalées', () => {
+  it('un seul record s’écrit « record », plusieurs « n records »', () => {
+    expect(verdictWords({ battu: 0, egalise: 0, record: 1 }, 'record', false)).toEqual([{ v: 'up', word: 'record' }]);
+    expect(verdictWords({ battu: 0, egalise: 0, record: 2 }, 'record', false)).toEqual([{ v: 'up', word: '2 records' }]);
+    expect(verdictWords({ battu: 0, egalise: 0, record: 1 }, 'record charge', false)).toEqual([{ v: 'up', word: 'record charge' }]);
+    expect(verdictWords({ battu: 0, egalise: 0, record: 3 }, 'record charge', false)).toEqual([{ v: 'up', word: '3 records charge' }]);
+  });
+
+  it('dans l’ordre : record, puis battues, puis égalées', () => {
+    expect(verdictWords({ battu: 2, egalise: 1, record: 1 }, 'record', false)).toEqual([
+      { v: 'up', word: 'record' },
+      { v: 'up', word: '2 battues' },
+      { v: 'eq', word: '1 égalée' },
+    ]);
+    expect(verdictWords({ battu: 0, egalise: 0, record: 0 }, 'record', false)).toEqual([]);
+  });
+
+  it('unilatéral : comptés par côté, le mot le dit', () => {
+    expect(verdictWords({ battu: 3, egalise: 1, record: 0 }, 'record', true)).toEqual([
+      { v: 'up', word: '3 côtés battus' },
+      { v: 'eq', word: '1 côté égalé' },
+    ]);
+    expect(verdictWords({ battu: 1, egalise: 2, record: 2 }, 'record', true)).toEqual([
+      { v: 'up', word: '2 côtés en record' },
+      { v: 'up', word: '1 côté battu' },
+      { v: 'eq', word: '2 côtés égalés' },
+    ]);
+    expect(verdictWords({ battu: 0, egalise: 0, record: 1 }, 'record', true)).toEqual([{ v: 'up', word: '1 côté en record' }]);
   });
 });

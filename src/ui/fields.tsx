@@ -5,11 +5,11 @@
 // (DESIGN.md : règle, rangées de numéros, steppers).
 //
 // Champ : fond levé, contour gris repère (3,4:1, assez pour repérer le champ),
-// rayon de bloc, texte de 17 px (au moins 16 px : iOS zoome sinon). Focus : UN
+// rayon de bloc (12 px), texte de 17 px (au moins 16 px : iOS zoome sinon). Focus : UN
 // seul indicateur (registre U17), le contour passe au blanc cassé et double
 // (filet intérieur net, sans flou) ; le contour global de `:focus-visible` est
 // retiré par `.focus-own`. Erreur : « Erreur : » puis la phrase sous le champ,
-// entre deux filets (`Alert`), reliée par `aria-describedby` ; jamais de rouge,
+// dans un bloc levé arrondi (`Alert`), reliée par `aria-describedby` ; jamais de rouge,
 // jamais le signal. Un champ a toujours un nom : libellé visible, ou masqué mais lu
 // (`hideLabel`, registre U37). Pas de placeholder qui imite une valeur (U32).
 import { useId, useState, type ReactNode, type Ref } from 'react';
@@ -28,7 +28,7 @@ export function FieldError({ id, children, className = '' }: { id?: string; chil
   );
 }
 
-/** Bloc d'information ou de garde : entre deux filets, titre, texte, actions dessous. */
+/** Bloc d'information ou de garde : bloc levé arrondi, titre, texte, actions dessous. */
 export function Notice({
   title,
   children,
@@ -43,7 +43,7 @@ export function Notice({
   className?: string;
 }) {
   return (
-    <div role={role} className={`border-y border-line py-3 ${className}`}>
+    <div role={role} className={`rounded-note bg-surface px-4 py-3 ${className}`}>
       {title && <p className="text-[16px] font-semibold leading-[1.35] text-ink">{title}</p>}
       {children && <div className={`${title ? 'mt-1' : ''} text-[15px] leading-[1.45] text-muted`}>{children}</div>}
       {actions && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">{actions}</div>}
@@ -243,12 +243,12 @@ export function TextArea({
   );
 }
 
-/** Case à cocher carrée : cochée = carré blanc cassé plein + coche du fond. */
+/** Case à cocher aux coins arrondis : cochée = carré blanc cassé plein + coche du fond. */
 export function CheckBox({ checked }: { checked: boolean }) {
   return (
     <span
       aria-hidden
-      className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[4px] border ${
+      className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[6px] border ${
         checked ? 'border-ink bg-ink text-bg' : 'border-muted'
       }`}
     >

@@ -4,7 +4,7 @@
 // aucun fond coloré, des mots plutôt que des icônes (DESIGN.md).
 import { useState, type ReactNode } from 'react';
 import { errorMessage } from '../../lib/error-message';
-import { ActionNote, ActionRow, Confirm, FieldError, PrimaryButton, Sheet, TextField, TextLink } from '../../ui';
+import { ActionNote, ActionRow, Confirm, FieldError, GROUP_ROW, Icon, PrimaryButton, Sheet, TextField, TextLink } from '../../ui';
 import type { MenuItem, RoutineMenu, SeanceActionKey } from './object-actions';
 
 /** Un nom tel qu'il sera enregistré : espaces de bord retirés, espaces internes réduits. */
@@ -114,9 +114,12 @@ function NameForm({
   );
 }
 
-/** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), Monter
- *  et Descendre en mots. La dernière ligne déplacée garde son titre en demi-gras
- *  (pas de bande latérale, comme la ligne courante du kit). */
+/** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), puis
+ *  Monter et Descendre en flèches de 44 px, nommées pour les lecteurs d'écran.
+ *  En mots (« Monter », « Descendre »), les deux boutons prenaient 180 px et ne
+ *  laissaient au nom qu'une lettre par ligne dans un groupe à 320 px. La
+ *  dernière ligne déplacée garde son titre en demi-gras (pas de bande latérale,
+ *  comme la ligne courante du kit). */
 export function ReorderRow({
   rank,
   title,
@@ -138,19 +141,19 @@ export function ReorderRow({
   onMove: (dir: -1 | 1) => void;
 }) {
   const btn =
-    'ui-press h-11 flex-none rounded-block border-[1.5px] border-ink bg-raise px-3 text-[15px] font-semibold text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
+    'ui-press flex h-11 w-11 flex-none items-center justify-center rounded-block border-[1.5px] border-ink bg-raise text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
   return (
-    <li className="relative flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
+    <li className={`${GROUP_ROW} flex min-h-16 items-center gap-3 px-4 py-2`}>
       <span className="tnum w-6 flex-none text-[15px] text-faint">{rank}</span>
       <span className="min-w-0 flex-1">
         <span className={`block break-words text-[17px] leading-[1.25] text-ink ${moved ? 'font-semibold' : 'font-medium'}`}>{title}</span>
         {meta && <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>}
       </span>
       <button type="button" className={btn} disabled={first || disabled} aria-label={`Monter ${title}`} onClick={() => onMove(-1)}>
-        Monter
+        <Icon name="chevron-up" />
       </button>
       <button type="button" className={btn} disabled={last || disabled} aria-label={`Descendre ${title}`} onClick={() => onMove(1)}>
-        Descendre
+        <Icon name="chevron-down" />
       </button>
     </li>
   );
@@ -280,7 +283,7 @@ export function SeanceActionsSheet({
           confirmLabel={archive.confirm === 'destructive' ? 'Archiver sans les modifications' : 'Archiver la séance'}
           busy={write.busy}
           error={write.error}
-          className="mx-5 mb-2 mt-1"
+          className="mx-4 mb-2 mt-1"
           onCancel={back}
           onConfirm={() => void write.run(onArchive)}
         >
@@ -298,7 +301,7 @@ export function SeanceActionsSheet({
           confirmLabel="Supprimer la séance"
           busy={write.busy}
           error={write.error}
-          className="mx-5 mb-2 mt-1"
+          className="mx-4 mb-2 mt-1"
           onCancel={back}
           onConfirm={() => void write.run(onDelete)}
         >
@@ -337,7 +340,7 @@ export function SeanceActionsSheet({
               />
             )}
           </ul>
-          {write.error && <FieldError className="mx-5">{write.error}</FieldError>}
+          {write.error && <FieldError className="mx-4">{write.error}</FieldError>}
         </>
       )}
     </Sheet>
@@ -401,7 +404,7 @@ export function RoutineActionsSheet({
           confirmLabel="Définir comme courante"
           busy={write.busy}
           error={write.error}
-          className="mx-5 mb-2 mt-1"
+          className="mx-4 mb-2 mt-1"
           onCancel={back}
           onConfirm={() => void write.run(onSetCurrent)}
         >
@@ -413,7 +416,7 @@ export function RoutineActionsSheet({
           confirmLabel="Archiver la routine"
           busy={write.busy}
           error={write.error}
-          className="mx-5 mb-2 mt-1"
+          className="mx-4 mb-2 mt-1"
           onCancel={back}
           onConfirm={() => void write.run(onArchive)}
         >
@@ -429,7 +432,7 @@ export function RoutineActionsSheet({
           confirmLabel="Supprimer la routine"
           busy={write.busy}
           error={write.error}
-          className="mx-5 mb-2 mt-1"
+          className="mx-4 mb-2 mt-1"
           onCancel={back}
           onConfirm={() => void write.run(onDelete)}
         >
@@ -466,7 +469,7 @@ export function RoutineActionsSheet({
               <ActionNote>La routine courante ne s’archive pas. Définis d’abord une autre routine comme courante.</ActionNote>
             )}
           </ul>
-          {write.error && <FieldError className="mx-5">{write.error}</FieldError>}
+          {write.error && <FieldError className="mx-4">{write.error}</FieldError>}
         </>
       )}
     </Sheet>
@@ -482,12 +485,12 @@ export interface PlanFlash {
   unarchive?: { kind: 'seance' | 'routine'; id: string; name: string };
 }
 
-/** La ligne d'état : la phrase entre deux filets, « Désarchiver » en lien à son
+/** La ligne d'état : la phrase dans un bloc levé arrondi, « Désarchiver » en lien à son
  *  bout. Le lien attend l'écriture ; un refus prend la place de la phrase. */
 export function StatusLine({ flash, onUnarchive }: { flash: PlanFlash; onUnarchive?: () => Promise<void> }) {
   const write = useWrite();
   return (
-    <div role="status" className="mx-5 mb-4 flex flex-wrap items-center justify-between gap-x-4 border-y border-line py-1.5">
+    <div role="status" className="mx-4 mb-4 flex flex-wrap items-center justify-between gap-x-4 rounded-note bg-surface px-4 py-1.5">
       <p className="min-w-0 py-1.5 text-[15px] leading-[1.45] text-ink">{write.error ? `Erreur : ${write.error}` : flash.text}</p>
       {flash.unarchive && onUnarchive && (
         <TextLink

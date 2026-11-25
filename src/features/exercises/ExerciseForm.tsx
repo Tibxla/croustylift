@@ -137,7 +137,7 @@ export function ExerciseForm({
       />
 
       <div
-        className="mt-2 flex min-h-14 flex-wrap items-center justify-between gap-x-3 border-b border-line py-1.5 pl-5 pr-2.5"
+        className="mx-4 mt-2 flex min-h-14 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-group bg-surface px-4 py-2.5"
       >
         <span className="min-w-0">
           <span className="block text-[15px] font-semibold text-ink">Mouvement</span>
@@ -154,7 +154,6 @@ export function ExerciseForm({
             { value: 'uni', label: 'Unilatéral' },
           ]}
           wrap={false}
-          className="-ml-2.5"
         />
       </div>
 
@@ -173,7 +172,7 @@ export function ExerciseForm({
             <FieldError>{muscleError}</FieldError>
           </div>
         )}
-        <div role="group" aria-labelledby="exercise-form-muscles" className="mt-2 grid grid-cols-2 border-t border-line">
+        <div role="group" aria-labelledby="exercise-form-muscles" className="mx-4 mt-2 grid grid-cols-2 overflow-hidden rounded-group bg-surface py-1">
           {MUSCLE_GROUPS.map((m, i) => {
             const on = muscles.includes(m);
             return (
@@ -183,16 +182,13 @@ export function ExerciseForm({
                 role="checkbox"
                 aria-checked={on}
                 onClick={() => setMuscles((prev) => toggleMuscle(prev, m))}
-                className={`flex min-h-12 items-center gap-3 border-b border-line py-2 text-left active:bg-line ${
-                  i % 2 === 0 ? 'pl-5 pr-2' : 'pl-3 pr-5'
-                }`}
+                className={`flex min-h-12 items-center gap-3 py-2 text-left focus-visible:outline-offset-[-2px] active:bg-line ${i % 2 === 0 ? 'pl-4 pr-2' : 'pl-3 pr-4'}`}
               >
                 <CheckBox checked={on} />
                 <span className={`min-w-0 text-[16px] first-letter:uppercase ${on ? 'font-semibold text-ink' : 'text-muted'}`}>{m}</span>
               </button>
             );
           })}
-          {MUSCLE_GROUPS.length % 2 === 1 && <span aria-hidden className="border-b border-line" />}
         </div>
       </div>
     </>

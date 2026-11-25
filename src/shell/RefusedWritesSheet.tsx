@@ -14,7 +14,7 @@ import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, retryRefused, type R
 import { listExercisesForCapture } from '../features/capture/data';
 import { forgetAbandonedSets } from '../features/capture/state';
 import { flushOutbox } from '../features/capture/sync';
-import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
+import { Confirm, EmptyState, GROUP, GROUP_ROW, SecondaryButton, Sheet, TextLink } from '../ui';
 import { abandonWarning, describeRefusal, fmtWhen, GESTURE_TEXT } from './refused-writes';
 
 type Outcome = { id: string; text: string };
@@ -125,13 +125,13 @@ function RefusedList() {
               {gone}
             </p>
           )}
-          <ul aria-label="Saisies refusées" className="border-t border-line">
+          <ul aria-label="Saisies refusées" className={GROUP}>
             {entries.map((entry) => {
               const t = describeRefusal(entry, lookup);
               const taken = abandonWarning(entry);
               const when = fmtWhen(entry.at);
               return (
-                <li key={entry.refusalId} className="border-b border-line px-5 py-3">
+                <li key={entry.refusalId} className={`${GROUP_ROW} px-4 py-3`}>
                   <p className="break-words text-[17px] font-medium leading-[1.3] text-ink">{t.what}</p>
                   {t.detail && <p className="mt-0.5 text-[14px] text-muted">{t.detail}</p>}
                   <p className="mt-0.5 text-[14px] text-faint">Refusée {when}</p>

@@ -73,6 +73,7 @@ import {
   resolveCaptureDate,
   onSetsAbandoned,
   shouldReanchorLaunch,
+  clearPersistedExecution,
   todayIso,
   type DatedNoteDraft,
   type HydratedProgress,
@@ -97,14 +98,16 @@ import { flushOutbox } from './sync';
 import { boundSetValues } from './stepper-utils';
 import { createLateMailbox, type LateMailbox } from './late-reality';
 import type { Side } from '../../domain/types';
-import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import { EdgeSwipeBack } from './EdgeSwipeBack';
+import { footUndo, logLabel, logRank } from './salle-foot';
 import type { IndexItem } from './ExerciseIndex';
 import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
-import { useGoToSurface } from '../../shell/navigation';
+import { useGoToSurface, useSurfaceReturn } from '../../shell/navigation';
+import { blurFocusedField } from '../../shell/blur-focused-field';
 import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
@@ -119,9 +122,10 @@ import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { applySetGesture as applyGesture } from './apply-set-gesture';
-import { changeSetSide, correctSet, deleteSet, type SetEntry, type SetGesture } from './set-gestures';
+import { changeSetSide, correctSet, deleteSet, undoLastSet, type SetEntry, type SetGesture } from './set-gestures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
 import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
+import { captureBoardKey, forgetPendingWrites, salleReturnAction } from './written-elsewhere';
 
 type LoadState =
   | { phase: 'loading' }
@@ -463,8 +467,8 @@ export function CaptureScreen() {
     [lateBox],
   );
 
-  // Au montage (et à chaque retour sur l'onglet Capture, qui REMONTE l'écran),
-  // on lit la routine courante : si elle a des séances, on en propose le choix.
+  // Au montage (et au retour sur l'onglet quand aucune séance n'est ouverte, cf.
+  // plus bas), on lit la routine courante : si elle a des séances, on en propose le choix.
   // Sinon (aucune routine courante, ou routine courante sans séance), on ne crée
   // PLUS rien en silence (l'ancien fallback ensureStarterSeance est supprimé) :
   // on affiche un état vide. Un user totalement neuf ne passe pas par ici, App
@@ -474,6 +478,9 @@ export function CaptureScreen() {
     const active = () => alive;
     loadGenRef.current += 1;
     setLoad({ phase: 'loading' });
+    // Ce chargement relit tout : ce que les autres onglets ont écrit jusqu'ici
+    // n'a plus à le relancer au retour (written-elsewhere.ts).
+    forgetPendingWrites();
 
     // Flush de l'outbox dès l'ARRIVÉE sur l'écran, quelle que soit la phase
     // (incident 2026-07-30) : les autres déclencheurs (montage de CaptureBoard,
@@ -531,6 +538,34 @@ export function CaptureScreen() {
     };
   }, [reloadKey, loadSeance]);
 
+  // Retour sur l'onglet : la Salle est restée montée, cachée (shell/surface-memory.ts).
+  // Une séance ouverte se retrouve telle quelle (exo, série visée, côté,
+  // brouillon). Sans séance ouverte (choix, rien à logger, erreur) ou une fois
+  // la séance rangée (clôture transitoire, ADR 0009), on relit comme l'ancien
+  // remontage : une séance créée entre-temps dans Séances apparaît, une séance
+  // en cours reprend, le récap rangé laisse place au lancement. De même quand un
+  // autre onglet a écrit sous la séance ouverte (written-elsewhere.ts) : le
+  // Journal l'a corrigée (la base fait foi) ou supprimée (retour à « Quelle
+  // séance ? »), Exos ou Séances ont changé une définition. Le chargement
+  // remonte alors le tableau (`captureBoardKey`) : réalisé relu, exécution
+  // réaffirmée avant la série suivante. Et la file d'écritures est retentée à
+  // chaque arrivée, quelle que soit la phase (incident 2026-07-30, cf. l'effet
+  // de chargement).
+  useSurfaceReturn(() => {
+    void attemptFlush();
+    const board = load.phase === 'ready' ? boardStateRef.current?.() ?? null : null;
+    const action = salleReturnAction({
+      phase: load.phase,
+      closed: (board?.closedAt ?? null) !== null,
+      executionId: board?.executionId ?? (load.phase === 'ready' ? load.executionId : null),
+    });
+    if (action === 'keep') return;
+    // Supprimée : l'état local est effacé encore une fois, au cas où il aurait
+    // été réécrit avant que le Journal ne la retire.
+    if (action === 'forget-and-reload' && board) clearPersistedExecution(board.executionId);
+    setReloadKey((k) => k + 1);
+  });
+
   // Clic sur une séance proposée : on la résout (version courante) et on charge.
   const chooseSeance = useCallback(
     (seance: SeanceChoice) => {
@@ -583,7 +618,7 @@ export function CaptureScreen() {
 
   return (
     <CaptureBoard
-      key={`${load.template.id}:${load.executionId}`}
+      key={captureBoardKey({ templateId: load.template.id, executionId: load.executionId, generation: load.generation })}
       template={load.template}
       extras={load.extras}
       lateBox={lateBox}
@@ -936,8 +971,8 @@ function CaptureBoard({
 
   // --- Synchro via outbox ---------------------------------------------------
 
-  // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
-  // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
+  // Au démontage du tableau (séance quittée, déconnexion ; un changement
+  // d'onglet le garde monté), un dernier essai d'écrire l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
   // démonté, le tableau ne le tient plus (cf. `retryPersistCaptureState`).
   useEffect(() => () => void retryPersistCaptureState(), []);
 
@@ -1044,29 +1079,6 @@ function CaptureBoard({
     [enqueueExecutionOnce],
   );
 
-  const handleUndo = useCallback(
-    (exerciseId: string) => {
-      // Id de la dernière série encore loggée localement : c'est elle qu'on annule.
-      // On lit la projection (stateRef) pour viser la BONNE dernière série même
-      // après des logs synchrones non encore re-rendus (cohérent avec handleLog).
-      const current = stateRef.current;
-      const prev = getProgress(current, exerciseId);
-      const lastId = prev.setIds[prev.setIds.length - 1] ?? null;
-      const action = { type: 'undo-last-set', exerciseId } as const;
-      dispatch(action);
-      stateRef.current = captureReducer(current, action);
-      // Une série réhydratée porte DÉSORMAIS son id réel (bug H2/F1) → on enfile un
-      // `deleteSet` qui retire la ligne en base. `null` ne subsiste que pour un
-      // cache d'ANCIEN format (série sans id) : rien à enfiler (le delete par id ne
-      // saurait quoi viser), on annule en local seulement (rare, assumé).
-      if (lastId) {
-        // L'exo est connu ici : l'op le porte pour la relecture de sa copie locale.
-        enqueueAndFlush({ type: 'deleteSet', id: lastId, exerciseIds: [exerciseId] });
-      }
-    },
-    [],
-  );
-
   // Corriger, changer de côté ou supprimer une série quelconque de l'exo affiché
   // (set-gestures.ts). Même enchaînement qu'un log : le geste se calcule sur la
   // PROJECTION, l'action est dispatchée et la projection avancée du même pas,
@@ -1083,6 +1095,16 @@ function CaptureBoard({
       });
     },
     [enqueueExecutionOnce],
+  );
+  // Annuler la dernière série (le pied de l'instrument) : même enchaînement que
+  // les autres gestes (`undoLastSet`, set-gestures.ts). On lit la projection
+  // (stateRef) pour viser la BONNE dernière série même après des logs
+  // synchrones non encore re-rendus (cohérent avec handleLog). Une série
+  // réhydratée porte son id réel (bug H2/F1) : un `deleteSet` la retire en base ;
+  // un cache d'ANCIEN format (série sans id) s'annule en local seulement.
+  const handleUndo = useCallback(
+    (exerciseId: string) => applySetGesture(undoLastSet(stateRef.current, exerciseId)),
+    [applySetGesture],
   );
   const handleCorrectSet = useCallback(
     (exerciseId: string, setId: string, values: Partial<SetEntry>) =>
@@ -1417,7 +1439,7 @@ type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
 /** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
  *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, pas de
- *  ligne (elle pousserait la rangée RIR sous la barre du pouce) : seules les
+ *  ligne (elle pousserait les plaques sous le pied) : seules les
  *  alarmes s'y disent, le bouton Sommaire garde la progression. */
 function SalleSync() {
   const sync = useSyncState();
@@ -1425,27 +1447,9 @@ function SalleSync() {
   return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
 }
 
-/** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
- *  au-delà du plan. L'info tient au TEXTE, jamais à la couleur seule. */
-function logLabel(side: Side | null, rank: number, plannedMax: number): string {
-  if (side) return `Logger ${side === 'left' ? 'gauche' : 'droite'} · série ${rank}`;
-  return rank > plannedMax ? 'Logger une de plus' : `Logger la série ${rank}`;
-}
-
-/** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
- *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales).
- *  Sous 340 px (320) : marges de 8 px et titre à 15 px, sinon « Sommai… » et
- *  « Exo sui… » (cf. la colonne du milieu, `BAR_GRID`). */
-const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line [@media(max-width:339px)]:px-2';
-/** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
-const BAR_TITLE =
-  'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink [@media(max-width:339px)]:text-[15px]';
-/** Rangée du haut : colonne du milieu (Annuler) à largeur bornée, Sommaire et
- *  Exo suivant gardent la même largeur, qu'Annuler soit là ou non ; resserrée
- *  sous 340 px pour laisser leurs titres entiers. */
-const BAR_GRID =
-  'mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2 [@media(max-width:339px)]:grid-cols-[1fr_minmax(48px,60px)_1fr]';
+/** Un lien du pied de l'instrument : souligné, cible de 44 px, sans enfoncement
+ *  (le fond ne change pas : un lien s'éclaircit seul quand on le presse). */
+const FOOT_LINK = 'flex h-11 min-w-0 items-center whitespace-nowrap px-2 text-[16px] text-ink active:opacity-70 [@media(max-width:339px)]:text-[15px]';
 
 function CapturePanel({
   exercise,
@@ -1510,15 +1514,10 @@ function CapturePanel({
   const currentSide: Side | null = unilateral
     ? draft?.side ?? pendingSide(progress) ?? 'left'
     : null;
-  // SÉRIES complètes : en unilatéral, une série = gauche + droite au même order
-  // (blind F4) ; bilatéral = une saisie par série.
-  const completedSets = unilateral
-    ? pairSidesByOrder(progress.sets).filter((p) => p.left !== null && p.right !== null).length
-    : progress.sets.length;
   // Le rang que dit « Logger » : en unilatéral, la série que vise le côté
-  // choisi (la case en cours de la bande, `targetSlotForSide`).
-  const rank = currentSide ? targetSlotForSide(progress.sets, currentSide) + 1 : completedSets + 1;
-  const lastSet = progress.sets[progress.sets.length - 1] ?? null;
+  // choisi (la case en cours de la bande, `targetSlotForSide`) ; en bilatéral,
+  // la série qui suit les séries faites (salle-foot.ts).
+  const rank = logRank(progress, currentSide);
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
@@ -1552,11 +1551,7 @@ function CapturePanel({
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
   const values = draft ? `${formatWeight(draft.weightKg)} × ${draft.reps} · RIR ${draft.rir}` : '';
   // Annuler retire la DERNIÈRE ligne loggée : un côté en unilatéral (décision 2b).
-  const undoWhat = lastSet
-    ? lastSet.side
-      ? { aria: `Annuler le côté ${sideLabel(lastSet.side)} de la série ${lastSet.order}`, sub: sideLabel(lastSet.side) }
-      : { aria: `Annuler la série ${lastSet.order}`, sub: `série ${lastSet.order}` }
-    : null;
+  const undoWhat = footUndo(progress);
 
   // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
@@ -1565,8 +1560,17 @@ function CapturePanel({
   const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
+  // Retour au Sommaire, par le bouton du pied, le récap d'exo ou le glissé :
+  // l'instrument se démonte, un champ au clavier (poids) perd d'abord le focus
+  // (shell/blur-focused-field.ts).
+  const backToSommaire = () => {
+    blurFocusedField();
+    dispatch({ type: 'back-to-picker' });
+  };
+
   return (
-    <>
+    // Glissé depuis le bord gauche : retour au Sommaire (EdgeSwipeBack.tsx).
+    <EdgeSwipeBack onBack={backToSommaire}>
       <SyncBanner line={alarm} action={refusedAction(sync.refused, openRefused)} />
       <ExerciseCapture
         exercise={exercise}
@@ -1577,7 +1581,7 @@ function CapturePanel({
         historyEpoch={historyEpoch}
         onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
         onNext={() => next && dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
-        onSommaire={() => dispatch({ type: 'back-to-picker' })}
+        onSommaire={backToSommaire}
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
         onSaveExerciseNote={onSaveExerciseNote}
@@ -1615,26 +1619,28 @@ function CapturePanel({
         {announce}
       </p>
 
-      {/* Zone du pouce, collée en bas (`sticky`, fond plein, encoche comprise ;
-          jamais `position: fixed`). Rangée du haut : Sommaire, Annuler, Exo
-          suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
-          geste répété, toujours au même endroit, sans enfoncement. Rien ne change
-          de place quand le minimum du plan est atteint (décision du 23/11). */}
+      {/* Pied léger, collé en bas (`sticky`, fond plein, encoche comprise ;
+          jamais `position: fixed`), variante A4 du 25/11. Rangée du haut, trois
+          liens soulignés à place fixe : « ‹ Sommaire » et la progression à
+          gauche, « Annuler » au milieu, « Exo suivant › » (ou « Terminer ›») à
+          droite. Rangée du bas : Logger, le seul bloc plein, le geste répété,
+          toujours au même endroit, sans enfoncement. Rien ne change de place
+          quand le minimum du plan est atteint (décision du 23/11). */}
       <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
-        <div className={BAR_GRID}>
+        <div className="mb-1 grid h-11 grid-cols-[1fr_auto_1fr] items-center gap-1">
           <button
             type="button"
-            onClick={() => dispatch({ type: 'back-to-picker' })}
+            onClick={backToSommaire}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
               detail.alarm ? `, ${detail.text}` : ''
             }`}
-            className={BAR_BTN}
+            className={`${FOOT_LINK} -ml-2 justify-self-start`}
           >
-            <span className={BAR_TITLE}>Sommaire</span>
+            <span className="underline decoration-1 underline-offset-4">‹ Sommaire</span>
             {/* La progression, toujours (sommaire-detail.ts) ; une alarme (stockage
                 plein, refus) prend sa place, en blanc cassé demi-gras. */}
-            <span className={`tnum w-full truncate text-[13px] leading-tight ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
-              {detail.text}
+            <span className={`tnum ml-1.5 min-w-0 truncate text-[14px] ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
+              {detail.alarm ? detail.text : `${done}/${total}`}
             </span>
           </button>
           {undoWhat ? (
@@ -1645,10 +1651,9 @@ function CapturePanel({
                 setAnnounce(`${undoWhat.aria.replace('Annuler', 'Annulé :')}.`);
               }}
               aria-label={undoWhat.aria}
-              className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
+              className={`${FOOT_LINK} justify-self-center text-[15px] text-muted underline decoration-1 underline-offset-4`}
             >
-              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4 [@media(max-width:339px)]:text-[15px]">Annuler</span>
-              <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
+              Annuler
             </button>
           ) : (
             <span aria-hidden />
@@ -1658,15 +1663,18 @@ function CapturePanel({
               type="button"
               onClick={() => dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
               aria-label={`Exo suivant, ${next.name}${next.resume ? `, reprise ${next.resume}` : ''}`}
-              className={BAR_BTN}
+              className={`${FOOT_LINK} -mr-2 justify-self-end underline decoration-1 underline-offset-4`}
             >
-              <span className={BAR_TITLE}>Exo suivant</span>
-              <span className="w-full truncate text-[13px] leading-tight text-muted">{next.name}</span>
+              Exo suivant ›
             </button>
           ) : canFinish ? (
-            <button type="button" onClick={onFinish} aria-label="Terminer la séance" className={BAR_BTN}>
-              <span className={BAR_TITLE}>Terminer</span>
-              <span className="truncate text-[13px] leading-tight text-muted">la séance</span>
+            <button
+              type="button"
+              onClick={onFinish}
+              aria-label="Terminer la séance"
+              className={`${FOOT_LINK} -mr-2 justify-self-end underline decoration-1 underline-offset-4`}
+            >
+              Terminer ›
             </button>
           ) : (
             <span aria-hidden />
@@ -1683,6 +1691,6 @@ function CapturePanel({
           <span className="tnum">{values}</span>
         </PrimaryButton>
       </div>
-    </>
+    </EdgeSwipeBack>
   );
 }

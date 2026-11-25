@@ -125,7 +125,10 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
-        className="ui-sheet absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-sheet border-t border-line bg-raise"
+        // `--surface` : les groupes arrondis posés dans la feuille prennent le
+        // palier au-dessus du levé (`group-sheet`), sinon ils s'y fondraient ;
+        // sur le panneau même, pour que la copie de sortie le garde.
+        className="ui-sheet absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-sheet border-t border-line bg-raise [--surface:var(--color-group-sheet)]"
       >
         {/* Le titre passe à la ligne plutôt que d'être coupé (un nom d'exo long
             avec le côté, à 360 px) ; sa première ligne reste au niveau de

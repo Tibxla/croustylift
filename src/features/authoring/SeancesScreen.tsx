@@ -149,6 +149,7 @@ export function SeancesScreen() {
               { kind: 'editor', seance: copy, ctx: { ...ctx, executed: false, takenNames: [...ctx.takenNames, copy.name] } },
               { text: `Copie de ${seance.name} créée. Elle part sans historique.` },
             ),
+            'seances',
           );
         }}
         onArchive={async () => {
@@ -431,7 +432,7 @@ export function RoutinesView({
                   />
                 ))}
               </List>
-              {error && <FieldError className="mx-5">{error}</FieldError>}
+              {error && <FieldError className="mx-4">{error}</FieldError>}
             </Disclosure>
           )}
         </>
@@ -832,7 +833,7 @@ export function RoutineView({
           <div className="px-5">
             <TextLink onClick={busy ? undefined : () => void run(onUnarchive)}>{busy ? 'Un instant…' : 'Désarchiver'}</TextLink>
           </div>
-          {error && <FieldError className="mx-5">{error}</FieldError>}
+          {error && <FieldError className="mx-4">{error}</FieldError>}
         </div>
       )}
 
@@ -895,7 +896,7 @@ export function RoutineView({
               {lock.retry && onRetryOrder && <TextLink onClick={onRetryOrder}>Réessayer</TextLink>}
             </p>
           )}
-          {reorder && error && <FieldError className="mx-5">{error}</FieldError>}
+          {reorder && error && <FieldError className="mx-4">{error}</FieldError>}
         </>
       )}
 
@@ -936,7 +937,7 @@ export function RoutineView({
               />
             ))}
           </List>
-          {!archivedRoutine && !reorder && error && <FieldError className="mx-5">{error}</FieldError>}
+          {!archivedRoutine && !reorder && error && <FieldError className="mx-4">{error}</FieldError>}
         </Disclosure>
       )}
 

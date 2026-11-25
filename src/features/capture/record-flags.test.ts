@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { estimateE1rm } from '../../domain/e1rm';
 import type { PerformedSet } from '../../domain/types';
 import type { PersonalRecord } from '../../domain/pr';
-import { computeRecordFlags } from './record-flags';
+import { computeRecordFlags, currentRecord } from './record-flags';
 
 const set = (weightKg: number, reps: number, rir: number, order: number): PerformedSet => ({
   weightKg,
@@ -92,5 +92,41 @@ describe('computeRecordFlags', () => {
   it('aucune série du jour → tableau vide', () => {
     const record: PersonalRecord = { bestE1rm: 100, bestE1rmSet: null, bestWeightReps: { weightKg: 80, reps: 5 } };
     expect(computeRecordFlags([], record)).toEqual([]);
+  });
+});
+
+// Le record COURANT que l'instrument lit sous « Record » (position du brouillon
+// en direct, draft-score.ts) : l'historique, avancé par les séries du jour du
+// côté visé, avec la même règle que les marqueurs.
+describe('currentRecord', () => {
+  const sided = (weightKg: number, reps: number, side: 'left' | 'right', order: number): PerformedSet => ({ weightKg, reps, rir: 1, order, side });
+
+  it('sans série du jour : le record historique tel quel', () => {
+    const record: PersonalRecord = { bestE1rm: 120, bestE1rmSet: { weightKg: 100, reps: 6, rir: 1 }, bestWeightReps: { weightKg: 100, reps: 6 } };
+    expect(currentRecord([], record)).toEqual(record);
+  });
+
+  it('une série du jour qui passe le record le remplace ; une égalité ne le déplace pas', () => {
+    const record: PersonalRecord = { bestE1rm: estimateE1rm(100, 5, 1), bestE1rmSet: { weightKg: 100, reps: 5, rir: 1 }, bestWeightReps: { weightKg: 100, reps: 5 } };
+    // 87,5 × 10 @1 égale 100 × 5 @1 ; 105 × 5 @1 le passe.
+    expect(currentRecord([set(87.5, 10, 1, 1)], record)?.bestE1rmSet).toEqual({ weightKg: 100, reps: 5, rir: 1 });
+    expect(currentRecord([set(87.5, 10, 1, 1), set(105, 5, 1, 2)], record)?.bestE1rmSet).toEqual({ weightKg: 105, reps: 5, rir: 1 });
+  });
+
+  it('premier passage : aucun record de toute la séance, comme les badges, qui n’en donnent pas la première fois', () => {
+    expect(currentRecord([], null)).toBeNull();
+    expect(currentRecord([set(60, 8, 2, 1), set(62.5, 8, 2, 2)], null)).toBeNull();
+    const virgin: PersonalRecord = { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null };
+    expect(currentRecord([set(60, 8, 2, 1)], virgin)).toBe(virgin);
+  });
+
+  it('unilatéral : seul le côté visé compte, l’autre bras garde son propre record', () => {
+    const left: PersonalRecord = { bestE1rm: estimateE1rm(20, 10, 1), bestE1rmSet: { weightKg: 20, reps: 10, rir: 1 }, bestWeightReps: { weightKg: 20, reps: 10 } };
+    const sets = [sided(24, 10, 'right', 1), sided(18, 10, 'left', 1)];
+    expect(currentRecord(sets, left, 'left')?.bestE1rmSet).toEqual({ weightKg: 20, reps: 10, rir: 1 });
+    // Côté droit vierge : pas de record tant que ce bras n'a pas d'historique.
+    expect(currentRecord(sets, null, 'right')).toBeNull();
+    const right: PersonalRecord = { bestE1rm: estimateE1rm(22, 10, 1), bestE1rmSet: { weightKg: 22, reps: 10, rir: 1 }, bestWeightReps: { weightKg: 22, reps: 10 } };
+    expect(currentRecord(sets, right, 'right')?.bestE1rmSet).toEqual({ weightKg: 24, reps: 10, rir: 1 });
   });
 });

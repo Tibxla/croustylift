@@ -40,7 +40,9 @@ export const STEP_INC = 0.25;
 
 export const DEFAULT_REGLAGES: Reglages = {
   signal: { kind: 'preset', name: SIG_DEFAULT.name },
-  stepKg: 1.25,
+  // 0,25 kg depuis le 25/11 (demande de l'utilisateur ; 1,25 avant). Un pas
+  // déjà enregistré sur l'appareil reste tel quel : seul le défaut change.
+  stepKg: 0.25,
   reduceMotion: null,
 };
 

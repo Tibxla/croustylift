@@ -22,7 +22,7 @@ const BUDGETS = {
   'index.js': 89_000, // code de l'app, tenu par le chargement à la demande (mesuré : 84 691 le 2026-11-25, à la fusion du registre d'écritures dans l'intégration, budget relevé à la mesure + 5 % ; 80 122 sur la branche du registre seule, sans journal de secours, ADR 0025, reprise de l'ancien format comprise, à retirer après le 2026-12-31 ; 78 100 après les lots UX et UI de l'audit du 24/11, reps reprises, garde du double toucher, copies datées ; 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
-  'index.css': 7_500, // (mesuré : 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)
+  'index.css': 8_200, // (mesuré : 7 832 à la fusion de la navigation collée sous l'île, bande du bord comprise, 25/11, budget relevé à la mesure + 5 % ; 7 746 aux groupes arrondis et pastilles, 25/11 ; 7 437 avant ; 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)
   // À la demande.
   'AnalysisScreen.js': 25_000, // code de l'Analyse (mesuré : 23 781 au lot UX hors Salle, statuts du Journal face à la Référence, aide sur les mots, copies datées ; 21 942 à la finition du lot 4 de la refonte E, séries d'un point, Record et faits datés, curseur accessible ; 19 348 au lot 4, 17 518 avant)
   'SeancesScreen.js': 15_200, // routines, page d'une routine, éditeur de séance (mesuré : 13 802 aux correctifs d'intégration, verrou de réordonnancement et « Réessayer », refus d'un ordre dépassé ; 13 106 à l'intuitivité de Séances, ⋯ et feuilles d'actions, ligne d'état, catalogue ouvert ; 11 277 avant ; 10 783 au lot 5)
@@ -33,7 +33,7 @@ const BUDGETS = {
   'confirm.js': 850, // confirmation en ligne du kit, partagée par les écrans à la demande (mesuré : 806)
   'useReloadBlockWhile.js': 300, // partagé par Exos et l'éditeur de séance (mesuré : 240)
   'seance-meta-load.js': 910, // « dernière fois mardi » de « Quelle séance ? », lu à part (mesuré : 821 aux correctifs d'intégration, amorce depuis la copie et réponses sous garde d'ordre ; 800 avant)
-  'use-dated-load.js': 620, // copies datées des écrans au calme, partagées par Séances et l'Analyse (mesuré : 556 aux correctifs d'intégration, vues montées relues à l'acquittement, délai rendu à « Réessayer » ; 525 avant)
+  'seance-dirty.js': 1_650, // copies datées des écrans au calme et garde de sortie des éditeurs, partagées par Séances et l'Analyse ; Rollup nomme ce chunk d'après la garde depuis que le shell ne l'importe plus (retour à l'endroit quitté, 25/11 : 1 506 ; avant, use-dated-load.js seul : 556 aux correctifs d'intégration, 525 avant)
   'workbox-window.prod.es5.js': 2_500, // enregistrement du service worker (mesuré : 2 357)
 }
 

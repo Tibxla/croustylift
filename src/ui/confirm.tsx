@@ -17,7 +17,7 @@ export function Confirm({
   keepLabel = 'Garder',
   busy = false,
   error,
-  className = 'mx-5 my-3',
+  className = 'mx-4 my-3',
 }: {
   children: ReactNode;
   confirmLabel: string;
@@ -31,7 +31,7 @@ export function Confirm({
   className?: string;
 }) {
   return (
-    <div role="alert" className={`border-y border-line py-3 ${className}`}>
+    <div role="alert" className={`rounded-note bg-surface px-4 py-3 ${className}`}>
       <div className="text-[15px] leading-[1.45] text-ink">{children}</div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
         {destructive ? (

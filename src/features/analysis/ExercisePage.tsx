@@ -15,7 +15,7 @@
 // et les faits viennent des exécutions de l'exo, relues à l'ouverture
 // (`loadExerciseExecutions`) : `ExerciseAnalysis` n'a que des points.
 import { useEffect, useState } from 'react';
-import { Icon, List, Row, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, TextLink } from '../../ui';
+import { GROUP, GROUP_ROW, Icon, List, Row, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, TextLink } from '../../ui';
 import type { ExerciseExecution } from '../../domain/types';
 import { liftedKg } from '../../domain/lifted';
 import { errorMessage } from '../../lib/error-message';
@@ -104,7 +104,7 @@ export function ExercisePage({
       />
 
       {!lead || !point || !selCurve ? (
-        <p className="mx-5 border-y border-line py-10 text-[17px] leading-[1.45] text-muted">
+        <p className="mx-4 rounded-group bg-surface px-4 py-10 text-[17px] leading-[1.45] text-muted">
           Aucune courbe : toutes les 1ʳᵉˢ séries sont à 0 kg. La courbe partira de la première série chargée.
         </p>
       ) : (
@@ -207,7 +207,7 @@ function Legend({
   year: number;
 }) {
   return (
-    <ul aria-label="Courbes par séance" className="mt-3 flex flex-col px-5">
+    <ul aria-label="Courbes par séance" className={`${GROUP} mt-3 flex flex-col`}>
       {curves.map((c) => {
         const key = curveKey(c.seanceId);
         const rank = shown.indexOf(c);
@@ -216,14 +216,15 @@ function Legend({
         const first = c.curve[0];
         const last = c.curve[c.curve.length - 1];
         return (
-          <li key={key}>
+          <li key={key} className={`${GROUP_ROW} px-4`}>
             <button
               type="button"
+              data-row-hit
               onClick={() => onToggle(key)}
               disabled={lastVisible}
               aria-pressed={!hidden}
               aria-label={lastVisible ? `${c.label}, seule courbe affichée` : `${hidden ? 'Afficher' : 'Masquer'} la courbe ${c.label}`}
-              className="flex min-h-12 w-full items-center gap-3 py-1 text-left active:opacity-70"
+              className="flex min-h-12 w-full items-center gap-3 py-1 text-left"
             >
               <span className="flex w-[22px] flex-none justify-center">
                 {!hidden && <Swatch tone={rank === 0 ? 'ink' : 'muted'} dashed={rank > 0} />}
@@ -318,15 +319,15 @@ function PointSets({
         Séries du {date}
       </SectionTitle>
       {phase === 'loading' ? (
-        <p role="status" className="border-t border-line px-5 py-3 text-[15px] text-muted">
+        <p role="status" className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] text-muted">
           Chargement des séries…
         </p>
       ) : phase === 'offline' ? (
-        <p role="status" className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+        <p role="status" className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-muted">
           Les séries se lisent avec le réseau. La courbe, elle, est là.
         </p>
       ) : !exec ? (
-        <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+        <p className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-muted">
           Séries indisponibles pour l’instant.
         </p>
       ) : (

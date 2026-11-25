@@ -3,11 +3,11 @@ import { DEFAULT_REGLAGES, effectiveReduceMotion, parseReglages, signalHex, sign
 import { CLARTE_MAX, contrast, freeHex, HUE_MAX, readable, SIG_PRESETS } from './signal-color';
 
 describe('parseReglages', () => {
-  it('rien ou illisible : les défauts (Jaune, 1,25 kg)', () => {
+  it('rien ou illisible : les défauts (Jaune, 0,25 kg)', () => {
     expect(parseReglages(null)).toEqual(DEFAULT_REGLAGES);
     expect(parseReglages('pas du json')).toEqual(DEFAULT_REGLAGES);
     expect(parseReglages('42')).toEqual(DEFAULT_REGLAGES);
-    expect(DEFAULT_REGLAGES).toEqual({ signal: { kind: 'preset', name: 'Jaune' }, stepKg: 1.25, reduceMotion: null });
+    expect(DEFAULT_REGLAGES).toEqual({ signal: { kind: 'preset', name: 'Jaune' }, stepKg: 0.25, reduceMotion: null });
   });
 
   it('relit une prédéfinie, une couleur libre et un pas valides', () => {
@@ -34,7 +34,7 @@ describe('parseReglages', () => {
       { kind: 'hex', hex: 'red;background:url(x)' },
     ];
     for (const signal of bad) expect(parseReglages(JSON.stringify({ signal, stepKg: 5 })).signal).toEqual(DEFAULT_REGLAGES.signal);
-    for (const stepKg of [0, 0.1, 10.25, -1, 1.3, '2', null]) expect(parseReglages(JSON.stringify({ stepKg })).stepKg).toBe(1.25);
+    for (const stepKg of [0, 0.1, 10.25, -1, 1.3, '2', null]) expect(parseReglages(JSON.stringify({ stepKg })).stepKg).toBe(0.25);
   });
 });
 
@@ -71,5 +71,15 @@ describe('signal', () => {
 
   it('les prédéfinies tiennent 5,8:1 sur le fond', () => {
     for (const p of SIG_PRESETS) expect(contrast(p.hex, '#100e0c')).toBeGreaterThan(5.8);
+  });
+});
+
+describe('pas de la règle par défaut (0,25 kg depuis le 25/11)', () => {
+  it('un pas déjà enregistré reste tel quel, y compris l’ancien défaut', () => {
+    expect(parseReglages(JSON.stringify({ stepKg: 1.25 })).stepKg).toBe(1.25);
+    expect(parseReglages(JSON.stringify({ stepKg: 2.5 })).stepKg).toBe(2.5);
+  });
+  it('sans pas enregistré : 0,25 kg', () => {
+    expect(parseReglages(JSON.stringify({ signal: { kind: 'preset', name: 'Rouge' } })).stepKg).toBe(0.25);
   });
 });

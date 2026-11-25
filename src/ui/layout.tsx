@@ -1,5 +1,12 @@
-// Kit E · mise en page d'un écran : en-tête, sections, filets, lignes de liste,
-// état vide, barre d'action collée en bas.
+// Kit E · mise en page d'un écran : en-tête, sections, groupes arrondis et leurs
+// lignes, état vide, barre d'action collée en bas.
+//
+// GROUPES ARRONDIS (direction du 25/11, DESIGN.md « Shapes ») : une liste est UN
+// bloc levé (`bg-surface`), retiré de 16 px des bords, de rayon 18 px ; ses
+// lignes se séparent par un filet intérieur qui ne touche aucun bord. Jamais de
+// bloc dans un bloc, jamais d'ombre. Les écrans qui écrivent leurs propres
+// lignes (réglages, fiche, fin de séance) prennent `GROUP` pour le conteneur et
+// `GROUP_ROW` pour chaque ligne, plutôt que de redessiner un filet.
 import type { ReactNode } from 'react';
 import { Chevron } from './icons';
 
@@ -68,10 +75,25 @@ export function ScreenHeader({
   );
 }
 
+/** Conteneur d'un groupe arrondi (bloc levé retiré de 16 px des bords). */
+export const GROUP = 'mx-4 rounded-group bg-surface';
+
+/** Ligne d'un groupe (`.group-row`, index.css) : filet intérieur au-dessus de
+ *  chaque ligne sauf la première, retiré de 16 px des deux côtés ; coins de la
+ *  première et de la dernière arrondis comme le groupe. Pressée par sa zone
+ *  touchable (enfant direct marqué `data-row-hit`), la ligne entière prend
+ *  l'aplat de pression. Une classe plutôt que sept utilitaires à variantes :
+ *  elle sert sur chaque ligne de l'app et tient le budget CSS. */
+export const GROUP_ROW = 'group-row';
+
+/** Filet intérieur au-dessus d'un bloc posé DANS une ligne de groupe (la partie
+ *  dépliée d'un exo de l'éditeur), retiré de 16 px des deux côtés. */
+export const GROUP_RULE = 'group-rule';
+
 /** Titre de section : phrase en casse normale, jamais de surtitre en majuscules. */
 export function SectionTitle({ children, aside, id }: { children: ReactNode; aside?: ReactNode; id?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 px-5 pb-2 pt-6">
+    <div className="flex items-baseline justify-between gap-3 px-5 pb-2 pt-7">
       <h2 id={id} className="text-[17px] font-semibold text-ink">
         {children}
       </h2>
@@ -80,7 +102,7 @@ export function SectionTitle({ children, aside, id }: { children: ReactNode; asi
   );
 }
 
-/** Ligne de liste : titre, méta dessous, valeur à droite, chevron si `onClick`
+/** Ligne d'un groupe : titre, méta dessous, valeur à droite, chevron si `onClick`
  *  (« ouvrir »). `chevron={false}` : le toucher ne mène nulle part (il ajoute,
  *  par exemple) ; `mark` pose alors à sa place une icône décorative qui dit le
  *  geste, DANS la zone touchable.
@@ -146,15 +168,18 @@ export function Row({
   // chevron ; sinon tout part du haut, pour les titres sur deux lignes.
   const bare = !meta && value === undefined && valueMeta === undefined;
   const cls = `flex min-h-14 min-w-0 flex-1 ${bare ? 'items-center' : 'items-start'} gap-3 py-3 text-left`;
+  // Pressée, toute la ligne prend l'aplat de pression (pas l'action à part,
+  // `trailing`, qui a son propre retour).
   return (
-    <li className="relative flex items-center gap-3 border-b border-line px-5">
+    <li className={`${GROUP_ROW} flex items-center gap-3 px-4`}>
       {onClick ? (
         <button
           type="button"
+          data-row-hit
           onClick={onClick}
           aria-label={ariaLabel}
           aria-current={current ? 'true' : undefined}
-          className={`${cls} active:opacity-70`}
+          className={cls}
         >
           {body}
         </button>
@@ -166,10 +191,10 @@ export function Row({
   );
 }
 
-/** Liste de `Row`, filet en tête. */
+/** Liste de `Row` : un groupe arrondi. */
 export function List({ children, label }: { children: ReactNode; label?: string }) {
   return (
-    <ul aria-label={label} className="border-t border-line">
+    <ul aria-label={label} className={GROUP}>
       {children}
     </ul>
   );

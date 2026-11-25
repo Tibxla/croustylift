@@ -1,12 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <!-- Icône E « Signal » : une règle graduée vue de face, l'aiguille au signal (jaune par défaut) au centre. Fond noir chaud plein, sans dégradé ni halo. -->
   <rect width="512" height="512" fill="#100e0c"/>
-  <rect x="115.0" y="156.2" width="282.1" height="12.0" rx="2.6" fill="#8f8c85"/>
-  <rect x="118.4" y="156.2" width="17.2" height="113.5" rx="2.6" fill="#f4f0e7"/>
-  <rect x="164.8" y="156.2" width="17.2" height="63.6" rx="2.6" fill="#b5b0a9"/>
-  <rect x="206.1" y="156.2" width="17.2" height="63.6" rx="2.6" fill="#b5b0a9"/>
-  <rect x="288.7" y="156.2" width="17.2" height="63.6" rx="2.6" fill="#b5b0a9"/>
-  <rect x="330.0" y="156.2" width="17.2" height="63.6" rx="2.6" fill="#b5b0a9"/>
-  <rect x="376.4" y="156.2" width="17.2" height="113.5" rx="2.6" fill="#f4f0e7"/>
-  <rect x="243.1" y="156.2" width="25.8" height="206.4" rx="2.6" fill="#f6d236"/>
+  <rect x="155" y="268" width="56" height="100" rx="24" fill="#f6d236" fill-opacity="0.40"/>
+  <rect x="228" y="216" width="56" height="152" rx="24" fill="#f6d236" fill-opacity="0.72"/>
+  <rect x="301" y="164" width="56" height="204" rx="24" fill="#f6d236"/>
 </svg>

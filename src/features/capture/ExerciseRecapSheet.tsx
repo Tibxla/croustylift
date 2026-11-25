@@ -2,21 +2,22 @@
 // fois, quand la borne haute du plan est franchie, et se rouvre depuis le bilan
 // de l'exo. Constat sobre : séries faites face au plan, statuts face à la
 // Référence et au record (par côté en unilatéral). Non
-// bloquant : l'exo suivant (ou le Sommaire), ou « Continuer l'exercice » pour
-// une série de plus. Feuille du kit : bornée en hauteur, sous la barre d'état.
+// bloquant : l'exo suivant en action principale (le Sommaire au dernier exo),
+// puis, côte à côte, « Continuer l'exo » pour une série de plus et
+// « Sommaire » pour revenir à la liste de la séance (même geste que « ‹ Sommaire »
+// du pied, demande du 25/11). Feuille du kit : bornée en hauteur, sous la barre
+// d'état.
 import type { PerformedSet } from '../../domain/types';
 import { PrimaryButton, SecondaryButton, Sheet, Status } from '../../ui';
 import { formatRange, formatSetCount } from './format';
-import { recordWord, summarizeBadges, type SetBadge, type VerdictCounts } from './set-badges';
+import { recordWord, summarizeBadges, verdictWords, type SetBadge, type VerdictCounts } from './set-badges';
 
-/** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé. */
+/** Statuts d'une ligne : record et battues en signal, égalées en blanc cassé, en
+ *  mots de `verdictWords` (la même source que le Sommaire et la fin de séance).
+ *  Une ligne « Gauche » ou « Droite » compte les séries de CE côté : ses mots
+ *  restent en séries. */
 function Verdicts({ counts, record }: { counts: VerdictCounts; record: 'record' | 'record charge' }) {
-  const [noun, kind] = record === 'record charge' ? ['record', ' charge'] : ['record', ''];
-  const parts = [
-    counts.record > 0 && <Status key="r" v="up" word={`${counts.record} ${noun}${counts.record > 1 ? 's' : ''}${kind}`} />,
-    counts.battu > 0 && <Status key="b" v="up" word={`${counts.battu} battue${counts.battu > 1 ? 's' : ''}`} />,
-    counts.egalise > 0 && <Status key="e" v="eq" word={`${counts.egalise} égalée${counts.egalise > 1 ? 's' : ''}`} />,
-  ].filter(Boolean);
+  const parts = verdictWords(counts, record, false).map((s) => <Status key={s.word} v={s.v} word={s.word} />);
   return parts.length ? <span className="flex flex-wrap items-center gap-x-3">{parts}</span> : <span className="text-muted">rien de battu</span>;
 }
 
@@ -57,13 +58,27 @@ export function ExerciseRecapSheet({
       footer={
         <>
           {next ? (
-            <PrimaryButton over="Exo suivant" onClick={onNext}>
-              {next}
-            </PrimaryButton>
+            <>
+              <PrimaryButton over="Exo suivant" onClick={onNext}>
+                {next}
+              </PrimaryButton>
+              {/* Côte à côte dès 360 px ; dessous, l'un sous l'autre plutôt
+                  qu'un libellé coupé (base de 150 px chacun). */}
+              <div className="flex flex-wrap gap-2">
+                <SecondaryButton onClick={onClose} className="flex-1 basis-[150px]">
+                  Continuer l’exo
+                </SecondaryButton>
+                <SecondaryButton onClick={onSommaire} ariaLabel="Revenir au Sommaire de la séance" className="flex-1 basis-[150px]">
+                  Sommaire
+                </SecondaryButton>
+              </div>
+            </>
           ) : (
-            <PrimaryButton onClick={onSommaire}>Sommaire</PrimaryButton>
+            <>
+              <PrimaryButton onClick={onSommaire}>Sommaire</PrimaryButton>
+              <SecondaryButton onClick={onClose}>Continuer l’exercice</SecondaryButton>
+            </>
           )}
-          <SecondaryButton onClick={onClose}>Continuer l’exercice</SecondaryButton>
         </>
       }
     >
