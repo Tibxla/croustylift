@@ -2,7 +2,7 @@
 // ordre, et ce qui s'écrit sous chaque numéro (une ligne, poids tronqué, RIR).
 import { describe, expect, it } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
-import { bandCells, bandName, bandParts, bandValue } from './set-band';
+import { bandCells, bandFirstShown, bandName, bandParts, bandValue } from './set-band';
 
 describe('bandValue : une ligne sous le numéro', () => {
   it('le poids sans ses décimales, tronqué, puis les reps, une espace fine et le RIR', () => {
@@ -122,5 +122,20 @@ describe('bandCells, unilatéral : une case par côté, rangées par série puis
       ['1 G', 1],
       ['1 D', 0],
     ]);
+  });
+});
+
+describe('bandFirstShown : la case où la bande se cale', () => {
+  it('bilatéral : deux cases avant la série en cours', () => {
+    expect(bandFirstShown(0, false)).toBe(0);
+    expect(bandFirstShown(5, false)).toBe(3);
+  });
+
+  it('unilatéral : les paires G et D restent ensemble, la série d’avant puis l’en cours', () => {
+    // Case en cours « 3 D » (index 5) : la vue part de « 2 G » (index 2).
+    expect(bandFirstShown(5, true)).toBe(2);
+    // « 3 G » (index 4) : pareil, jamais une vue qui commence par « 2 D ».
+    expect(bandFirstShown(4, true)).toBe(2);
+    expect(bandFirstShown(1, true)).toBe(0);
   });
 });

@@ -123,3 +123,14 @@ export function bandCellName(c: BandCell, badges: readonly SetBadge[], draft: Va
   if (c.state === 'current') return `Série ${c.rank} en cours${sideWord(c)}, ${bandName(draft)}`;
   return `Série ${c.rank}${sideWord(c)}, à faire`;
 }
+
+/**
+ * L'index de la case sur laquelle la bande se cale, la case en cours étant à
+ * `current` : deux cases avant elle en bilatéral ; en unilatéral, le début de la
+ * série d'avant, pour que « 2 G » et « 2 D » restent ensemble (jamais une vue
+ * qui s'ouvre sur un « D »). Relecture du 25/11.
+ */
+export function bandFirstShown(current: number, unilateral: boolean): number {
+  if (current < 0) return 0;
+  return unilateral ? Math.max(0, current - (current % 2) - 2) : Math.max(0, current - 2);
+}

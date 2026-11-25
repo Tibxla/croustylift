@@ -8,7 +8,8 @@
 //
 // Quatre cases entières dès 360 px d'écran, trois en dessous : jamais de case
 // coupée au repos. Au-delà, la bande défile, se cale sur une case entière et
-// garde la série en cours en vue, deux cases faites avant elle. Recadrage
+// garde la série en cours en vue, deux cases faites avant elle (en unilatéral,
+// la série d'avant entière : « 2 G » et « 2 D » restent ensemble). Recadrage
 // instantané (aucune animation : il suit chaque log).
 //
 // Case en cours : le brouillon en gris, soulignée d'un trait épais. Une case
@@ -21,7 +22,7 @@ import { useLayoutEffect, useRef } from 'react';
 import type { PerformedSet } from '../../domain/types';
 import { Sign, TONE } from '../../ui';
 import { badgeStatus, type SetBadge } from './set-badges';
-import { bandCellName, bandParts, type BandCell } from './set-band';
+import { bandCellName, bandFirstShown, bandParts, type BandCell } from './set-band';
 
 type Draft = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
@@ -44,11 +45,12 @@ export function SetBand({
   const current = cells.findIndex((c) => c.state === 'current');
   useLayoutEffect(() => {
     const el = band.current;
-    // Calée sur une case entière : deux cases avant la série en cours.
-    const first = el?.children[Math.max(0, current - 2)] as HTMLElement | undefined;
+    // Calée sur une case entière (`bandFirstShown`) : deux cases avant la série
+    // en cours, les paires G et D ensemble en unilatéral.
+    const first = el?.children[bandFirstShown(current, unilateral)] as HTMLElement | undefined;
     if (!el || !first) return;
     el.scrollLeft = first.offsetLeft - 20;
-  }, [current, cells.length]);
+  }, [current, cells.length, unilateral]);
 
   return (
     <ol
