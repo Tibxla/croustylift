@@ -488,12 +488,18 @@ export function ExerciseCapture({
                       aria-checked={sel}
                       aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
                       onClick={() => chooseSide(sd)}
-                      className={`h-11 flex-none px-2.5 text-[17px] ${
-                        sel ? 'rounded-cell bg-surface font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
+                      className={`flex h-11 flex-none items-center text-[17px] ${
+                        sel ? 'font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
                       }`}
                     >
-                      {sd === 'left' ? 'Gauche' : 'Droite'}
-                      {done && <span className="ml-1 text-[13px] text-faint">faite</span>}
+                      {/* La pastille du choisi fait 28 px, la hauteur de la ligne,
+                          dans une cible de 44 px : à 44 px, elle remontait de 8 px
+                          et touchait le filet du dessus sur écran bas (retour de
+                          l'utilisateur du 25/11). */}
+                      <span data-pastille className={`flex h-7 items-center rounded-cell px-2.5 ${sel ? 'bg-surface' : ''}`}>
+                        {sd === 'left' ? 'Gauche' : 'Droite'}
+                        {done && <span className="ml-1 text-[13px] font-normal text-faint">faite</span>}
+                      </span>
                     </button>
                   );
                 })}
