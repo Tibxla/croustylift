@@ -665,7 +665,7 @@ function LiveMeasure({ live, onWord }: { live: DraftScore['live']; onWord: () =>
           e1RM
         </button>
       )}
-      <span className="tnum text-[20px] font-semibold tracking-[-0.01em] text-ink">{live ? live.value : '·'}</span>
+      <span className="tnum text-[22px] font-medium leading-none tracking-[-0.01em] text-ink">{live ? live.value : '·'}</span>
     </p>
   );
 }
