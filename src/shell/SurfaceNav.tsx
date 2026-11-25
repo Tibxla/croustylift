@@ -5,7 +5,10 @@
 // (logger, exo suivant, enregistrer). Pourquoi des mots : cinq surfaces tiennent
 // en une ligne lisible sans icône à deviner, et rien ne se cache derrière un
 // menu. Le mot actif est en demi-gras dans une pastille arrondie, les autres en
-// gris. Dans un onglet de navigateur, la ligne est dans le flux (elle défile avec
+// gris. La pastille fait 32 px de haut, centrée dans le bouton de 44 px qui
+// reste la cible du toucher (elle en remplissait toute la hauteur jusqu'au
+// 25/11, trop épaisse) ; ses 9 px de côté sont ceux du bouton d'avant, la
+// largeur des mots ne change pas. Dans un onglet de navigateur, la ligne est dans le flux (elle défile avec
 // la page). Dans l'app installée, elle est COLLÉE en haut (`sticky`, jamais
 // `fixed`), voir HAUT DE L'ÉCRAN.
 //
@@ -82,11 +85,13 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
               type="button"
               aria-current={active ? 'page' : undefined}
               onClick={() => onSelect(s.id)}
-              className={`h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
-                active ? 'rounded-cell bg-surface font-semibold text-ink' : 'text-muted active:text-ink'
+              className={`flex h-11 min-w-11 items-center justify-center text-[15px] max-[349px]:text-[14px] ${
+                active ? 'font-semibold text-ink' : 'text-muted active:text-ink'
               }`}
             >
-              {s.label}
+              <span className={`flex h-8 items-center px-[9px] max-[349px]:px-1.5 ${active ? 'rounded-cell bg-surface' : ''}`}>
+                {s.label}
+              </span>
             </button>
           );
         })}

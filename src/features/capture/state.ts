@@ -308,15 +308,35 @@ export function totalLoggedSets(state: CaptureState): number {
 }
 
 /**
- * Un état de capture restauré est-il REPRENABLE (ADR 0011) ? Oui s'il porte au
- * moins une série (séance réellement en cours), ou si son lancement date de moins
- * d'1 h (on vient de démarrer, le chrono tourne légitimement). Un lancement SANS
- * aucun set vieux de plus d'1 h a EXPIRÉ : on ne le reprend pas (le chrono aurait
- * tourné dans le vide), on repropose le lancement. `now` injecté pour les tests.
+ * L'état porte-t-il un GESTE sur la séance qui ne vit que sur l'appareil : un
+ * exo ajouté ou remplacé (`layout`), ou un exo passé ? Aucun n'écrit en base.
  */
-export function isResumable(state: CaptureState, now = Date.now()): boolean {
+export function hasSeanceEdits(state: Pick<CaptureState, 'layout' | 'progress'>): boolean {
+  if ((state.layout?.length ?? 0) > 0) return true;
+  return Object.values(state.progress).some((p) => p.skipped);
+}
+
+/**
+ * Un état de capture restauré est-il REPRENABLE (ADR 0011) ? Oui s'il porte au
+ * moins une série ou une note datée (séance réellement en cours, son exécution
+ * est née), ou si son lancement date de moins d'1 h (on vient de démarrer, le
+ * chrono tourne légitimement). Un lancement SANS aucun set vieux de plus d'1 h a
+ * EXPIRÉ : on ne le reprend pas (le chrono aurait tourné dans le vide), on
+ * repropose le lancement.
+ *
+ * Sauf s'il porte un geste sur la séance (`hasSeanceEdits`) et date du jour
+ * (amendement du 25/11 de l'ADR 0011). Sans cela un exo ajouté, remplacé ou passé
+ * avant la première série disparaissait au rechargement passé 1 h : l'état
+ * n'était plus repris, et le choix de la séance l'écrasait par un état neuf. Le
+ * chrono expiré se réancre alors à la première série (`shouldReanchorLaunch`).
+ * Un geste de la VEILLE ne rouvre pas la séance d'hier le lendemain.
+ * `now` et `today` injectés pour les tests.
+ */
+export function isResumable(state: CaptureState, now = Date.now(), today = todayIso()): boolean {
   if (totalLoggedSets(state) > 0) return true;
-  return now - state.startedAt <= LAUNCH_EXPIRY_MS;
+  if (Object.keys(state.datedNotes).length > 0) return true;
+  if (now - state.startedAt <= LAUNCH_EXPIRY_MS) return true;
+  return state.date === today && hasSeanceEdits(state);
 }
 
 /**
@@ -486,16 +506,16 @@ export function resolveCaptureDate(
 ): { date: string; restored: CaptureState | null } {
   // On n'adopte un cache que s'il est REPRENABLE (ADR 0011) : un lancement vide de
   // plus d'1 h a expiré (chrono dans le vide) → on l'ignore et on repropose le
-  // lancement (capture vierge). Un cache avec des séries, ou un lancement récent,
-  // reste repris.
+  // lancement (capture vierge). Un cache avec des séries, un lancement récent, ou
+  // un geste du jour sur la séance (exo ajouté, remplacé, passé), reste repris.
   const fromToday = loadPersisted(session, today);
-  if (fromToday && isResumable(fromToday)) return { date: today, restored: fromToday };
+  if (fromToday && isResumable(fromToday, Date.now(), today)) return { date: today, restored: fromToday };
 
   // Rien de reprenable aujourd'hui : une séance d'hier non clôturée se reprend
   // telle quelle (frontière minuit). `loadPersisted` a déjà écarté toute clôture.
   const yesterday = previousDayIso(today);
   const fromYesterday = loadPersisted(session, yesterday);
-  if (fromYesterday && isResumable(fromYesterday)) return { date: yesterday, restored: fromYesterday };
+  if (fromYesterday && isResumable(fromYesterday, Date.now(), today)) return { date: yesterday, restored: fromYesterday };
 
   return { date: today, restored: null };
 }

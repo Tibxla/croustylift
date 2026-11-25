@@ -46,7 +46,7 @@ import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrde
 import { isBlankNote } from '../../domain/notes';
 import type { Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, Sheet, Sign, StateMark, Status, TONE, useCompact, useCompactTight } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, Sign, slideHintOnce, StateMark, Status, TONE, useCompact, useCompactTight } from '../../ui';
 import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
@@ -156,6 +156,10 @@ export function ExerciseCapture({
   // doigts, et ce changement de côté, pris pour un geste, réinitialisait poids,
   // reps et RIR en cours de réglage.
   const [selectedSide, setSelectedSide] = useState<Side>(() => defaultSide(progress.sets));
+  // Indice de glissé de la règle et des rangées : une fois par appareil, au
+  // premier affichage de l'instrument (src/ui/slide-hint.ts).
+  const instrument = useRef<HTMLDivElement>(null);
+  useEffect(() => slideHintOnce(instrument.current), []);
   // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
   // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
   // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
@@ -380,7 +384,7 @@ export function ExerciseCapture({
   return (
     // Colonne qui prend toute la hauteur au-dessus du pied : l'air du haut se
     // répartit (plafonné), le surplus va entre le haut et les plaques.
-    <div className="flex flex-1 flex-col pt-1">
+    <div ref={instrument} className="flex flex-1 flex-col pt-1">
       {/* Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : pas d'index,
           sinon les plaques passent sous le pied. Le Sommaire et « Exo suivant »
           restent à un toucher. */}
@@ -484,12 +488,18 @@ export function ExerciseCapture({
                       aria-checked={sel}
                       aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
                       onClick={() => chooseSide(sd)}
-                      className={`h-11 flex-none px-2.5 text-[17px] ${
-                        sel ? 'rounded-cell bg-surface font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
+                      className={`flex h-11 flex-none items-center text-[17px] ${
+                        sel ? 'font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
                       }`}
                     >
-                      {sd === 'left' ? 'Gauche' : 'Droite'}
-                      {done && <span className="ml-1 text-[13px] text-faint">faite</span>}
+                      {/* La pastille du choisi fait 28 px, la hauteur de la ligne,
+                          dans une cible de 44 px : à 44 px, elle remontait de 8 px
+                          et touchait le filet du dessus sur écran bas (retour de
+                          l'utilisateur du 25/11). */}
+                      <span data-pastille className={`flex h-7 items-center rounded-cell px-2.5 ${sel ? 'bg-surface' : ''}`}>
+                        {sd === 'left' ? 'Gauche' : 'Droite'}
+                        {done && <span className="ml-1 text-[13px] font-normal text-faint">faite</span>}
+                      </span>
                     </button>
                   );
                 })}

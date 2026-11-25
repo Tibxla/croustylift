@@ -1,6 +1,16 @@
 // Kit E · rangée de numéros touchables (reps, RIR en salle) : un tap, une valeur.
 import { useLayoutEffect, useRef } from 'react';
 
+/** « ligne » : une case fait 44 px au moins (cible tactile). */
+const CELL_MIN = 44;
+/** « ligne » : place gardée à droite pour l'aperçu de la case suivante. */
+const PEEK_MIN = 20;
+/** « ligne » : largeur du fondu de bord, prise dans l'aperçu (20 px au moins), jamais sur une case entière. */
+const FADE = 10;
+/** Masque du fondu de bord : une transparence, pas un dégradé de couleur. Les
+ *  largeurs viennent de `--fade-l` et `--fade-r`, posées au défilement. */
+const EDGE_MASK = 'linear-gradient(to right, transparent 0, #000 var(--fade-l, 0px), #000 calc(100% - var(--fade-r, 0px)), transparent 100%)';
+
 /** Rangée de numéros touchables, de `min` à `max` (l'appelant borne la plage : reps
  *  1 à 50, RIR 0 à 10 en salle, élargie si la valeur courante en sort). Un tap = une valeur ; la fourchette du plan est
  *  soulignée d'un filet, la valeur choisie dans une pastille arrondie (`rounded-cell`,
@@ -20,18 +30,25 @@ import { useLayoutEffect, useRef } from 'react';
  *  courante si elles tiennent ensemble, sinon sur la valeur. Ensuite elle ne
  *  bouge plus d'elle-même, sauf si la valeur choisie change d'ailleurs (log,
  *  annulation, clavier) et sort du champ. Un tap ne déplace jamais les chiffres
- *  sous le doigt. L'appelant remonte la rangée (`key`) à chaque exo ou série
+ *  sous le doigt, sauf sur la demi-case d'aperçu de « ligne », qui entre dans
+ *  le champ. L'appelant remonte la rangée (`key`) à chaque exo ou série
  *  pour qu'elle reparte calée.
  *
  *  Clavier : un seul arrêt de tabulation (la valeur choisie), ← → Début Fin.
  *
  *  DISPOSITION « ligne » (instrument de la Salle, variante A4 du 25/11) : le mot à
  *  gauche, les chiffres à droite sur la même ligne, sans fourchette écrite (le
- *  plan se lit au filet sous les chiffres, la Référence au petit carré). Six
- *  cases ENTIÈRES dans la largeur qui reste (cinq sous 360 px d'écran, pour
- *  garder 44 px par case), aucun chiffre coupé au bord ; la rangée glisse et se
- *  cale sur le début d'une case. Au montage, le plan est centré dans les cases
- *  visibles, la valeur dedans. */
+ *  plan se lit au filet sous les chiffres, la Référence au petit carré). La
+ *  rangée court jusqu'au bord de la plaque : autant de cases ENTIÈRES de 44 px
+ *  au moins que la place en tient (six de 375 à 414 px d'écran, cinq à 320 et
+ *  360), plus une demi-case d'APERÇU à droite, coupée par le bord et estompée
+ *  par un fondu (masque de transparence sur les 10 derniers px, jamais sur une
+ *  case entière). Retour de l'utilisateur du 25/11 : avec six cases nettes, « on
+ *  ne dirait pas qu'on peut » faire glisser. L'aperçu dit « il y en a d'autres
+ *  par là » ; au bout de la plage il disparaît, et c'est à gauche que la case
+ *  coupée s'estompe. La rangée se cale sur le début d'une case. Au montage, le
+ *  plan est centré dans les cases entières, la valeur dedans. Un indice de
+ *  glissé joue une fois par appareil (`slideHintOnce`, couche `data-glisse`). */
 export function NumberRow({
   label,
   min,
@@ -76,6 +93,9 @@ export function NumberRow({
   const focusSel = useRef(false);
   const drag = useRef<{ x: number; left: number; moved: boolean } | null>(null);
   const swallowClick = useRef(false);
+  /** « ligne » : cases entières visibles et largeur d'une case (px), d'après la place. */
+  const per = useRef(6);
+  const cellW = useRef(0);
 
   const cellOf = (n: number) => row.current?.querySelector<HTMLElement>(`[data-n="${n}"]`) ?? null;
   const centerOn = (n: number) => {
@@ -84,17 +104,34 @@ export function NumberRow({
     if (!el || !c) return;
     el.scrollLeft = c.offsetLeft + c.offsetWidth / 2 - el.clientWidth / 2;
   };
-  // « ligne » : cases calées sur leur début, autant de cases entières que la
-  // largeur en tient (6, ou 5 sous 360 px).
-  const perView = () => {
+  // « ligne » : autant de cases entières de 44 px au moins que la place en tient
+  // une fois l'aperçu gardé, puis la largeur qui laisse une demi-case d'aperçu.
+  const fit = () => {
     const el = row.current;
-    const c = cellOf(min);
-    return el && c && c.offsetWidth > 0 ? Math.max(1, Math.round(el.clientWidth / c.offsetWidth)) : 6;
+    const w = el?.clientWidth ?? 0;
+    if (!el || w <= 0) return;
+    per.current = Math.max(1, Math.floor((w - PEEK_MIN) / CELL_MIN));
+    cellW.current = Math.max(CELL_MIN, w / (per.current + 0.5));
+    el.style.setProperty('--cell', `${cellW.current}px`);
   };
+  /** Le fondu suit le défilement : à droite tant qu'il reste des valeurs (il
+   *  s'efface sur les 10 derniers px de course) ; à gauche seulement au bout de
+   *  la plage, où la case coupée passe de ce côté. Aux positions de repos, il ne
+   *  touche que l'aperçu : la pastille du choisi reste nette. */
+  const edges = () => {
+    const el = row.current;
+    if (!el || !ligne) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const right = max > 0 ? Math.min(FADE, Math.max(0, max - el.scrollLeft)) : 0;
+    const left = max > FADE ? Math.min(FADE, Math.max(0, el.scrollLeft - (max - FADE))) : 0;
+    el.style.setProperty('--fade-r', `${right}px`);
+    el.style.setProperty('--fade-l', `${left}px`);
+  };
+  const perView = () => per.current;
   const firstVisible = () => {
     const el = row.current;
-    const c = cellOf(min);
-    return el && c && c.offsetWidth > 0 ? min + Math.round(el.scrollLeft / c.offsetWidth) : min;
+    const w = cellW.current || cellOf(min)?.offsetWidth || 0;
+    return el && w > 0 ? min + Math.round(el.scrollLeft / w) : min;
   };
   const showFrom = (first: number) => {
     const el = row.current;
@@ -120,13 +157,15 @@ export function NumberRow({
 
   useLayoutEffect(() => {
     if (ligne) {
-      // Calage d'ouverture : le plan centré dans les cases visibles, la valeur dedans.
-      const per = perView();
+      // Calage d'ouverture : le plan centré dans les cases entières, la valeur dedans.
+      fit();
+      const n = perView();
       const planLen = presc[1] - presc[0] + 1;
-      let first = presc[0] - Math.floor(Math.max(0, per - planLen) / 2);
+      let first = presc[0] - Math.floor(Math.max(0, n - planLen) / 2);
       if (value < first) first = value;
-      if (value > first + per - 1) first = value - per + 1;
-      showFrom(Math.max(min, Math.min(first, max - per + 1)));
+      if (value > first + n - 1) first = value - n + 1;
+      showFrom(Math.max(min, Math.min(first, max - n + 1)));
+      edges();
       return;
     }
     // Calage d'ouverture : plan + valeur s'ils tiennent dans les 7 cases entières.
@@ -148,6 +187,25 @@ export function NumberRow({
     if (!fullyVisible(value)) bringIntoView(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+
+  // « ligne » : la place change (rotation, fenêtre) : les cases se recalculent,
+  // la rangée garde sa première case.
+  useLayoutEffect(() => {
+    const el = row.current;
+    if (!ligne || !el || typeof ResizeObserver === 'undefined') return;
+    let w = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth === w) return;
+      w = el.clientWidth;
+      const first = firstVisible();
+      fit();
+      showFrom(first);
+      edges();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ligne]);
 
   const pickKey = (n: number) => {
     const v = Math.min(max, Math.max(min, n));
@@ -175,10 +233,18 @@ export function NumberRow({
     <div
       ref={row}
       data-number-row={label}
+      data-glisse={ligne ? 'enfants' : undefined}
       className={ligne ? 'relative flex min-w-0 flex-1 overflow-x-auto' : 'relative mt-0.5 flex overflow-x-auto px-5'}
-      style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollBehavior: 'auto', overscrollBehaviorX: 'contain' }}
+      style={{
+        scrollbarWidth: 'none',
+        scrollSnapType: 'x mandatory',
+        scrollBehavior: 'auto',
+        overscrollBehaviorX: 'contain',
+        ...(ligne && { maskImage: EDGE_MASK, WebkitMaskImage: EDGE_MASK }),
+      }}
       role="radiogroup"
       aria-label={label}
+      onScroll={ligne ? edges : undefined}
       onKeyDown={(e) => {
         const k = e.key;
         if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
@@ -252,14 +318,22 @@ export function NumberRow({
             data-n={n}
             onClick={() => {
               if (n === value) return;
-              pickedHere.current = true;
+              // « ligne » : la demi-case d'aperçu touchée entre dans le champ
+              // (le recadrage de `value` la ramène), sinon le choisi resterait
+              // coupé et estompé. Une case entière ne bouge pas sous le doigt.
+              pickedHere.current = !ligne || fullyVisible(n);
               onPick(n);
             }}
-            className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'} ${ligne ? 'basis-1/6 [@media(max-width:359px)]:basis-1/5' : ''}`}
+            className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'}`}
             // « bande » : 1/8 de la largeur de la rangée (le pourcentage se lit sur
             // la boîte de contenu, marges d'écran de 20 px déduites). « ligne » :
-            // 1/6 (1/5 sous 360 px) de la place laissée par le mot, calé au début.
-            style={ligne ? { scrollSnapAlign: 'start' } : { flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
+            // la largeur calculée (`fit`), calée au début ; avant la mesure, six
+            // cases et demie dans la place laissée par le mot.
+            style={
+              ligne
+                ? { flexBasis: 'var(--cell, calc(100% / 6.5))', minWidth: CELL_MIN, scrollSnapAlign: 'start' }
+                : { flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }
+            }
           >
             <span
               className={`tnum flex items-center justify-center text-[22px] tracking-[-0.01em] ${
@@ -280,8 +354,10 @@ export function NumberRow({
 
   if (ligne) {
     return (
-      <div className="flex items-center pl-5 pr-3">
-        <span className="w-[52px] flex-none">{labelNode}</span>
+      // Jusqu'au bord droit de la plaque (sans marge) : l'aperçu y est coupé net.
+      // Colonne du mot à 44 px (« Reps » en fait 38) : six cases entières dès 375 px.
+      <div className="flex items-center pl-5">
+        <span className="w-11 flex-none">{labelNode}</span>
         {scroller}
       </div>
     );

@@ -34,11 +34,11 @@ function names(html: string): string[] {
 }
 
 describe('SetBand', () => {
-  it('bilatéral : une ligne sous le numéro, poids tronqué et RIR ; le nom lu garde la valeur exacte', () => {
+  it('bilatéral : une ligne sous le numéro, poids en quatre chiffres et RIR ; le nom lu garde la valeur exacte', () => {
     const html = render([{ order: 1, weightKg: 171.25, reps: 8, rir: 1 }], false, null, 4);
-    // « 171×8 », puis le RIR en gris après une espace fine.
-    expect(html).toMatch(/171×8<span[^>]*>\u2009R1</);
-    expect(html).toMatch(/126×12<span[^>]*>\u2009R4</);
+    // « 171,2×8 », puis le RIR en gris après une espace fine.
+    expect(html).toMatch(/171,2×8<span[^>]*>\u2009R1</);
+    expect(html).toMatch(/126,2×12<span[^>]*>\u2009R4</);
     expect(names(html)).toEqual([
       'Corriger la série 1, 171,25 kilos, 8 reps, RIR 1, battue',
       'Série 2 en cours, 126,25 kilos, 12 reps, RIR 4',
@@ -60,8 +60,8 @@ describe('SetBand', () => {
 
   it('une valeur trop longue (reps à trois chiffres, RIR à deux) est rognée dans sa case, sans déborder sur la voisine', () => {
     const html = render([{ order: 1, weightKg: 126.25, reps: 120, rir: 10 }], false, null, 4);
-    // La forme validée reste la même : « 126×120 », puis le RIR après une espace fine.
-    expect(html).toMatch(/126×120<span[^>]*>\u2009R10</);
+    // La forme validée reste la même : « 126,2×120 », puis le RIR après une espace fine.
+    expect(html).toMatch(/126,2×120<span[^>]*>\u2009R10</);
     // La ligne de valeur ne se coupe pas et ne déborde pas : elle se rogne en « … ».
     const valueLine = /<span aria-hidden="true" class="([^"]*)"><span class="underline/.exec(html)?.[1] ?? '';
     expect(valueLine.split(' ')).toEqual(expect.arrayContaining(['whitespace-nowrap', 'overflow-hidden', 'text-ellipsis']));
