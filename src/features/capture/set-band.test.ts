@@ -172,4 +172,14 @@ describe('bandFirstShown : la case où la bande se cale', () => {
     expect(bandFirstShown(4, true)).toBe(2);
     expect(bandFirstShown(1, true)).toBe(0);
   });
+
+  it('trois cases à l’écran (sous 360 px) : la série en cours reste en vue, sa paire entière', () => {
+    // « 2 D » (index 3) : la série d'avant entière la poussait en quatrième
+    // case, hors de l'écran. La vue part alors de sa paire, « 2 G ».
+    expect(bandFirstShown(3, true, 3)).toBe(2);
+    expect(bandFirstShown(5, true, 3)).toBe(4);
+    // « 2 G » (index 2) tient en troisième case : la série d'avant reste.
+    expect(bandFirstShown(2, true, 3)).toBe(0);
+    expect(bandFirstShown(5, false, 3)).toBe(3);
+  });
 });

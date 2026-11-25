@@ -14,12 +14,14 @@
 // zéro final tombe : 82,5 → « 82,5 », 171,25 → « 171,2 », 22,25 → « 22,25 »,
 // 7,5 → « 7,5 », 100 → « 100 ».
 //   Mesuré le 25/11 dans la case rendue (place utile, cases de la bande) : 86 px
-//   à 393 px d'écran, 82 à 375, 78 à 360 (quatre cases), 91 à 320 (trois cases).
+//   à 393 px d'écran, 82 à 375, 78 à 360 (quatre cases), 93 à 320 (trois cases).
+//   Depuis la pastille ajustée du 25/11 au soir (SetBand.tsx) : 81,25 à 393,
+//   81,75 à 375, 78 à 380 et à 360, 93 à 320.
 //   « 171,2×12 R4 » fait 86,5 px à 14 px : la ligne passe à 13 px dès 360 px
 //   (75,6 px) et à 14 px sous 360 (86,5 px), au lieu de 14 et 15. À trois
 //   chiffres, 14 px tenait (« 82,5×12 R4 » 77,6 px) mais 171,25 restait « 171 ».
-//   Un RIR de 10 ne tient qu'à 393 px (83,5 px) : ailleurs la case le rogne en
-//   « … » (déjà le cas avant, dès 375 px).
+//   Un RIR de 10 (83,5 px) se rogne en « … » jusqu'à 393 px depuis la pastille
+//   ajustée du 25/11 au soir (il tenait à 393 avant) ; il tient à 414.
 //
 // LES CASES. Bilatéral : une case par série prévue (borne haute du plan), plus la
 // série en cours si on la dépasse. Unilatéral : une case par CÔTÉ (« 2 G »,
@@ -152,8 +154,14 @@ export function bandCellName(c: BandCell, badges: readonly SetBadge[], draft: Va
  * `current` : deux cases avant elle en bilatéral ; en unilatéral, le début de la
  * série d'avant, pour que « 2 G » et « 2 D » restent ensemble (jamais une vue
  * qui s'ouvre sur un « D »). Relecture du 25/11.
+ *
+ * `columns` : les cases entières à l'écran (quatre, trois sous 360 px). À trois,
+ * la série d'avant entière poussait « 2 D » en quatrième case, hors de l'écran :
+ * la vue part alors du début de sa paire, la case en cours toujours en vue.
  */
-export function bandFirstShown(current: number, unilateral: boolean): number {
+export function bandFirstShown(current: number, unilateral: boolean, columns = 4): number {
   if (current < 0) return 0;
-  return unilateral ? Math.max(0, current - (current % 2) - 2) : Math.max(0, current - 2);
+  const first = unilateral ? Math.max(0, current - (current % 2) - 2) : Math.max(0, current - 2);
+  if (current < first + columns) return first;
+  return unilateral ? current - (current % 2) : current - columns + 1;
 }
