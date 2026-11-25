@@ -300,7 +300,7 @@ export function AnalysisScreen() {
         <>
           {/* Les mots de l'Analyse, une phrase chacun, repliés sous le titre. */}
           <WordsHelp terms={['e1rm', 'pente', 'bloc', 'reference']} className="-mt-3 px-5 pb-1" />
-          <div className="border-b border-line px-3">
+          <div className="px-4 pb-1">
             <Choice label="Vue de l’analyse" options={TABS} value={tab} onChange={chooseTab} wrap={false} />
           </div>
           {tab === 'exos' ? (
@@ -333,8 +333,8 @@ function Page({ children }: { children: ReactNode }) {
 
 function LoadError({ what, message, onRetry }: { what: string; message: string; onRetry: () => void }) {
   return (
-    <div className="px-5 pt-4">
-      <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+    <div className="px-4 pt-4">
+      <p role="alert" className="break-words rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-ink">
         <span className="font-semibold">Erreur : </span>Impossible de charger {what} : {message}
       </p>
       <div className="mt-4">

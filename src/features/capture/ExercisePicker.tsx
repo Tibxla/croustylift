@@ -150,10 +150,9 @@ export function ExercisePicker({
 
         {/* Séance d'un jour passé restée ouverte : on le dit, avec ses sorties. */}
         {staleSince && (
-          // Entre deux filets, sans trait latéral (plancher : aucune barre sur
-          // un seul côté d'un bloc) : le filet haut ici, le bas est celui qui
-          // ouvre la liste juste dessous (un seul trait, pas deux).
-          <div role="status" className="mx-5 border-t border-line pb-4 pt-3">
+          // Un avis dans un bloc levé arrondi, sans trait latéral (plancher :
+          // aucune barre sur un seul côté d'un bloc), au-dessus de la liste.
+          <div role="status" className="mx-4 mb-4 rounded-note bg-surface px-4 pb-4 pt-3">
             <p className="text-[15px] leading-[1.45] text-ink">Cette séance date d’{staleSince} et n’a pas été terminée.</p>
             <p className="mt-1 text-[14px] leading-[1.45] text-muted">
               {canFinish
@@ -501,11 +500,11 @@ function CatalogList({
         />
       </div>
       {pickError && (
-        <Alert className="mx-5 mb-3">{pickError}</Alert>
+        <Alert className="mx-4 mb-3">{pickError}</Alert>
       )}
       {loadError ? (
-        <div role="alert" className="px-5 py-4">
-          <p className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+        <div role="alert" className="px-4 py-4">
+          <p className="break-words rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-ink">
             <span className="font-semibold">Erreur : </span>
             {loadError}
           </p>

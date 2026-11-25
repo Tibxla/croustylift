@@ -20,13 +20,15 @@
 // ne reçoivent donc qu'un nombre ou un « poids × reps ».
 // L'action principale d'un écran est UN bloc blanc cassé plein en bas, dans la
 // barre collée (`Screen bottom`). Le reste : bouton secondaire à
-// contour, liens soulignés, lignes et filets. Icônes : seulement les icônes
+// contour, liens soulignés, groupes arrondis (`List`, `GROUP`, `GROUP_ROW`) aux
+// filets intérieurs, choix en sélecteur à segments. Icônes : seulement les icônes
 // fonctionnelles de `icons.tsx`, là où elles sont lues sans hésiter ; une icône
 // seule a un nom (aria-label) et 44 px. Plus les trois marques d'état d'un exo
 // (fait, en cours, passé), toujours à côté de leur mot, jamais en signal.
 //
 // INTERDIT : dégradés (texte ou fond), flou, verre, halos, lueurs, ombres
-// floues, cartes arrondies avec icône dans un rond, emojis, icônes décoratives,
+// (aucune, la profondeur est un palier de fond), bloc arrondi dans un bloc
+// arrondi, cartes arrondies avec icône dans un rond, emojis, icônes décoratives,
 // surtitres en majuscules ou en mono, pilules de badge, rounded-2xl, microcopie
 // motivante, tiret long dans le texte affiché (« · » ou virgule), `position:
 // fixed` (barres collées en `sticky`, feuilles montées dans `SheetSlotContext`).
@@ -38,8 +40,11 @@
 //   16,9:1 texte, bouton principal · muted #b5b0a9 8,9:1 secondaire, ▼ ·
 //   faint #8f8c85 5,7:1 méta (13 px au moins) · dim #6b6761 3,4:1 repères non
 //   textuels · line #3a3733 filets, aplat de pression · on-ink #4a463f texte
-//   secondaire sur le bouton principal · sig réglable.
-//   Rayons : `rounded-block` 6 px, `rounded-t-sheet` 10 px. Marge d'écran 20 px
+//   secondaire sur le bouton principal · group #24211d groupes arrondis (faint
+//   4,78:1) · group-sheet #28241f les mêmes dans une feuille · sig réglable.
+//   `bg-surface` lit le bon des deux (une feuille repose `--surface`).
+//   Rayons : `rounded-block` 12 px (boutons, champs, segments), `rounded-note`
+//   14 px (avis), `rounded-group` 18 px (groupes), `rounded-t-sheet` 16 px. Marge d'écran 20 px
 //   (px-5). Échelle : 72 (poids) · 32 · 28 (titre d'écran) · 22 · 18 (bouton) ·
 //   17 (section, ligne) · 16 (corps) · 15 · 14 (méta) · 13 (le plus petit).
 //
@@ -55,7 +60,7 @@ export { ActionNote, ActionRow, Confirm, Disclosure } from './confirm';
 export { Choice, Stepper, Switch } from './controls';
 export { CheckBox, FieldError, ImplicitSubmit, Notice, PasswordField, RadioMark, TextArea, TextField } from './fields';
 export { Icon, IconButton, StateIcon, StateMark, type ExoState } from './icons';
-export { BottomBar, EmptyState, List, Row, Screen, ScreenHeader, SectionTitle } from './layout';
+export { BottomBar, EmptyState, GROUP, GROUP_ROW, GROUP_RULE, List, Row, Screen, ScreenHeader, SectionTitle } from './layout';
 export { NumberRow } from './number-row';
 export { Ruler } from './ruler';
 export { Sheet } from './sheet';

@@ -37,24 +37,7 @@
 // références (prescriptions + séries faites) et REFUSE avec un message lisible si
 // l'exo est encore utilisé, au lieu de laisser la base lever une violation de FK.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import {
-  Alert,
-  Confirm,
-  EmptyState,
-  IconButton,
-  List,
-  LoadError,
-  Loading,
-  PrimaryButton,
-  Row,
-  Screen,
-  ScreenHeader,
-  SecondaryButton,
-  SectionTitle,
-  TextField,
-  TextLink,
-  Choice,
-} from '../../ui';
+import { Alert, Choice, Confirm, EmptyState, GROUP, GROUP_ROW, IconButton, List, LoadError, Loading, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, TextField, TextLink } from '../../ui';
 import { MUSCLE_GROUPS } from '../authoring/exercise-input';
 import { localTemplates, seancesUsing } from './local-usage';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';
@@ -461,7 +444,7 @@ function Catalogue({
       </div>
 
       {used.length > 1 && (
-        <div className="mt-1 overflow-x-auto px-3 [scrollbar-width:none]">
+        <div className="mt-1 overflow-x-auto px-4 [scrollbar-width:none]">
           <Choice
             label="Muscle principal"
             wrap={false}
@@ -484,7 +467,7 @@ function Catalogue({
           {personal.length ? (
             <List label="Tes exos">{personal.map(row)}</List>
           ) : (
-            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">
+            <p className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] text-muted">
               {filtered ? 'Aucun de tes exos ne correspond.' : 'Pas encore d’exo perso. Le bouton du bas en crée un.'}
             </p>
           )}
@@ -492,7 +475,7 @@ function Catalogue({
           {base.length ? (
             <List label="Catalogue commun">{base.map(row)}</List>
           ) : (
-            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">Aucun exo de base ne correspond.</p>
+            <p className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] text-muted">Aucun exo de base ne correspond.</p>
           )}
           <p className="px-5 pt-3 text-[14px] leading-[1.45] text-faint">
             Un exo de base se personnalise pour toi seul : le catalogue commun ne change pas pour les autres.
@@ -611,7 +594,7 @@ function Fiche({
 
       {flash && <Flash>{flash}</Flash>}
 
-      <div className="border-t border-line">
+      <div className={GROUP}>
         <Line label="Muscles">{musclesOf(exo).map((m) => keepTogether(capitalize(m))).join(', ') || 'aucun'}</Line>
         <Line label="Mouvement" sub={exo.unilateral ? 'un côté à la fois, gauche et droite saisis à part' : undefined}>
           {exo.unilateral ? 'unilatéral' : 'bilatéral'}
@@ -695,7 +678,7 @@ function Fiche({
               <p className="mt-1 text-muted">Ton nom, tes muscles et ton réglage du mouvement sont retirés. Ta note et ton historique restent.</p>
             </Confirm>
           ) : guard === 'delete' && usedIn.length > 0 ? (
-            <div role="alert" className="mx-5 border-y border-line py-3">
+            <div role="alert" className="mx-4 rounded-note bg-surface px-4 py-3">
               <p className="text-[15px] leading-[1.45] text-ink">
                 Il figure dans {usedIn.join(', ')} : retire-le d’abord de {usedIn.length > 1 ? 'ces séances' : 'cette séance'}.
               </p>
@@ -750,7 +733,7 @@ function Page({ children, bottom }: { children: ReactNode; bottom?: ReactNode })
 /** Ligne de la fiche : libellé gris à gauche, valeur à droite. */
 function Line({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="flex min-h-12 items-baseline justify-between gap-4 border-b border-line px-5 py-3">
+    <div className={`${GROUP_ROW} flex min-h-12 items-baseline justify-between gap-4 px-4 py-3`}>
       <span className="flex-none text-[16px] text-muted">{label}</span>
       <span className="min-w-0 text-right">
         <span className="block text-[16px] text-ink first-letter:uppercase">{children}</span>
@@ -763,7 +746,7 @@ function Line({ label, children, sub }: { label: string; children: ReactNode; su
 /** Confirmation du dernier geste : entre deux filets, sans couleur. */
 function Flash({ children }: { children: ReactNode }) {
   return (
-    <Alert role="status" label={null} className="mx-5 mb-4">
+    <Alert role="status" label={null} className="mx-4 mb-4">
       {children}
     </Alert>
   );

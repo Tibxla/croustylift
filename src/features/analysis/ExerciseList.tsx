@@ -81,7 +81,7 @@ export function ExerciseList({
           {scoped ? 'Exos de la routine' : 'Exos'}
         </SectionTitle>
         {inPlan.length === 0 ? (
-          <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+          <p className="mx-4 rounded-note bg-surface px-4 py-3 text-[15px] leading-[1.45] text-muted">
             Aucun exo de la routine n’a encore de série. Les courbes partent de la première série loggée.
           </p>
         ) : (

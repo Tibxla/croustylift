@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-24T12:00:00Z",
+  "generatedAt": "2026-11-25T18:00:00Z",
   "title": "Design System: Croustylift",
   "extensions": {
     "colorMeta": {
@@ -66,6 +66,16 @@
           "#6cc0ff",
           "#5ed68f"
         ]
+      },
+      "group": {
+        "role": "neutral",
+        "displayName": "Groupe",
+        "canonical": "#24211d"
+      },
+      "group-sheet": {
+        "role": "neutral",
+        "displayName": "Groupe en feuille",
+        "canonical": "#28241f"
       }
     },
     "typographyMeta": {
@@ -118,7 +128,7 @@
       {
         "name": "line",
         "value": "#3a3733",
-        "purpose": "Filet de 1 px : séparateurs, haut des feuilles."
+        "purpose": "Filet de 1 px à l'intérieur d'un groupe arrondi, retiré de 16 px des deux bords ; haut des feuilles ; aplat de pression."
       },
       {
         "name": "rule-strong",
@@ -126,9 +136,24 @@
         "purpose": "Trait de 2 px entre deux familles de contenu."
       },
       {
-        "name": "current-mark",
-        "value": "#f4f0e7",
-        "purpose": "Trait de 3 px à gauche d'une ligne courante ou d'un message d'erreur."
+        "name": "group-radius",
+        "value": "18px",
+        "purpose": "Rayon d'un groupe arrondi (liste), retiré de 16 px des bords."
+      },
+      {
+        "name": "note-radius",
+        "value": "14px",
+        "purpose": "Rayon d'un avis, d'une alerte, de la ligne de synchro."
+      },
+      {
+        "name": "block-radius",
+        "value": "12px",
+        "purpose": "Rayon des boutons, champs et du sélecteur à segments (pastille : 9 px)."
+      },
+      {
+        "name": "sheet-radius",
+        "value": "16px",
+        "purpose": "Rayon haut des feuilles basses."
       }
     ],
     "shadows": [],
@@ -201,9 +226,9 @@
       "name": "Row",
       "kind": "list-item",
       "refersTo": "row",
-      "description": "Ligne de liste : titre qui passe à la ligne, méta dessous, chevron si elle s'ouvre, filet bas.",
-      "html": "<div class=\"ds-row\"><span class=\"t\">Extension triceps à la poulie</span><span class=\"m\">3 séries · 10 à 12 reps</span></div>",
-      "css": ".ds-row{display:flex;flex-direction:column;min-height:56px;padding:12px 20px;border-bottom:1px solid #3a3733;font-family:'Inter Variable',system-ui,sans-serif}.ds-row .t{font-size:17px;font-weight:500;color:#f4f0e7}.ds-row .m{margin-top:2px;font-size:14px;color:#b5b0a9}"
+      "description": "Ligne d'un groupe arrondi : titre qui passe à la ligne, méta dessous, chevron si elle s'ouvre ; filet intérieur au-dessus, sauf la première.",
+      "html": "<div class=\"ds-group\"><div class=\"ds-row\"><span class=\"t\">Extension triceps à la poulie</span><span class=\"m\">3 séries · 10 à 12 reps</span></div><div class=\"ds-row\"><span class=\"t\">Curl marteau</span><span class=\"m\">3 séries · 8 à 12 reps</span></div></div>",
+      "css": ".ds-group{margin:0 16px;background:#24211d;border-radius:18px;font-family:'Inter Variable',system-ui,sans-serif}.ds-row{position:relative;display:flex;flex-direction:column;min-height:56px;padding:12px 16px;box-sizing:border-box}.ds-row+.ds-row:before{content:'';position:absolute;left:16px;right:16px;top:0;height:1px;background:#3a3733}.ds-row .t{font-size:17px;font-weight:500;color:#f4f0e7}.ds-row .m{margin-top:2px;font-size:14px;color:#b5b0a9}"
     },
     {
       "name": "Surface Nav",
@@ -217,9 +242,9 @@
       "name": "Sheet",
       "kind": "dialog",
       "refersTo": "sheet",
-      "description": "Feuille basse : voile noir plein à 65 %, panneau levé à rayon haut de 10 px, filet haut.",
+      "description": "Feuille basse : voile noir plein à 65 %, panneau levé à rayon haut de 16 px, filet haut ; les groupes intérieurs passent au palier group-sheet.",
       "html": "<div class=\"ds-sheet\"><h2>Remplacer l'exo</h2></div>",
-      "css": ".ds-sheet{background:#1a1815;color:#f4f0e7;border-top:1px solid #3a3733;border-radius:10px 10px 0 0;padding:8px 20px 24px;font-family:'Inter Variable',system-ui,sans-serif}.ds-sheet h2{font-size:17px;font-weight:600}"
+      "css": ".ds-sheet{background:#1a1815;color:#f4f0e7;border-top:1px solid #3a3733;border-radius:16px 16px 0 0;padding:8px 20px 24px;font-family:'Inter Variable',system-ui,sans-serif}.ds-sheet h2{font-size:17px;font-weight:600}"
     },
     {
       "name": "Status",
@@ -228,16 +253,24 @@
       "description": "Statut : couleur + signe + mot. Seul « mieux » prend le signal.",
       "html": "<span class=\"ds-status up\">▲ battue</span> <span class=\"ds-status eq\">▬ égalée</span> <span class=\"ds-status down\">▼ en deçà</span>",
       "css": ".ds-status{font:500 14px 'Inter Variable',system-ui,sans-serif}.ds-status.up{color:#f6d236}.ds-status.eq{color:#f4f0e7}.ds-status.down{color:#b5b0a9}"
+    },
+    {
+      "name": "Segmented Choice",
+      "kind": "control",
+      "refersTo": "segmented",
+      "description": "Choix exclusif en sélecteur à segments : bloc de groupe, rayon 12 px, le choisi en pastille de 9 px à l'aplat de filet, en demi-gras ; segments de 44 px.",
+      "html": "<div class=\"ds-seg\"><span class=\"on\">Exos</span><span>Journal</span></div>",
+      "css": ".ds-seg{display:inline-flex;gap:2px;padding:3px;background:#24211d;border-radius:12px;font-family:'Inter Variable',system-ui,sans-serif;font-size:16px}.ds-seg span{display:flex;align-items:center;height:44px;padding:0 10px;border-radius:9px;color:#b5b0a9}.ds-seg .on{background:#3a3733;color:#f4f0e7;font-weight:600}"
     }
   ],
   "narrative": {
     "northStar": "Signal",
-    "overview": "Un cadran noir, du texte blanc cassé et une seule couleur qui veut dire quelque chose. Noir chaud, gris chauds, hiérarchie par la taille et la graisse d'Inter, filets et espace. Le signal (jaune par défaut, réglable) ne dit que « tu es ici » et « mieux que la dernière fois ». L'action principale est un bloc blanc cassé plein en bas, la navigation cinq mots en haut, le bas de l'écran appartient à la séance. Plat : ni ombre, ni dégradé, ni flou.",
+    "overview": "Un cadran noir, du texte blanc cassé et une seule couleur qui veut dire quelque chose. Noir chaud, gris chauds, hiérarchie par la taille et la graisse d'Inter, groupes arrondis et espace. Le signal (jaune par défaut, réglable) ne dit que « tu es ici » et « mieux que la dernière fois ». L'action principale est un bloc blanc cassé plein en bas, la navigation cinq mots en haut, le bas de l'écran appartient à la séance. Plat : ni ombre, ni dégradé, ni flou.",
     "keyCharacteristics": [
       "Noir chaud, blanc cassé, gris chauds ; une seule couleur, le signal, réservée à deux sens.",
       "Bouton principal en bloc blanc cassé plein, un par écran, en bas.",
       "Inter partout, chiffres tabulaires pour les nombres seulement.",
-      "Plat : aucune ombre, aucun dégradé, aucun flou ; la structure est faite de filets.",
+      "Plat : aucune ombre, aucun dégradé, aucun flou ; la structure est faite de groupes arrondis (18 px) aux filets intérieurs, jamais un bloc dans un bloc.",
       "Navigation en mots, en haut ; feuilles basses pour les choix de second rang.",
       "Contraste AA prouvé par script, cibles de 44 px au moins."
     ],
@@ -269,13 +302,18 @@
       },
       {
         "name": "The Flat Rule",
-        "body": "Aucune ombre, aucun halo, aucun dégradé, aucun flou : un filet, de l'espace ou le fond levé à la place.",
+        "body": "Aucune ombre, aucun halo, aucun dégradé, aucun flou : de l'espace ou un fond de groupe à la place.",
         "section": "elevation"
       },
       {
         "name": "The Sticky Bar Rule",
         "body": "Les barres basses sont collées en sticky, fond plein, encoche comprise ; jamais de position fixed.",
         "section": "layout"
+      },
+      {
+        "name": "The No Nested Block Rule",
+        "body": "Un groupe arrondi ne contient jamais un autre bloc arrondi de fond différent ; ce qui vit dedans prend le fond du groupe.",
+        "section": "shapes"
       }
     ],
     "dos": [
@@ -293,7 +331,7 @@
       "Don't faire surgir le clavier en salle.",
       "Don't utiliser le signal en fond, bouton, lien, sélection, interrupteur, confirmation ou erreur.",
       "Don't de dégradé, de flou, de verre dépoli, de halo, de lueur, ni d'ombre floue.",
-      "Don't de carte arrondie avec icône dans un rond, de pilule de badge, de rounded-2xl.",
+      "Don't de carte arrondie avec icône dans un rond, de bloc dans un bloc, de pilule de badge, de rounded-2xl, d'ombre sous un groupe.",
       "Don't de surtitre en majuscules ni de mono en costume technique.",
       "Don't d'emoji, d'icône décorative ni de microcopie motivante.",
       "Don't de tiret long dans le texte affiché.",

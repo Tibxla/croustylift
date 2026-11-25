@@ -43,7 +43,7 @@ import {
   useReglages,
 } from '../../settings/reglages';
 import { CLARTE_DEFAUT, CLARTE_MAX, FREE_NAME, freeHex, HUE_MAX, HUE_STEP, readable, SIG_PRESETS } from '../../settings/signal-color';
-import { Alert, Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, Switch, TextLink } from '../../ui';
+import { Alert, GROUP, GROUP_ROW, Ruler, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sign, Status, Stepper, Switch, TextLink } from '../../ui';
 import { errorMessage } from '../../lib/error-message';
 import { signOutRefusalLabel } from '../capture/sync-label';
 import { downloadUserData, exportFilename } from '../export/data';
@@ -126,7 +126,7 @@ function SignalSection() {
           className="mx-5 mt-3 flex min-h-12 w-[calc(100%-40px)] items-center gap-3 text-left"
         >
           <span className={`flex-none rounded-block p-[3px] ${free ? 'outline-2 outline-solid outline-ink' : ''}`}>
-            <span className="block h-9 w-[52px] rounded-[3px]" style={{ background: freeColor }} />
+            <span className="block h-9 w-[52px] rounded-[9px]" style={{ background: freeColor }} />
           </span>
           <span className={`min-w-0 flex-1 text-[16px] ${free ? 'font-semibold text-ink' : 'text-muted'}`}>{FREE_NAME}</span>
           <span className="flex-none text-[14px] text-faint">{free ? 'choisie' : 'toutes les teintes'}</span>
@@ -195,7 +195,7 @@ function Swatch({ hex, name, selected, onPick }: { hex: string; name: string; se
   return (
     <button type="button" role="radio" aria-checked={selected} aria-label={name} onClick={onPick} className="ui-press min-h-11 min-w-0 text-left">
       <span className={`block rounded-block p-[3px] ${selected ? 'outline-2 outline-solid outline-ink' : ''}`}>
-        <span className="block h-9 rounded-[3px]" style={{ background: hex }} />
+        <span className="block h-9 rounded-[9px]" style={{ background: hex }} />
       </span>
       <span
         className={`mt-1.5 block truncate text-[14px] ${selected ? 'font-semibold text-ink underline decoration-2 underline-offset-[5px]' : 'text-muted'}`}
@@ -216,7 +216,7 @@ function SignalPreview() {
   // même ligne. Sous 380 px, la courbe passe sous la règle, sans quoi « égalée »
   // chevauchait la pente.
   return (
-    <div aria-hidden className="mx-5 mt-4 grid grid-cols-[1fr_auto] gap-x-5 gap-y-4 border-y border-line py-4 max-[379px]:grid-cols-1">
+    <div aria-hidden className="mx-4 mt-4 grid grid-cols-[1fr_auto] gap-x-5 gap-y-4 rounded-group bg-surface p-4 max-[379px]:grid-cols-1">
       <div className="min-w-0">
         <div className="relative h-[40px] overflow-hidden">
           {ticks.map((k) => (
@@ -266,7 +266,7 @@ function SalleSection() {
   return (
     <section>
       <SectionTitle>En salle</SectionTitle>
-      <div className="border-t border-line">
+      <div className={GROUP}>
         <Stepper
           label="Pas de la règle"
           value={stepKg}
@@ -364,7 +364,7 @@ function DonneesSection() {
         </p>
       )}
       {status.phase === 'error' && (
-        <Alert className="mx-5 mt-3">{status.message}</Alert>
+        <Alert className="mx-4 mt-3">{status.message}</Alert>
       )}
     </section>
   );
@@ -419,12 +419,12 @@ function CompteSection({
   return (
     <section>
       <SectionTitle>Compte</SectionTitle>
-      <div className="border-t border-line">
+      <div className={GROUP}>
         <Line label="E-mail" value={email ?? 'sur cet appareil'} />
       </div>
       <div className="px-5 pt-3">
         {issue?.kind === 'pending' ? (
-          <div role="alert" className="border-y border-line py-3">
+          <div role="alert" className="rounded-note bg-surface px-4 py-3">
             <p className="text-[15px] leading-[1.45] text-ink">{signOutRefusalLabel({ held: issue.pending, refused: issue.refused })}</p>
             {/* L'option sûre est le bouton ; la perte, un lien discret. */}
             <div className="mt-3 flex flex-wrap items-center gap-x-4">
@@ -445,7 +445,7 @@ function CompteSection({
         ) : (
           <>
             {issue?.kind === 'error' && (
-              <div role="alert" className="mb-3 border-y border-line py-3">
+              <div role="alert" className="mb-3 rounded-note bg-surface px-4 py-3">
                 <p className="break-words text-[15px] leading-[1.45] text-ink">
                   <span className="font-semibold">Déconnexion impossible : </span>
                   {issue.message}
@@ -467,7 +467,7 @@ function CompteSection({
  *  place, elle passe sous le libellé (la version, à 320 px). */
 function Line({ label, value, whole = false }: { label: string; value: ReactNode; whole?: boolean }) {
   return (
-    <div className={`flex min-h-12 items-center justify-between gap-x-4 border-b border-line px-5 py-2.5 ${whole ? 'flex-wrap gap-y-0.5' : ''}`}>
+    <div className={`${GROUP_ROW} flex min-h-12 items-center justify-between gap-x-4 px-4 py-2.5 ${whole ? 'flex-wrap gap-y-0.5' : ''}`}>
       {/* Le libellé ne se coupe jamais (« E- / mail ») : c'est la valeur qui cède. */}
       <span className="flex-none whitespace-nowrap text-[16px] text-muted">{label}</span>
       <span className={`text-right text-[16px] text-ink ${whole ? 'whitespace-nowrap' : 'min-w-0 truncate'}`}>{value}</span>
@@ -485,10 +485,10 @@ function AboutSection() {
   return (
     <section>
       <SectionTitle>À propos</SectionTitle>
-      <div className="border-t border-line">
+      <div className={GROUP}>
         <Line label="Version" whole value={<span className="tnum">{APP_VERSION_LABEL}</span>} />
         {updateReady && (
-          <div className="flex min-h-14 items-center justify-between gap-4 border-b border-line px-5 py-2">
+          <div className={`${GROUP_ROW} flex min-h-14 items-center justify-between gap-4 px-4 py-2`}>
             <span className="text-[16px] text-ink">{inSession ? 'Mise à jour prête, installée après ta séance' : 'Mise à jour prête'}</span>
             {!inSession && (
               <SecondaryButton size="sm" onClick={() => requestReload('manual', 'reglages')}>

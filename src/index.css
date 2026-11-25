@@ -7,8 +7,9 @@
   Tokens de la refonte E « Signal » (DESIGN.md). Une seule source : ce bloc.
   Ratios WCAG sur le fond, mesurés par `npm run contrast` (scripts/contrast.mjs),
   qui échoue si un texte passe sous 4,5:1 :
-    ink 16,9:1 · muted 8,9:1 · faint 5,7:1 (≥ 5,2:1 sur raise) · on-ink 8,3:1
-    sur ink. `dim` (3,4:1) et `line` (1,6:1) ne portent pas de texte courant.
+    ink 16,9:1 · muted 8,9:1 · faint 5,7:1 (≥ 5,2:1 sur raise, 4,78:1 sur group,
+    4,59:1 sur group-sheet) · on-ink 8,3:1 sur ink. `dim` (3,4:1) et `line`
+    (1,6:1) ne portent pas de texte courant.
 
   Le signal `--sig` n'est pas ici : il est réglable (Réglages), posé sur `:root`
   plus bas et remplacé au démarrage par src/settings/ avant le premier rendu. En
@@ -23,11 +24,15 @@
   --color-dim: #6b6761;     /* repères non textuels (graduations) */
   --color-line: #3a3733;    /* filets, aplat de pression */
   --color-on-ink: #4a463f;  /* texte secondaire posé sur le bouton principal */
+  --color-group: #24211d;   /* groupes arrondis (listes, avis) posés sur le fond */
+  --color-group-sheet: #28241f; /* les mêmes, posés dans une feuille levée */
 
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
-  --radius-block: 6px;      /* boutons, carrés de couleur, champs */
-  --radius-sheet: 10px;     /* haut des feuilles basses */
+  --radius-block: 12px;     /* boutons, champs, sélecteur à segments */
+  --radius-note: 14px;      /* avis, alertes, ligne de synchro */
+  --radius-group: 18px;     /* groupe arrondi d'une liste */
+  --radius-sheet: 16px;     /* haut des feuilles basses */
 
   /* Courbes (DESIGN.md, Mouvement) : enfoncement et élan, tiroir des feuilles. */
   --ease-press: cubic-bezier(0.23, 1, 0.32, 1);
@@ -37,11 +42,16 @@
 /* Le signal suit `--sig` partout où il est relu (Réglages le change en direct). */
 @theme inline {
   --color-sig: var(--sig);
+  /* Fond d'un groupe arrondi : `group` sur le fond, `group-sheet` dans une
+     feuille (le panneau de `Sheet` repose `--surface`). En Tailwind : `bg-surface`. */
+  --color-surface: var(--surface);
 }
 
 :root {
   /* Signal par défaut (Jaune), remplacé au démarrage par le choix enregistré. */
   --sig: #f6d236;
+  /* Fond des groupes arrondis, relu par `bg-surface` ; une feuille le change. */
+  --surface: var(--color-group);
 
   /* Encoches du système, lues une seule fois ici : tout le calcul de hauteur
      passe par ces deux variables (et les tests peuvent les surcharger, Chromium
@@ -249,6 +259,44 @@ input:-webkit-autofill:active {
   [data-motion="reduite"] .ui-sheet {
     transform: none;
     opacity: 0;
+  }
+}
+
+/*
+  Ligne d'un groupe arrondi (`GROUP_ROW`, src/ui/layout.tsx ; DESIGN.md
+  « Shapes »). Filet intérieur de 1 px au-dessus de chaque ligne sauf la
+  première, retiré de 16 px des deux bords ; coins de la première et de la
+  dernière ligne arrondis comme le groupe, pour que l'aplat de pression suive le
+  bord. La ligne s'allume quand sa zone touchable (enfant direct `data-row-hit`)
+  est pressée, pas quand on presse une action à part (« ⋯ »). Une classe de
+  composant : la même chose en utilitaires à variantes dépassait le budget CSS.
+  `.group-rule` (`GROUP_RULE`) : le même filet au-dessus d'un bloc posé dans
+  une ligne (partie dépliée d'un exo de l'éditeur).
+*/
+@layer components {
+  .group-row,
+  .group-rule {
+    position: relative;
+  }
+  .group-row:first-child {
+    border-top-left-radius: var(--radius-group);
+    border-top-right-radius: var(--radius-group);
+  }
+  .group-row:last-child {
+    border-bottom-left-radius: var(--radius-group);
+    border-bottom-right-radius: var(--radius-group);
+  }
+  .group-row:not(:first-child)::before,
+  .group-rule::before {
+    content: "";
+    position: absolute;
+    inset-inline: 16px;
+    top: 0;
+    height: 1px;
+    background-color: var(--color-line);
+  }
+  .group-row:has(> [data-row-hit]:active:not(:disabled)) {
+    background-color: var(--color-line);
   }
 }
 

@@ -20,7 +20,9 @@ const read = (path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)
 const tokens = parseHexTokens(read('../src/index.css'))
 const presets = JSON.parse(read('../src/settings/signal-presets.json'))
 
-const BACKGROUNDS = ['bg', 'raise']
+// Fonds où du texte se pose : le fond, le levé (feuilles, bouton secondaire), les
+// groupes arrondis sur le fond et dans une feuille.
+const BACKGROUNDS = ['bg', 'raise', 'group', 'group-sheet']
 const INKS = [
   { name: 'ink', required: true },
   { name: 'muted', required: true },
@@ -38,7 +40,7 @@ const pairs = [
   { fg: tokens['on-ink'], bg: tokens.ink, label: 'on-ink / ink', required: true },
   { fg: tokens.bg, bg: tokens.muted, label: 'bg / muted', required: true },
   ...presets.flatMap((p) =>
-    ['bg', 'raise'].map((bg) => ({ fg: p.hex, bg: tokens[bg], label: `signal ${p.name} / ${bg}`, required: true })),
+    BACKGROUNDS.map((bg) => ({ fg: p.hex, bg: tokens[bg], label: `signal ${p.name} / ${bg}`, required: true })),
   ),
 ]
 
