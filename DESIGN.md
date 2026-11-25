@@ -156,7 +156,7 @@ Ce que le système rejette : les trackers de muscu classiques (Hevy, Strong, Fit
 - Noir chaud, blanc cassé, gris chauds ; une seule couleur, le signal, réservée à deux sens.
 - Bouton principal en bloc blanc cassé plein, un par écran, en bas.
 - Inter partout, chiffres tabulaires pour les nombres seulement.
-- Plat : aucune ombre, aucun dégradé, aucun flou. La structure est faite de groupes arrondis (18 px), aux filets intérieurs ; jamais un bloc dans un bloc.
+- Plat : aucune ombre, aucun dégradé, aucun flou (le fondu de bord de la règle et des rangées est un masque de transparence, pas une couleur). La structure est faite de groupes arrondis (18 px), aux filets intérieurs ; jamais un bloc dans un bloc.
 - Navigation en mots, en haut ; feuilles basses pour les choix de second rang.
 - Contraste AA prouvé par script (`npm run contrast`), cibles de 44 px au moins.
 
@@ -237,7 +237,7 @@ Deux tons doux et désaturés, chacun à **un seul sens**, comme le signal (troi
 
 ## Elevation & Depth
 
-**Plat.** Aucune ombre, aucun halo, aucun dégradé, aucun flou, nulle part. La profondeur se lit à des paliers de fond (fond, levé, groupe) et à des filets intérieurs de 1 px. Une feuille basse se distingue par son fond levé, son filet haut et le voile noir plein (65 %) qui couvre l'écran derrière elle, pas par une ombre.
+**Plat.** Aucune ombre, aucun halo, aucun dégradé, aucun flou, nulle part. Seule transparence admise : le fondu de bord de la règle et des rangées de numéros, un masque (`mask-image`) qui estompe ce qui continue hors champ, jamais une couleur. La profondeur se lit à des paliers de fond (fond, levé, groupe) et à des filets intérieurs de 1 px. Une feuille basse se distingue par son fond levé, son filet haut et le voile noir plein (65 %) qui couvre l'écran derrière elle, pas par une ombre.
 
 ### Named Rules
 
@@ -299,7 +299,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Interrupteur** (`Switch`) : une ligne de groupe, le libellé à gauche, « Oui » ou « Non » écrit, puis la case. Activé : case blanc cassé pleine (jamais le signal).
 - **Stepper de formulaire** (`Stepper`) : une ligne de groupe, − valeur +, carrés de 44 px, valeur en chiffre clé (22 px) à largeur fixe pour que les boutons ne bougent pas sous le pouce. Sous 350 px, le libellé prend sa ligne et les boutons passent dessous, à droite : le libellé ne se coupe jamais mot à mot. Un choix trop large pour la colonne du libellé (« Fixe · Fourchette ») passe sur sa propre ligne dessous (`below`).
 - **Choix exclusif** (`Choice`) : un sélecteur à segments. Bloc `bg-surface` de 12 px de rayon et 3 px de marge ; chaque segment est un mot de 44 px de haut ; le choisi prend une pastille de 9 px à l'aplat de filet, en demi-gras blanc cassé, les autres restent gris. Jamais le signal. Dans un groupe, le bloc se fond au groupe et seule la pastille se voit. Une rangée de filtres trop longue défile (`wrap={false}`).
-- **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Flèches au clavier.
+- **Règle graduée** (`Ruler`) : la règle glisse sous une aiguille fixe (le signal). Toucher va au cran, glisser suit le doigt sans transition, un coup sec garde son élan (320 ms, interruptible). Les graduations courent jusqu'aux bords et s'y estompent sur 28 px (masque de transparence sur une couche fixe, pas sur la boîte, pour garder l'anneau de focus) : la règle continue des deux côtés. Flèches au clavier.
 
 ### Salle
 
@@ -309,7 +309,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 - **Instrument, bas, trois plaques** : poids et règle, Reps, RIR, chacune en groupe arrondi (fond de groupe, 18 px, retrait de 12 px), séparées par une bande du fond noir (14 px, 10 sur écran bas, 8 très bas) ; entre deux zones tactiles de plaques voisines, 16 px de rien au moins (mesuré). Ni filet, ni ombre ; leur rayon et leur retrait sont des jetons (cf. Shapes).
 - **Lecture du poids** (`WeightReadout`) : chiffres tabulaires. Dans l'instrument, « 140 kg » forme un bloc centré EN ENTIER sur l'aiguille (`kg="bloc"`), « kg » à un peu plus du tiers de la taille du nombre ; 72 px, 64 sur écran bas (56 en unilatéral), 48 très bas. Dans la correction et l'éditeur de séance passée, la valeur seule est centrée, « kg » accroché à sa droite hors centrage. Une valeur trop longue réduit sa taille juste assez pour ne toucher ni le bord ni « kg ». La toucher ouvre le clavier numérique pour une valeur précise (virgule acceptée, bornée) ; Entrée ou toucher ailleurs valide, Échap ou vide annule, la règle se recale.
 - **Règle de poids** : au pas de Réglages, graduation majeure tous les 5 kg, élan sur un coup sec ; jusqu'à 500 kg (au-delà, le clavier).
-- **Rangées de numéros** (`NumberRow`) : reps 1 à 50, RIR 0 à 10, élargies si la valeur en sort ; un tap, une valeur ; elles glissent au doigt. Dans l'instrument (`layout="ligne"`), le mot à gauche et six cases entières à droite (cinq sous 360 px, 44 px au moins chacune), sans fourchette écrite : le plan se lit au filet sous les chiffres, la Référence au petit carré au-dessus, le choisi dans sa pastille.
+- **Rangées de numéros** (`NumberRow`) : reps 1 à 50, RIR 0 à 10, élargies si la valeur en sort ; un tap, une valeur ; elles glissent au doigt. Dans l'instrument (`layout="ligne"`), le mot à gauche (colonne de 44 px) et, jusqu'au bord de la plaque, autant de cases entières de 44 px au moins que la place en tient (six de 375 à 414 px d'écran, cinq à 320 et 360) plus une demi-case d'APERÇU, coupée par le bord et estompée sur ses 10 derniers px : on voit qu'il y a d'autres valeurs et que la rangée glisse (retour de l'utilisateur du 25/11, « on ne dirait pas qu'on peut »). Au bout de la plage, l'aperçu passe à gauche. Le fondu ne touche jamais une case entière : la pastille du choisi reste nette. Sans fourchette écrite : le plan se lit au filet sous les chiffres, la Référence au petit carré au-dessus, le choisi dans sa pastille.
 - **Pied léger** : rangée du haut à trois places fixes, en liens soulignés de 44 px : « ‹ Sommaire » et la progression (« 0/4 », ou l'alarme en demi-gras) à gauche, « Annuler » au milieu, « Exo suivant › » ou « Terminer › » à droite ; dessous, Logger, seul bloc plein, toujours au même endroit, sans enfoncement. Rien ne change de place au minimum du plan.
 - **Récap de fin d'exo** : il monte seul quand la borne haute du plan est franchie. Action principale : « Exo suivant » (le Sommaire au dernier exo) ; dessous, côte à côte (l'un sous l'autre sous 360 px), « Continuer l'exo » et « Sommaire », boutons secondaires de 48 px ; « Sommaire » ramène au Sommaire comme « ‹ Sommaire » du pied.
 - **Glissé du bord** : un glissé de gauche à droite parti des 20 px du bord gauche ramène au Sommaire, au-delà de 30 % de la largeur ou d'un coup sec. L'écran suit le doigt en `transform` seul, sur le fond levé où se lit « ‹ Sommaire ». Inactif quand une feuille est ouverte ; un départ hors de la bande reste à la règle ou à la rangée. Un toucher sur place dans la bande est rendu à ce qui est dessous.
@@ -324,6 +324,7 @@ Le kit vit dans `src/ui/` (règles d'usage en tête de `src/ui/index.ts`). Les �
 
 - Rare, court, interruptible : des transitions, pas d'images clés. Sorties plus courtes que les entrées. Courbe forte `cubic-bezier(0.23, 1, 0.32, 1)` pour l'enfoncement et l'élan, `cubic-bezier(0.32, 0.72, 0, 1)` pour la feuille.
 - Aucune animation sur les gestes répétés en salle (logger, règle au toucher, rangées de numéros) ni sur le changement de surface : le retour est instantané. Seule exception, le glissé du bord vers le Sommaire : l'écran suit le doigt sans transition, puis, lâché, file ou revient en 200 ms (ease-out fort), sans rebond ; sec avec « Réduire les animations ».
+- **Indice de glissé** (`slideHintOnce`, `src/ui/slide-hint.ts`) : UNE fois par appareil (drapeau en localStorage), au premier affichage de l'instrument, la règle puis Reps puis RIR (70 ms d'écart) glissent de 14 px vers ce qui est caché et reviennent, 300 ms à l'aller (ease-out fort) et 300 ms au retour. Jamais sur un geste ; rien avec « Réduire les animations » ; un toucher l'interrompt.
 - Réduire les animations (Réglages, défaut = préférence du système, `data-motion="reduite"` sur `<html>`) : plus de déplacement ni de changement d'échelle ; restent les fondus d'opacité et de couleur.
 
 ### Reste du pont hérité
@@ -348,7 +349,7 @@ Tous les écrans sont au kit. Seule la classe `.field` reste dans `src/index.css
 - **Don't** ressembler à Hevy, Strong ou FitNotes : boutons partout, formulaires à rallonge.
 - **Don't** faire surgir le clavier en salle : règle, rangées de numéros, steppers.
 - **Don't** utiliser le signal en fond, bouton, lien, sélection, interrupteur, confirmation ou erreur.
-- **Don't** de dégradé (fond ou texte), de flou, de verre dépoli, de halo, de lueur, ni d'ombre floue.
+- **Don't** de dégradé (fond ou texte ; le fondu de bord de la règle et des rangées est un masque de transparence), de flou, de verre dépoli, de halo, de lueur, ni d'ombre floue.
 - **Don't** de carte arrondie avec icône dans un rond, de bloc dans un bloc, de pilule de badge, de `rounded-2xl`, d'ombre sous un groupe.
 - **Don't** de surtitre en majuscules ni de mono en costume technique.
 - **Don't** d'emoji, d'icône décorative ni de microcopie motivante.

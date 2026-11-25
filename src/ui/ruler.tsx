@@ -2,6 +2,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { prefersReducedMotion } from './motion';
 
+/** Fondu des bords de la règle : masque de transparence de 28 px de chaque côté. */
+const EDGE_FADE = 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)';
+
 /** Règle graduée au pouce : c'est la règle qui glisse sous une aiguille fixe.
  *  Toucher sans glisser va au cran touché ; ← → au clavier. La valeur est un
  *  index de cran entier (`steps`), à l'appelant de le convertir.
@@ -17,7 +20,15 @@ import { prefersReducedMotion } from './motion';
  *  (au-delà de 0,9 px/ms seulement : un glissé posé ou un petit ajustement vif
  *  s'arrête là où on lâche ; lancée bornée à 560 px). La piste y glisse en
  *  320 ms ease-out fort, interruptible par un nouveau toucher ; avec Réduire les
- *  animations, elle y saute. */
+ *  animations, elle y saute.
+ *
+ *  BORDS. Les graduations courent jusqu'aux bords et s'y estompent (fondu de
+ *  28 px par masque de transparence, pas un dégradé de couleur) : la règle se
+ *  lit comme continuant de chaque côté (retour de l'utilisateur du 25/11, « on
+ *  ne dirait pas qu'on peut » la faire glisser). Le masque est posé sur une
+ *  couche FIXE autour de la piste (il ne glisse pas avec elle), et pas sur la
+ *  boîte : un masque y rognerait l'anneau de focus. La piste porte
+ *  `data-glisse` pour l'indice joué une fois par appareil (`slideHintOnce`). */
 export function Ruler({
   steps,
   onChange,
@@ -179,39 +190,41 @@ export function Ruler({
         setDrag(null);
       }}
     >
-      <div
-        ref={track}
-        aria-hidden
-        className="absolute inset-0"
-        style={{
-          transform: `translate3d(${-value * pxPerStep}px, 0, 0)`,
-          // Sans glissé animé, aucune transition : la règle sert des centaines de
-          // fois par séance, elle suit le doigt et saute au cran touché.
-          transition: animating ? `transform ${animMs}ms cubic-bezier(0.23, 1, 0.32, 1)` : 'none',
-        }}
-      >
-        {ticks.map((v) => {
-          const major = isMajor(v);
-          const mid = isMid(v);
-          const color = tickColor?.(v);
-          return (
-            <div
-              key={v}
-              className="absolute top-0 flex flex-col items-center"
-              style={{ left: `calc(50% + ${v * pxPerStep}px)`, transform: 'translateX(-50%)' }}
-            >
+      <div aria-hidden className="absolute inset-0" style={{ maskImage: EDGE_FADE, WebkitMaskImage: EDGE_FADE }}>
+        <div
+          ref={track}
+          data-glisse
+          className="absolute inset-0"
+          style={{
+            transform: `translate3d(${-value * pxPerStep}px, 0, 0)`,
+            // Sans glissé animé, aucune transition : la règle sert des centaines de
+            // fois par séance, elle suit le doigt et saute au cran touché.
+            transition: animating ? `transform ${animMs}ms cubic-bezier(0.23, 1, 0.32, 1)` : 'none',
+          }}
+        >
+          {ticks.map((v) => {
+            const major = isMajor(v);
+            const mid = isMid(v);
+            const color = tickColor?.(v);
+            return (
               <div
-                className={color ? '' : major ? 'bg-muted' : 'bg-dim'}
-                style={{
-                  width: color ? Math.max(2, pxPerStep - 2) : major ? 2 : 1,
-                  height: major ? tick.major : mid ? tick.mid : tick.minor,
-                  background: color,
-                }}
-              />
-              {major && majorLabel && <span className={`tnum ${tick.gap} whitespace-nowrap text-[13px] text-faint`}>{majorLabel(v)}</span>}
-            </div>
-          );
-        })}
+                key={v}
+                className="absolute top-0 flex flex-col items-center"
+                style={{ left: `calc(50% + ${v * pxPerStep}px)`, transform: 'translateX(-50%)' }}
+              >
+                <div
+                  className={color ? '' : major ? 'bg-muted' : 'bg-dim'}
+                  style={{
+                    width: color ? Math.max(2, pxPerStep - 2) : major ? 2 : 1,
+                    height: major ? tick.major : mid ? tick.mid : tick.minor,
+                    background: color,
+                  }}
+                />
+                {major && majorLabel && <span className={`tnum ${tick.gap} whitespace-nowrap text-[13px] text-faint`}>{majorLabel(v)}</span>}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {/* L'aiguille, fixe au centre ; elle s'arrête au-dessus des étiquettes. */}
       <div className="pointer-events-none absolute left-1/2 top-0 w-[3px] -translate-x-1/2" style={{ background: needle, height: tick.needle }} />

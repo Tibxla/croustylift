@@ -29,7 +29,8 @@
 // seule a un nom (aria-label) et 44 px. Plus les trois marques d'état d'un exo
 // (fait, en cours, passé), toujours à côté de leur mot, jamais en signal.
 //
-// INTERDIT : dégradés (texte ou fond), flou, verre, halos, lueurs, ombres
+// INTERDIT : dégradés (texte ou fond ; le fondu de bord de la règle et des
+// rangées en ligne est un MASQUE de transparence, pas une couleur), flou, verre, halos, lueurs, ombres
 // (aucune, la profondeur est un palier de fond), bloc arrondi dans un bloc
 // arrondi, cartes arrondies avec icône dans un rond, emojis, icônes décoratives,
 // surtitres en majuscules ou en mono, pilules de badge, rounded-2xl, microcopie
@@ -58,6 +59,9 @@
 //     répété des centaines de fois en salle (`press={false}`) : le fond change seul.
 //   - Feuille : monte en 240 ms (courbe de tiroir iOS), descend en 150 ms.
 //   - Règle : saut sec au toucher, élan de 320 ms sur un coup sec.
+//   - Indice de glissé (`slideHintOnce`) : UNE fois par appareil, au premier
+//     affichage de l'instrument, la règle et les rangées glissent de 14 px et
+//     reviennent (2 × 300 ms). Jamais sur un geste, rien avec Réduire les animations.
 //   - Réduire les animations (Réglages, défaut = système ; `data-motion` sur <html>) :
 //     plus de déplacement ni d'échelle, seuls les fondus restent.
 export { PrimaryButton, SecondaryButton, TextLink } from './buttons';
@@ -69,6 +73,7 @@ export { BottomBar, EmptyState, GROUP, GROUP_ROW, GROUP_RULE, List, Row, Screen,
 export { NumberRow } from './number-row';
 export { Ruler } from './ruler';
 export { Sheet } from './sheet';
+export { slideHintOnce } from './slide-hint';
 export { SheetSlotContext } from './sheet-slot';
 export { Alert, CopyNote, LoadError, Loading, OfflineState } from './states';
 export { Sign, Status } from './status';

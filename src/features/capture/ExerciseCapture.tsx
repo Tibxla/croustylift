@@ -46,7 +46,7 @@ import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrde
 import { isBlankNote } from '../../domain/notes';
 import type { Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, Sheet, Sign, StateMark, Status, TONE, useCompact, useCompactTight } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, Sign, slideHintOnce, StateMark, Status, TONE, useCompact, useCompactTight } from '../../ui';
 import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
@@ -156,6 +156,10 @@ export function ExerciseCapture({
   // doigts, et ce changement de côté, pris pour un geste, réinitialisait poids,
   // reps et RIR en cours de réglage.
   const [selectedSide, setSelectedSide] = useState<Side>(() => defaultSide(progress.sets));
+  // Indice de glissé de la règle et des rangées : une fois par appareil, au
+  // premier affichage de l'instrument (src/ui/slide-hint.ts).
+  const instrument = useRef<HTMLDivElement>(null);
+  useEffect(() => slideHintOnce(instrument.current), []);
   // Brouillon TOUCHÉ : posé à la première interaction dans la zone de saisie
   // (tap sur un bouton, focus ou frappe dans un champ, même non validée), levé
   // au début de la saisie suivante. Tant qu'il est posé, un rafraîchissement de
@@ -380,7 +384,7 @@ export function ExerciseCapture({
   return (
     // Colonne qui prend toute la hauteur au-dessus du pied : l'air du haut se
     // répartit (plafonné), le surplus va entre le haut et les plaques.
-    <div className="flex flex-1 flex-col pt-1">
+    <div ref={instrument} className="flex flex-1 flex-col pt-1">
       {/* Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : pas d'index,
           sinon les plaques passent sous le pied. Le Sommaire et « Exo suivant »
           restent à un toucher. */}
