@@ -37,7 +37,26 @@
 // références (prescriptions + séries faites) et REFUSE avec un message lisible si
 // l'exo est encore utilisé, au lieu de laisser la base lever une violation de FK.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Choice, Confirm, EmptyState, GROUP, GROUP_ROW, IconButton, List, LoadError, Loading, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, TextField, TextLink } from '../../ui';
+import {
+  Alert,
+  Choice,
+  Confirm,
+  EmptyState,
+  GROUP,
+  GROUP_ROW,
+  IconButton,
+  List,
+  LoadError,
+  Loading,
+  PrimaryButton,
+  Row,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  TextField,
+  TextLink,
+} from '../../ui';
 import { MUSCLE_GROUPS } from '../authoring/exercise-input';
 import { localTemplates, seancesUsing } from './local-usage';
 import { useReloadBlockWhile } from '../../pwa/useReloadBlockWhile';

@@ -4,7 +4,7 @@
 // aucun fond coloré, des mots plutôt que des icônes (DESIGN.md).
 import { useState, type ReactNode } from 'react';
 import { errorMessage } from '../../lib/error-message';
-import { ActionNote, ActionRow, Confirm, FieldError, GROUP_ROW, PrimaryButton, Sheet, TextField, TextLink } from '../../ui';
+import { ActionNote, ActionRow, Confirm, FieldError, GROUP_ROW, Icon, PrimaryButton, Sheet, TextField, TextLink } from '../../ui';
 import type { MenuItem, RoutineMenu, SeanceActionKey } from './object-actions';
 
 /** Un nom tel qu'il sera enregistré : espaces de bord retirés, espaces internes réduits. */
@@ -114,9 +114,12 @@ function NameForm({
   );
 }
 
-/** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), Monter
- *  et Descendre en mots. La dernière ligne déplacée garde son titre en demi-gras
- *  (pas de bande latérale, comme la ligne courante du kit). */
+/** Ligne en mode « Réordonner » : rang, nom (sur deux lignes au besoin), puis
+ *  Monter et Descendre en flèches de 44 px, nommées pour les lecteurs d'écran.
+ *  En mots (« Monter », « Descendre »), les deux boutons prenaient 180 px et ne
+ *  laissaient au nom qu'une lettre par ligne dans un groupe à 320 px. La
+ *  dernière ligne déplacée garde son titre en demi-gras (pas de bande latérale,
+ *  comme la ligne courante du kit). */
 export function ReorderRow({
   rank,
   title,
@@ -138,7 +141,7 @@ export function ReorderRow({
   onMove: (dir: -1 | 1) => void;
 }) {
   const btn =
-    'ui-press h-11 flex-none rounded-block border-[1.5px] border-ink bg-raise px-3 text-[15px] font-semibold text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
+    'ui-press flex h-11 w-11 flex-none items-center justify-center rounded-block border-[1.5px] border-ink bg-raise text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
   return (
     <li className={`${GROUP_ROW} flex min-h-16 items-center gap-3 px-4 py-2`}>
       <span className="tnum w-6 flex-none text-[15px] text-faint">{rank}</span>
@@ -147,10 +150,10 @@ export function ReorderRow({
         {meta && <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>}
       </span>
       <button type="button" className={btn} disabled={first || disabled} aria-label={`Monter ${title}`} onClick={() => onMove(-1)}>
-        Monter
+        <Icon name="chevron-up" />
       </button>
       <button type="button" className={btn} disabled={last || disabled} aria-label={`Descendre ${title}`} onClick={() => onMove(1)}>
-        Descendre
+        <Icon name="chevron-down" />
       </button>
     </li>
   );

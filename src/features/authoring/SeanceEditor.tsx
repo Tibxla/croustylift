@@ -76,7 +76,30 @@ import { ReorderRow, SeanceActionsSheet, StatusLine } from './seances-ui';
 import { createSaveFlight, saveAllThenLeave, type SaveFlight } from './save-flight';
 import { NOTE_HINT, NoteSheet } from '../notes/NoteSheet';
 import { useOnline } from '../../lib/use-dated-load';
-import { Alert, Choice, EmptyState, GROUP, GROUP_ROW, GROUP_RULE, Icon, IconButton, List, LoadError, Loading, OfflineState, PrimaryButton, Row, Screen, ScreenHeader, SecondaryButton, SectionTitle, Sheet, Stepper, TextField, TextLink } from '../../ui';
+import {
+  Alert,
+  Choice,
+  EmptyState,
+  GROUP,
+  GROUP_ROW,
+  GROUP_RULE,
+  Icon,
+  IconButton,
+  List,
+  LoadError,
+  Loading,
+  OfflineState,
+  PrimaryButton,
+  Row,
+  Screen,
+  ScreenHeader,
+  SecondaryButton,
+  SectionTitle,
+  Sheet,
+  Stepper,
+  TextField,
+  TextLink,
+} from '../../ui';
 
 type ExerciseRow = Database['public']['Tables']['exercises']['Row'];
 

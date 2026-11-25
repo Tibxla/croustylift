@@ -29,7 +29,25 @@ import type { PerformedExercise } from '../../domain/set-count';
 import { weekStartIso } from '../../domain/week';
 import { useSyncState } from '../../shell/useSyncState';
 import { setSurfaceIntent, useGoToSurface } from '../../shell/navigation';
-import { Alert, type ExoState, GROUP, GROUP_ROW, IconButton, List, PrimaryButton, Row, Ruler, Screen, ScreenHeader, SectionTitle, Sign, StateMark, Status, Stepper, TextLink } from '../../ui';
+import {
+  Alert,
+  type ExoState,
+  GROUP,
+  GROUP_ROW,
+  IconButton,
+  List,
+  PrimaryButton,
+  Row,
+  Ruler,
+  Screen,
+  ScreenHeader,
+  SectionTitle,
+  Sign,
+  StateMark,
+  Status,
+  Stepper,
+  TextLink,
+} from '../../ui';
 import { formatCount, formatE1rm, formatWeight } from './format';
 import {
   nudgeDuration,
