@@ -9,6 +9,7 @@ import { loadLocalAccount } from '../../lib/local-account';
 import { forgetEntrustedExercises, writeMakingRoom } from './cache-eviction';
 import { logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
+import { isExecutionRetired } from './written-elsewhere';
 
 /**
  * Brouillon d'une NOTE DATÉE (issue #26) : le contexte d'une perf le jour de la
@@ -1226,6 +1227,10 @@ function captureStateExerciseIds(state: CaptureState): string[] {
 
 export function persist(state: CaptureState): void {
   if (typeof localStorage === 'undefined') return;
+  // Exécution supprimée depuis le Journal : la Salle cachée qui la tenait encore
+  // ne réécrit pas l'état effacé (written-elsewhere.ts), sinon son retour
+  // reprendrait la séance supprimée.
+  if (isExecutionRetired(state.executionId)) return;
   // `ownerId` : le compte reconnu sur l'appareil, pour ne jamais restaurer la
   // capture d'un compte sous un autre (cf. `loadPersisted`).
   const ownerId = loadLocalAccount()?.userId;

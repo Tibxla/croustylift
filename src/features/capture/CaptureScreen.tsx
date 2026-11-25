@@ -73,6 +73,7 @@ import {
   resolveCaptureDate,
   onSetsAbandoned,
   shouldReanchorLaunch,
+  clearPersistedExecution,
   todayIso,
   type DatedNoteDraft,
   type HydratedProgress,
@@ -123,6 +124,7 @@ import { applySetGesture as applyGesture } from './apply-set-gesture';
 import { changeSetSide, correctSet, deleteSet, undoLastSet, type SetEntry, type SetGesture } from './set-gestures';
 import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
 import { enteredElsewhere, leaveSession, nothingEntered } from './session-gestures';
+import { captureBoardKey, forgetPendingWrites, salleReturnAction } from './written-elsewhere';
 
 type LoadState =
   | { phase: 'loading' }
@@ -475,6 +477,9 @@ export function CaptureScreen() {
     const active = () => alive;
     loadGenRef.current += 1;
     setLoad({ phase: 'loading' });
+    // Ce chargement relit tout : ce que les autres onglets ont écrit jusqu'ici
+    // n'a plus à le relancer au retour (written-elsewhere.ts).
+    forgetPendingWrites();
 
     // Flush de l'outbox dès l'ARRIVÉE sur l'écran, quelle que soit la phase
     // (incident 2026-07-30) : les autres déclencheurs (montage de CaptureBoard,
@@ -537,15 +542,27 @@ export function CaptureScreen() {
   // brouillon). Sans séance ouverte (choix, rien à logger, erreur) ou une fois
   // la séance rangée (clôture transitoire, ADR 0009), on relit comme l'ancien
   // remontage : une séance créée entre-temps dans Séances apparaît, une séance
-  // en cours reprend, le récap rangé laisse place au lancement. Et la file
-  // d'écritures est retentée à chaque arrivée, quelle que soit la phase
-  // (incident 2026-07-30, cf. l'effet de chargement).
+  // en cours reprend, le récap rangé laisse place au lancement. De même quand un
+  // autre onglet a écrit sous la séance ouverte (written-elsewhere.ts) : le
+  // Journal l'a corrigée (la base fait foi) ou supprimée (retour à « Quelle
+  // séance ? »), Exos ou Séances ont changé une définition. Le chargement
+  // remonte alors le tableau (`captureBoardKey`) : réalisé relu, exécution
+  // réaffirmée avant la série suivante. Et la file d'écritures est retentée à
+  // chaque arrivée, quelle que soit la phase (incident 2026-07-30, cf. l'effet
+  // de chargement).
   useSurfaceReturn(() => {
     void attemptFlush();
-    const closed = load.phase === 'ready' && (boardStateRef.current?.().closedAt ?? null) !== null;
-    if (closed || load.phase === 'choosing' || load.phase === 'empty' || load.phase === 'error') {
-      setReloadKey((k) => k + 1);
-    }
+    const board = load.phase === 'ready' ? boardStateRef.current?.() ?? null : null;
+    const action = salleReturnAction({
+      phase: load.phase,
+      closed: (board?.closedAt ?? null) !== null,
+      executionId: board?.executionId ?? (load.phase === 'ready' ? load.executionId : null),
+    });
+    if (action === 'keep') return;
+    // Supprimée : l'état local est effacé encore une fois, au cas où il aurait
+    // été réécrit avant que le Journal ne la retire.
+    if (action === 'forget-and-reload' && board) clearPersistedExecution(board.executionId);
+    setReloadKey((k) => k + 1);
   });
 
   // Clic sur une séance proposée : on la résout (version courante) et on charge.
@@ -600,7 +617,7 @@ export function CaptureScreen() {
 
   return (
     <CaptureBoard
-      key={`${load.template.id}:${load.executionId}`}
+      key={captureBoardKey({ templateId: load.template.id, executionId: load.executionId, generation: load.generation })}
       template={load.template}
       extras={load.extras}
       lateBox={lateBox}

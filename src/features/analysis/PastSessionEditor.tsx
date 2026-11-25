@@ -26,6 +26,7 @@ import { formatWeight } from '../capture/format';
 import { roundWeightKg } from '../capture/stepper-utils';
 import { WeightReadout } from '../capture/WeightReadout';
 import { clearPersistedExecution, newId } from '../capture/state';
+import { markExecutionCorrected, markExecutionDeleted } from '../capture/written-elsewhere';
 import { loadExecutionForEdit, type EditableExecution } from '../capture/data';
 import {
   addSet,
@@ -256,6 +257,11 @@ export function PastSessionEditor({
       return;
     }
     setSave({ phase: 'saving' });
+    // La Salle tient peut-être cette exécution, cachée (séance du jour en cours) :
+    // à son retour elle relit la séance corrigée au lieu de garder ses séries
+    // (capture/written-elsewhere.ts). Posé avant l'envoi : une correction en
+    // attente est déjà durable.
+    markExecutionCorrected(executionId);
     try {
       // `flush` ne REJETTE PAS sur une coupure réseau : il s'arrête à l'op en
       // échec et renvoie `remaining > 0` (cf. outbox.ts). On inspecte donc le
@@ -292,6 +298,9 @@ export function PastSessionEditor({
       // Si la Capture tient encore CETTE exécution en cours (séance du jour non
       // clôturée), on efface son état local comme le fait l'Annulation : il prime
       // à la réhydratation, et la série suivante recréerait l'exécution supprimée.
+      // Et la Salle cachée qui la tenait ne la réécrit plus ; à son retour, elle
+      // revient sur « Quelle séance ? » (capture/written-elsewhere.ts).
+      markExecutionDeleted(executionId);
       clearPersistedExecution(executionId);
       // Les exos de la séance sont connus ici : l'op les porte pour que leurs
       // copies locales d'historique soient relues à l'acquittement.
