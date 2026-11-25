@@ -1156,7 +1156,7 @@ describe('troisième tour : le verrou de l’ancienne file sur un appareil plein
 });
 
 describe('troisième tour : sous stockage plein, une série refusée garde sa trace après un rechargement', () => {
-  it('correction héritée renvoyée comme série entière et refusée : la série est toujours parmi les refus', async () => {
+  it('correction héritée envoyée comme série entière et refusée sans pouvoir l’écrire : la série est toujours parmi les refus après rechargement', async () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     localStorage.setItem(
       LEGACY_QUARANTINE,
@@ -1164,7 +1164,9 @@ describe('troisième tour : sous stockage plein, une série refusée garde sa tr
     );
     localStorage.setItem(LEGACY_QUEUE, JSON.stringify([{ ...correction('s1', 90), _uid: 'q1', _owner: 'user-1', _at: 2000 }]));
     registryStorageFull();
-    // La correction part comme la série entière, et la base la refuse à son tour.
+    // La correction part comme la série entière, et la base la refuse à son tour :
+    // ce second refus ne peut pas s'écrire (voie 1), la passe s'arrête. Le refus
+    // listé est toujours celui de l'ancienne quarantaine.
     await flush(base({ refuses: () => '23514' }).fns);
     expect(listRefused().map((r) => `${r.op.type}:${r.op.id}`)).toEqual(['insertSet:s1']);
 
