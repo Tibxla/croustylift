@@ -28,6 +28,12 @@
 
   --radius-block: 6px;      /* boutons, carrés de couleur, champs */
   --radius-sheet: 10px;     /* haut des feuilles basses */
+  /* Instrument de la Salle (variante A4) : jetons à 0 tant que le traitement
+     d'arrondi n'est pas choisi ; le changer ici suffit, l'écran n'a aucun rayon
+     en dur. `rounded-plate` : les trois plaques de réglage ; `rounded-cell` :
+     une case de la bande des séries (son fond de pression). */
+  --radius-plate: 0px;
+  --radius-cell: 0px;
 
   /* Courbes (DESIGN.md, Mouvement) : enfoncement et élan, tiroir des feuilles. */
   --ease-press: cubic-bezier(0.23, 1, 0.32, 1);
@@ -40,6 +46,9 @@
 }
 
 :root {
+  /* Retrait latéral des plaques de réglage de la Salle : 0, elles vont bord à
+     bord ; un traitement en « bulles » les détachera des bords d'ici. */
+  --plate-inset: 0px;
   /* Signal par défaut (Jaune), remplacé au démarrage par le choix enregistré. */
   --sig: #f6d236;
 

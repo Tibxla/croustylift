@@ -533,7 +533,7 @@ export function ExerciseCapture({
         {/* Trois plaques, séparées par le fond : entre deux zones tactiles
             voisines, 4 + écart + 4 px de rien (16 px au moins). */}
         <div className="flex flex-col" style={{ gap: tight ? 8 : compact ? 10 : 14 }}>
-          <div data-plate="poids" className={`bg-raise pb-1.5 ${tight ? 'pt-2' : 'pt-3'}`}>
+          <div data-plate="poids" className={`${PLATE} pb-1.5 ${tight ? 'pt-2' : 'pt-3'}`}>
             <WeightReadout value={weightKg} kg="bloc" size={weightSize} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
             <div className={tight ? 'mt-1' : 'mt-2'}>
               <Ruler
@@ -553,7 +553,7 @@ export function ExerciseCapture({
             </div>
           </div>
           {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
-          <div data-plate="reps" className="bg-raise py-1">
+          <div data-plate="reps" className={`${PLATE} py-1`}>
             <NumberRow
               key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
               layout="ligne"
@@ -567,7 +567,7 @@ export function ExerciseCapture({
               compact={tight}
             />
           </div>
-          <div data-plate="rir" className="bg-raise py-1">
+          <div data-plate="rir" className={`${PLATE} py-1`}>
             <NumberRow
               key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
               layout="ligne"
@@ -640,6 +640,11 @@ export function ExerciseCapture({
     </div>
   );
 }
+
+/** Une plaque de réglage : fond levé, rayon et retrait latéral en jetons du
+ *  thème (`--radius-plate`, `--plate-inset`, src/index.css), à 0 tant que le
+ *  traitement d'arrondi n'est pas choisi. Aucun rayon en dur. */
+const PLATE = 'overflow-hidden rounded-plate bg-raise mx-(--plate-inset)';
 
 /** Air entre deux groupes de l'instrument : un plancher, puis une part de la
  *  hauteur libre, plafonnée ou non. Aucune animation : la répartition suit la

@@ -102,12 +102,12 @@ export function SetBand({
                 type="button"
                 aria-label={`Corriger la s${name.slice(1)}`}
                 onClick={() => c.id && onEdit(c.id)}
-                className="block w-full pb-1.5 pr-1.5 text-left active:bg-line"
+                className="block w-full rounded-cell pb-1.5 pr-1.5 text-left active:bg-line"
               >
                 {body}
               </button>
             ) : (
-              <div className="pb-1.5 pr-1.5">{body}</div>
+              <div className="rounded-cell pb-1.5 pr-1.5">{body}</div>
             )}
             <span
               aria-hidden
