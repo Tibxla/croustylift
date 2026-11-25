@@ -73,8 +73,8 @@ export function VariantD({ s, exercise, progress, index, compact, tight, onPick,
                 {formatWeight(set.weightKg)} × {set.reps} · {set.rir}
               </span>
               {st && (
-                <span className={st.v === 'up' ? 'text-sig' : 'text-ink'}>
-                  <Sign v={st.v} size={10} />
+                <span className={`inline-flex items-center gap-1 ${st.v === 'up' ? 'text-sig' : 'text-ink'}`}>
+                  <Sign v={st.v} size={10} /> <span className="text-[13px]">{st.short}</span>
                 </span>
               )}
             </button>

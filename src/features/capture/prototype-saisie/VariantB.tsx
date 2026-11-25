@@ -10,7 +10,7 @@
 //
 // « kg » : en EN-TÊTE de colonne et dans le titre du réglage (« Poids, kg ») ;
 // le nombre est seul, centré pile sur l'aiguille.
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PerformedSet } from '../../../domain/types';
 import { IconButton, NumberRow, Sign } from '../../../ui';
 import { formatRange, formatWeight } from '../format';
@@ -34,6 +34,15 @@ export function VariantB({ s, exercise, progress, exoPos, compact, tight, onEdit
   const refOf = (order: number, side?: string) => reference?.find((r) => r.order === order && (r.side ?? undefined) === (side ?? undefined)) ?? null;
   const future = s.unilateral ? [] : Array.from({ length: Math.max(0, s.plannedMax - progress.sets.length - 1) }, (_, i) => progress.sets.length + 2 + i);
   const rowH = tight ? 'h-10' : 'h-11';
+  const body = useRef<HTMLDivElement>(null);
+  const current = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const b = body.current;
+    const c = current.current;
+    if (!b || !c) return;
+    // La ligne en cours en bas du champ, la série d'avant juste au-dessus.
+    b.scrollTop = Math.max(0, c.offsetTop - b.offsetTop + c.offsetHeight - b.clientHeight);
+  }, [s.draftKey, progress.sets.length]);
 
   const cell = (f: Field, value: string, label: string) => {
     const on = field === f;
@@ -80,6 +89,9 @@ export function VariantB({ s, exercise, progress, exoPos, compact, tight, onEdit
           <span />
         </div>
 
+        {/* Le corps défile seul au-delà de quatre lignes (fin d'exo, unilatéral) :
+            la ligne en cours reste en vue, le réglage ne descend jamais sous la barre. */}
+        <div ref={body} className="overflow-y-auto" style={{ maxHeight: tight ? 3 * 40 + 60 : 3 * 44 + 60, scrollbarWidth: 'thin' }}>
         {progress.sets.map((set, i) => {
           const id = progress.setIds[i];
           const st = badgeStatus(s.badges[i] ?? null);
@@ -115,7 +127,7 @@ export function VariantB({ s, exercise, progress, exoPos, compact, tight, onEdit
         })}
 
         {/* La ligne en cours : levée, ses trois cases se touchent. */}
-        <div role="row" aria-current="step" className={`${COLS} h-[60px] border-b border-line bg-raise`}>
+        <div ref={current} role="row" aria-current="step" className={`${COLS} h-[60px] border-b border-line bg-raise`}>
           <span className="tnum text-[15px] font-semibold text-ink">
             {s.rank}
             {sideMark(s.side)}
@@ -137,6 +149,7 @@ export function VariantB({ s, exercise, progress, exoPos, compact, tight, onEdit
             <span />
           </div>
         ))}
+        </div>
       </div>
 
       <p className="mt-1.5 flex justify-between px-5 text-[14px] text-muted">

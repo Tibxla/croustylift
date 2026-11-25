@@ -51,9 +51,8 @@ export function EdgeSwipeBack({ onBack, children }: { onBack: () => void; childr
       }
       paint(p.clientWidth, 'transform 200ms cubic-bezier(0.23, 1, 0.32, 1)');
       window.setTimeout(() => {
+        // L'écran est démonté par le Sommaire : rien à remettre en place.
         onBack();
-        // L'écran est démonté par le Sommaire ; s'il reste (rien à quitter), on le remet.
-        if (pane.current) paint(0, 'none');
       }, 200);
     } else {
       paint(0, reduced ? 'none' : 'transform 280ms cubic-bezier(0.34, 1.35, 0.64, 1)');

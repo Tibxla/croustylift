@@ -68,7 +68,7 @@ export function ProtoWeight({ value, onChange, size, unit }: { value: number; on
     if (!/\d/.test(raw)) onChange(before.current);
   };
 
-  const kgInline = <span className="ml-[0.12em] font-medium text-muted" style={{ fontSize: Math.round(fit.size * 0.36) }}>kg</span>;
+  const kgInline = <span className="ml-[0.2em] font-medium text-muted" style={{ fontSize: Math.round(fit.size * 0.36) }}>kg</span>;
   const kgBelow = <span className="mt-1 block text-[14px] font-medium leading-none text-muted">kg</span>;
   const number = editing ? (
     <input
