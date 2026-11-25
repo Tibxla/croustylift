@@ -435,7 +435,11 @@ function CompteSection({
                   // Forçage explicite (ADR 0012) : la seule porte de purge, la perte
                   // est nommée sur le lien.
                   setIssue(null);
-                  void onSignOut({ force: true }).catch(() => {});
+                  // Un brouillon ouvert refuse même la déconnexion forcée : la
+                  // raison s'affiche à la place, comme pour la déconnexion simple.
+                  void onSignOut({ force: true }).catch((err: unknown) => {
+                    setIssue({ kind: 'error', message: errorMessage(err) });
+                  });
                 }}
               >
                 Me déconnecter et perdre ces saisies

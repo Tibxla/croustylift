@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { draftSignOutRefusal, openMemory, surfaceKey, switchMemory } from './surface-memory';
+import { describe, expect, it, vi } from 'vitest';
+import { draftSignOutRefusal, guardSignOut, openMemory, surfaceKey, switchMemory } from './surface-memory';
 
 describe('openMemory', () => {
   it('monte seulement la surface d’arrivée, en haut', () => {
@@ -97,5 +97,26 @@ describe('draftSignOutRefusal', () => {
       expect(refusal).toMatch(/brouillon/);
       expect(refusal).toMatch(/enregistre-le ou abandonne-le/);
     }
+  });
+});
+
+// Le bug : « Me déconnecter et perdre ces saisies » (forçage des écritures
+// retenues) passait aussi la garde des brouillons. Un brouillon tenu par un
+// écran caché partait sans un mot. Le forçage ne vise que les écritures
+// retenues : les brouillons sont vérifiés dans tous les cas.
+describe('guardSignOut', () => {
+  it('sans brouillon : la déconnexion part, forcée ou non, avec ses options', async () => {
+    const signOut = vi.fn(async () => {});
+    await guardSignOut(signOut, [], undefined);
+    await guardSignOut(signOut, ['ecriture-directe'], { force: true });
+    expect(signOut).toHaveBeenNthCalledWith(1, undefined);
+    expect(signOut).toHaveBeenNthCalledWith(2, { force: true });
+  });
+
+  it('un brouillon ouvert : refusée, même forcée, et rien n’est purgé', async () => {
+    const signOut = vi.fn(async () => {});
+    await expect(guardSignOut(signOut, ['brouillon-seance'], { force: true })).rejects.toThrow(/brouillon/);
+    await expect(guardSignOut(signOut, ['brouillon-note-exercice'], undefined)).rejects.toThrow(/brouillon/);
+    expect(signOut).not.toHaveBeenCalled();
   });
 });

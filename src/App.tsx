@@ -33,7 +33,7 @@ import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
 import { SurfaceNav } from './shell/SurfaceNav'
 import { hasSurfaceIntent, SurfaceActiveContext, SurfaceNavigationContext } from './shell/navigation'
-import { draftSignOutRefusal, openMemory, surfaceKey, switchMemory, type SurfaceMemory } from './shell/surface-memory'
+import { guardSignOut, openMemory, surfaceKey, switchMemory, type SurfaceMemory } from './shell/surface-memory'
 import { syncLine } from './shell/sync-line'
 import { useSyncState } from './shell/useSyncState'
 import { LoadError, Loading, SheetSlotContext, SyncBanner } from './ui'
@@ -310,13 +310,9 @@ function AuthenticatedApp({
   }, [])
   // Se déconnecter démonte tous les onglets : refusé tant qu'un écran, même
   // caché, tient un brouillon (la raison s'affiche sous le bouton des Réglages).
-  // Le forçage, lui, ne sert qu'aux écritures retenues, déjà passé ce point.
+  // Forcé compris : le forçage ne vise que les écritures retenues de la file.
   const guardedSignOut = useCallback(
-    async (options?: { force?: boolean }) => {
-      const refusal = options?.force ? null : draftSignOutRefusal(activeBlockers())
-      if (refusal) throw new Error(refusal)
-      await onSignOut(options)
-    },
+    (options?: { force?: boolean }) => guardSignOut(onSignOut, activeBlockers(), options),
     [onSignOut],
   )
   // Emplacement des feuilles basses du kit (src/ui/sheet.tsx), dernier enfant

@@ -99,3 +99,19 @@ export function draftSignOutRefusal(blockers: readonly string[]): string | null 
   if (!blockers.some((b) => b.startsWith('brouillon-'))) return null;
   return 'un brouillon n’est pas enregistré dans un autre onglet (séance, correction, exo ou note) : enregistre-le ou abandonne-le avant de te déconnecter.';
 }
+
+/**
+ * La déconnexion gardée : refusée (rejet portant la raison) tant qu'un brouillon
+ * est ouvert, MÊME forcée. Le forçage (« Me déconnecter et perdre ces saisies »)
+ * ne vise que les écritures retenues de la file, déjà nommées sur son lien ; un
+ * brouillon ne s'y voit pas, et partirait sans un mot.
+ */
+export async function guardSignOut<O>(
+  signOut: (options: O) => Promise<void>,
+  blockers: readonly string[],
+  options: O,
+): Promise<void> {
+  const refusal = draftSignOutRefusal(blockers);
+  if (refusal) throw new Error(refusal);
+  await signOut(options);
+}
