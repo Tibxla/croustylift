@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -302,6 +303,10 @@ function AuthenticatedApp({
     },
     [memory],
   )
+  const registerBoundary = useCallback((s: Surface, boundary: ErrorBoundary | null) => {
+    if (boundary) boundaries.current.set(s, boundary)
+    else boundaries.current.delete(s)
+  }, [])
   // Se déconnecter démonte tous les onglets : refusé tant qu'un écran, même
   // caché, tient un brouillon (la raison s'affiche sous le bouton des Réglages).
   // Le forçage, lui, ne sert qu'aux écritures retenues, déjà passé ce point.
@@ -388,12 +393,6 @@ function AuthenticatedApp({
     return () => window.removeEventListener('online', flushAndRevalidate)
   }, [])
 
-  const { analysis, seances, exercises, reglages } = lazyScreens
-  const AnalysisScreen = analysis.Component
-  const SeancesScreen = seances.Component
-  const ExercisesScreen = exercises.Component
-  const ReglagesScreen = reglages.Component
-
   if (check.phase === 'checking') {
     return <FullScreenSpinner label="Chargement" />
   }
@@ -447,37 +446,17 @@ function AuthenticatedApp({
             {surface !== 'capture' && (
               <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />
             )}
-            {memory.mounted.map((s) => {
-              const shown = s === surface
-              return (
-                <div key={surfaceKey(memory, s)} style={shown ? SHOWN : PARKED} inert={!shown} aria-hidden={shown ? undefined : true}>
-                  <SurfaceActiveContext.Provider value={shown}>
-                    {/* Une feuille d'une surface cachée ne s'affiche pas par-dessus
-                        une autre : sans emplacement, elle attend son retour. */}
-                    <SheetSlotContext.Provider value={shown ? sheetSlot : null}>
-                      <ErrorBoundary
-                        ref={(boundary) => {
-                          if (boundary) boundaries.current.set(s, boundary)
-                          else boundaries.current.delete(s)
-                        }}
-                        surface={s}
-                      >
-                        <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
-                          {s === 'capture' && <CaptureScreen />}
-                          {s === 'analysis' && <AnalysisScreen />}
-                          {s === 'seances' && <SeancesScreen />}
-                          {s === 'exercises' && <ExercisesScreen />}
-                          {/* Compte (e-mail, Déconnexion), version et mise à jour vivent ici,
-                              au calme : rien de tout cela n'a sa place dans le chrome
-                              permanent ni en salle. App reste propriétaire de l'auth. */}
-                          {s === 'reglages' && <ReglagesScreen email={email} onSignOut={guardedSignOut} />}
-                        </Suspense>
-                      </ErrorBoundary>
-                    </SheetSlotContext.Provider>
-                  </SurfaceActiveContext.Provider>
-                </div>
-              )
-            })}
+            {memory.mounted.map((s) => (
+              <SurfaceSlot
+                key={surfaceKey(memory, s)}
+                surface={s}
+                shown={s === surface}
+                sheetSlot={sheetSlot}
+                email={email}
+                onSignOut={guardedSignOut}
+                onBoundary={registerBoundary}
+              />
+            ))}
           </div>
           {/* Montée à la première ouverture seulement : son chunk n'est demandé
               qu'à ce moment. Un échec de chargement ne casse pas l'app (frontière
@@ -504,6 +483,58 @@ function AuthenticatedApp({
     </main>
   )
 }
+
+/**
+ * Une surface montée, affichée ou cachée (shell/surface-memory.ts). Mémoïsée :
+ * l'app authentifiée se rend à chaque changement de la file d'écritures (une
+ * série loggée), et les surfaces cachées n'ont pas à se rendre avec elle.
+ */
+const SurfaceSlot = memo(function SurfaceSlot({
+  surface,
+  shown,
+  sheetSlot,
+  email,
+  onSignOut,
+  onBoundary,
+}: {
+  surface: Surface
+  shown: boolean
+  sheetSlot: HTMLElement | null
+  email: string | undefined
+  onSignOut: (options?: { force?: boolean }) => Promise<void>
+  onBoundary: (surface: Surface, boundary: ErrorBoundary | null) => void
+}) {
+  // Lu au rendu : après un import échoué et oublié, le composant paresseux est
+  // neuf (`lazySurface`), et la surface remontée le redemande.
+  const { analysis, seances, exercises, reglages } = lazyScreens
+  const AnalysisScreen = analysis.Component
+  const SeancesScreen = seances.Component
+  const ExercisesScreen = exercises.Component
+  const ReglagesScreen = reglages.Component
+  const boundaryRef = useCallback((boundary: ErrorBoundary | null) => onBoundary(surface, boundary), [onBoundary, surface])
+  return (
+    <div style={shown ? SHOWN : PARKED} inert={!shown} aria-hidden={shown ? undefined : true}>
+      <SurfaceActiveContext.Provider value={shown}>
+        {/* Une feuille d'une surface cachée ne s'affiche pas par-dessus une
+            autre : sans emplacement, elle attend son retour. */}
+        <SheetSlotContext.Provider value={shown ? sheetSlot : null}>
+          <ErrorBoundary ref={boundaryRef} surface={surface}>
+            <Suspense fallback={<FullScreenSpinner label="Chargement" />}>
+              {surface === 'capture' && <CaptureScreen />}
+              {surface === 'analysis' && <AnalysisScreen />}
+              {surface === 'seances' && <SeancesScreen />}
+              {surface === 'exercises' && <ExercisesScreen />}
+              {/* Compte (e-mail, Déconnexion), version et mise à jour vivent ici,
+                  au calme : rien de tout cela n'a sa place dans le chrome
+                  permanent ni en salle. App reste propriétaire de l'auth. */}
+              {surface === 'reglages' && <ReglagesScreen email={email} onSignOut={onSignOut} />}
+            </Suspense>
+          </ErrorBoundary>
+        </SheetSlotContext.Provider>
+      </SurfaceActiveContext.Provider>
+    </div>
+  )
+})
 
 function FullScreenSpinner({ label }: { label: string }) {
   // Une phrase plutôt qu'une toupie (kit E, `Loading`).

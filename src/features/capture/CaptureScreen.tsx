@@ -533,11 +533,18 @@ export function CaptureScreen() {
 
   // Retour sur l'onglet : la Salle est restée montée, cachée (shell/surface-memory.ts).
   // Une séance ouverte se retrouve telle quelle (exo, série visée, côté,
-  // brouillon). Sans séance ouverte (choix, rien à logger, erreur), on relit
-  // comme l'ancien remontage : une séance créée entre-temps dans Séances
-  // apparaît, et une séance en cours reprend.
+  // brouillon). Sans séance ouverte (choix, rien à logger, erreur) ou une fois
+  // la séance rangée (clôture transitoire, ADR 0009), on relit comme l'ancien
+  // remontage : une séance créée entre-temps dans Séances apparaît, une séance
+  // en cours reprend, le récap rangé laisse place au lancement. Et la file
+  // d'écritures est retentée à chaque arrivée, quelle que soit la phase
+  // (incident 2026-07-30, cf. l'effet de chargement).
   useSurfaceReturn(() => {
-    if (load.phase === 'choosing' || load.phase === 'empty' || load.phase === 'error') setReloadKey((k) => k + 1);
+    void attemptFlush();
+    const closed = load.phase === 'ready' && (boardStateRef.current?.().closedAt ?? null) !== null;
+    if (closed || load.phase === 'choosing' || load.phase === 'empty' || load.phase === 'error') {
+      setReloadKey((k) => k + 1);
+    }
   });
 
   // Clic sur une séance proposée : on la résout (version courante) et on charge.
@@ -945,8 +952,8 @@ function CaptureBoard({
 
   // --- Synchro via outbox ---------------------------------------------------
 
-  // En quittant la Capture (changement d'onglet), un dernier essai d'écrire
-  // l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
+  // Au démontage du tableau (séance quittée, déconnexion ; un changement
+  // d'onglet le garde monté), un dernier essai d'écrire l'état que le stockage a refusé : l'utilisateur a pu libérer de la place, et
   // démonté, le tableau ne le tient plus (cf. `retryPersistCaptureState`).
   useEffect(() => () => void retryPersistCaptureState(), []);
 
