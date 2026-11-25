@@ -196,5 +196,5 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
 export const GESTURE_TEXT: Record<Exclude<GestureOutcome, 'done'>, string> = {
   gone: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
   busy: 'Un envoi est en cours dans un autre onglet. Réessaie dans un instant.',
-  unsaved: 'Le stockage de l’appareil est plein : rien n’a changé. Libère de la place, puis réessaie.',
+  unsaved: 'L’appareil n’a pas pu l’enregistrer (stockage plein) : rien n’a changé. Réessaie une fois de la place libérée.',
 };

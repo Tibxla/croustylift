@@ -29,7 +29,11 @@
 // le renvoi, l'abandon et la reprise d'une ancienne file sont les seules
 // lectures-modifications-écritures de l'enregistrement, un onglet à la fois. Il
 // n'existe aucun état intermédiaire où une écriture serait à deux endroits, ou
-// nulle part. L'enfilement, lui, n'attend jamais le verrou (une passe le tient
+// nulle part. Une transition est ÉCRITE sur l'appareil, ou elle N'A PAS LIEU :
+// rien n'est tenu en mémoire pour être rejoué plus tard. Appareil plein, un
+// acquittement se règle en retirant l'écriture de sa source (cela passe
+// toujours) ; un refus qui ne peut pas s'écrire ARRÊTE la passe, sans rien
+// retirer, et la ligne de synchro le dit (`storageFailing`). L'enfilement, lui, n'attend jamais le verrou (une passe le tient
 // le temps de ses requêtes, et une série doit être durable dès le geste) : il
 // écrit les écritures de son geste dans une clé à elles, la BOÎTE D'ENTRÉE,
 // que le registre fait entrer sous le verrou. Les gestes synchrones qui
@@ -1330,7 +1334,8 @@ function stripQueueFields(op: OutboxOp): OutboxOp {
  * ENFILE les écritures d'UN geste comme une seule unité : UNE écriture sur
  * l'appareil, dans une clé à elles (cf. `INBOX_PREFIX`), que personne d'autre
  * ne réécrit. Elles sont toutes écrites, ou toutes tenues en mémoire (repli
- * sous stockage plein), jamais coupées en deux : enfilées une à une, un
+ * sous stockage plein : visible, et recharger est interdit tant qu'elles ne
+ * sont nulle part ailleurs, cf. `hasUnpersistedOps`), jamais coupées en deux : enfilées une à une, un
  * stockage presque plein écrivait la suppression d'une série sans les remontées
  * de rang qui la suivent.
  *
@@ -1471,7 +1476,8 @@ function ownRefusal(record: RegistryRecord, refusalId: string): Entry | undefine
 /**
  * RENVOIE une saisie refusée : elle redevient une écriture en attente, À SA
  * PLACE d'origine dans l'ordre d'envoi, et sera retentée à la prochaine passe
- * (elle reviendra parmi les refus si la base la refuse encore). Renvoyer la
+ * (elle reviendra parmi les refus si la base la refuse encore). `'unsaved'` si
+ * l'appareil n'a pas pu l'écrire : elle est toujours refusée. Renvoyer la
  * création d'une séance libère du même coup les saisies qu'elle retenait. Parce
  * qu'elle garde sa place, une correction ou une suppression plus récente de la
  * même série passe toujours APRÈS elle : renvoyer ne ressuscite ni n'écrase rien.

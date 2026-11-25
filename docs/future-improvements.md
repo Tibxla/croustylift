@@ -121,13 +121,18 @@ perte), finition.
   correction, l'ancienne part après et gagne en base, sur les colonnes qu'elle écrit :
   c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas se présente : dater
   les écritures d'une même ligne côté base.
+- **Appareil plein dès la première ouverture, ancienne file vide** (importante, rare, acceptée le 25/11 ; ADR 0025, « Limites connues »). Le verrou de l'ancienne file ne peut pas être posé : un onglet resté sur l'ancienne version peut envoyer lui-même ce qu'il enfile, avant une écriture plus ancienne du registre. La ligne de synchro dit « Stockage plein ». Disparaît avec la reprise de l'ancien format (après le 2026-12-31).
+- **Envoi arrêté sous stockage plein** (mineure, sans perte). Un refus de la base que l'appareil ne peut pas écrire arrête la passe : plus rien ne part tant que la place n'est pas revenue, saisies indépendantes comprises (ADR 0025, « Passe arrêtée »). Pistes : un geste « Libérer de la place » dans Réglages (copies de lecture, séances en cours oubliées), et laisser partir les écritures qui ne dépendent pas de celle qui bloque.
+- **Saisie tenue en mémoire, page fermée** (importante, rare). Stockage plein et hors ligne : une saisie que l'appareil a refusée ne tient qu'en mémoire. Le rechargement par l'app est refusé, mais fermer l'onglet la perd. Piste : IndexedDB en second support pour ces seules saisies.
+- **Écriture acquittée non gardée sous stockage plein** (mineure). Elle cède la place au lieu de rester dix minutes : une réponse de la base partie avant son acquittement peut la faire manquer à l'écran jusqu'à la lecture suivante.
+- **Deux onglets, chacun avec des saisies en mémoire** (mineure). Stockage plein : un onglet ne voit pas les saisies que l'autre tient en mémoire. Chacun envoie les siennes à sa passe ; l'ordre entre les deux suit les passes, pas les gestes.
 - **Version inconnue du registre** (finition). Un onglet resté sur une version plus
   ancienne que celle qui a écrit le registre n'envoie plus rien et demande de recharger ;
   ce qu'on y saisit d'ici là ne tient qu'en mémoire. Piste, à la première montée de
   format : laisser à l'ancienne version une clé de dépôt que la nouvelle reprend.
 - **Reprise de l'ancien format** (à retirer après le 2026-12-31). La conversion de la
   file et de la quarantaine d'avant le registre, et leur reprise en continu
-  (`absorbLegacy`, `fromLegacy`), ne servent qu'aux onglets restés sur l'ancienne version.
+  (`settleLegacy`, `fromLegacy`), ne servent qu'aux onglets restés sur l'ancienne version.
 - **État de séance retenu en mémoire, réécrit par-dessus un autre onglet** (mineure,
   acceptée). Stockage plein, deux onglets : l'onglet A quitte la Capture avec son état
   refusé, retenu en mémoire. L'onglet B écrit ensuite une disposition plus récente de

@@ -77,10 +77,13 @@ export function emptyRecord(): RegistryRecord {
 }
 
 // --- Transitions ---------------------------------------------------------------
-// Toute modification est une suite de transitions rejouables sur un
-// enregistrement RELU : c'est ce que le repli mémoire garde quand le stockage
-// refuse l'écriture (jamais une copie de l'enregistrement, qui effacerait ce
-// qu'un autre onglet y a écrit entre-temps).
+// Toute modification est une suite de transitions. Sous le verrou, elles sont
+// appliquées puis l'enregistrement est écrit d'un coup, ou rien n'a lieu
+// (outbox.ts, `commit`). Seul un geste synchrone fait HORS du verrou (« Annuler
+// la séance », Déconnexion, conversion de démarrage) garde les siennes un tour
+// de boucle, pour les rejouer sur l'enregistrement RELU sous le verrou (jamais
+// une copie de l'enregistrement, qui effacerait ce qu'un autre onglet y a
+// écrit entre-temps).
 
 export type Transition =
   /** Ajoute une écriture si son identité est inconnue. */
@@ -89,11 +92,10 @@ export type Transition =
    * Modifie une écriture si elle est encore là (`undefined` retire le champ), et
    * si elle est encore à la RÉVISION `r`, celle qu'elle avait quand la
    * modification a été décidée ; elle passe alors à la révision `to`. Rejouée
-   * plus tard sur l'enregistrement relu (journal de secours), la modification
-   * ne défait donc pas ce qu'un autre onglet a écrit entre-temps : un refus tenu
-   * en mémoire ne revient ni sur une écriture acquittée depuis, ni sur un
-   * renvoi. Une suite de modifications de la même écriture se rejoue en
-   * chaîne, ou pas du tout.
+   * au tour suivant sur l'enregistrement relu (geste hors verrou), la
+   * modification ne défait donc pas ce qu'un autre onglet a écrit entre-temps.
+   * Une suite de modifications de la même écriture se rejoue en chaîne, ou
+   * pas du tout.
    */
   | { t: 'patch'; uid: string; fields: Partial<Entry>; r?: number; to?: number }
   /** Retire des écritures ; avec `rs`, chacune seulement si elle est encore à cette révision. */
@@ -151,8 +153,9 @@ function knows(record: RegistryRecord, uid: string): boolean {
 
 /**
  * Un enregistrement en cours de modification : chaque geste passe par `add`,
- * `patch` ou `drop`, qui l'appliquent ET le notent (`log`), pour que le repli
- * mémoire puisse le rejouer.
+ * `patch` ou `drop`, qui l'appliquent ET le notent (`log`) : c'est ce qu'un
+ * geste hors verrou rejoue, et ce qui dit, appareil plein, quelles écritures
+ * la transition a modifiées (outbox.ts, `settleInPlace`).
  */
 export class Draft {
   readonly log: Transition[] = [];
