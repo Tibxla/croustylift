@@ -33,7 +33,7 @@ export function SyncBanner({
     );
   }
   return (
-    <div role="status" className="ui-note ui-bleed overflow-hidden border-y border-line">
+    <div role="status" className="ui-note ui-bleed border-y border-line">
       <button
         type="button"
         onClick={action.onClick}

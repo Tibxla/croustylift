@@ -323,6 +323,16 @@ input:-webkit-autofill:active {
 [data-arrondi] .ui-num-bar {
   border-radius: 2px;
 }
+/* Filet pleine largeur sous un choix d'en-tête : les traitements s'en passent. */
+[data-arrondi] .ui-rule {
+  border-bottom-color: transparent;
+}
+/* Grille à filets intérieurs (séries prévues, muscles) dans un bloc arrondi :
+   ses cases gardent leurs marges, le bloc rogne leurs filets aux coins. */
+[data-arrondi] .ui-note.ui-grid {
+  padding-inline: 0;
+  overflow: hidden;
+}
 
 /* --- R1 · Groupes arrondis ----------------------------------------------
    À la façon d'iOS Réglages : chaque liste est UN bloc levé de grand rayon,

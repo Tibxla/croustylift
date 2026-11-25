@@ -575,7 +575,7 @@ function MeasureRuler({
     );
   }
   return (
-    <div className="border-b border-line pb-1 pt-3">
+    <div className="ui-row border-b border-line pb-1 pt-3">
       <p className="flex items-baseline justify-between gap-3 px-5">
         <span className="text-[17px] font-medium text-ink">{label}</span>
         <span className="tnum text-[22px] font-medium text-ink" aria-hidden>

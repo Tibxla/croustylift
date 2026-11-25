@@ -1034,7 +1034,7 @@ function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows
       {muscles.length === 0 ? (
         <p className="ui-note ui-bleed border-t border-line px-5 pt-2.5 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
       ) : (
-        <dl className="grid grid-cols-2 border-t border-line">
+        <dl className="ui-note ui-bleed ui-grid grid grid-cols-2 border-t border-line">
           {muscles.map((m, i) => {
             const v = fmtCountRange(now.byMuscle[m] ?? zero);
             const b = fmtCountRange(before.byMuscle[m] ?? zero);

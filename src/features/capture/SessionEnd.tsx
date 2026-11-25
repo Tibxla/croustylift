@@ -204,7 +204,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
                 onChange={(v) => setDuration((d) => nudgeDuration(d, v > (d ?? 0) ? 1 : -1))}
                 valueWidth={56}
               />
-              <div className="flex justify-end border-b border-line px-5">
+              <div className="ui-row flex justify-end border-b border-line px-5">
                 {duration !== durationMin ? (
                   <TextLink tone="muted" onClick={() => setDuration(durationMin)}>
                     Revenir au chrono
@@ -225,7 +225,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
             />
           )}
           {bpmOn ? (
-            <div className="border-b border-line pb-1 pt-3">
+            <div className="ui-row border-b border-line pb-1 pt-3">
               <p className="tnum px-5 text-center text-[32px] font-[650] leading-none tracking-[-0.03em] text-ink" aria-hidden>
                 {bpm}
                 <span className="ml-1.5 text-[17px] font-medium text-muted">bpm</span>

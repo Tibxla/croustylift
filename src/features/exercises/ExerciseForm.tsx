@@ -173,7 +173,7 @@ export function ExerciseForm({
             <FieldError>{muscleError}</FieldError>
           </div>
         )}
-        <div role="group" aria-labelledby="exercise-form-muscles" className="mt-2 grid grid-cols-2 border-t border-line">
+        <div role="group" aria-labelledby="exercise-form-muscles" className="ui-note ui-bleed ui-grid mt-2 grid grid-cols-2 border-t border-line">
           {MUSCLE_GROUPS.map((m, i) => {
             const on = muscles.includes(m);
             return (

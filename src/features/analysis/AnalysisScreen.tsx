@@ -300,7 +300,7 @@ export function AnalysisScreen() {
         <>
           {/* Les mots de l'Analyse, une phrase chacun, repliés sous le titre. */}
           <WordsHelp terms={['e1rm', 'pente', 'bloc', 'reference']} className="-mt-3 px-5 pb-1" />
-          <div className="border-b border-line px-3">
+          <div className="ui-rule border-b border-line px-3">
             <Choice label="Vue de l’analyse" options={TABS} value={tab} onChange={chooseTab} wrap={false} />
           </div>
           {tab === 'exos' ? (
