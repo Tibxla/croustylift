@@ -28,4 +28,9 @@ describe('sommaireDetail', () => {
     expect(sommaireDetail({ ...ok, refused: 1 }, 2, 6)).toEqual({ text: '1 refusée', alarm: true });
     expect(sommaireDetail({ ...ok, refused: 2, offline: true }, 2, 6)).toEqual({ text: '2 refusées', alarm: true });
   });
+
+  it('stockage plein, envoi arrêté (ADR 0025), et version dépassée : l’alarme prend la place', () => {
+    expect(sommaireDetail({ ...ok, full: true, pending: 3 }, 2, 6)).toEqual({ text: 'stockage plein', alarm: true });
+    expect(sommaireDetail({ ...ok, outdated: true, refused: 1 }, 2, 6)).toEqual({ text: 'mise à jour', alarm: true });
+  });
 });

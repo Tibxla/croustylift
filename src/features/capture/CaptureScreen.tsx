@@ -1544,7 +1544,7 @@ function CapturePanel({
   // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
   // par le serveur se disent en clair, en tête.
-  const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const alarm = sync.unsaved || sync.full || sync.outdated || sync.refused > 0 ? syncLine(sync) : null;
   const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
