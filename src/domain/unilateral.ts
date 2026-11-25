@@ -36,20 +36,26 @@ export interface SidePair {
  * gauche et droite. Un côté manquant (saisie incomplète) reste `null` plutôt
  * que d'être fabriqué. Trié par `order` croissant. Une série SANS `side`
  * (bilatérale) n'est appariée à aucun côté : ce helper ne sert que l'unilatéral.
+ *
+ * DOUBLON : deux lignes du MÊME côté au même rang. La base n'y met aucune
+ * unicité, et deux appareils peuvent chacun remplir ce côté (un log ici, un
+ * changement de côté là, cf. `changeSetSide`). Aucune ligne n'est perdue : la
+ * ligne en trop ouvre une paire de plus au même rang, à la suite. Elle reste
+ * ainsi visible, corrigeable et supprimable ; avant, la dernière lue prenait la
+ * place de l'autre, qui disparaissait de l'écran sans quitter la base.
  */
 export function pairSidesByOrder(sets: PerformedSet[]): SidePair[] {
-  const byOrder = new Map<number, SidePair>()
+  const byOrder = new Map<number, SidePair[]>()
   for (const set of sets) {
-    if (set.side === undefined) continue
-    let pair = byOrder.get(set.order)
-    if (!pair) {
-      pair = { order: set.order, left: null, right: null }
-      byOrder.set(set.order, pair)
-    }
-    if (set.side === 'left') pair.left = set
-    else pair.right = set
+    const side = set.side
+    if (side === undefined) continue
+    let pairs = byOrder.get(set.order)
+    if (!pairs) byOrder.set(set.order, (pairs = []))
+    let pair = pairs.find((candidate) => candidate[side] === null)
+    if (!pair) pairs.push((pair = { order: set.order, left: null, right: null }))
+    pair[side] = set
   }
-  return [...byOrder.values()].sort((a, b) => a.order - b.order)
+  return [...byOrder.entries()].sort(([a], [b]) => a - b).flatMap(([, pairs]) => pairs)
 }
 
 /**

@@ -9,13 +9,16 @@ import {
   cachedRead,
   clearReadCache,
   invalidateReads,
+  markToRefresh,
   networkFirstRead,
   onReadWritten,
+  setReadStamper,
   refreshRead,
   revalidateReadCache,
   seedRead,
   peekRead,
   peekFreshRead,
+  peekReadStamped,
 } from './read-cache';
 import { clearLocalAccount, saveLocalAccount } from './local-account';
 
@@ -511,6 +514,49 @@ describe('onReadWritten', () => {
     off();
   });
 
+  it('relue à l’identique sous une AUTRE estampille : prévient, ce que les écritures locales y ajoutent a pu changer', async () => {
+    let seq = 10;
+    setReadStamper(() => seq);
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+
+    // Même estampille (aucune écriture locale entre les deux lectures) : rien.
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+    expect(written).toEqual([]);
+    // Une écriture locale a été enfilée ou acquittée entre-temps.
+    seq = 11;
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    await settle();
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+    setReadStamper(null);
+  });
+
+  it('copie réécrite par un AUTRE onglet (événement storage) : les abonnés d’ici sont prévenus', async () => {
+    await cachedRead('exo-execs:e1', async () => ['a']);
+    const target = new EventTarget();
+    vi.stubGlobal('window', target);
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+    const storageEvent = (key: string | null, newValue: string | null) =>
+      target.dispatchEvent(Object.assign(new Event('storage'), { key, newValue }));
+
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', '{"v":1,"value":["a"],"stamp":11}');
+    // Ni une autre clé, ni la copie d'un autre compte, ni une purge.
+    storageEvent('croustylift:registre', '{}');
+    storageEvent('croustylift:readcache:user-2:exo-execs:e1', '{"v":1,"value":["z"]}');
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', null);
+
+    expect(written).toEqual(['exo-execs:e1']);
+    off();
+    storageEvent('croustylift:readcache:user-1:exo-execs:e1', '{"v":1,"value":["b"]}');
+    expect(written).toEqual(['exo-execs:e1']);
+    vi.unstubAllGlobals();
+  });
+
   it('une réponse supplantée (non écrite) ne prévient pas : l’écran ne recule pas', async () => {
     await cachedRead('exo-execs:e1', async () => ['a', 'supprimée']);
     let answer!: (value: string[]) => void;
@@ -547,5 +593,25 @@ describe('onReadWritten', () => {
     await cachedRead('exo-execs:e1', async () => ['a']);
 
     expect(written).toEqual([]);
+  });
+});
+
+describe('marque « à rafraîchir » et estampille', () => {
+  it('la marque garde l’estampille de la copie, et une relecture identique qui la lève prévient', async () => {
+    setReadStamper(() => 7);
+    await cachedRead('vue:journal', async () => ['a']);
+    markToRefresh(['vue:']);
+    // Toujours servie avec son estampille, mais plus tenue pour fraîche.
+    expect(peekReadStamped('vue:journal')).toEqual({ value: ['a'], stamp: 7 });
+    expect(peekFreshRead('vue:journal')).toBeNull();
+
+    const written: string[] = [];
+    const off = onReadWritten((key) => written.push(key));
+    await refreshRead('vue:journal', async () => ['a']);
+    // Même contenu, même estampille : la marque levée suffit à prévenir.
+    expect(written).toEqual(['vue:journal']);
+    expect(peekFreshRead('vue:journal')).toEqual(['a']);
+    off();
+    setReadStamper(null);
   });
 });

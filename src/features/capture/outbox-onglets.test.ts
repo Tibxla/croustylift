@@ -1,7 +1,9 @@
-// Deux ONGLETS sur la même file (relecture Codex du lot 3A) : deux instances du
-// module `outbox`, un seul stockage partagé, comme deux onglets du navigateur.
+// Deux ONGLETS sur le même registre (relecture Codex du lot 3A) : deux instances
+// du module `outbox`, un seul stockage partagé, comme deux onglets du navigateur.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OutboxOp, SyncFns } from './outbox';
+
+import { otherTabRewrites, storedPendingIds } from '../../test/registry';
 
 type Outbox = typeof import('./outbox');
 
@@ -14,7 +16,7 @@ class SharedStorage {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
   setItem(k: string, v: string): void {
-    if (this.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+    if (this.full && k.startsWith('croustylift:registre')) throw new Error('QuotaExceededError');
     this.store.set(k, String(v));
   }
   removeItem(k: string): void {
@@ -73,8 +75,8 @@ async function until(ready: () => boolean): Promise<void> {
   if (!ready()) throw new Error('condition jamais atteinte');
 }
 
-const persistedIds = () =>
-  (JSON.parse(storage.getItem('croustylift:outbox') ?? '[]') as OutboxOp[]).map((op) => op.id);
+/** Les écritures EN ATTENTE que l'appareil porte (enregistrement et boîte d'entrée). */
+const persistedIds = () => storedPendingIds(storage);
 
 beforeEach(() => {
   storage = new SharedStorage();
@@ -89,7 +91,7 @@ afterEach(() => {
 });
 
 describe('stockage plein dans un onglet, écritures d’un autre onglet', () => {
-  it('le repli mémoire de A n’efface pas la série persistée entre-temps par B', async () => {
+  it('la saisie que A tient en mémoire n’efface pas la série persistée entre-temps par B', async () => {
     const a = await openTab();
     const b = await openTab();
     // A persiste S0, puis le stockage refuse S1 : A la tient en mémoire.
@@ -190,12 +192,12 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     expect(persistedIds()).toEqual([]);
   });
 
-  it('un retrait tenu en mémoire par A ne réécrit pas la file : la série de B reste', async () => {
+  it('appareil plein : A retire l’écriture acquittée de sa clé sans rien réécrire, la série de B reste', async () => {
     const a = await openTab();
     const b = await openTab();
     a.enqueue(setOp('S0'));
     a.enqueue(setOp('S1'));
-    // Le stockage refuse le retrait de S0 après son envoi par A.
+    // Le stockage refuse toute écriture ; retirer la clé de S0, acquittée, passe quand même.
     storage.full = true;
     const tabA = recorder(async (op) => {
       if (op.id === 'S1') throw new Error('offline');
@@ -206,7 +208,7 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     storage.full = false;
     b.enqueue(setOp('S2'));
 
-    // A relit : S0 reste retirée pour lui, S1 et S2 sont là.
+    // A relit : S0 n'est plus nulle part, S1 et S2 sont là.
     expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
   });
 });
@@ -227,7 +229,7 @@ describe('verrou de flush occupé par un autre onglet', () => {
     // B logge sa dernière série : verrou pris, rien ne part.
     b.enqueue(setOp('S1'));
     const tabB = recorder();
-    expect(await b.flush(tabB.fns)).toEqual({ remaining: 2, flushed: 0 });
+    expect(await b.flush(tabB.fns)).toMatchObject({ remaining: 2, flushed: 0 });
     expect(tabB.sent).toEqual([]);
 
     // La requête de A échoue, A libère le verrou. Aucune nouvelle saisie dans B.
@@ -340,5 +342,214 @@ describe('verrou de flush occupé par un autre onglet', () => {
     expect(tabB.sent).toEqual([]);
     // Un seul réveil, qui trouve la file vide et ne redemande pas le verrou.
     expect(lockRequests.mock.calls.length).toBe(0);
+  });
+});
+
+// Constat 2 de la relecture contradictoire : `localStorage` n'a pas de verrou
+// entre processus. L'onglet A lit le registre pour acquitter une série, l'onglet
+// B enfile au même instant, puis A écrit son brouillon, d'avant la saisie de B.
+describe('enfilement dans un onglet pendant l’acquittement dans l’autre', () => {
+  it('la saisie de B survit à l’écriture, périmée, de A', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    a.enqueue(setOp('S0'));
+    const tabA = recorder();
+    await a.flush(tabA.fns); // S0 est au registre, acquittée
+    a.enqueue(setOp('S1'));
+    // Au moment précis où A écrit le registre (acquittement de S1), B enfile S2 :
+    // l'écriture de A, préparée avant, ne la contient pas.
+    const setItem = storage.setItem.bind(storage);
+    let interleaved = false;
+    storage.setItem = (k: string, v: string) => {
+      if (k.startsWith('croustylift:registre') && !interleaved && v.includes('"acked"') && v.includes('S1')) {
+        interleaved = true;
+        b.enqueue(setOp('S2'));
+      }
+      setItem(k, v);
+    };
+
+    await a.flush(tabA.fns);
+    storage.setItem = setItem;
+
+    expect(interleaved).toBe(true);
+    // S2 n'a pas été écrasée : elle est partie (ici, la passe de A l'a reprise
+    // en relisant le registre), une seule fois, et plus rien n'attend.
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    expect([...tabA.sent, ...tabB.sent].filter((id) => id === 'S2')).toEqual(['S2']);
+    expect(b.readQueue()).toEqual([]);
+    expect(persistedIds()).toEqual([]);
+  });
+
+  it('un geste est UNE écriture de l’appareil, dans une clé que personne d’autre ne réécrit', async () => {
+    const a = await openTab();
+    const writes: string[] = [];
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      writes.push(k);
+      setItem(k, v);
+    };
+    a.enqueueAll([setOp('S1'), setOp('S2')]);
+    storage.setItem = setItem;
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^croustylift:registre:in:/);
+    expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
+  });
+});
+
+describe('troisième tour : une saisie reste lisible pendant son transfert de la boîte d’entrée au registre', () => {
+  /**
+   * Joue `read` dans l'onglet A pendant que l'onglet B fait entrer la saisie
+   * au registre (écriture de l'enregistrement, puis effacement de la clé),
+   * juste avant le `at`-ième accès de A au stockage. Rend faux quand `read`
+   * fait moins de `at` accès : toutes les positions ont été essayées.
+   */
+  async function duringTransfer(at: number, read: (a: Outbox, uid: string) => void): Promise<boolean> {
+    storage = new SharedStorage();
+    (globalThis as unknown as { localStorage: Storage }).localStorage = storage as unknown as Storage;
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = b.enqueueAll([setOp('S1')]);
+    let accesses = 0;
+    let moved = false;
+    const transfer = () => {
+      accesses += 1;
+      if (moved || accesses !== at) return;
+      moved = true;
+      // Ce que fait la passe de B sous le verrou : la saisie entre à
+      // l'enregistrement, sa clé de la boîte d'entrée disparaît.
+      otherTabRewrites((writes) => writes, storage);
+    };
+    const getItem = storage.getItem.bind(storage);
+    const key = storage.key.bind(storage);
+    storage.getItem = (k: string) => (transfer(), getItem(k));
+    storage.key = (i: number) => (transfer(), key(i));
+    read(a, uid!);
+    storage.getItem = getItem;
+    storage.key = key;
+    return moved;
+  }
+
+  it('son sort ne passe jamais par « disparue » : la sauvegarde n’est pas annoncée trop tôt', async () => {
+    let positions = 0;
+    for (let at = 1; ; at += 1) {
+      let fate: string | undefined;
+      const moved = await duringTransfer(at, (a, uid) => void ([fate] = a.fatesOf([uid])));
+      if (!moved) break;
+      positions += 1;
+      expect(`${at}:${fate}`).toBe(`${at}:pending`);
+    }
+    expect(positions).toBeGreaterThan(1);
+  });
+
+  it('« Annuler la séance » pendant le transfert : la saisie de la séance est bien retirée', async () => {
+    let positions = 0;
+    for (let at = 1; ; at += 1) {
+      let a: Outbox | undefined;
+      const moved = await duringTransfer(at, (tab) => {
+        a = tab;
+        tab.purgeByExecution('exec-1');
+      });
+      if (!moved) break;
+      positions += 1;
+      expect(`${at}:${a!.readQueue().map((op) => op.id).join()}`).toBe(`${at}:`);
+      // L'écriture sur l'appareil suit, sous le verrou.
+      await vi.waitFor(() => expect(`${at}:${persistedIds().join()}`).toBe(`${at}:`));
+    }
+    expect(positions).toBeGreaterThan(1);
+  });
+});
+
+// Voie 1 (ADR 0025) : le journal de secours n'existe plus. Ce qu'un onglet n'a
+// pas pu écrire n'a pas eu lieu : il n'a rien à rejouer plus tard sur ce qu'un
+// autre onglet a écrit entre-temps. Les trois scénarios des relectures (refus
+// tenu en mémoire puis acquittement, renvoi, ou refus par l'autre onglet)
+// restent ici, sous la nouvelle règle.
+describe('voie 1 : un refus que l’onglet A n’a pas pu écrire n’a pas eu lieu', () => {
+  it('B envoie la même saisie et l’acquitte : elle reste acquittée, A ne la renvoie pas', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1')]);
+    // Le registre ne peut pas être écrit : le refus de A n'a pas lieu.
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k.startsWith('croustylift:registre')) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    const refusing = recorder(async () => {
+      throw Object.assign(new Error('rejet'), { code: '42501' });
+    });
+    await a.flush(refusing.fns);
+    expect(a.fatesOf([uid!])).toEqual(['pending']);
+    expect(a.storageFailing()).toBe(true);
+    // La place revient, la base accepte : B envoie la saisie et l'écrit acquittée.
+    storage.setItem = setItem;
+    const tabB = recorder();
+    await b.flush(tabB.fns);
+    expect(tabB.sent).toEqual(['S1']);
+    expect(b.fatesOf([uid!])).toEqual(['acked']);
+
+    // A repasse : il n'a rien gardé du refus, et ne renvoie rien.
+    const tabA = recorder();
+    await a.flush(tabA.fns);
+
+    expect(tabA.sent).toEqual([]);
+    expect(b.fatesOf([uid!])).toEqual(['acked']);
+    expect(a.listRefused()).toEqual([]);
+    expect(a.storageFailing()).toBe(false);
+  });
+});
+
+describe('voie 1 : ce que l’onglet A n’a pas pu écrire ne revient pas sur ce que B a écrit', () => {
+  const blockRegistry = () => {
+    const setItem = storage.setItem.bind(storage);
+    storage.setItem = (k: string, v: string) => {
+      if (k === 'croustylift:registre') throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    return () => void (storage.setItem = setItem);
+  };
+  const refusing = () =>
+    recorder(async () => {
+      throw Object.assign(new Error('rejet'), { code: '42501' });
+    });
+
+  it('refus non écrit par A ; B refuse la même saisie puis la renvoie : elle reste en attente', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1')]);
+    const free = blockRegistry();
+    await a.flush(refusing().fns);
+    free();
+    // B la refuse à son tour (écrit), puis l'utilisateur la renvoie depuis B ; le réseau tombe.
+    await b.flush(refusing().fns);
+    expect(await b.retryRefused(uid!)).toBe('done');
+    expect(b.fatesOf([uid!])).toEqual(['pending']);
+
+    // A repasse (réseau coupé) : il n'a gardé aucun refus à faire revenir sur le renvoi.
+    await a.flush(recorder(async () => { throw new TypeError('Failed to fetch'); }).fns);
+
+    expect(b.fatesOf([uid!])).toEqual(['pending']);
+  });
+
+  it('acquittement non écrit par A ; B refuse la même saisie depuis : elle reste refusée', async () => {
+    const a = await openTab();
+    const b = await openTab();
+    const [uid] = a.enqueueAll([setOp('S1'), setOp('S2')]);
+    const offline = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await a.flush(recorder(offline).fns); // les deux entrent au registre
+    const free = blockRegistry();
+    // S1 passe en base, mais son acquittement ne peut pas s'écrire : il n'a pas lieu, la passe s'arrête.
+    await a.flush(recorder(async (op) => (op.id === 'S2' ? offline() : undefined)).fns);
+    free();
+    await b.flush(refusing().fns);
+    expect(b.fatesOf([uid!])).toEqual(['refused']);
+
+    await a.flush(recorder(async () => { throw new TypeError('Failed to fetch'); }).fns);
+
+    expect(b.fatesOf([uid!])).toEqual(['refused']);
   });
 });

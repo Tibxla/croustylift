@@ -83,7 +83,7 @@ figure pas n'est pas connu.
   `started_at` (le réancrage ne vise qu'une exécution pas encore née, ADR 0011).
 
 - **Séance close ou supprimée dont l'écriture attend encore** : `loadTodayExecution`
-  n'adopte pas une exécution que l'outbox clôt ou supprime (`isExecutionRetiredInQueue`),
+  n'adopte pas une exécution qu'une écriture locale clôt ou supprime (`isExecutionRetired`),
   sinon une séance rangée sur un réseau qui flanche était reprise à la réouverture. Une
   clôture ou une suppression sortie de la file relève les lignes qu'elle a touchées : zéro
   ligne veut dire que l'exécution n'existe pas en base, donc qu'il n'y a rien à reprendre
@@ -115,13 +115,27 @@ perte), finition.
 ### File d'écritures et stockage plein
 
 - **Écriture ancienne envoyée après une correction déjà partie** (finition). Stockage
-  plein, deux onglets : une écriture tenue en mémoire par l'un est désormais replacée
-  dans la file à son instant d'enfilement, donc avant une correction de la même ligne
-  encore en file (y compris celle d'un onglet resté sur un bundle antérieur, qui
-  n'écrit pas d'instant : elle est située par ce que la file portait déjà quand
-  l'écriture est entrée en mémoire). Si l'autre onglet a DÉJÀ envoyé sa correction, l'ancienne part après
-  et gagne en base : c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas
-  se présente : dater les écritures d'une même ligne côté base.
+  plein, deux onglets : une écriture tenue en mémoire par l'un garde son numéro
+  d'enfilement, qui suit l'horloge, donc sa place avant une correction de la même ligne
+  encore en attente (registre d'écritures, ADR 0025). Si l'autre onglet a DÉJÀ envoyé sa
+  correction, l'ancienne part après et gagne en base, sur les colonnes qu'elle écrit :
+  c'est le last-write-wins de l'ADR 0003, accepté. Piste, si le cas se présente : dater
+  les écritures d'une même ligne côté base.
+- **Appareil plein dès la première ouverture, ancienne file vide** (importante, rare, acceptée le 25/11 ; ADR 0025, « Limites connues »). Le verrou de l'ancienne file ne peut pas être posé : un onglet resté sur l'ancienne version peut envoyer lui-même ce qu'il enfile, avant une écriture plus ancienne du registre. La ligne de synchro dit « Stockage plein ». Disparaît avec la reprise de l'ancien format (après le 2026-12-31).
+- **Envoi arrêté sous stockage plein** (mineure, sans perte). Un refus de la base que l'appareil ne peut pas écrire arrête la passe : plus rien ne part tant que la place n'est pas revenue, saisies indépendantes comprises (ADR 0025, « Passe arrêtée »). Pistes : un geste « Libérer de la place » dans Réglages (copies de lecture, séances en cours oubliées), et laisser partir les écritures qui ne dépendent pas de celle qui bloque.
+- **Écriture héritée sans compte, attribuée trop tard** (mineure, rare ; ADR 0025, « Limites connues »). Le patch différé d'`adoptLegacyOps` est abandonné si l'écriture change de révision à son entrée au registre : elle reste sans compte jusqu'au démarrage suivant et part après des saisies plus récentes. Piste : attribuer le compte à l'admission, sous le verrou, à partir du compte relevé au démarrage. Disparaît avec la reprise de l'ancien format.
+- **Arrêt de la passe commun aux comptes, et acquittement qui modifie** (mineure, stockage plein). L'arrêt ne regarde pas le compte ; un acquittement qui doit aussi modifier une écriture restante arrête la passe. Sans perte, visible. Piste : sonder par compte, et écrire les modifications avant de retirer.
+- **Sources réduites après l'enregistrement** (mineure, stockage plein et app tuée entre deux écritures). Piste : réduire les sources avant d'écrire l'enregistrement.
+- **Saisie tenue en mémoire, page fermée** (importante, rare). Stockage plein et hors ligne : une saisie que l'appareil a refusée ne tient qu'en mémoire. Le rechargement par l'app est refusé, mais fermer l'onglet la perd. Piste : IndexedDB en second support pour ces seules saisies.
+- **Écriture acquittée non gardée sous stockage plein** (mineure). Elle cède la place au lieu de rester dix minutes : une réponse de la base partie avant son acquittement peut la faire manquer à l'écran jusqu'à la lecture suivante.
+- **Deux onglets, chacun avec des saisies en mémoire** (mineure). Stockage plein : un onglet ne voit pas les saisies que l'autre tient en mémoire. Chacun envoie les siennes à sa passe ; l'ordre entre les deux suit les passes, pas les gestes.
+- **Version inconnue du registre** (finition). Un onglet resté sur une version plus
+  ancienne que celle qui a écrit le registre n'envoie plus rien et demande de recharger ;
+  ce qu'on y saisit d'ici là ne tient qu'en mémoire. Piste, à la première montée de
+  format : laisser à l'ancienne version une clé de dépôt que la nouvelle reprend.
+- **Reprise de l'ancien format** (à retirer après le 2026-12-31). La conversion de la
+  file et de la quarantaine d'avant le registre, et leur reprise en continu
+  (`settleLegacy`, `fromLegacy`), ne servent qu'aux onglets restés sur l'ancienne version.
 - **État de séance retenu en mémoire, réécrit par-dessus un autre onglet** (mineure,
   acceptée). Stockage plein, deux onglets : l'onglet A quitte la Capture avec son état
   refusé, retenu en mémoire. L'onglet B écrit ensuite une disposition plus récente de
@@ -132,8 +146,8 @@ perte), finition.
   respecter la clôture et garder la plus récente (`retryPersistCaptureState`,
   `capture/state.ts`).
 - **Un envoi par écriture** (finition). Le flush fait une requête par écriture. Mesuré
-  à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait la
-  quarantaine, qui se décide par écriture.
+  à environ 40 ms l'une : laissé tel quel, le regroupement compliquerait le
+  refus, qui se décide par écriture.
 
 ### Comptes
 
@@ -212,3 +226,7 @@ un OBJET JSON pour `create_seance`, qui renvoie un composite sans SETOF, et non 
 tableau à un élément. `createSeance` (`authoring/data.ts`) le suppose ; le test unitaire
 simule un objet et le banc passe par psql. Une création depuis l'app, une fois 0027 en
 base, le tranche : si c'était un tableau, l'éditeur s'ouvrirait sur une séance sans id.
+
+Alléger index.js (84,7 ko gzip le 2026-11-25, budget relevé à 89 000 à la fusion du
+registre d'écritures), d'abord en retirant la reprise de l'ancien format après le
+2026-12-31 (cf. l'en-tête des clés `LEGACY_*` de `capture/outbox.ts`).

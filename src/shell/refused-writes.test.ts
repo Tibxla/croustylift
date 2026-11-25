@@ -1,15 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { clearQueue, enqueue, type RefusedWrite } from '../features/capture/outbox';
-import { saveLocalAccount } from '../lib/local-account';
+import { describe, expect, it } from 'vitest';
+import type { OutboxOp, RefusedWrite } from '../features/capture/outbox';
 import {
+  abandonWarning,
   canRetry,
-  dependentsOf,
   describeRefusal,
   fmtDay,
   fmtWhen,
+  GESTURE_TEXT,
   refusalReason,
-  RESEND_BLOCK_TEXT,
-  resendBlock,
 } from './refused-writes';
 
 const at = '2026-11-24T13:05:00.000Z';
@@ -19,6 +17,7 @@ const entry = (op: RefusedWrite['op'], reason = '23514 : new row violates check 
   reason,
   at,
   refusalId: 'r1',
+  dependents: [],
   ...extra,
 });
 
@@ -131,14 +130,20 @@ describe('saisies refusées lues par un humain', () => {
   });
 
   it('une saisie retenue par sa séance ne se renvoie pas seule et part avec elle', () => {
-    const exec = entry({ type: 'upsertExecution', id: 'x1', seanceVersionId: 'v', performedOn: '2026-11-24' }, '23503 : fk');
-    const set = { ...entry({ type: 'insertSet', id: 's', executionId: 'x1', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x1, en quarantaine"), refusalId: 'r2' };
-    const other = { ...entry({ type: 'insertSet', id: 't', executionId: 'x2', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x2, en quarantaine"), refusalId: 'r3' };
+    // Le registre dit QUI la retient (`heldBy`) : la feuille ne lit aucun motif.
+    const set = entry({ type: 'insertSet', id: 's', executionId: 'x1', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, '', {
+      refusalId: 'r2',
+      heldBy: 'r1',
+    });
     const t = describeRefusal(set, lookup);
     expect(t.reason).toBe('Elle repart avec sa séance.');
     expect(t.retryable).toBe(false);
-    expect(dependentsOf(exec, [exec, set, other])).toEqual([set]);
-    expect(dependentsOf(set, [exec, set])).toEqual([]);
+  });
+
+  it('un motif qui ressemble à une dépendance ne retient rien : seul le registre le dit', () => {
+    const set = entry({ type: 'insertSet', id: 's', executionId: 'x1', exerciseId: 'e', setOrder: 1, weightKg: 1, reps: 1, rir: 1 }, "dépend de l'exécution x1, en quarantaine");
+    expect(describeRefusal(set, lookup).reason).not.toBe('Elle repart avec sa séance.');
+    expect(canRetry(set)).toBe(true);
   });
 
   it('une création de séance dépassée ne se renvoie pas', () => {
@@ -153,66 +158,42 @@ describe('saisies refusées lues par un humain', () => {
   });
 });
 
-// « Renvoyer » qui ne remet rien en file (`retryRefused` rend faux) : la feuille
-// dit pourquoi, avec le même prédicat que la file (`setWriteQueued`, même série
-// et même compte). Une suppression de la série en file n'est pas un stockage plein.
-describe('pourquoi « Renvoyer » n’a rien renvoyé', () => {
-  class MemoryStorage {
-    private store = new Map<string, string>();
-    getItem(k: string): string | null {
-      return this.store.get(k) ?? null;
-    }
-    setItem(k: string, v: string): void {
-      this.store.set(k, String(v));
-    }
-    removeItem(k: string): void {
-      this.store.delete(k);
-    }
-    clear(): void {
-      this.store.clear();
-    }
-    get length(): number {
-      return this.store.size;
-    }
-    key(i: number): string | null {
-      return [...this.store.keys()][i] ?? null;
-    }
-  }
+// Ce que l'abandon emporte : le registre rend les écritures qui dépendent de la
+// saisie (`dependents`), la confirmation de la feuille les nomme.
+describe('ce que l’abandon d’une saisie emporte avec elle', () => {
+  const insert: OutboxOp = { type: 'insertSet', id: 'set-3', executionId: 'x', exerciseId: 'ex1', setOrder: 3, weightKg: 9999, reps: 8, rir: 2 };
+  const correction: OutboxOp = { type: 'patchSet', id: 'set-3', executionId: 'x', exerciseId: 'ex1', setOrder: 3, weightKg: 82.5, reps: 8, rir: 2, only: 'values' };
 
-  const refused = (owner: string | undefined = 'user-1'): RefusedWrite =>
-    entry({ type: 'insertSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 80, reps: 8, rir: 2, ...(owner ? { _owner: owner } : {}) }, '42501 : new row violates row-level security policy');
-
-  beforeEach(() => {
-    (globalThis as unknown as { localStorage: Storage }).localStorage = new MemoryStorage() as unknown as Storage;
-    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
-    clearQueue();
+  it('rien n’en dépend : rien à dire', () => {
+    expect(abandonWarning(entry(insert))).toBe('');
   });
 
-  it('une suppression de cette série attend : le refus partira avec elle', () => {
-    enqueue({ type: 'deleteSet', id: 'set-1', exerciseIds: ['ex1'] });
-    expect(resendBlock(refused(), true)).toBe('deletion-queued');
-    expect(RESEND_BLOCK_TEXT['deletion-queued']).toBe('Une suppression de cette série attend déjà l’envoi : ce refus partira avec elle.');
+  it('une série refusée emporte sa correction, et la confirmation le dit', () => {
+    expect(abandonWarning(entry(insert, '23514 : check', { dependents: [correction] }))).toBe(
+      'Ta correction de la série 3 sera aussi abandonnée.',
+    );
+    expect(abandonWarning(entry(insert, '23514 : check', { dependents: [correction, correction] }))).toBe(
+      'Tes 2 corrections de la série 3 seront aussi abandonnées.',
+    );
   });
 
-  it('une correction de cette série attend : elle partira avec', () => {
-    enqueue({ type: 'patchSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 82.5, reps: 8, rir: 2, only: 'values' });
-    expect(resendBlock(refused(), true)).toBe('correction-queued');
+  it('le début d’une séance emporte les saisies qu’il retenait', () => {
+    const exec: OutboxOp = { type: 'upsertExecution', id: 'x', seanceVersionId: 'v', performedOn: '2026-11-24' };
+    expect(abandonWarning(entry(exec, '23503 : fk', { dependents: [insert] }))).toBe('La saisie qui en dépend part avec elle.');
+    expect(abandonWarning(entry(exec, '23503 : fk', { dependents: [insert, correction] }))).toBe(
+      'Les 2 saisies qui en dépendent partent avec elle.',
+    );
   });
 
-  it('correction ET suppression en file : la suppression l’emporte', () => {
-    enqueue({ type: 'patchSet', id: 'set-1', executionId: 'x', exerciseId: 'ex1', setOrder: 2, weightKg: 82.5, reps: 8, rir: 2, only: 'values' });
-    enqueue({ type: 'deleteSet', id: 'set-1', exerciseIds: ['ex1'] });
-    expect(resendBlock(refused(), true)).toBe('deletion-queued');
+  it('une remontée de rang qui en dépend n’est pas une « correction »', () => {
+    const rank: OutboxOp = { ...correction, only: 'rank' } as OutboxOp;
+    expect(abandonWarning(entry(insert, '23514 : check', { dependents: [rank] }))).toBe('La saisie qui en dépend part avec elle.');
   });
+});
 
-  it('la suppression d’une AUTRE série, ou celle d’un autre compte, ne compte pas : stockage', () => {
-    enqueue({ type: 'deleteSet', id: 'set-2', exerciseIds: ['ex1'] });
-    expect(resendBlock(refused(), true)).toBe('storage');
-    expect(resendBlock(refused('user-2'), true)).toBe('storage');
-    expect(RESEND_BLOCK_TEXT.storage).toMatch(/stockage/);
-  });
-
-  it('l’entrée a disparu : réglée depuis un autre onglet', () => {
-    expect(resendBlock(refused(), false)).toBe('settled');
+describe('un geste de la feuille qui n’a rien fait', () => {
+  it('dit pourquoi, sans parler de stockage', () => {
+    expect(GESTURE_TEXT.gone).toMatch(/déjà été réglée/);
+    expect(GESTURE_TEXT.busy).toMatch(/Réessaie/);
   });
 });

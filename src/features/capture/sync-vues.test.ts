@@ -60,13 +60,20 @@ class MemoryStorage {
   }
 }
 
-/** Une passe qui acquitte `ops` par les vraies fonctions de sync. */
+/**
+ * Une passe qui acquitte `ops` par les vraies fonctions de sync, et le dit
+ * (`settled`, registre) : c'est de là que sync.ts tire les effets d'un acquittement.
+ */
 function acknowledging(ops: OutboxOp[]) {
   flushMock.mockImplementationOnce(async () => {
     for (const op of ops) {
       if (op.type === 'deleteExecution') await syncFns.deleteExecution(op);
     }
-    return { remaining: 0, flushed: ops.length };
+    return {
+      remaining: 0,
+      flushed: ops.length,
+      settled: ops.map((op, i) => ({ uid: `u${i}`, op, fate: 'acked' as const, touches: [] })),
+    };
   });
 }
 
@@ -136,10 +143,40 @@ describe('acquittement d’une écriture du réalisé', () => {
     expect(peekRead<{ value: string[] }>(JOURNAL_VIEW)?.value).toEqual(['exec-supprimee']);
   });
 
+  it('ce que la passe n’a pas fait en base (suppression conditionnelle sans effet, écriture refusée) ne relit pas le Journal monté', async () => {
+    const refresh = vi.fn();
+    const unmount = mountView(JOURNAL_VIEW, refresh);
+    flushMock.mockResolvedValueOnce({
+      remaining: 0,
+      flushed: 1,
+      settled: [
+        { uid: 'u1', op: { type: 'deleteExecutionIfEmpty', id: 'exec-gardee' }, fate: 'acked', touches: [], noEffect: true },
+        { uid: 'u2', op: DELETE, fate: 'refused', touches: [] },
+      ],
+    });
+    await flushOutbox();
+    expect(refresh).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('une passe partagée par deux appelants (flush mémoïsé) ne relit le Journal monté qu’une fois', async () => {
+    const refresh = vi.fn();
+    const unmount = mountView(JOURNAL_VIEW, refresh);
+    const shared = Promise.resolve<FlushResult>({
+      remaining: 0,
+      flushed: 1,
+      settled: [{ uid: 'u1', op: DELETE, fate: 'acked', touches: ['ex-1'] }],
+    });
+    flushMock.mockReturnValue(shared);
+    await Promise.all([flushOutbox(), flushOutbox()]);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
   it('une passe sans écriture du réalisé ne relit pas le Journal monté', async () => {
     const refresh = vi.fn();
     const unmount = mountView(JOURNAL_VIEW, refresh);
-    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 0 });
+    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 0, settled: [] });
     await flushOutbox();
     expect(refresh).not.toHaveBeenCalled();
     unmount();

@@ -60,27 +60,6 @@ export function datedNoteOutboxOp(params: {
 }
 
 /**
- * Les notes datées de l'exécution `executionId` dont une écriture attend encore
- * en file : leurs exos, et l'id de la note pour une op d'effacement d'un bundle
- * antérieur (qui ne porte ni exécution ni exo). Sert à la réconciliation d'une
- * réponse tardive de la base (`reconcileDatedNotes`, capture/state) : la base
- * ne connaît pas encore ces écritures, sa version de ces notes est périmée.
- * Logique PURE.
- */
-export function pendingDatedNoteKeys(queue: readonly OutboxOp[], executionId: string): string[] {
-  const keys: string[] = [];
-  for (const op of queue) {
-    if (op.type === 'upsertDatedNote') {
-      if (op.executionId === executionId) keys.push(op.exerciseId);
-    } else if (op.type === 'deleteDatedNote') {
-      if (op.executionId === undefined || op.exerciseId === undefined) keys.push(op.id);
-      else if (op.executionId === executionId) keys.push(op.exerciseId);
-    }
-  }
-  return keys;
-}
-
-/**
  * Décide l'op d'outbox pour une note d'INSTRUCTIONS (issue #52, blind F3), à
  * partir du corps saisi :
  *   - corps réel  -> `upsertExerciseNote` (corps NORMALISÉ) ;

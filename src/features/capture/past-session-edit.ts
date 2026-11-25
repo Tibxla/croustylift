@@ -336,6 +336,8 @@ export function diffSetsToOps(
       // `side` porté de bout en bout (ADR 0005) : `undefined` pour le bilatéral
       // (l'outbox/`upsertSet` l'écrit `null`), 'left'/'right' pour l'unilatéral.
       side: s.side,
+      // La ligne existait avant l'édition : ce n'est pas une création.
+      ...(before !== undefined ? { rewrites: true as const } : {}),
     });
   }
 

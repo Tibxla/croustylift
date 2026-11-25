@@ -8,7 +8,7 @@
 //
 // Les budgets sont les tailles mesurées à leur dernière révision, plus 5 %,
 // arrondis aux 500 octets les plus proches. Les relever est permis, mais c'est un
-// geste délibéré, visible dans le diff. Dernière révision : correctifs de la branche d'intégration du 24/11, budgets au ras élargis à la mesure + 10 % (SeancesScreen.js, seance-meta-load.js, use-dated-load.js)
+// geste délibéré, visible dans le diff. Dernière révision : fusion du registre d'écritures du 25/11 (index.js à 89 000) ; avant, correctifs de la branche d'intégration du 24/11, budgets au ras élargis à la mesure + 10 % (SeancesScreen.js, seance-meta-load.js, use-dated-load.js)
 // (taille mesurée en commentaire de chaque ligne).
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -19,7 +19,7 @@ import { evaluateBudgets, logicalName } from './bundle-size-lib.mjs'
 /** Octets gzip maximum par chunk. */
 const BUDGETS = {
   // Chemin critique : chargé au lancement, Capture comprise.
-  'index.js': 82_000, // code de l'app, tenu par le chargement à la demande (mesuré : 78 100 après les lots UX et UI de l'audit du 24/11, reps reprises, garde du double toucher, copies datées ; 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
+  'index.js': 89_000, // code de l'app, tenu par le chargement à la demande (mesuré : 84 691 le 2026-11-25, à la fusion du registre d'écritures dans l'intégration, budget relevé à la mesure + 5 % ; 80 122 sur la branche du registre seule, sans journal de secours, ADR 0025, reprise de l'ancien format comprise, à retirer après le 2026-12-31 ; 78 100 après les lots UX et UI de l'audit du 24/11, reps reprises, garde du double toucher, copies datées ; 73 760 au lot 5 de la refonte E, Séances, Exos, Réglages et saisies refusées passés à la demande ; 89 700 au lot 4, tout compris ; 86 613 au lot 3 ; 80 000 environ avant le lot 3, 78 642 au lot 2, 75 495 au lot 1)
   'react.js': 63_500, // react, react-dom, scheduler (mesuré : 60 608)
   'supabase.js': 57_500, // (mesuré : 54 775)
   'index.css': 7_500, // (mesuré : 7 053 au nettoyage du code mort ; 8 426 au lot 2, 8 629 au lot 1, 9 110 avant E)

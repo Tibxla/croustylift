@@ -1,13 +1,15 @@
-// Les saisies refusées par le serveur (quarantaine de la file, ADR 0018), lues
-// par un humain : quoi, quand, pourquoi. Pur, testé, sauf `resendBlock` qui lit
-// la file ; l'écran est RefusedWritesSheet.tsx.
+// Les saisies refusées par le serveur (registre d'écritures, ADR 0018), lues
+// par un humain : quoi, quand, pourquoi. Pur, testé ; l'écran est
+// RefusedWritesSheet.tsx.
 //
-// La file ne porte que des identifiants : le nom de l'exo vient du catalogue
-// local (lu par l'appelant, hors ligne compris), la date d'une séance de son op
-// de création quand elle est connue. La raison est la chaîne stockée par la
-// file : « <code SQLSTATE> : <message> » pour un refus de la base (traduite
-// par `errorMessage`, comme partout), ou la dépendance à une séance refusée.
-import { isSetWrite, readQueue, setWriteQueued, type RefusedWrite } from '../features/capture/outbox';
+// Ce module ne fait qu'AFFICHER ce que le registre rend (`RefusedWrite`,
+// outbox.ts) : qui retient une saisie (`heldBy`), ce qui partira avec elle
+// (`dependents`). Il ne déduit rien du texte d'un motif, et ne relit pas le
+// registre. Le nom de l'exo vient du catalogue local (lu par l'appelant, hors
+// ligne compris), la date d'une séance de son op de création. Le motif est la
+// chaîne gardée avec le refus : « <code SQLSTATE> : <message> », traduite par
+// `errorMessage`, comme partout.
+import type { GestureOutcome, RefusedWrite } from '../features/capture/outbox';
 import { errorMessage } from '../lib/error-message';
 
 export interface RefusalText {
@@ -72,7 +74,7 @@ const isBuiltIn = (message: string) => /^([a-z]|JSON )/.test(message);
  * si renvoyer peut servir, sinon d'abandonner. Le code SQLSTATE ne s'affiche
  * pas (il reste dans le relevé de diagnostic).
  */
-export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'op'>): string {
+export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'heldBy'>): string {
   if (entry.superseded) return 'La séance a été créée depuis : ce refus n’a plus d’effet.';
   const reason = entry.reason ?? '';
   if (isDependent(entry)) return 'Elle repart avec sa séance.';
@@ -99,7 +101,7 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
  * refusée, une donnée mal formée ou un élément lié supprimé : le serveur
  * refuserait à l'identique.
  */
-export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): boolean {
+export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'heldBy'>): boolean {
   if (entry.superseded || isDependent(entry)) return false;
   const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(entry.reason ?? '');
   if (!m) return true;
@@ -108,15 +110,33 @@ export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): bo
 }
 
 /** Retenue seulement parce que la création de sa séance a été refusée. */
-export function isDependent(entry: Pick<RefusedWrite, 'reason'>): boolean {
-  return (entry.reason ?? '').startsWith('dépend de l');
+export function isDependent(entry: Pick<RefusedWrite, 'heldBy'>): boolean {
+  return entry.heldBy !== undefined;
 }
 
-/** Les saisies retenues par la création refusée de cette séance (même exécution). */
-export function dependentsOf(execution: RefusedWrite, entries: readonly RefusedWrite[]): RefusedWrite[] {
-  if (execution.op.type !== 'upsertExecution') return [];
-  const id = execution.op.id;
-  return entries.filter((e) => e !== execution && isDependent(e) && e.reason.includes(id));
+/**
+ * Ce que l'abandon de cette saisie emporte avec elle, dit dans la confirmation ;
+ * vide si rien n'en dépend. Une série refusée emporte sa correction (elle
+ * n'aurait plus de ligne à corriger) ; le début d'une séance emporte les
+ * saisies qu'il retenait.
+ */
+export function abandonWarning(entry: Pick<RefusedWrite, 'op' | 'dependents'>): string {
+  const deps = entry.dependents;
+  if (deps.length === 0) return '';
+  const op = entry.op;
+  if (op.type === 'insertSet' || op.type === 'patchSet') {
+    const corrections = deps.filter(
+      (dep) => dep.type === 'patchSet' && dep.id === op.id && dep.only === 'values',
+    );
+    if (corrections.length === deps.length) {
+      return corrections.length > 1
+        ? `Tes ${corrections.length} corrections de la série ${op.setOrder} seront aussi abandonnées.`
+        : `Ta correction de la série ${op.setOrder} sera aussi abandonnée.`;
+    }
+  }
+  return deps.length > 1
+    ? `Les ${deps.length} saisies qui en dépendent partent avec elle.`
+    : 'La saisie qui en dépend part avec elle.';
 }
 
 /** Une note tronquée pour la liste. */
@@ -141,7 +161,8 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
     case 'patchSet': {
       const side = op.side === 'left' ? ' · gauche' : op.side === 'right' ? ' · droite' : '';
       const values = `${kg(op.weightKg)} kg × ${op.reps} · RIR ${op.rir}${side}`;
-      const kind = op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : 'nouveau rang';
+      const kind =
+        op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : op.only === 'side' ? 'nouveau côté' : 'nouveau rang';
       return { ...base, what: withExo(`Série ${op.setOrder}`, op.exerciseId), detail: kind ? `${kind} · ${values}` : values };
     }
     case 'deleteSet':
@@ -168,28 +189,12 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
   }
 }
 
-/** Pourquoi « Renvoyer » n'a rien remis en file (`retryRefused` a rendu faux). */
-export type ResendBlock = 'settled' | 'deletion-queued' | 'correction-queued' | 'storage';
-
 /**
- * La cause d'un « Renvoyer » sans effet, `stillThere` disant si l'entrée est
- * encore listée. Une écriture de la même série attend en file, par le prédicat
- * même de `retryRefused` (`setWriteQueued` : insertion, correction ou
- * suppression, du même compte) : une suppression, qui l'emporte si les deux
- * attendent, ou une correction. Sinon c'est le stockage qui a refusé.
+ * Ce que la feuille dit quand un geste n'a rien fait (`retryRefused` ou
+ * `abandonRefused` n'a pas rendu `'done'`, outbox.ts).
  */
-export function resendBlock(entry: RefusedWrite, stillThere: boolean): ResendBlock {
-  if (!stillThere) return 'settled';
-  const op = entry.op;
-  if (!isSetWrite(op) || !setWriteQueued(op.id, op._owner)) return 'storage';
-  const deleting = readQueue().some((q) => q.type === 'deleteSet' && q.id === op.id && q._owner === op._owner);
-  return deleting ? 'deletion-queued' : 'correction-queued';
-}
-
-/** Ce que la feuille dit pour chaque cause. */
-export const RESEND_BLOCK_TEXT: Record<ResendBlock, string> = {
-  settled: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
-  'deletion-queued': 'Une suppression de cette série attend déjà l’envoi : ce refus partira avec elle.',
-  'correction-queued': 'Une correction de cette série attend déjà l’envoi : elle partira avec. Rien à renvoyer.',
-  storage: 'L’appareil n’a pas pu l’enregistrer : son stockage est peut-être plein. Libère de la place puis réessaie.',
+export const GESTURE_TEXT: Record<Exclude<GestureOutcome, 'done'>, string> = {
+  gone: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
+  busy: 'Un envoi est en cours dans un autre onglet. Réessaie dans un instant.',
+  unsaved: 'L’appareil n’a pas pu l’enregistrer (stockage plein) : rien n’a changé. Réessaie une fois de la place libérée.',
 };

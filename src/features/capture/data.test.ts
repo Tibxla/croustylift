@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyPendingSets,
   copyHoldsDeletedRow,
   decideCaptureSource,
   deriveExerciseHistory,
@@ -9,7 +8,6 @@ import {
   type SeanceChoice,
   type PerformedSetWithExecutionRow,
 } from './data';
-import type { OutboxOp } from './outbox';
 
 // Logique PURE de sélection de la séance en Capture (issue #1).
 //
@@ -293,107 +291,9 @@ describe('deriveExerciseHistory', () => {
 // l'avant-dernière ; (2) l'exécution du jour n'était pas écartée, donc après une
 // revalidation post-flush le repère opposait à l'utilisateur ses propres séries.
 
-describe('applyPendingSets', () => {
-  const upsertExec = (id: string, performedOn: string, versionId = 'v-upper-1'): OutboxOp => ({
-    type: 'upsertExecution',
-    id,
-    seanceVersionId: versionId,
-    performedOn,
-    startedAt: `${performedOn}T18:00:00.000Z`,
-  });
-  const insertSet = (
-    id: string,
-    executionId: string,
-    weightKg: number,
-    exerciseId = 'exo-1',
-  ): OutboxOp => ({
-    type: 'insertSet',
-    id,
-    executionId,
-    exerciseId,
-    setOrder: 1,
-    weightKg,
-    reps: 5,
-    rir: 1,
-  });
-
-  it('file vide -> les lignes lues passent telles quelles', () => {
-    const rows = [setRow({ id: 's-1', execution_id: 'e-1' })];
-    expect(applyPendingSets(rows, [], 'exo-1')).toEqual(rows);
-  });
-
-  it('séance jamais remontée : ses séries entrent, datées par son upsertExecution', () => {
-    const ops = [upsertExec('e-offline', '2026-06-20'), insertSet('s-9', 'e-offline', 95)];
-    const merged = applyPendingSets([], ops, 'exo-1');
-    expect(merged).toHaveLength(1);
-    expect(merged[0]).toMatchObject({
-      weight_kg: 95,
-      execution_id: 'e-offline',
-      executions: { performed_on: '2026-06-20', seance_version_id: 'v-upper-1' },
-    });
-  });
-
-  it('une série en attente sur une exécution DÉJÀ en base hérite de sa jointure', () => {
-    const rows = [setRow({ id: 's-1', execution_id: 'e-1', weight_kg: 80 })];
-    const merged = applyPendingSets(rows, [insertSet('s-2', 'e-1', 85)], 'exo-1');
-    expect(merged.map((r) => r.weight_kg)).toEqual([80, 85]);
-    expect(merged[1]?.executions?.performed_on).toBe('2026-06-18');
-  });
-
-  it('ignore les séries d\'un AUTRE exo (la lecture est par exercice)', () => {
-    const ops = [upsertExec('e-offline', '2026-06-20'), insertSet('s-9', 'e-offline', 95, 'exo-2')];
-    expect(applyPendingSets([], ops, 'exo-1')).toEqual([]);
-  });
-
-  it('rejouer une série déjà lue ne la duplique pas (idempotence par id)', () => {
-    const rows = [setRow({ id: 's-1', execution_id: 'e-1', weight_kg: 80 })];
-    const merged = applyPendingSets(rows, [insertSet('s-1', 'e-1', 82.5)], 'exo-1');
-    expect(merged).toHaveLength(1);
-    expect(merged[0]?.weight_kg).toBe(82.5);
-  });
-
-  it('deleteSet retire la ligne (annulation encore en attente)', () => {
-    const rows = [setRow({ id: 's-1', execution_id: 'e-1' })];
-    expect(applyPendingSets(rows, [{ type: 'deleteSet', id: 's-1' }], 'exo-1')).toEqual([]);
-  });
-
-  it('deleteExecution retire TOUTES les lignes de son exécution', () => {
-    const rows = [
-      setRow({ id: 's-1', execution_id: 'e-1' }),
-      setRow({ id: 's-2', execution_id: 'e-1', set_order: 2 }),
-      setRow({ id: 's-3', execution_id: 'e-2' }),
-    ];
-    const merged = applyPendingSets(rows, [{ type: 'deleteExecution', id: 'e-1' }], 'exo-1');
-    expect(merged.map((r) => r.id)).toEqual(['s-3']);
-  });
-
-  it('une série sans contexte d\'exécution lisible est ignorée (ni datable ni scopable)', () => {
-    // `upsertExecution` déjà parti, `insertSet` encore en file, aucune ligne de
-    // cette exécution en base : limite assumée de l'ADR 0014.
-    expect(applyPendingSets([], [insertSet('s-9', 'e-inconnue', 95)], 'exo-1')).toEqual([]);
-  });
-
-  it('rend les lignes triées par date puis created_at, comme la requête', () => {
-    const rows = [
-      setRow({
-        id: 's-old',
-        execution_id: 'e-old',
-        executions: {
-          performed_on: '2026-06-01',
-          created_at: '2026-06-01T10:00:00.000Z',
-          seance_version_id: 'v-upper-1',
-        },
-      }),
-    ];
-    const ops = [upsertExec('e-new', '2026-06-20'), insertSet('s-new', 'e-new', 95)];
-    expect(applyPendingSets(rows, ops, 'exo-1').map((r) => r.id)).toEqual(['s-old', 's-new']);
-  });
-
-  it('une ligne d\'une copie locale SANS id survit (clé de repli execution:order:side)', () => {
-    const rows = [setRow({ execution_id: 'e-1' }), setRow({ execution_id: 'e-1', set_order: 2 })];
-    expect(applyPendingSets(rows, [], 'exo-1')).toHaveLength(2);
-  });
-});
+// (1) : les écritures locales appliquées par-dessus la copie d'historique. Les
+// cas sont dans execution-reality.test.ts (« la Référence »), où la même règle
+// sert au tableau de la Salle : `exerciseRowsReality`.
 
 describe('deriveExerciseHistory — exclusion de l\'exécution en cours', () => {
   const versions = ['v-upper-1'];

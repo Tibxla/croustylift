@@ -5,15 +5,17 @@
 // se règle une à une : « Renvoyer » la remet en file et lance un envoi (elle
 // revient ici si le serveur la refuse encore) ; « Abandonner » la retire pour
 // de bon, après confirmation (ADR 0012 : rien ne se perd sans geste explicite).
-// Les fonctions viennent de la file (`listRefused`, `retryRefused`,
-// `abandonRefused`), intouchée. Elles ne voient que les saisies du compte
+// Les fonctions viennent du registre d'écritures (`listRefused`, `retryRefused`,
+// `abandonRefused`, outbox.ts), qui rend aussi ce qui dépend de chaque saisie :
+// la feuille ne fait qu'afficher. Elles ne voient que les saisies du compte
 // reconnu.
 import { useCallback, useEffect, useState } from 'react';
 import { abandonRefused, listRefused, OUTBOX_CHANGED_EVENT, retryRefused, type RefusedWrite } from '../features/capture/outbox';
 import { listExercisesForCapture } from '../features/capture/data';
+import { forgetAbandonedSets } from '../features/capture/state';
 import { flushOutbox } from '../features/capture/sync';
 import { Confirm, EmptyState, SecondaryButton, Sheet, TextLink } from '../ui';
-import { dependentsOf, describeRefusal, fmtWhen, RESEND_BLOCK_TEXT, resendBlock } from './refused-writes';
+import { abandonWarning, describeRefusal, fmtWhen, GESTURE_TEXT } from './refused-writes';
 
 type Outcome = { id: string; text: string };
 
@@ -60,13 +62,10 @@ function RefusedList() {
   async function resend(entry: RefusedWrite) {
     setBusy(entry.refusalId);
     setOutcome(null);
-    if (!retryRefused(entry.refusalId)) {
-      // Une écriture de la même série attend déjà en file (une suppression, ou
-      // une correction qui reconstituera la série à partir de ce refus) : rien à
-      // renvoyer. Elle n'est plus là : réglée depuis un autre onglet. Sinon, le
-      // stockage (cf. `resendBlock`).
-      const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
-      setOutcome({ id: entry.refusalId, text: RESEND_BLOCK_TEXT[resendBlock(entry, stillThere)] });
+    const done = await retryRefused(entry.refusalId);
+    if (done !== 'done') {
+      // Plus là (réglée depuis un autre onglet), ou un envoi tient le verrou.
+      setOutcome({ id: entry.refusalId, text: GESTURE_TEXT[done] });
       setBusy(null);
       refresh();
       return;
@@ -75,7 +74,7 @@ function RefusedList() {
     try {
       await flushOutbox();
     } catch {
-      // Hors ligne ou serveur muet : elle reste en file et partira au retour.
+      // Hors ligne ou serveur muet : elle attend et partira au retour.
     }
     const back = listRefused().some((r) => r.refusalId === entry.refusalId);
     setOutcome({
@@ -86,18 +85,17 @@ function RefusedList() {
     refresh();
   }
 
-  function abandon(entry: RefusedWrite) {
+  async function abandon(entry: RefusedWrite) {
     setOutcome(null);
-    // Le début d'une séance emporte les saisies qu'il retenait : sans lui, elles
-    // ne peuvent plus partir. Elles d'abord, lui ensuite.
-    for (const dep of dependentsOf(entry, listRefused())) abandonRefused(dep.refusalId);
-    if (!abandonRefused(entry.refusalId)) {
-      const stillThere = listRefused().some((r) => r.refusalId === entry.refusalId);
-      setOutcome({
-        id: entry.refusalId,
-        text: stillThere ? 'L’appareil n’a pas pu la retirer. Réessaie.' : 'Cette saisie a déjà été réglée, depuis un autre onglet.',
-      });
-    }
+    setBusy(entry.refusalId);
+    // Ce qui dépend d'elle part avec elle, d'un seul tenant (registre) : les
+    // saisies que le début d'une séance retenait, la correction d'une série.
+    // Une série abandonnée quitte aussi le tableau de la Salle, tout de suite :
+    // celles qui sont RÉELLEMENT parties, que le registre rend sous le verrou
+    // (la liste affichée a pu changer pendant l'attente).
+    const done = await abandonRefused(entry.refusalId, forgetAbandonedSets);
+    if (done !== 'done') setOutcome({ id: entry.refusalId, text: GESTURE_TEXT[done] });
+    setBusy(null);
     setConfirming(null);
     refresh();
   }
@@ -130,7 +128,7 @@ function RefusedList() {
           <ul aria-label="Saisies refusées" className="border-t border-line">
             {entries.map((entry) => {
               const t = describeRefusal(entry, lookup);
-              const deps = dependentsOf(entry, entries).length;
+              const taken = abandonWarning(entry);
               const when = fmtWhen(entry.at);
               return (
                 <li key={entry.refusalId} className="border-b border-line px-5 py-3">
@@ -148,12 +146,12 @@ function RefusedList() {
                       keepLabel="Garder"
                       confirmLabel="Abandonner définitivement"
                       onCancel={() => setConfirming(null)}
-                      onConfirm={() => abandon(entry)}
+                      onConfirm={() => void abandon(entry)}
                     >
                       <p className="font-medium">Abandonner cette saisie ?</p>
                       <p className="mt-1 text-muted">
                         Elle ne sera jamais envoyée et quittera cet appareil.
-                        {deps > 0 && ` ${deps > 1 ? `Les ${deps} saisies qui en dépendent partent` : 'La saisie qui en dépend part'} avec elle.`}
+                        {taken && ` ${taken}`}
                       </p>
                     </Confirm>
                   ) : (

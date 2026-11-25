@@ -63,6 +63,24 @@ interface Envelope {
    * copie périmée cède la place au réseau.
    */
   refresh?: true;
+  /**
+   * ESTAMPILLE de la lecture qui a écrit cette copie, relevée à son départ
+   * (`setReadStamper`). Dit quelles écritures locales la copie ne peut pas
+   * contenir. Absente d'une copie écrite avant ce champ, ou sans estampilleur.
+   */
+  stamp?: number;
+}
+
+/**
+ * Estampilleur des lectures : relevé au DÉPART de chaque lecture réseau, et
+ * gardé avec la copie qu'elle écrit (`cachedReadStamped`, `peekReadStamped`).
+ * Posé par la couche qui tient le registre d'écritures (capture/data.ts) : le
+ * cache n'en connaît que le nombre. Sans estampilleur, aucune copie n'en porte.
+ */
+let stamper: (() => number) | null = null;
+
+export function setReadStamper(next: (() => number) | null): void {
+  stamper = next;
 }
 
 /** Registre mémoire des revalidations connues de cette session (clé → refetch). */
@@ -119,7 +137,7 @@ function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
 }
 
 /** Lit une entrée. `null` = absente ou illisible (jamais « valeur null »). */
-function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean } | null {
+function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean; stamp: number | null } | null {
   if (typeof localStorage === 'undefined') return null;
   const raw = localStorage.getItem(key);
   if (!raw) return null;
@@ -136,6 +154,7 @@ function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean
         value: envelope.value as T,
         stale: envelope.stale === true || staleInMemory.has(key),
         refresh: envelope.refresh === true || refreshInMemory.has(key),
+        stamp: typeof envelope.stamp === 'number' ? envelope.stamp : null,
       };
     }
     return null;
@@ -146,17 +165,32 @@ function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean
 
 /**
  * Écrit une entrée (dégrade en silence si quota plein / mode privé), puis
- * prévient les abonnés (`onReadWritten`) si le CONTENU a changé.
+ * prévient les abonnés (`onReadWritten`) si le CONTENU ou l'estampille a changé.
  */
-function writeEntry(key: string, value: unknown): boolean {
+function writeEntry(key: string, value: unknown, stamp: number | null = null): boolean {
   if (typeof localStorage === 'undefined') return false;
   try {
-    const before = localStorage.getItem(key);
-    const after = JSON.stringify({ v: 1, value } satisfies Envelope);
+    const before = readEntry<unknown>(key);
+    const after = JSON.stringify({ v: 1, value, ...(stamp !== null ? { stamp } : {}) } satisfies Envelope);
     localStorage.setItem(key, after);
     staleInMemory.delete(key);
     refreshInMemory.delete(key);
-    if (before !== after) notifyWritten(key);
+    // Un CONTENU qui change prévient les abonnés ; une copie relue à
+    // l'identique sous la même estampille ne fait bouger aucun écran. Sous une
+    // AUTRE estampille, elle prévient aussi : l'estampille ne change que si une
+    // écriture locale a été enfilée ou acquittée entre les deux lectures, et ce
+    // que le lecteur ajoute à la copie (`writesSince`) n'est alors plus le même
+    // (une correction acquittée entre-temps, que la base ne porte plus). Une
+    // copie périmée ou à rafraîchir qui redevient fraîche prévient aussi.
+    if (
+      before === null ||
+      before.stale ||
+      before.refresh ||
+      before.stamp !== stamp ||
+      JSON.stringify(before.value) !== JSON.stringify(value)
+    ) {
+      notifyWritten(key);
+    }
     return true;
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
@@ -197,8 +231,22 @@ function notifyWritten(storageKey: string): void {
  */
 export function onReadWritten(listener: (key: string) => void): () => void {
   writeListeners.add(listener);
+  // Une copie réécrite par un AUTRE onglet (événement `storage`, que le
+  // navigateur n'envoie qu'aux autres) prévient aussi : sans cela, la Référence
+  // montée ici gardait sa valeur d'avant, et une relecture faite ensuite d'ici
+  // trouvait la copie déjà à jour, donc ne prévenait personne non plus.
+  const fromOtherTab = (event: Event) => {
+    const { key, newValue } = event as StorageEvent;
+    const account = loadLocalAccount();
+    if (!account || typeof key !== 'string' || newValue === null) return;
+    const scope = fullKey(account.userId, '');
+    if (key.startsWith(scope)) listener(key.slice(scope.length));
+  };
+  const tabs = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
+  if (tabs) window.addEventListener('storage', fromOtherTab);
   return () => {
     writeListeners.delete(listener);
+    if (tabs) window.removeEventListener('storage', fromOtherTab);
   };
 }
 
@@ -230,12 +278,23 @@ async function guardedFetch<T>(
   fetcher: () => Promise<T>,
   raisesFloor = false,
 ): Promise<T> {
+  return (await guardedFetchStamped(userId, storageKey, fetcher, raisesFloor)).value;
+}
+
+/** `guardedFetch`, qui rend aussi l'estampille relevée au départ de la lecture. */
+async function guardedFetchStamped<T>(
+  userId: string,
+  storageKey: string,
+  fetcher: () => Promise<T>,
+  raisesFloor = false,
+): Promise<{ value: T; stamp: number | null }> {
   readSeq += 1;
   const seq = readSeq;
   const gen = purgeGen;
   const scope = fullKey(userId, '');
   const ackAt = ackGeneration(userId, storageKey.slice(scope.length));
   if (raisesFloor) floor.set(storageKey, seq);
+  const stamp = stamper ? stamper() : null;
   const value = await fetcher();
   // Vérifiée JUSTE avant d'écrire (rien d'asynchrone entre les deux) : une
   // écriture acquittée depuis le départ, dans cet onglet ou un autre, a changé
@@ -250,12 +309,12 @@ async function guardedFetch<T>(
   ) {
     // Écrite ou non (quota plein), la réponse est la plus fraîche acceptée :
     // elle fixe l'ordre et part aux abonnés (`onReadAccepted`).
-    const persisted = writeEntry(storageKey, value);
+    const persisted = writeEntry(storageKey, value, stamp);
     lastWritten.set(storageKey, seq);
     const key = acceptListeners.size > 0 ? unscoped(storageKey) : null;
     if (key !== null) for (const listener of [...acceptListeners]) listener(key, value, persisted);
   }
-  return value;
+  return { value, stamp };
 }
 
 /** Borne une promesse : rejette après `ms` (la promesse d'origine continue). */
@@ -289,8 +348,24 @@ export async function cachedRead<T>(
   fetcher: () => Promise<T>,
   { replay = true }: { replay?: boolean } = {},
 ): Promise<T> {
+  return (await cachedReadStamped(key, fetcher, { replay })).value;
+}
+
+/**
+ * `cachedRead`, qui rend aussi l'ESTAMPILLE de ce qu'il sert : celle de la
+ * lecture qui a écrit la copie servie, ou celle de la lecture réseau qui vient
+ * de répondre. `null` : copie d'avant ce champ, ou aucun estampilleur posé.
+ */
+export async function cachedReadStamped<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  { replay = true }: { replay?: boolean } = {},
+): Promise<{ value: T; stamp: number | null }> {
   const account = loadLocalAccount();
-  if (!account) return fetcher();
+  if (!account) {
+    const stamp = stamper ? stamper() : null;
+    return { value: await fetcher(), stamp };
+  }
 
   const storageKey = fullKey(account.userId, key);
   const refresh = async () => {
@@ -306,10 +381,10 @@ export async function cachedRead<T>(
     // Revalidation en arrière-plan : hors-ligne elle échoue en silence, la
     // copie servie reste la vérité locale jusqu'au prochain passage en ligne.
     void refresh().catch(() => {});
-    return cached.value;
+    return { value: cached.value, stamp: cached.stamp };
   }
 
-  const attempt = guardedFetch(account.userId, storageKey, fetcher);
+  const attempt = guardedFetchStamped(account.userId, storageKey, fetcher);
   if (cached === null) return attempt;
   // Copie PÉRIMÉE par une écriture faite d'ici (`invalidateReads`) : réseau
   // d'abord, borné ; la copie ne sert qu'en secours (hors ligne, wifi zombie).
@@ -318,7 +393,7 @@ export async function cachedRead<T>(
   try {
     return await withTimeout(attempt, NETWORK_FIRST_TIMEOUT_MS);
   } catch {
-    return cached.value;
+    return { value: cached.value, stamp: cached.stamp };
   }
 }
 
@@ -344,7 +419,12 @@ export function invalidateReads(prefixes: readonly string[]): void {
       try {
         localStorage.setItem(
           storageKey,
-          JSON.stringify({ v: 1, value: entry.value, stale: true } satisfies Envelope),
+          JSON.stringify({
+            v: 1,
+            value: entry.value,
+            stale: true,
+            ...(entry.stamp !== null ? { stamp: entry.stamp } : {}),
+          } satisfies Envelope),
         );
       } catch {
         // Quota plein : la marque est tenue en mémoire. La copie n'est JAMAIS
@@ -414,7 +494,15 @@ export function markToRefresh(prefixes: readonly string[]): void {
       const entry = readEntry<unknown>(storageKey);
       if (entry === null || entry.stale || entry.refresh) continue;
       try {
-        localStorage.setItem(storageKey, JSON.stringify({ v: 1, value: entry.value, refresh: true } satisfies Envelope));
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({
+            v: 1,
+            value: entry.value,
+            refresh: true,
+            ...(entry.stamp !== null ? { stamp: entry.stamp } : {}),
+          } satisfies Envelope),
+        );
       } catch {
         refreshInMemory.add(storageKey);
       }
@@ -465,9 +553,15 @@ export function seedRead(key: string, value: unknown, writerId?: string): void {
  * copies contiennent une ligne supprimée), pas pour servir un écran.
  */
 export function peekRead<T>(key: string): T | null {
+  return peekReadStamped<T>(key)?.value ?? null;
+}
+
+/** `peekRead`, avec l'estampille de la copie (cf. `cachedReadStamped`). */
+export function peekReadStamped<T>(key: string): { value: T; stamp: number | null } | null {
   const account = loadLocalAccount();
   if (!account) return null;
-  return readEntry<T>(fullKey(account.userId, key))?.value ?? null;
+  const entry = readEntry<T>(fullKey(account.userId, key));
+  return entry === null ? null : { value: entry.value, stamp: entry.stamp };
 }
 
 /**

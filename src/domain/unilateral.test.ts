@@ -61,6 +61,25 @@ describe('loggedSetEquivalents', () => {
 })
 
 describe('pairSidesByOrder', () => {
+  it('deux lignes du MÊME côté au même rang (écrites depuis deux appareils) : aucune n’est perdue, la seconde ouvre sa propre case', () => {
+    const sets: PerformedSet[] = [
+      { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },
+      { weightKg: 32, reps: 10, rir: 2, order: 1, side: 'right' },
+      { weightKg: 34, reps: 9, rir: 1, order: 1, side: 'right' },
+      { weightKg: 30, reps: 8, rir: 2, order: 2, side: 'left' },
+    ]
+
+    const pairs = pairSidesByOrder(sets)
+
+    expect(pairs.map((p) => [p.order, p.left?.weightKg ?? null, p.right?.weightKg ?? null])).toEqual([
+      [1, 30, 32],
+      [1, null, 34],
+      [2, 30, null],
+    ])
+    // Chaque côté présent compte, doublon compris.
+    expect(loggedSetEquivalents(sets)).toBe(2)
+  })
+
   it('apparie gauche et droite d’un même order en une paire', () => {
     const sets: PerformedSet[] = [
       { weightKg: 30, reps: 10, rir: 2, order: 1, side: 'left' },

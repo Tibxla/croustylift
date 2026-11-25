@@ -29,14 +29,17 @@
 // ne connaît pas : un onglet resté dessus s'arrête sur elle au lieu de la
 // rejouer en upsert complet (cf. `PatchSetOp`). L'op porte quand même la ligne
 // entière, pour reconstituer une série dont l'insertion a été refusée.
-//   - hors ligne, le log puis sa correction tiennent tous deux en file et
+//   - seules les colonnes CHANGÉES sont écrites (`cols`) : last-write-wins par
+//     colonne (ADR 0003), corriger le poids ici et les reps ailleurs garde les
+//     deux ;
+//   - hors ligne, le log puis sa correction attendent tous deux au registre et
 //     partent dans l'ordre, la dernière écriture gagne ;
-//   - une série dont l'insertion a été refusée par la base (quarantaine) est
-//     relevée par sa correction : le flush envoie alors la série ENTIÈRE,
-//     reconstituée du refus et de la correction, et lève le refus une fois
-//     l'écriture acquittée (outbox.ts, « Séries refusées, puis reprises ») ;
-//   - la Référence fusionnée (`applyPendingSets`) et la reprise
-//     (`applyQueuedSets`) remplacent déjà une série par son id.
+//   - une série dont l'insertion a été refusée par la base est relevée par sa
+//     correction : la passe envoie alors la série ENTIÈRE, reconstituée du
+//     refus et de la correction, et lève le refus une fois l'écriture
+//     acquittée (parenté et lignée, registry-record.ts) ;
+//   - la Référence et le tableau appliquent déjà une écriture locale par l'id
+//     de sa série (execution-reality.ts).
 // Les badges (battue, égalée, record) ne sont pas stockés : ils se recalculent
 // des séries (`computeSetBadges`, set-badges.ts), donc suivent la correction.
 // Unilatéral : chaque côté est une ligne, avec son id. Corriger un côté ne
@@ -63,10 +66,11 @@
 //
 // Réponse tardive de la base : une série corrigée, renumérotée ou supprimée ici
 // pendant le trajet d'une lecture garde son état local à l'arrivée de la
-// réponse, que ses écritures soient encore en file ou déjà acquittées
-// (`reconcileProgress` et le cas `reconcile-progress` du réducteur, state.ts).
+// réponse, que ses écritures attendent encore ou soient déjà acquittées : le
+// registre les garde, et le tableau les applique sur la réponse, colonne par
+// colonne (execution-reality.ts, cas `reconcile-progress` du réducteur).
 
-import type { PerformedSet } from '../../domain/types';
+import type { PerformedSet, Side } from '../../domain/types';
 import type { OutboxOp, PatchSetOp } from './outbox';
 import { RANK_POLICY_AFTER_DELETION, logicalSetRows, ranksAfterDeletion } from './set-ranks';
 import { boundSetValues } from './stepper-utils';
@@ -91,7 +95,7 @@ export function writeSetOp(
   exerciseId: string,
   id: string,
   set: PerformedSet,
-  only: 'values' | 'rank',
+  only: PatchSetOp['only'],
 ): PatchSetOp {
   const row = {
     id,
@@ -112,24 +116,75 @@ export function writeSetOp(
  * log (`boundSetValues`). `null` si la série n'existe pas dans cet exo, si elle
  * n'a pas d'id (cache d'ancien format, rien à viser en base) ou si rien ne
  * change.
+ *
+ * `values` ne porte que ce que l'utilisateur a RÉGLÉ. Les autres colonnes sont
+ * celles de la ligne telle qu'elle est maintenant : la feuille de correction a
+ * pu s'ouvrir avant qu'une réponse tardive de la base ne change une colonne
+ * qu'il n'a pas touchée, et la comparer à son brouillon la réécrivait en base
+ * avec la valeur d'avant.
  */
 export function correctSet(
   state: CaptureState,
   exerciseId: string,
   setId: string,
-  values: SetEntry,
+  values: Partial<SetEntry>,
 ): SetGesture | null {
   const progress = getProgress(state, exerciseId);
   const index = progress.setIds.indexOf(setId);
   const current = index === -1 ? undefined : progress.sets[index];
   if (current === undefined) return null;
-  const next = boundSetValues({ weightKg: values.weightKg, reps: values.reps, rir: values.rir });
-  if (next.weightKg === current.weightKg && next.reps === current.reps && next.rir === current.rir) {
-    return null;
-  }
+  const bounded = boundSetValues({
+    weightKg: values.weightKg ?? current.weightKg,
+    reps: values.reps ?? current.reps,
+    rir: values.rir ?? current.rir,
+  });
+  // Seules les colonnes RÉGLÉES sont bornées et posées, au tableau comme en
+  // base : une colonne intacte garde sa valeur, même hors des bornes de la
+  // saisie (elle vient de la base, qui l'accepte).
+  const next = {
+    weightKg: values.weightKg === undefined ? current.weightKg : bounded.weightKg,
+    reps: values.reps === undefined ? current.reps : bounded.reps,
+    rir: values.rir === undefined ? current.rir : bounded.rir,
+  };
+  // Seules les colonnes CHANGÉES sont écrites (last-write-wins par colonne,
+  // ADR 0003) : corriger le poids ici et les reps sur un autre appareil garde
+  // les deux.
+  const cols = (['weightKg', 'reps', 'rir'] as const).filter(
+    (col) => values[col] !== undefined && next[col] !== current[col],
+  );
+  if (cols.length === 0) return null;
   return {
     action: { type: 'correct-set', exerciseId, setId, values: next },
-    ops: [writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values')],
+    ops: [{ ...writeSetOp(state, exerciseId, setId, { ...current, ...next }, 'values'), cols }],
+  };
+}
+
+/**
+ * Change le CÔTÉ de la ligne d'id `setId` (exo unilatéral : une série saisie à
+ * gauche l'était à droite). Seul le côté est écrit, en base comme à l'écran
+ * (`patchSet` avec `only: 'side'`) : son rang et ses valeurs ne bougent pas.
+ *
+ * Le côté ne change que si l'AUTRE côté de ce rang est libre : une série tient
+ * sur deux lignes au même rang, une gauche et une droite (ADR 0005), et deux
+ * lignes du même côté au même rang ne seraient plus une série. `null` sinon,
+ * comme pour une ligne inconnue, sans id (rien à viser en base), sans côté
+ * (exo bilatéral) ou déjà de ce côté.
+ */
+export function changeSetSide(
+  state: CaptureState,
+  exerciseId: string,
+  setId: string,
+  side: Side,
+): SetGesture | null {
+  const progress = getProgress(state, exerciseId);
+  const index = progress.setIds.indexOf(setId);
+  const current = index === -1 ? undefined : progress.sets[index];
+  if (current === undefined || current.side === undefined || current.side === side) return null;
+  const taken = progress.sets.some((set, i) => i !== index && set.order === current.order && set.side === side);
+  if (taken) return null;
+  return {
+    action: { type: 'change-set-side', exerciseId, setId, side },
+    ops: [writeSetOp(state, exerciseId, setId, { ...current, side }, 'side')],
   };
 }
 

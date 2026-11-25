@@ -19,7 +19,8 @@
 //     templates en copie et des séances en cours. Une séance en cours porte
 //     parfois un exo AJOUTÉ ou remplaçant, absent de tout template : ses copies
 //     évincées, la réouverture hors ligne l'ignorait, avec ses séries.
-// Si cela ne suffit pas, la file tient en mémoire (cf. outbox, `writeQueue`).
+// Si cela ne suffit pas : une saisie neuve tient en mémoire, une transition du
+// registre s'écrit sans grandir ou n'a pas lieu (cf. outbox, `commit`).
 //
 // Module sans dépendance vers les couches d'accès : l'outbox et l'état de
 // capture l'appellent, et les couches d'accès importent l'outbox.

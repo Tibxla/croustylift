@@ -30,9 +30,11 @@ vi.mock('../notes/data', () => ({
   deleteExerciseNoteByExercise: vi.fn(),
 }));
 
-import { onQueueChanged, OUTBOX_STORAGE_KEY } from './queue-changes';
+import { onQueueChanged } from './queue-changes';
 import { flushOutbox } from './sync';
-import { enqueue, OUTBOX_CHANGED_EVENT } from './outbox';
+import { enqueue, isRegistryStorageKey, OUTBOX_CHANGED_EVENT } from './outbox';
+
+const REGISTRY_KEY = 'croustylift:registre';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -64,19 +66,26 @@ beforeEach(() => {
 });
 
 describe('onQueueChanged', () => {
-  it('la clé de stockage épinglée est bien celle de la file (outbox.ts, gelé)', () => {
+  it('les clés qu’écrit un enfilement sont toutes reconnues comme celles du registre', () => {
     enqueue({ type: 'upsertExecution', id: 'e1', seanceVersionId: 'v1', performedOn: '2026-11-24' });
-    expect(localStorage.getItem(OUTBOX_STORAGE_KEY)).toContain('e1');
+    const written: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key !== null && (localStorage.getItem(key) ?? '').includes('e1')) written.push(key);
+    }
+    expect(written.length).toBeGreaterThan(0);
+    for (const key of written) expect(isRegistryStorageKey(key)).toBe(true);
+    expect(isRegistryStorageKey('croustylift:readcache:user-1:vue:journal')).toBe(false);
   });
 
   it('un flush de CET onglet qui se termine (retrait de la file) prévient', async () => {
     const listener = vi.fn();
     const off = onQueueChanged(listener, new EventTarget());
-    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 1 });
+    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 1, settled: [] });
     await flushOutbox();
     expect(listener).toHaveBeenCalledTimes(1);
     off();
-    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 1 });
+    flushMock.mockResolvedValueOnce({ remaining: 0, flushed: 1, settled: [] });
     await flushOutbox();
     expect(listener).toHaveBeenCalledTimes(1);
   });
@@ -87,10 +96,12 @@ describe('onQueueChanged', () => {
     const off = onQueueChanged(listener, target);
     target.dispatchEvent(storageEvent('croustylift:readcache:user-1:vue:journal'));
     expect(listener).not.toHaveBeenCalled();
-    target.dispatchEvent(storageEvent(OUTBOX_STORAGE_KEY));
+    target.dispatchEvent(storageEvent(REGISTRY_KEY));
+    // La boîte d'entrée d'un geste fait dans l'autre onglet.
+    target.dispatchEvent(storageEvent(`${REGISTRY_KEY}:in:onglet-2`));
     // `clear()` du stockage : clé nulle.
     target.dispatchEvent(storageEvent(null));
-    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledTimes(3);
     off();
   });
 
@@ -103,7 +114,7 @@ describe('onQueueChanged', () => {
     expect(listener).toHaveBeenCalledTimes(2);
     off();
     target.dispatchEvent(new Event('online'));
-    target.dispatchEvent(storageEvent(OUTBOX_STORAGE_KEY));
+    target.dispatchEvent(storageEvent(REGISTRY_KEY));
     expect(listener).toHaveBeenCalledTimes(2);
   });
 });

@@ -70,7 +70,11 @@ const meta = (lastOn: string, lastExecutionId: string): StoredMap => ({
 /** Ce que la ligne de la séance `a` affiche : la copie, la file, les acquittées. */
 const shown = () => mergePendingExecutions(peekSeancesMeta(), [...readOwnQueue(), ...readAckedExecutions()]).a;
 
-/** Une passe qui acquitte les ops en file, puis les retire de la file. */
+/**
+ * Une passe qui acquitte les ops en file, puis les retire de la file. Elle dit
+ * ce qu'elle a acquitté (`settled`, registre) : c'est de là que sync.ts tire
+ * les effets d'un acquittement.
+ */
 function acknowledgeQueue() {
   flushMock.mockImplementationOnce(async () => {
     const ops = readOwnQueue();
@@ -79,7 +83,11 @@ function acknowledgeQueue() {
       if (op.type === 'upsertExecution') await syncFns.upsertExecution(op);
     }
     clearQueue();
-    return { remaining: 0, flushed: ops.length };
+    return {
+      remaining: 0,
+      flushed: ops.length,
+      settled: ops.map((op, i) => ({ uid: `u${i}`, op, fate: 'acked' as const, touches: [] })),
+    };
   });
 }
 

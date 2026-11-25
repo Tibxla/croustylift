@@ -5,7 +5,6 @@ import { replaceExercise, restoreSkippedExercise } from './exercise-gestures';
 import { deriveExerciseDeviations, layoutEditOf, replayLayout, templateExerciseIds } from './session-edit';
 import type { SessionExercise } from './fixtures';
 import {
-  applyQueuedSets,
   captureReducer,
   getProgress,
   initialState,
@@ -15,6 +14,8 @@ import {
   type CaptureState,
 } from './state';
 import { buildSessionRecap } from './session-recap';
+import { executionReality } from './execution-reality';
+import type { LocalWrite, OutboxOp } from './outbox';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -40,6 +41,8 @@ const BENCH = 'bench-press';
 const fresh = (): CaptureState => ({ ...initialState(upperA, DATE), executionId: 'exec-1' });
 const skipped = (state = fresh()) => captureReducer(state, { type: 'skip-exercise', exerciseId: BENCH });
 const set = (order: number) => ({ weightKg: 80, reps: 8, rir: 2, order });
+/** Des écritures locales en attente, telles que le registre les rend (`writesSince`). */
+const pending = (...ops: OutboxOp[]): LocalWrite[] => ops.map((op, i) => ({ uid: `u${i}`, n: i + 1, op, fate: 'pending' }));
 
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage = new MemoryStorage() as unknown as Storage;
@@ -89,7 +92,7 @@ describe('restoreSkippedExercise (« Remettre » un exo passé)', () => {
 
   it('une réponse tardive de la base ne remet pas « passé » un exo remis, ni l’inverse', () => {
     const base = { [BENCH]: { sets: [set(1)], setIds: ['s1'] } };
-    const late = { type: 'reconcile-progress' as const, base, pendingSetIds: [], knownAtDeparture: [] };
+    const late = { type: 'reconcile-progress' as const, base, writes: [] };
     // Passé localement : il le reste, avec la série arrivée de la base.
     const stillSkipped = captureReducer(skipped(), late);
     expect(getProgress(stillSkipped, BENCH)).toMatchObject({ skipped: true, setIds: ['s1'] });
@@ -101,11 +104,13 @@ describe('restoreSkippedExercise (« Remettre » un exo passé)', () => {
   });
 
   it('les écritures de séries en file rejouées gardent la marque « passé »', () => {
-    const progress = applyQueuedSets(
-      skipped().progress,
-      [{ type: 'insertSet', id: 's1', executionId: 'exec-1', exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 8, rir: 2 }],
-      'exec-1',
-    );
+    const state = skipped();
+    const progress = executionReality({
+      executionId: state.executionId,
+      read: state.progress,
+      writes: pending({ type: 'insertSet', id: 's1', executionId: state.executionId, exerciseId: BENCH, setOrder: 1, weightKg: 80, reps: 8, rir: 2 }),
+      skipped: new Set([BENCH]),
+    });
     expect(progress[BENCH]).toMatchObject({ skipped: true, setIds: ['s1'] });
   });
 
@@ -166,13 +171,11 @@ describe('replaceExercise', () => {
     const swapped = captureReducer(before, gesture.action);
     const next = captureReducer(swapped, {
       type: 'reconcile-progress',
-      knownAtDeparture: [],
-      pendingSetIds: [],
       base: source === 'base' ? { [BENCH]: { sets: [set(1)], setIds: ['journal'] } } : {},
-      queuedOps: source === 'file' ? [{
+      writes: source === 'file' ? pending({
         type: 'insertSet', id: 'journal', exerciseId: BENCH, executionId: before.executionId,
         setOrder: 1, weightKg: 80, reps: 8, rir: 2,
-      }] : [],
+      }) : [],
     });
     persist(next);
     for (const state of [next, loadPersisted(upperA, DATE)!]) {
@@ -196,7 +199,7 @@ describe('replaceExercise', () => {
     const swapped = captureReducer(before, replaceExercise(before, upperA, BENCH, machine)!.action);
     const added = captureReducer(swapped, { type: 'edit-layout', edit: layoutEditOf(first) });
     const next = captureReducer(added, {
-      type: 'reconcile-progress', knownAtDeparture: [], pendingSetIds: [],
+      type: 'reconcile-progress', writes: [],
       base: { [BENCH]: { sets: [set(1)], setIds: ['journal'] } },
     });
     const session = replayLayout(upperA, next.layout!, (edit) => edit.exerciseId === BENCH ? first : machine);

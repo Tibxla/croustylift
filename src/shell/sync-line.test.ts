@@ -39,9 +39,19 @@ describe('syncLine', () => {
     expect(syncLine({ ...base, offline: true, refused: 1 })?.detail).toBe('les saisies restent sur cet appareil · 1 saisie refusée');
   });
 
-  it('stockage plein, en ligne, file vide ou non : l’avertissement prime (les saisies ne tiennent qu’en mémoire)', () => {
-    const full = { title: 'Stockage plein', detail: 'tes saisies ne sont pas gardées ici, laisse l’app ouverte' };
-    expect(syncLine({ ...base, unsaved: true })).toEqual(full);
-    expect(syncLine({ ...base, unsaved: true, pending: 2 })).toEqual(full);
+  it('stockage plein, saisies en mémoire seulement : l’avertissement prime et dit ce qui reste à envoyer', () => {
+    const kept = 'tes saisies ne sont pas gardées ici, laisse l’app ouverte';
+    expect(syncLine({ ...base, unsaved: true })).toEqual({ title: 'Stockage plein', detail: kept });
+    expect(syncLine({ ...base, unsaved: true, pending: 2 })).toEqual({ title: 'Stockage plein', detail: `2 saisies à envoyer, ${kept}` });
+  });
+
+  it('stockage plein, tout est sur l’appareil : l’envoi est arrêté, avec ce qui reste à envoyer', () => {
+    expect(syncLine({ ...base, full: true, pending: 3, refused: 1 })).toEqual({
+      title: 'Stockage plein',
+      detail: 'envoi arrêté, 3 saisies sur l’appareil : libère de la place',
+    });
+    expect(syncLine({ ...base, full: true })).toEqual({ title: 'Stockage plein', detail: 'libère de la place sur cet appareil' });
+    // Des saisies en mémoire seulement : c'est elles qu'il faut dire d'abord.
+    expect(syncLine({ ...base, full: true, unsaved: true, pending: 1 })?.detail).toContain('pas gardées ici');
   });
 });
