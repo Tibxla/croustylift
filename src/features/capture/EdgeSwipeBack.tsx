@@ -15,6 +15,10 @@
 // 40) : leur voile la couvre. Par sûreté, un départ alors qu'une feuille est
 // ouverte (un `role="dialog"` dans l'emplacement) est ignoré.
 //
+// UN DOIGT À LA FOIS. Le geste retient le pointeur qui l'a ouvert ; les autres
+// doigts sont ignorés. Pendant le retour vers le Sommaire (200 ms engagées),
+// aucun départ n'est pris (automate pur : `edgeDown`, `edgeMove`, `edgeUp`).
+//
 // RETOUR VISUEL, en `transform` seul, posé par ref sans rendu React : l'écran
 // suit le doigt, sans transition, sur un fond levé où se lit « ‹ Sommaire ».
 // Lâché au-delà du seuil ou d'un coup sec, l'écran file à droite (200 ms,
@@ -24,7 +28,7 @@
 import { useContext, useEffect, useRef, type ReactNode } from 'react';
 import { SheetSlotContext } from '../../ui';
 import { prefersReducedMotion } from '../../ui/motion';
-import { EDGE_PX, edgeLock, edgeRelease, edgeStarts, releaseVelocity, trimTrail, type TrailPoint } from './edge-swipe';
+import { EDGE_PX, edgeDown, edgeMove, edgeUp, type EdgeGesture } from './edge-swipe';
 
 const EASE_OUT = 'cubic-bezier(0.23, 1, 0.32, 1)';
 const SETTLE_MS = 200;
@@ -35,7 +39,7 @@ export function EdgeSwipeBack({ onBack, children }: { onBack: () => void; childr
   const under = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
-  const g = useRef<{ x0: number; y0: number; dx: number; lock: 'pending' | 'swipe' | 'abandon'; trail: TrailPoint[] } | null>(null);
+  const g = useRef<EdgeGesture | null>(null);
 
   useEffect(
     () => () => {
@@ -104,44 +108,44 @@ export function EdgeSwipeBack({ onBack, children }: { onBack: () => void; childr
         className="absolute bottom-0 left-0 top-0 z-20"
         style={{ width: EDGE_PX, touchAction: 'none' }}
         onPointerDown={(e) => {
-          // Un second doigt ne reprend pas le geste.
-          if (g.current) return;
-          const left = e.currentTarget.getBoundingClientRect().left;
-          if (!edgeStarts({ x: e.clientX - left, sheetOpen: sheetOpen() })) return;
+          // Un seul doigt à la fois, aucun départ pendant un retour engagé (edge-swipe.ts).
+          const next = edgeDown(g.current, {
+            pointerId: e.pointerId,
+            x: e.clientX,
+            y: e.clientY,
+            t: e.timeStamp,
+            left: e.currentTarget.getBoundingClientRect().left,
+            sheetOpen: sheetOpen(),
+            returning: timer.current !== null,
+          });
+          if (next === g.current) return;
           e.currentTarget.setPointerCapture(e.pointerId);
-          g.current = { x0: e.clientX, y0: e.clientY, dx: 0, lock: 'pending', trail: [{ x: e.clientX, t: e.timeStamp }] };
+          g.current = next;
         }}
         onPointerMove={(e) => {
-          const s = g.current;
-          if (!s) return;
-          s.trail = trimTrail([...s.trail, { x: e.clientX, t: e.timeStamp }], e.timeStamp);
-          if (s.lock === 'pending') s.lock = edgeLock(e.clientX - s.x0, e.clientY - s.y0);
-          if (s.lock !== 'swipe') return;
-          s.dx = Math.max(0, e.clientX - s.x0);
-          paint(s.dx, 'none');
+          const m = edgeMove(g.current, { pointerId: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp });
+          g.current = m.g;
+          if (m.dx !== null) paint(m.dx, 'none');
         }}
         onPointerUp={(e) => {
-          const s = g.current;
-          g.current = null;
-          if (!s) return;
-          if (s.lock === 'pending') {
+          const width = pane.current?.clientWidth ?? window.innerWidth;
+          const { g: next, outcome } = edgeUp(g.current, { pointerId: e.pointerId, x: e.clientX, t: e.timeStamp }, width);
+          g.current = next;
+          if (outcome === 'tap') {
             // Un toucher sur place : rendu à ce qui est sous la bande.
             const el = strip.current;
             if (el) el.style.pointerEvents = 'none';
             const hit = document.elementFromPoint(e.clientX, e.clientY);
             if (el) el.style.pointerEvents = '';
             if (hit instanceof HTMLElement) hit.click();
-            return;
+          } else if (outcome === 'back' || outcome === 'stay') {
+            settle(outcome === 'back');
           }
-          if (s.lock !== 'swipe') return;
-          const velocity = releaseVelocity(trimTrail(s.trail, e.timeStamp), { x: e.clientX, t: e.timeStamp });
-          const width = pane.current?.clientWidth ?? window.innerWidth;
-          settle(edgeRelease({ dx: s.dx, width, velocity }) === 'back');
         }}
-        onPointerCancel={() => {
-          const s = g.current;
-          g.current = null;
-          if (s?.lock === 'swipe') settle(false);
+        onPointerCancel={(e) => {
+          const { g: next, outcome } = edgeUp(g.current, { pointerId: e.pointerId, x: e.clientX, t: e.timeStamp }, 0, true);
+          g.current = next;
+          if (outcome === 'stay') settle(false);
         }}
       />
     </div>

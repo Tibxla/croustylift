@@ -1,7 +1,7 @@
 // La décision du glissé depuis le bord gauche, qui ramène au Sommaire : zone de
 // départ, verrouillage du sens, seuil ou coup sec au lâcher.
 import { describe, expect, it } from 'vitest';
-import { EDGE_PX, edgeLock, edgeRelease, edgeStarts, releaseVelocity, trimTrail } from './edge-swipe';
+import { EDGE_PX, edgeDown, edgeLock, edgeMove, edgeRelease, edgeStarts, edgeUp, releaseVelocity, trimTrail } from './edge-swipe';
 
 describe('edgeStarts : seul un départ dans la bande du bord compte', () => {
   it('dans les 20 px du bord, sans feuille ouverte : le geste peut commencer', () => {
@@ -71,5 +71,49 @@ describe('vitesse au lâcher : sur les 100 dernières ms', () => {
   it('px/ms entre le plus vieux point gardé et le lâcher ; nulle sans durée', () => {
     expect(releaseVelocity([{ x: 40, t: 160 }], { x: 90, t: 200 })).toBeCloseTo(1.25);
     expect(releaseVelocity([{ x: 40, t: 200 }], { x: 90, t: 200 })).toBe(0);
+  });
+});
+
+describe('le geste, doigt par doigt (edgeDown, edgeMove, edgeUp)', () => {
+  const down = (pointerId: number, x = 4, extra: Partial<Parameters<typeof edgeDown>[1]> = {}) => ({ pointerId, x, y: 300, t: 0, sheetOpen: false, returning: false, ...extra });
+
+  it('un doigt au bord ouvre le geste ; ses déplacements vers la droite le suivent ; lâché loin : retour', () => {
+    let g = edgeDown(null, down(1));
+    expect(g).not.toBeNull();
+    let m = edgeMove(g, { pointerId: 1, x: 40, y: 302, t: 16 });
+    expect(m.dx).toBe(36);
+    m = edgeMove(m.g, { pointerId: 1, x: 200, y: 305, t: 300 });
+    g = m.g;
+    expect(edgeUp(g, { pointerId: 1, x: 200, t: 320 }, 393)).toEqual({ g: null, outcome: 'back' });
+  });
+
+  it('un second doigt ne reprend pas le geste, et ses déplacements comme son lâcher sont ignorés', () => {
+    const g = edgeDown(null, down(1));
+    expect(edgeDown(g, down(2))).toBe(g);
+    const m = edgeMove(g, { pointerId: 2, x: 300, y: 300, t: 16 });
+    expect(m).toEqual({ g, dx: null });
+    expect(edgeUp(g, { pointerId: 2, x: 300, t: 32 }, 393)).toEqual({ g, outcome: 'none' });
+  });
+
+  it('pendant le retour vers le Sommaire, aucun départ n’est pris', () => {
+    expect(edgeDown(null, down(3, 4, { returning: true }))).toBeNull();
+  });
+
+  it('feuille ouverte, ou départ hors de la bande : rien', () => {
+    expect(edgeDown(null, down(1, 4, { sheetOpen: true }))).toBeNull();
+    expect(edgeDown(null, down(1, 30))).toBeNull();
+  });
+
+  it('un toucher sur place est rendu à ce qui est dessous ; un glissé vertical ne fait rien', () => {
+    const g = edgeDown(null, down(1));
+    expect(edgeUp(g, { pointerId: 1, x: 5, t: 80 }, 393).outcome).toBe('tap');
+    const v = edgeMove(edgeDown(null, down(1)), { pointerId: 1, x: 6, y: 340, t: 50 });
+    expect(v.dx).toBeNull();
+    expect(edgeUp(v.g, { pointerId: 1, x: 6, t: 60 }, 393).outcome).toBe('none');
+  });
+
+  it('lâché court et lent : l’écran revient', () => {
+    const m = edgeMove(edgeDown(null, down(1)), { pointerId: 1, x: 60, y: 300, t: 400 });
+    expect(edgeUp(m.g, { pointerId: 1, x: 60, t: 800 }, 393).outcome).toBe('stay');
   });
 });

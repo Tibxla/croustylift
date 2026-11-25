@@ -53,3 +53,64 @@ export function releaseVelocity(trail: readonly TrailPoint[], end: TrailPoint): 
   const dt = end.t - a.t;
   return dt > 0 ? (end.x - a.x) / dt : 0;
 }
+
+// --- Le geste, doigt par doigt ---------------------------------------------
+// Un petit automate : l'écran (EdgeSwipeBack.tsx) lui passe chaque événement du
+// pointeur et peint ce qu'il rend. Un seul doigt à la fois : le geste retient le
+// `pointerId` qui l'a ouvert, et les autres doigts sont ignorés au départ, au
+// déplacement et au lâcher. Pendant le retour vers le Sommaire (200 ms engagées),
+// aucun départ n'est pris : un second geste relâché sous le seuil annulait le
+// retour et laissait l'instrument démonté sous le doigt (relecture du 25/11).
+
+export interface EdgeGesture {
+  pointerId: number;
+  x0: number;
+  y0: number;
+  dx: number;
+  lock: 'pending' | 'swipe' | 'abandon';
+  trail: TrailPoint[];
+}
+
+interface PointerAt {
+  pointerId: number;
+  x: number;
+  y: number;
+  t: number;
+}
+
+/** Un doigt se pose. `left` : bord gauche de la bande, `returning` : un retour
+ *  vers le Sommaire est engagé. Rend le geste ouvert, ou `g` inchangé. */
+export function edgeDown(
+  g: EdgeGesture | null,
+  p: PointerAt & { left?: number; sheetOpen: boolean; returning: boolean },
+): EdgeGesture | null {
+  if (g !== null || p.returning) return g;
+  if (!edgeStarts({ x: p.x - (p.left ?? 0), sheetOpen: p.sheetOpen })) return g;
+  return { pointerId: p.pointerId, x0: p.x, y0: p.y, dx: 0, lock: 'pending', trail: [{ x: p.x, t: p.t }] };
+}
+
+/** Le doigt bouge. `dx` : le déplacement à peindre, `null` s'il n'y a rien à peindre. */
+export function edgeMove(g: EdgeGesture | null, p: PointerAt): { g: EdgeGesture | null; dx: number | null } {
+  if (!g || p.pointerId !== g.pointerId) return { g, dx: null };
+  const trail = trimTrail([...g.trail, { x: p.x, t: p.t }], p.t);
+  const lock = g.lock === 'pending' ? edgeLock(p.x - g.x0, p.y - g.y0) : g.lock;
+  if (lock !== 'swipe') return { g: { ...g, trail, lock }, dx: null };
+  const dx = Math.max(0, p.x - g.x0);
+  return { g: { ...g, trail, lock, dx }, dx };
+}
+
+/** Le doigt se lève (ou le geste est annulé : `cancel`). `outcome` : `tap` (toucher
+ *  sur place, à rendre à ce qui est dessous), `back`, `stay`, ou `none`. */
+export function edgeUp(
+  g: EdgeGesture | null,
+  p: { pointerId: number; x: number; t: number },
+  width: number,
+  cancel = false,
+): { g: EdgeGesture | null; outcome: 'none' | 'tap' | 'back' | 'stay' } {
+  if (!g || p.pointerId !== g.pointerId) return { g, outcome: 'none' };
+  if (g.lock === 'pending') return { g: null, outcome: cancel ? 'none' : 'tap' };
+  if (g.lock !== 'swipe') return { g: null, outcome: 'none' };
+  if (cancel) return { g: null, outcome: 'stay' };
+  const velocity = releaseVelocity(trimTrail(g.trail, p.t), { x: p.x, t: p.t });
+  return { g: null, outcome: edgeRelease({ dx: g.dx, width, velocity }) };
+}
