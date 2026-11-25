@@ -15,6 +15,8 @@ function packageOf(id: string): string | null {
 }
 
 export default defineConfig({
+  // PROTOTYPE JETABLE (prototype/salle-saisie) : servi sur le tailnet pour l'iPhone.
+  preview: { allowedHosts: ['.ts.net'] },
   define: {
     __APP_COMMIT__: JSON.stringify(buildCommit()),
     __APP_BUILT_AT__: JSON.stringify(new Date().toISOString()),

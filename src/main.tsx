@@ -19,7 +19,13 @@ applyStoredReglages()
 
 // Hors de l'arbre React : ces deux services vivent autant que la page et ne
 // doivent pas dépendre d'un écran monté (login, premier lancement, erreur).
-initServiceWorker()
+// PROTOTYPE JETABLE (prototype/salle-saisie) : pas de service worker, pour qu'un
+// nouveau build se voie au premier rechargement ; l'ancien, s'il y en a un, part.
+if (import.meta.env.VITE_PROTOTYPE === '1') {
+  void navigator.serviceWorker?.getRegistrations().then((rs) => rs.forEach((r) => void r.unregister()))
+} else {
+  initServiceWorker()
+}
 watchRecoveryLink(() => requestReload('activated'))
 startViewportWatch()
 

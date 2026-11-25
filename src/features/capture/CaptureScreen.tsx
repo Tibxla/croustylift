@@ -100,6 +100,8 @@ import type { Side } from '../../domain/types';
 import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseCapture } from './ExerciseCapture';
+import { ProtoBar, ProtoGate } from './prototype-saisie/ProtoGate';
+import { ProtoSaisie } from './prototype-saisie/ProtoSaisie';
 import type { IndexItem } from './ExerciseIndex';
 import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from './salle-progress';
 import { formatWeight } from './format';
@@ -1357,7 +1359,25 @@ function CaptureBoard({
 
   return (
     <div className="flex min-h-surface flex-col">
+      <ProtoBar />
       {activeExercise ? (
+        <ProtoGate
+          render={(variant) => (
+            <ProtoSaisie
+              key={activeExercise.exerciseId}
+              variant={variant}
+              exercise={activeExercise}
+              progress={getProgress(state, activeExercise.exerciseId)}
+              index={indexItems}
+              next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId), nextEx.unilateral ?? false) } : null}
+              done={counts.done}
+              total={session.exercises.length}
+              canFinish={loggedAny}
+              datedNote={getDatedNote(state, activeExercise.exerciseId)?.body ?? ''}
+              dispatch={dispatch}
+            />
+          )}
+        >
         <CapturePanel
           key={activeExercise.exerciseId}
           exercise={activeExercise}
@@ -1379,6 +1399,7 @@ function CaptureBoard({
           onChangeSetSide={(setId, side) => handleChangeSetSide(activeExercise.exerciseId, setId, side)}
           onDeleteSet={(setId) => handleDeleteSet(activeExercise.exerciseId, setId)}
         />
+        </ProtoGate>
       ) : (
         <>
           <SalleSync />
