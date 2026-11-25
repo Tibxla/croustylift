@@ -22,7 +22,15 @@ import { useLayoutEffect, useRef } from 'react';
  *  sous le doigt. L'appelant remonte la rangée (`key`) à chaque exo ou série
  *  pour qu'elle reparte calée.
  *
- *  Clavier : un seul arrêt de tabulation (la valeur choisie), ← → Début Fin. */
+ *  Clavier : un seul arrêt de tabulation (la valeur choisie), ← → Début Fin.
+ *
+ *  DISPOSITION « ligne » (instrument de la Salle, variante A4 du 25/11) : le mot à
+ *  gauche, les chiffres à droite sur la même ligne, sans fourchette écrite (le
+ *  plan se lit au filet sous les chiffres, la Référence au petit carré). Six
+ *  cases ENTIÈRES dans la largeur qui reste (cinq sous 360 px d'écran, pour
+ *  garder 44 px par case), aucun chiffre coupé au bord ; la rangée glisse et se
+ *  cale sur le début d'une case. Au montage, le plan est centré dans les cases
+ *  visibles, la valeur dedans. */
 export function NumberRow({
   label,
   min,
@@ -35,6 +43,7 @@ export function NumberRow({
   rangeWord = 'plan',
   onLabel,
   labelHint,
+  layout = 'bande',
 }: {
   label: string;
   min: number;
@@ -54,9 +63,13 @@ export function NumberRow({
   onLabel?: () => void;
   /** Nom lu du libellé touchable (« RIR, ce que ça veut dire »). */
   labelHint?: string;
+  /** « bande » (défaut) : libellé et fourchette au-dessus, chiffres bord à bord ;
+   *  « ligne » : le mot à gauche, six cases entières à droite (cf. en-tête). */
+  layout?: 'bande' | 'ligne';
 }) {
   const row = useRef<HTMLDivElement>(null);
   const values = range0(min, max);
+  const ligne = layout === 'ligne';
   /** La dernière valeur vient d'un tap dans cette rangée : ne rien recadrer. */
   const pickedHere = useRef(false);
   const focusSel = useRef(false);
@@ -70,14 +83,51 @@ export function NumberRow({
     if (!el || !c) return;
     el.scrollLeft = c.offsetLeft + c.offsetWidth / 2 - el.clientWidth / 2;
   };
+  // « ligne » : cases calées sur leur début, autant de cases entières que la
+  // largeur en tient (6, ou 5 sous 360 px).
+  const perView = () => {
+    const el = row.current;
+    const c = cellOf(min);
+    return el && c && c.offsetWidth > 0 ? Math.max(1, Math.round(el.clientWidth / c.offsetWidth)) : 6;
+  };
+  const firstVisible = () => {
+    const el = row.current;
+    const c = cellOf(min);
+    return el && c && c.offsetWidth > 0 ? min + Math.round(el.scrollLeft / c.offsetWidth) : min;
+  };
+  const showFrom = (first: number) => {
+    const el = row.current;
+    const c = cellOf(Math.max(min, Math.min(first, max)));
+    if (el && c) el.scrollLeft = c.offsetLeft;
+  };
   const fullyVisible = (n: number) => {
     const el = row.current;
     const c = cellOf(n);
     if (!el || !c) return true;
     return c.offsetLeft >= el.scrollLeft - 1 && c.offsetLeft + c.offsetWidth <= el.scrollLeft + el.clientWidth + 1;
   };
+  /** Ramène `n` dans le champ, sans animation. */
+  const bringIntoView = (n: number) => {
+    if (!ligne) {
+      centerOn(n);
+      return;
+    }
+    const per = perView();
+    const first = firstVisible();
+    showFrom(n < first ? n : n - per + 1);
+  };
 
   useLayoutEffect(() => {
+    if (ligne) {
+      // Calage d'ouverture : le plan centré dans les cases visibles, la valeur dedans.
+      const per = perView();
+      const planLen = presc[1] - presc[0] + 1;
+      let first = presc[0] - Math.floor(Math.max(0, per - planLen) / 2);
+      if (value < first) first = value;
+      if (value > first + per - 1) first = value - per + 1;
+      showFrom(Math.max(min, Math.min(first, max - per + 1)));
+      return;
+    }
     // Calage d'ouverture : plan + valeur s'ils tiennent dans les 7 cases entières.
     const a = Math.max(min, Math.min(presc[0], value));
     const b = Math.min(max, Math.max(presc[1], value));
@@ -94,7 +144,7 @@ export function NumberRow({
       pickedHere.current = false;
       return;
     }
-    if (!fullyVisible(value)) centerOn(value);
+    if (!fullyVisible(value)) bringIntoView(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
@@ -105,61 +155,61 @@ export function NumberRow({
     onPick(v);
   };
 
-  return (
-    <div>
-      <div className="flex items-baseline justify-between px-5">
-        {onLabel ? (
-          <button
-            type="button"
-            onClick={onLabel}
-            aria-label={labelHint}
-            className="-mx-2.5 min-w-11 px-2.5 text-left text-[15px] font-semibold text-ink underline decoration-dim decoration-1 underline-offset-[4px] active:opacity-70"
-          >
-            {label}
-          </button>
-        ) : (
-          <span className="text-[15px] font-semibold text-ink">{label}</span>
-        )}
-        <span className="text-[14px] text-muted">
-          {rangeWord} {presc[0] === presc[1] ? presc[0] : `${presc[0]}-${presc[1]}`}
-          {refValue !== null && <span> · réf. {refValue}</span>}
-        </span>
-      </div>
-      <div
-        ref={row}
-        data-number-row={label}
-        className="relative mt-0.5 flex overflow-x-auto px-5"
-        style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollBehavior: 'auto', overscrollBehaviorX: 'contain' }}
-        role="radiogroup"
-        aria-label={label}
-        onKeyDown={(e) => {
-          const k = e.key;
-          if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
-          e.preventDefault();
-          pickKey(k === 'Home' ? min : k === 'End' ? max : value + (k === 'ArrowRight' ? 1 : -1));
-        }}
-        onPointerDown={(e) => {
-          if (e.pointerType !== 'mouse' || e.button !== 0) return;
-          drag.current = { x: e.clientX, left: e.currentTarget.scrollLeft, moved: false };
-        }}
-        onPointerMove={(e) => {
-          const d = drag.current;
-          if (!d) return;
-          const dx = e.clientX - d.x;
-          if (!d.moved) {
-            if (Math.abs(dx) < 5) return;
-            d.moved = true;
-            e.currentTarget.setPointerCapture(e.pointerId);
-            e.currentTarget.style.scrollSnapType = 'none';
-          }
-          e.currentTarget.scrollLeft = d.left - dx;
-        }}
-        onPointerUp={(e) => {
-          const d = drag.current;
-          drag.current = null;
-          if (!d?.moved) return;
+  const labelNode = onLabel ? (
+    <button
+      type="button"
+      onClick={onLabel}
+      aria-label={labelHint}
+      className={`-mx-2.5 min-w-11 px-2.5 text-left font-semibold text-ink underline decoration-dim decoration-1 underline-offset-[4px] active:opacity-70 ${
+        ligne ? 'h-11 text-[16px]' : 'text-[15px]'
+      }`}
+    >
+      {label}
+    </button>
+  ) : (
+    <span className={`font-semibold text-ink ${ligne ? 'text-[16px]' : 'text-[15px]'}`}>{label}</span>
+  );
+
+  const scroller = (
+    <div
+      ref={row}
+      data-number-row={label}
+      className={ligne ? 'relative flex min-w-0 flex-1 overflow-x-auto' : 'relative mt-0.5 flex overflow-x-auto px-5'}
+      style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollBehavior: 'auto', overscrollBehaviorX: 'contain' }}
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={(e) => {
+        const k = e.key;
+        if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
+        e.preventDefault();
+        pickKey(k === 'Home' ? min : k === 'End' ? max : value + (k === 'ArrowRight' ? 1 : -1));
+      }}
+      onPointerDown={(e) => {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
+        drag.current = { x: e.clientX, left: e.currentTarget.scrollLeft, moved: false };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const dx = e.clientX - d.x;
+        if (!d.moved) {
+          if (Math.abs(dx) < 5) return;
+          d.moved = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+          e.currentTarget.style.scrollSnapType = 'none';
+        }
+        e.currentTarget.scrollLeft = d.left - dx;
+      }}
+      onPointerUp={(e) => {
+        const d = drag.current;
+        drag.current = null;
+        if (!d?.moved) return;
+        const el = e.currentTarget;
+        if (ligne) {
+          // Accroche au début de case le plus proche, sans glisser.
+          showFrom(firstVisible());
+        } else {
           // Accroche au chiffre le plus proche du centre, sans glisser.
-          const el = e.currentTarget;
           const mid = el.scrollLeft + el.clientWidth / 2;
           let best = values[0]!;
           let gap = Infinity;
@@ -173,55 +223,78 @@ export function NumberRow({
             }
           }
           centerOn(best);
-          el.style.scrollSnapType = 'x mandatory';
-          swallowClick.current = true;
-          window.setTimeout(() => (swallowClick.current = false), 0);
-        }}
-        onPointerCancel={(e) => {
-          drag.current = null;
-          e.currentTarget.style.scrollSnapType = 'x mandatory';
-        }}
-        onClickCapture={(e) => {
-          if (!swallowClick.current) return;
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-      >
-        {values.map((n) => {
-          const sel = n === value;
-          const inPlan = n >= presc[0] && n <= presc[1];
-          return (
-            <button
-              key={n}
-              type="button"
-              role="radio"
-              aria-checked={sel}
-              tabIndex={sel ? 0 : -1}
-              data-n={n}
-              onClick={() => {
-                if (n === value) return;
-                pickedHere.current = true;
-                onPick(n);
-              }}
-              className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'}`}
-              // 1/8 de la largeur de la rangée (le pourcentage se lit sur la boîte
-              // de contenu, marges d'écran de 20 px déduites).
-              style={{ flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
+        }
+        el.style.scrollSnapType = 'x mandatory';
+        swallowClick.current = true;
+        window.setTimeout(() => (swallowClick.current = false), 0);
+      }}
+      onPointerCancel={(e) => {
+        drag.current = null;
+        e.currentTarget.style.scrollSnapType = 'x mandatory';
+      }}
+      onClickCapture={(e) => {
+        if (!swallowClick.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      {values.map((n) => {
+        const sel = n === value;
+        const inPlan = n >= presc[0] && n <= presc[1];
+        return (
+          <button
+            key={n}
+            type="button"
+            role="radio"
+            aria-checked={sel}
+            tabIndex={sel ? 0 : -1}
+            data-n={n}
+            onClick={() => {
+              if (n === value) return;
+              pickedHere.current = true;
+              onPick(n);
+            }}
+            className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'} ${ligne ? 'basis-1/6 [@media(max-width:359px)]:basis-1/5' : ''}`}
+            // « bande » : 1/8 de la largeur de la rangée (le pourcentage se lit sur
+            // la boîte de contenu, marges d'écran de 20 px déduites). « ligne » :
+            // 1/6 (1/5 sous 360 px) de la place laissée par le mot, calé au début.
+            style={ligne ? { scrollSnapAlign: 'start' } : { flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
+          >
+            <span
+              className={`tnum flex h-full items-center justify-center text-[22px] tracking-[-0.01em] ${
+                sel ? 'font-bold text-ink' : inPlan ? 'text-ink' : 'text-faint'
+              }`}
             >
-              <span
-                className={`flex h-full items-center justify-center text-[22px] tracking-[-0.01em] ${
-                  sel ? 'font-bold text-ink' : inPlan ? 'text-ink' : 'text-faint'
-                }`}
-              >
-                {n}
-              </span>
-              {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
-              {sel && <span className="absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
-              {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
-            </button>
-          );
-        })}
+              {n}
+            </span>
+            {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
+            {sel && <span className="absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
+            {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (ligne) {
+    return (
+      <div className="flex items-center pl-5 pr-3">
+        <span className="w-[52px] flex-none">{labelNode}</span>
+        {scroller}
       </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between px-5">
+        {labelNode}
+        <span className="text-[14px] text-muted">
+          {rangeWord} {presc[0] === presc[1] ? presc[0] : `${presc[0]}-${presc[1]}`}
+          {refValue !== null && <span> · réf. {refValue}</span>}
+        </span>
+      </div>
+      {scroller}
     </div>
   );
 }

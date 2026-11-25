@@ -8,6 +8,12 @@
 // toucher ni le bord ni « kg » (mesurée par ResizeObserver sur une copie
 // invisible à 72 px). Le saut entre 80 et 82,5 est voulu.
 //
+// BLOC (`kg="bloc"`, instrument de la Salle, variante A4 validée le 25/11) :
+// « 140 kg » forme UN bloc, centré en entier sur l'aiguille ; « kg » suit le
+// nombre sur sa ligne de base, à un peu plus du tiers de sa taille. Le nombre
+// quitte l'aiguille, vers la gauche, de la moitié de « kg ». La correction et
+// l'éditeur de séance passée gardent le nombre seul centré, « kg » accroché.
+//
 // SAISIE PRÉCISE : toucher la valeur ouvre le clavier numérique (inputmode
 // decimal, virgule acceptée, 56 px au moins donc pas de zoom iOS) pour une valeur
 // hors du
@@ -28,7 +34,15 @@ const FACE = 'font-[650] leading-none tracking-[-0.045em]';
 const GUTTER = 20;
 const KG_ROOM = 34;
 
-function Kg() {
+function Kg({ bloc, size }: { bloc: boolean; size: number }) {
+  if (bloc) {
+    // Dans le bloc : « kg » compte dans le centrage.
+    return (
+      <span aria-hidden className="ml-[0.2em] whitespace-nowrap font-medium text-muted" style={{ fontSize: Math.round(size * 0.36) }}>
+        kg
+      </span>
+    );
+  }
   // Largeur nulle : « kg » suit le nombre sur sa ligne de base sans décaler son centrage.
   return (
     <span aria-hidden className="w-0 overflow-visible whitespace-nowrap">
@@ -37,12 +51,29 @@ function Kg() {
   );
 }
 
-export function WeightReadout({ value, onChange }: { value: number; onChange: (kg: number) => void }) {
+export function WeightReadout({
+  value,
+  onChange,
+  kg = 'accroche',
+  size,
+}: {
+  value: number;
+  onChange: (kg: number) => void;
+  /** « accroche » (défaut) : le nombre seul centré, « kg » accroché à sa droite ;
+   *  « bloc » : « nombre kg » centré en entier (cf. en-tête). */
+  kg?: 'accroche' | 'bloc';
+  /** Taille de base imposée par l'écran ; sinon 72, 56 sur écran bas, 48 très bas. */
+  size?: number;
+}) {
   // Écran bas (360×780) : 56 px au lieu de 72 ; très bas (375×667) : 48 px. La
   // rangée RIR reste au-dessus de la barre.
   const compact = useCompact();
   const tight = useCompactTight();
-  const base = tight ? 48 : compact ? 56 : 72;
+  const base = size ?? (tight ? 48 : compact ? 56 : 72);
+  const bloc = kg === 'bloc';
+  // Place de « kg » : de chaque côté quand il est accroché (le nombre reste au
+  // centre), une seule fois dans le bloc.
+  const kgRoom = bloc ? Math.round(base * 0.55) : 2 * KG_ROOM;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   // La valeur d'avant la saisie, rendue par Échap ou un champ vide.
@@ -61,7 +92,7 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
     const p = probe.current;
     if (!b || !p || typeof ResizeObserver === 'undefined') return;
     const measure = () => {
-      const room = b.clientWidth - 2 * (GUTTER + KG_ROOM);
+      const room = b.clientWidth - 2 * GUTTER - kgRoom;
       const natural = p.getBoundingClientRect().width;
       const size = natural > room ? Math.max(32, Math.floor((base * room) / natural)) : base;
       setFit({ size, width: Math.ceil((natural * size) / base) + 4 });
@@ -71,7 +102,7 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
     ro.observe(b);
     ro.observe(p);
     return () => ro.disconnect();
-  }, [base]);
+  }, [base, kgRoom]);
 
   const start = () => {
     before.current = value;
@@ -126,7 +157,7 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
             // soulignement, le seul signe « je tape ici », était rogné.
             style={{ fontSize: fit.size, height: fit.size, width: fit.width || undefined }}
           />
-          <Kg />
+          <Kg bloc={bloc} size={fit.size} />
         </span>
       ) : (
         <button
@@ -139,7 +170,7 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
             <span className={`tnum ${FACE}`} style={{ fontSize: fit.size }}>
               {shown}
             </span>
-            <Kg />
+            <Kg bloc={bloc} size={fit.size} />
           </span>
         </button>
       )}
