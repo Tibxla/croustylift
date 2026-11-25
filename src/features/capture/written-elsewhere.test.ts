@@ -22,6 +22,7 @@ import {
 } from './written-elsewhere';
 import { initialState, loadPersisted, persist } from './state';
 import { upperA } from './fixtures';
+import { invalidateExerciseNoteCopy, invalidatePlanCopies } from './plan-copies';
 
 const open = (executionId: string): SalleAtReturn => ({ phase: 'ready', closed: false, executionId });
 
@@ -78,6 +79,25 @@ describe('retour sur la Salle', () => {
       expect(salleReturnAction({ phase, closed: false, executionId: null })).toBe('reload');
     }
     expect(salleReturnAction({ phase: 'ready', closed: true, executionId: 'exec-1' })).toBe('reload');
+  });
+});
+
+// Exos ou Séances modifiés pendant une séance ouverte en Salle : avant, le retour
+// remontait la Salle, qui relisait nom, unilatéral et note de ses exos. Toute
+// écriture du plan et toute note d'exo écrite hors de la file passent par
+// l'invalidation des copies de la Capture (plan-copies.ts) : c'est là que le
+// marqueur se pose, pour tous les écrans d'un coup. Le chargement relancé lit
+// alors le réseau d'abord (copies périmées) ; la version de la séance entamée,
+// elle, reste celle de son état local (`adoptedVersionId`).
+describe('définitions écrites ailleurs', () => {
+  it('une écriture du plan (exo, séance, version) relance le chargement au retour', () => {
+    invalidatePlanCopies();
+    expect(salleReturnAction(open('exec-1'))).toBe('reload');
+  });
+
+  it('une note d’exo écrite depuis Exos ou Séances aussi', () => {
+    invalidateExerciseNoteCopy('exo-1');
+    expect(salleReturnAction(open('exec-1'))).toBe('reload');
   });
 });
 

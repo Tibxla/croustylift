@@ -12,6 +12,7 @@
 // Module à part, sans dépendance vers les couches d'accès : l'authoring et la
 // Capture s'importent déjà l'un l'autre.
 import { invalidateReads } from '../../lib/read-cache';
+import { markDefinitionsWritten } from './written-elsewhere';
 
 /** La routine courante et ses séances proposées au choix. */
 export const CAPTURE_SOURCE_KEY = 'capture-source';
@@ -32,6 +33,9 @@ export const EXERCISE_NOTE_PREFIX = 'exo-note:';
  * deux changent ensemble à chaque version créée.
  */
 export function invalidatePlanCopies(): void {
+  // La Salle, cachée sur une séance ouverte, relira ses définitions à son retour
+  // (nom, unilatéral, note des exos ; written-elsewhere.ts).
+  markDefinitionsWritten();
   invalidateReads([
     CAPTURE_SOURCE_KEY,
     SEANCE_VERSION_PREFIX,
@@ -43,5 +47,6 @@ export function invalidatePlanCopies(): void {
 
 /** La note d'instructions d'un exo vient d'être écrite hors de l'outbox. */
 export function invalidateExerciseNoteCopy(exerciseId: string): void {
+  markDefinitionsWritten();
   invalidateReads([`${EXERCISE_NOTE_PREFIX}${exerciseId}`]);
 }
