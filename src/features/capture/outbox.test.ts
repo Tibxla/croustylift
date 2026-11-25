@@ -1404,10 +1404,11 @@ describe('quarantaine (rejet définitif de la base)', () => {
     expect(readQuarantine()).toEqual([]);
   });
 
-  it('refus impossible à écrire (quota) : il est tenu en mémoire, listé, et la suite part', async () => {
-    // Avant le registre, la quarantaine avait sa clé : son écriture refusée
-    // laissait l'op en file et ARRÊTAIT la passe (résiduel 6). Un seul
-    // enregistrement : le refus suit le même repli mémoire que le reste.
+  it('refus impossible à écrire (stockage plein) : il n’a pas lieu, la passe s’arrête sans rien retirer ni rien renvoyer en boucle', async () => {
+    // Un refus s'écrit en grandissant (son motif). Appareil plein : la
+    // transition n'a pas lieu (ADR 0025). La saisie reste en attente, la
+    // suivante aussi, et les passes suivantes ne reposent pas la question à la
+    // base tant que la place n'est pas revenue.
     enqueue(setOp('set-refuse', 1));
     enqueue(setOp('set-2', 2));
     const fns = okFns();
@@ -1416,20 +1417,32 @@ describe('quarantaine (rejet définitif de la base)', () => {
     });
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
+    let full = true;
     store.setItem = (k: string, v: string) => {
-      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
+      if (full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const res = await flush(fns);
 
-    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
-    expect(listRefused().map((q) => q.op.id)).toEqual(['set-refuse']);
+    expect(res).toMatchObject({ remaining: 2, flushed: 0, settled: [] });
+    expect(listRefused()).toEqual([]);
+    expect(persisted().map((w) => `${w.op.id}:${w.fate}`)).toEqual(['set-refuse:pending', 'set-2:pending']);
     expect(storageFailing()).toBe(true);
+    // Cinq déclencheurs de plus (saisie, retour du réseau, montage) : aucune requête.
+    for (let i = 0; i < 5; i += 1) await flush(fns);
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+
+    // La place revient : le refus s'écrit, et la suite part.
+    full = false;
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 1 });
+    expect(listRefused().map((q) => q.op.id)).toEqual(['set-refuse']);
+    expect(storageFailing()).toBe(false);
+    expect(fns.insertSet).toHaveBeenCalledTimes(3);
   });
 
-  it('retrait de la file impossible à persister (quota) : l’op n’est pas rejouée en boucle, la passe finit en mémoire', async () => {
+  it('enregistrement impossible à écrire (quota) : une écriture acquittée quitte sa source, elle n’est pas rejouée', async () => {
     enqueue(execOp('exec-1'));
     enqueue(setOp('set-1', 1));
     const fns = okFns();
@@ -1443,8 +1456,9 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns);
 
-    // Le retrait de la première op n'a pas pu s'écrire : le miroir mémoire le
-    // tient, donc elle n'est envoyée qu'UNE fois et la passe continue.
+    // Rien n'entre à l'enregistrement, mais chaque écriture acquittée est
+    // retirée de sa clé de la boîte d'entrée (retirer passe toujours) : elle
+    // n'est envoyée qu'UNE fois et la passe continue.
     expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
     expect(fns.insertSet).toHaveBeenCalledTimes(1);
     expect(res).toMatchObject({ remaining: 0, flushed: 2 });
@@ -1457,7 +1471,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
 // Avant : l'écriture refusée était signalée en console et c'est tout. L'op
 // enfilée n'existait nulle part, la bannière disait « Synchronisé ».
 
-describe('stockage plein (quota) : miroir mémoire de la file', () => {
+describe('stockage plein (quota) : les saisies que l’appareil refuse tiennent en mémoire', () => {
   /** Le stockage refuse toute écriture de la file tant que `full` est vrai. */
   function quota(): { full: boolean } {
     const state = { full: true };
@@ -1491,7 +1505,7 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     expect(localStorage.getItem(REGISTRY_KEY)).toBeNull();
   });
 
-  it('le flush envoie ce que tient le miroir', async () => {
+  it('le flush envoie ce que tient la mémoire', async () => {
     quota();
     enqueue(execOp());
     enqueue(setOp('s1', 1));
@@ -1499,11 +1513,11 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
 
     expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((op) => op.id)).toEqual(['exec-1', 's1']);
-    // File vide : la retirer du stockage passe toujours, le miroir est rendu.
+    // Acquittées, elles quittent la mémoire : plus rien n'est refusé.
     expect(storageFailing()).toBe(false);
   });
 
-  it('dès que le stockage accepte de nouveau, la file est persistée et le miroir rendu', () => {
+  it('dès que le stockage accepte de nouveau, elles sont écrites sur l’appareil', () => {
     const state = quota();
     enqueue(execOp());
     expect(storageFailing()).toBe(true);

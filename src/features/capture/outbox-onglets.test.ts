@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 describe('stockage plein dans un onglet, écritures d’un autre onglet', () => {
-  it('le repli mémoire de A n’efface pas la série persistée entre-temps par B', async () => {
+  it('la saisie que A tient en mémoire n’efface pas la série persistée entre-temps par B', async () => {
     const a = await openTab();
     const b = await openTab();
     // A persiste S0, puis le stockage refuse S1 : A la tient en mémoire.
@@ -192,12 +192,12 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     expect(persistedIds()).toEqual([]);
   });
 
-  it('un retrait tenu en mémoire par A ne réécrit pas la file : la série de B reste', async () => {
+  it('appareil plein : A retire l’écriture acquittée de sa clé sans rien réécrire, la série de B reste', async () => {
     const a = await openTab();
     const b = await openTab();
     a.enqueue(setOp('S0'));
     a.enqueue(setOp('S1'));
-    // Le stockage refuse le retrait de S0 après son envoi par A.
+    // Le stockage refuse toute écriture ; retirer la clé de S0, acquittée, passe quand même.
     storage.full = true;
     const tabA = recorder(async (op) => {
       if (op.id === 'S1') throw new Error('offline');
@@ -208,7 +208,7 @@ describe('stockage plein dans un onglet, écritures d’un autre onglet', () => 
     storage.full = false;
     b.enqueue(setOp('S2'));
 
-    // A relit : S0 reste retirée pour lui, S1 et S2 sont là.
+    // A relit : S0 n'est plus nulle part, S1 et S2 sont là.
     expect(a.readQueue().map((op) => op.id)).toEqual(['S1', 'S2']);
   });
 });
@@ -461,22 +461,28 @@ describe('troisième tour : une saisie reste lisible pendant son transfert de la
   });
 });
 
-describe('relecture entière : le journal de secours d’un onglet ne défait pas ce qu’un autre a écrit', () => {
-  it('A tient un refus en mémoire, B envoie la même saisie et l’acquitte : elle reste acquittée', async () => {
+// Voie 1 (ADR 0025) : le journal de secours n'existe plus. Ce qu'un onglet n'a
+// pas pu écrire n'a pas eu lieu : il n'a rien à rejouer plus tard sur ce qu'un
+// autre onglet a écrit entre-temps. Les trois scénarios des relectures (refus
+// tenu en mémoire puis acquittement, renvoi, ou refus par l'autre onglet)
+// restent ici, sous la nouvelle règle.
+describe('voie 1 : un refus que l’onglet A n’a pas pu écrire n’a pas eu lieu', () => {
+  it('B envoie la même saisie et l’acquitte : elle reste acquittée, A ne la renvoie pas', async () => {
     const a = await openTab();
     const b = await openTab();
     const [uid] = a.enqueueAll([setOp('S1')]);
-    // Le registre ne peut pas être écrit : le refus de A ne tient qu'en mémoire.
+    // Le registre ne peut pas être écrit : le refus de A n'a pas lieu.
     const setItem = storage.setItem.bind(storage);
     storage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:registre') throw new Error('QuotaExceededError');
+      if (k.startsWith('croustylift:registre')) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     const refusing = recorder(async () => {
       throw Object.assign(new Error('rejet'), { code: '42501' });
     });
     await a.flush(refusing.fns);
-    expect(a.fatesOf([uid!])).toEqual(['refused']);
+    expect(a.fatesOf([uid!])).toEqual(['pending']);
+    expect(a.storageFailing()).toBe(true);
     // La place revient, la base accepte : B envoie la saisie et l'écrit acquittée.
     storage.setItem = setItem;
     const tabB = recorder();
@@ -484,15 +490,18 @@ describe('relecture entière : le journal de secours d’un onglet ne défait pa
     expect(tabB.sent).toEqual(['S1']);
     expect(b.fatesOf([uid!])).toEqual(['acked']);
 
-    // A repasse : son journal ne doit pas ramener le refus.
-    await a.flush(recorder().fns);
+    // A repasse : il n'a rien gardé du refus, et ne renvoie rien.
+    const tabA = recorder();
+    await a.flush(tabA.fns);
 
+    expect(tabA.sent).toEqual([]);
     expect(b.fatesOf([uid!])).toEqual(['acked']);
     expect(a.listRefused()).toEqual([]);
+    expect(a.storageFailing()).toBe(false);
   });
 });
 
-describe('vérification ciblée : le journal de secours ne s’applique qu’à l’écriture telle qu’il l’a vue', () => {
+describe('voie 1 : ce que l’onglet A n’a pas pu écrire ne revient pas sur ce que B a écrit', () => {
   const blockRegistry = () => {
     const setItem = storage.setItem.bind(storage);
     storage.setItem = (k: string, v: string) => {
@@ -506,7 +515,7 @@ describe('vérification ciblée : le journal de secours ne s’applique qu’à 
       throw Object.assign(new Error('rejet'), { code: '42501' });
     });
 
-  it('A tient un refus en mémoire ; B refuse la même saisie puis la renvoie : elle reste en attente', async () => {
+  it('refus non écrit par A ; B refuse la même saisie puis la renvoie : elle reste en attente', async () => {
     const a = await openTab();
     const b = await openTab();
     const [uid] = a.enqueueAll([setOp('S1')]);
@@ -518,13 +527,13 @@ describe('vérification ciblée : le journal de secours ne s’applique qu’à 
     expect(await b.retryRefused(uid!)).toBe('done');
     expect(b.fatesOf([uid!])).toEqual(['pending']);
 
-    // A repasse (réseau coupé) : son vieux refus ne doit pas revenir sur le renvoi.
+    // A repasse (réseau coupé) : il n'a gardé aucun refus à faire revenir sur le renvoi.
     await a.flush(recorder(async () => { throw new TypeError('Failed to fetch'); }).fns);
 
     expect(b.fatesOf([uid!])).toEqual(['pending']);
   });
 
-  it('A a évincé une acquittée sous quota ; B la tient refusée depuis : le retrait de A ne l’emporte pas', async () => {
+  it('acquittement non écrit par A ; B refuse la même saisie depuis : elle reste refusée', async () => {
     const a = await openTab();
     const b = await openTab();
     const [uid] = a.enqueueAll([setOp('S1'), setOp('S2')]);
@@ -533,7 +542,7 @@ describe('vérification ciblée : le journal de secours ne s’applique qu’à 
     };
     await a.flush(recorder(offline).fns); // les deux entrent au registre
     const free = blockRegistry();
-    // S1 est acquittée, puis évincée faute de place : en mémoire seulement. S2 reste.
+    // S1 passe en base, mais son acquittement ne peut pas s'écrire : il n'a pas lieu, la passe s'arrête.
     await a.flush(recorder(async (op) => (op.id === 'S2' ? offline() : undefined)).fns);
     free();
     await b.flush(refusing().fns);

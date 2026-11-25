@@ -82,13 +82,16 @@ const del = (id: string): OutboxOp => ({ type: 'deleteSet', id, exerciseIds: ['b
 /** Fausse base : note ce qui part ; `refuses` rend un SQLSTATE pour refuser, `cuts` coupe le réseau. */
 function base(options: { refuses?: (op: OutboxOp) => string | null; cuts?: (op: OutboxOp) => boolean } = {}) {
   const sent: string[] = [];
+  /** Toutes les requêtes parties, acceptées ou non. */
+  const tried: string[] = [];
   const run = async (op: OutboxOp) => {
+    tried.push(`${op.type}:${op.id}`);
     if (options.cuts?.(op)) throw new TypeError('Failed to fetch');
     const code = options.refuses?.(op) ?? null;
     if (code !== null) throw Object.assign(new Error('rejet'), { code });
     sent.push(`${op.type}:${op.id}`);
   };
-  return { sent, fns: new Proxy({}, { get: () => run }) as SyncFns };
+  return { sent, tried, fns: new Proxy({}, { get: () => run }) as SyncFns };
 }
 
 const refusal = (type: OutboxOp['type'], id: string) => listRefused().find((r) => r.op.type === type && r.op.id === id)!;
@@ -905,16 +908,18 @@ describe('second tour : un ancien onglet enfile derrière le verrou, la reprise 
 
 // --- Troisième tour (constats C, E et I) ------------------------------------------
 
-/** Le stockage refuse désormais toute écriture du registre et de sa boîte d'entrée (quota plein). */
-function registryStorageFull(): void {
+/** Le stockage refuse désormais toute écriture du registre et de sa boîte d'entrée, même plus petite (quota plein). */
+function registryStorageFull(): { free: () => void } {
   const setItem = localStorage.setItem.bind(localStorage);
+  let full = true;
   localStorage.setItem = (k: string, v: string) => {
-    if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
+    if (full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
     setItem(k, v);
   };
+  return { free: () => void (full = false) };
 }
 
-describe('troisième tour : le journal de secours suit l’ordre réel des transitions', () => {
+describe('troisième tour : une séance annulée ne revient pas par l’ancienne file', () => {
   it('séance annulée puis stockage plein : sa saisie, reprise de l’ancienne file, ne revient pas', async () => {
     saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
     localStorage.setItem(
@@ -956,22 +961,33 @@ describe('troisième tour : une écriture acquittée sans pouvoir être écrite 
 });
 
 describe('troisième tour : un geste tenu en mémoire entre au registre comme les autres', () => {
-  it('stockage plein, séance refusée : sa série, tenue en mémoire, est retenue et ne part pas', async () => {
+  const refusing = () => base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) });
+
+  it('stockage plein, séance refusée : le refus ne peut pas s’écrire, la passe s’arrête, rien ne part ni ne se perd', async () => {
     registryStorageFull();
     enqueueAll([exec(), insert('s1')]);
     expect(storageFailing()).toBe(true);
 
-    const b = base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) });
-    await flush(b.fns);
+    const b = refusing();
+    for (let i = 0; i < 4; i += 1) await flush(b.fns);
 
-    expect(b.sent).toEqual([]);
-    expect(refusal('insertSet', 's1')).toMatchObject({ heldBy: refusal('upsertExecution', 'exec-1').refusalId });
+    // Une seule question posée à la base, pas une par passe ; la série n'est pas partie sans sa séance.
+    expect(b.tried).toEqual(['upsertExecution:exec-1']);
+    expect(listRefused()).toEqual([]);
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-1', 's1']);
+    // Toujours en mémoire seulement : recharger reste interdit.
+    expect(hasUnpersistedOps()).toBe(true);
   });
 
-  it('la séance renvoyée avec succès : la série repart avec elle', async () => {
-    registryStorageFull();
+  it('la place revient : la séance est refusée, sa série retenue ; renvoyée avec succès, la série repart avec elle', async () => {
+    const device = registryStorageFull();
     enqueueAll([exec(), insert('s1')]);
-    await flush(base({ refuses: (op) => (op.type === 'upsertExecution' ? '23503' : null) }).fns);
+    await flush(refusing().fns);
+
+    device.free();
+    await flush(refusing().fns);
+    expect(refusal('insertSet', 's1')).toMatchObject({ heldBy: refusal('upsertExecution', 'exec-1').refusalId });
+    expect(storageFailing()).toBe(false);
 
     await retryRefused(refusal('upsertExecution', 'exec-1').refusalId);
     const b = base();
@@ -1208,13 +1224,15 @@ describe('relecture entière : sous stockage plein, la boîte d’entrée garde 
       setItem(k, v);
     };
     await flush(base({ refuses: () => '23514' }).fns);
-    expect(listRefused().map((r) => `${r.op.type}:${r.op.id}`)).toEqual(['insertSet:s1']);
+    // Le refus de l'insertion n'a pas pu s'écrire : il n'a pas lieu, la passe s'arrête.
+    expect(listRefused()).toEqual([]);
+    expect(storedWrites().map((w) => `${w.op.type}:${w.fate}`)).toEqual(['insertSet:pending', 'patchSet:pending']);
 
     const tab = await reloaded();
 
-    // Les refus ne tenaient qu'en mémoire : les deux gestes, toujours sur
-    // l'appareil, repartent dans l'ordre. Avant, la clé de l'insertion était
-    // effacée : la correction partait seule, sur une ligne qui n'existe pas.
+    // Les deux gestes, toujours sur l'appareil, repartent dans l'ordre. Avant,
+    // la clé de l'insertion était effacée : la correction partait seule, sur
+    // une ligne qui n'existe pas.
     const b = base();
     await tab.flush(b.fns);
     expect(b.sent).toEqual(['insertSet:s1', 'patchSet:s1']);
@@ -1292,44 +1310,50 @@ describe('relecture entière : une écriture acquittée tenue pour passée le re
 // --- Vérification ciblée de la relecture entière (second tour) ----------------------
 
 describe('vérification ciblée : refus de création dépassé, sous stockage plein', () => {
-  it('la réaffirmation réussit sans pouvoir être écrite : abandonner l’ancien refus laisse la série suivante en attente', async () => {
+  it('la réaffirmation passe en base sans pouvoir être écrite : elle reste en attente, et abandonner l’ancien refus n’emporte rien d’autre', async () => {
     enqueue(exec());
     await flush(base({ refuses: () => '23503' }).fns);
     const old = refusal('upsertExecution', 'exec-1').refusalId;
-    const setItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
-      setItem(k, v);
-    };
     enqueue(exec());
-    await flush(base().fns);
+    const device = registryStorageFull();
+    const b = base();
+    await flush(b.fns);
+    await flush(b.fns);
+    // L'acquittement aurait marqué l'ancien refus comme dépassé : impossible à
+    // écrire, il n'a pas lieu. Une seule requête, et la séance attend toujours.
+    expect(b.tried).toEqual(['upsertExecution:exec-1']);
     enqueue(insert('s1'));
     expect(refusal('upsertExecution', 'exec-1').dependents).toEqual([]);
 
-    await abandonRefused(old);
+    // Abandonner retire : cela passe même appareil plein.
+    expect(await abandonRefused(old)).toBe('done');
+    expect(readQueue().map((op) => op.id)).toEqual(['exec-1', 's1']);
 
-    expect(readQueue().map((op) => op.id)).toEqual(['s1']);
+    device.free();
+    await flush(b.fns);
+    expect(b.sent).toEqual(['upsertExecution:exec-1', 'upsertExecution:exec-1', 'insertSet:s1']);
+    expect(listRefused()).toEqual([]);
   });
 });
 
 describe('vérification ciblée : une lignée écrite en deux fois se reconstruit en une', () => {
-  it('insertion sur l’appareil, correction tenue en mémoire, toutes deux refusées, place revenue, rechargement : abandonner le refus n’envoie pas l’insertion', async () => {
+  it('insertion sur l’appareil, correction tenue en mémoire, place revenue pour la boîte d’entrée, rechargement, les deux refusées : un seul refus, et l’abandonner n’envoie rien', async () => {
     enqueue(insert('s1', 1, { weightKg: 70 }));
     registryStorageFull();
     enqueue(correction('s1', 90));
     await flush(base({ refuses: () => '23514' }).fns);
-    expect(listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([90]);
+    // Voie 1 : le refus de l'insertion n'a pas pu s'écrire, rien n'est refusé.
+    expect(listRefused()).toEqual([]);
     // La place revient pour la boîte d'entrée seulement : le geste tenu en mémoire y est écrit.
     const store = localStorage as unknown as MemoryStorage;
-    store.setItem = (k: string, v: string) => {
-      if (k === REGISTRY_KEY) throw new Error('QuotaExceededError');
-      MemoryStorage.prototype.setItem.call(store, k, v);
-    };
-    expect(retryPersistQueue()).toBe(false);
+    store.setItem = (k: string, v: string) => MemoryStorage.prototype.setItem.call(store, k, v);
+    expect(retryPersistQueue()).toBe(true);
+    expect(hasUnpersistedOps()).toBe(false);
 
     const tab = await reloaded();
+    await tab.flush(base({ refuses: () => '23514' }).fns);
     const [only] = tab.listRefused();
-    expect(tab.listRefused()).toHaveLength(1);
+    expect(tab.listRefused().map((r) => (r.op as { weightKg: number }).weightKg)).toEqual([90]);
     await tab.abandonRefused(only!.refusalId);
 
     const b = base();
@@ -1398,5 +1422,165 @@ describe('vérification ciblée : l’âge monotone d’une acquittée part de l
     mono += 2 * 60 * 1000;
 
     expect(tab.writesSince(stamp)).toEqual([]);
+  });
+});
+
+// --- Voie 1 (ADR 0025) : écrite, ou pas lieu --------------------------------------
+// Le journal de secours (transitions tenues en mémoire puis rejouées) n'existe
+// plus. Appareil plein : un acquittement se règle en retirant l'écriture de sa
+// source, ce qui passe toujours ; un refus, qui grossit l'enregistrement, n'a
+// pas lieu, et la passe s'arrête sans rien retirer ni rien renvoyer en boucle.
+
+describe('voie 1 : appareil plein, un acquittement se règle en rétrécissant sa source', () => {
+  it('plus un octet : tout part une fois, depuis l’enregistrement comme depuis la boîte d’entrée, et l’appareil se vide', async () => {
+    enqueue(exec());
+    await flush(base({ cuts: () => true }).fns); // la séance entre à l'enregistrement
+    enqueueAll([insert('s1'), insert('s2', 2)]); // un geste, une clé de la boîte d'entrée
+    deviceFull();
+
+    const b = base();
+    const result = await flush(b.fns);
+
+    expect(b.tried).toEqual(['upsertExecution:exec-1', 'insertSet:s1', 'insertSet:s2']);
+    expect(result).toMatchObject({ remaining: 0, flushed: 3 });
+    expect(storedWrites()).toEqual([]);
+    expect(storageFailing()).toBe(false);
+  });
+
+  it('saisie que l’appareil a refusée, tenue en mémoire : elle part, et plus rien n’interdit de recharger', async () => {
+    await flush(base().fns); // le verrou de l'ancienne file est posé tant qu'il y a de la place
+    deviceFull();
+    enqueue(insert('s1'));
+    expect(hasUnpersistedOps()).toBe(true);
+    expect(storageFailing()).toBe(true);
+
+    const b = base();
+    await flush(b.fns);
+
+    expect(b.tried).toEqual(['insertSet:s1']);
+    expect(hasUnpersistedOps()).toBe(false);
+    expect(storageFailing()).toBe(false);
+  });
+
+  it('une suppression restée dans la boîte d’entrée emporte, une fois acquittée, le refus qu’elle écartait', async () => {
+    enqueue(insert('s1'));
+    await flush(base({ refuses: () => '23514' }).fns);
+    expect(listRefused()).toHaveLength(1);
+    enqueue(del('s1'));
+    // L'enregistrement ne peut pas recevoir la suppression : elle reste dans sa clé.
+    const setItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k: string, v: string) => {
+      if (k === REGISTRY_KEY && v.includes('deleteSet')) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+
+    const b = base();
+    await flush(b.fns);
+    expect(b.sent).toEqual(['deleteSet:s1']);
+
+    // Après un rechargement, l'ancien refus n'est pas redevenu renvoyable.
+    const tab = await reloaded();
+    expect(tab.listRefused()).toEqual([]);
+    expect(storedWrites()).toEqual([]);
+  });
+});
+
+describe('voie 1 : appareil plein, un refus qui ne peut pas s’écrire arrête la passe', () => {
+  const refusing = () => base({ refuses: (op) => (op.id === 'refusée' ? '23514' : null) });
+
+  it('rien n’est retiré, la saisie indépendante attend, et six passes ne font qu’une requête', async () => {
+    enqueue(del('refusée'));
+    enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
+    await flush(base({ cuts: () => true }).fns);
+    deviceFull();
+
+    const b = refusing();
+    for (let i = 0; i < 6; i += 1) await flush(b.fns);
+
+    // Avant : la suppression refusée repartait 504 fois par passe.
+    expect(b.tried).toEqual(['deleteSet:refusée']);
+    expect(listRefused()).toEqual([]);
+    expect(storedWrites().map((w) => `${w.op.id}:${w.fate}`)).toEqual(['refusée:pending', 'indépendante:pending']);
+    expect(pendingCount()).toBe(2);
+    expect(storageFailing()).toBe(true);
+  });
+
+  it('une saisie faite pendant l’arrêt est gardée ; la place revient, le refus est rangé et tout le reste part', async () => {
+    enqueue(del('refusée'));
+    enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
+    await flush(base({ cuts: () => true }).fns);
+    const device = deviceFull();
+    const b = refusing();
+    await flush(b.fns);
+    enqueue(insert('pendant', 2, { executionId: 'exec-2', exerciseId: 'squat' }));
+    await flush(b.fns);
+    expect(b.tried).toEqual(['deleteSet:refusée']);
+    expect(hasUnpersistedOps()).toBe(true);
+
+    device.free();
+    await flush(b.fns);
+
+    expect(listRefused().map((r) => r.op.id)).toEqual(['refusée']);
+    expect(b.sent).toEqual(['insertSet:indépendante', 'insertSet:pendant']);
+    expect(storageFailing()).toBe(false);
+    expect(hasUnpersistedOps()).toBe(false);
+  });
+
+  it('après un rechargement pendant l’arrêt, rien n’est perdu : les deux saisies sont toujours sur l’appareil', async () => {
+    enqueue(del('refusée'));
+    enqueue(insert('indépendante', 1, { executionId: 'exec-2', exerciseId: 'squat' }));
+    await flush(base({ cuts: () => true }).fns);
+    deviceFull();
+    await flush(refusing().fns);
+
+    const tab = await reloaded();
+
+    expect(tab.readQueue().map((op) => op.id)).toEqual(['refusée', 'indépendante']);
+  });
+});
+
+describe('voie 1 : un acquittement que l’appareil refuse même de retirer n’a pas lieu', () => {
+  it('l’écriture reste en attente, la passe s’arrête, et elle ne repart qu’une fois la place revenue', async () => {
+    enqueue(insert('s1'));
+    enqueue(insert('s2', 2));
+    await flush(base({ cuts: () => true }).fns);
+    const device = registryStorageFull();
+
+    const b = base();
+    for (let i = 0; i < 4; i += 1) await flush(b.fns);
+
+    expect(b.tried).toEqual(['insertSet:s1']);
+    expect(readQueue().map((op) => op.id)).toEqual(['s1', 's2']);
+    expect(storageFailing()).toBe(true);
+
+    device.free();
+    await flush(b.fns);
+    // s1 repart une fois (sans effet : idempotente par id), puis s2.
+    expect(b.tried).toEqual(['insertSet:s1', 'insertSet:s1', 'insertSet:s2']);
+    expect(pendingCount()).toBe(0);
+    expect(storageFailing()).toBe(false);
+  });
+});
+
+describe('voie 1 : les gestes de la feuille des refus disent quand l’appareil n’a rien pu écrire', () => {
+  it('renvoyer ou abandonner sans pouvoir écrire : rien ne bouge, le tableau n’oublie rien, et c’est dit', async () => {
+    enqueue(insert('s1'));
+    enqueue(insert('s2', 2));
+    await flush(base({ refuses: () => '23514' }).fns);
+    const [first] = listRefused();
+    const device = registryStorageFull();
+    const removed: OutboxOp[] = [];
+
+    expect(await retryRefused(first!.refusalId)).toBe('unsaved');
+    expect(await abandonRefused(first!.refusalId, (ops) => removed.push(...ops))).toBe('unsaved');
+
+    expect(removed).toEqual([]);
+    expect(listRefused()).toHaveLength(2);
+    expect(storageFailing()).toBe(true);
+
+    device.free();
+    expect(await abandonRefused(first!.refusalId, (ops) => removed.push(...ops))).toBe('done');
+    expect(removed.map((op) => op.id)).toEqual(['s1']);
+    expect(listRefused().map((r) => r.op.id)).toEqual(['s2']);
   });
 });

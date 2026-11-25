@@ -187,14 +187,19 @@ describe('résiduel 3 : un stockage plein à l’acquittement d’une suppressio
   });
 });
 
-describe('résiduel 6 (client) : un refus se range même quand le stockage est plein', () => {
-  it('la saisie refusée est listée et la suivante part quand même', async () => {
+describe('résiduel 6 (client) : un refus que le stockage plein empêche d’écrire ne perd rien', () => {
+  it('rien n’est rangé parmi les refus tant que la place manque ; elle revient, le refus est listé et la suivante part', async () => {
     const base = fakeBase((op) => (op.type === 'insertSet' && op.id === 'S1' ? '23514' : null));
     enqueueAll([execOp(), insertOp('S1', 1), insertOp('S2', 2)]);
 
+    // Voie 1 (ADR 0025) : une transition est écrite, ou elle n'a pas lieu.
     storage.full = true;
     await flush(base.fns);
+    expect(listRefused()).toEqual([]);
+    expect(base.sets.has('S2')).toBe(false);
 
+    storage.full = false;
+    await flush(base.fns);
     expect(refusalOf('insertSet', 'S1')).toBeDefined();
     expect(base.sets.has('S2')).toBe(true);
   });

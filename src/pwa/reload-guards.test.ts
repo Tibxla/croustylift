@@ -192,19 +192,20 @@ describe('currentBlockers : écritures de la file tenues en mémoire', () => {
     expect(wouldReload()).toBe(true)
   })
 
-  it('un retrait non écrit ne retient rien : seules les écritures en mémoire comptent', async () => {
+  it('appareil plein après coup : ce qui est acquitté quitte sa clé, rien ne tient en mémoire', async () => {
     // Tout est écrit sur l'appareil, puis le stockage se remplit.
     enqueue(execOp)
     enqueue(setOp('s1', 1))
     enqueue(setOp('s2', 2))
     quota()
 
-    // L'exécution et s1 passent en base, s2 non. Leur retrait de la file ne peut
-    // pas être écrit : la file persistée les garde, elles seraient rejouées sans
-    // effet après un rechargement. Rien n'existe en mémoire seulement.
+    // L'exécution et s1 passent en base, s2 non. Elles quittent leur clé de la
+    // boîte d'entrée (retirer passe toujours) ; s2 reste dans la sienne. Rien
+    // n'existe en mémoire seulement, et rien n'a été refusé.
     await flush(syncFns(['s2']))
     expect(pendingCount()).toBe(1)
-    expect(storageFailing()).toBe(true)
+    expect(storedPendingIds()).toEqual(['s2'])
+    expect(storageFailing()).toBe(false)
     expect(currentBlockers()).toEqual([])
     expect(wouldReload()).toBe(true)
   })
