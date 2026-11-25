@@ -44,7 +44,9 @@
 //   faint #8f8c85 5,7:1 méta (13 px au moins) · dim #6b6761 3,4:1 repères non
 //   textuels · line #3a3733 filets, aplat de pression · on-ink #4a463f texte
 //   secondaire sur le bouton principal · group #24211d groupes arrondis (faint
-//   4,78:1) · group-sheet #28241f les mêmes dans une feuille · sig réglable.
+//   4,78:1) · group-sheet #28241f les mêmes dans une feuille · sig réglable ·
+//   status-done #9fb59a vert sauge, « fait » seulement · status-current #8fa6b8
+//   bleu ardoise, « en cours » seulement (pastilles d'état, `StatePill`).
 //   `bg-surface` lit le bon des deux (une feuille repose `--surface`).
 //   Rayons : `rounded-block` 12 px (boutons, champs, segments), `rounded-note`
 //   14 px (avis), `rounded-group` 18 px (groupes), `rounded-t-sheet` 16 px. Marge d'écran 20 px

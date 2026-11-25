@@ -79,9 +79,13 @@
       },
       "status-done": {
         "role": "semantic",
-        "displayName": "Fait",
-        "canonical": "#f6d236",
-        "note": "Provisoire : vaut var(--sig), le signal (jaune par défaut), en attendant le choix de l'utilisateur ; texte noir chaud dessus."
+        "displayName": "Vert sauge (fait)",
+        "canonical": "#9fb59a"
+      },
+      "status-current": {
+        "role": "semantic",
+        "displayName": "Bleu ardoise (en cours)",
+        "canonical": "#8fa6b8"
       }
     },
     "typographyMeta": {
@@ -335,6 +339,11 @@
         "name": "The Selection Pill Rule",
         "body": "Ce qui est choisi ou en cours se pose dans une pastille arrondie de 10 px (aplat de filet ou fond de groupe), jamais soulignée, jamais au signal.",
         "section": "shapes"
+      },
+      {
+        "name": "The One Meaning Colors Rule",
+        "body": "Trois couleurs à sens unique : le signal pour « mieux que », le vert sauge pour « fait », le bleu ardoise pour « en cours ». Toujours avec signe et mot.",
+        "section": "colors"
       }
     ],
     "dos": [

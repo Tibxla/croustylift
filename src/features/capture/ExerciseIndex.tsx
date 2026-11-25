@@ -2,8 +2,8 @@
 // (fait, en cours, passé) et une jauge de ses séries. Toucher un numéro ouvre
 // l'exo (alternance, superset). Le mot de l'état est dans le nom accessible :
 // la colonne est trop étroite pour lui. Le numéro et sa marque prennent la
-// pastille d'état du Sommaire (`StatePill`, kit) : pleine et colorée pour un exo
-// fait, en contour pour un exo entamé ; la ligne garde sa hauteur.
+// pastille d'état du Sommaire (`StatePill`, kit) : vert sauge pour un exo fait,
+// bleu ardoise pour un exo entamé ; la ligne garde sa hauteur.
 import { StatePill, type ExoState } from '../../ui';
 import { EXO_STATE_WORD } from './salle-progress';
 

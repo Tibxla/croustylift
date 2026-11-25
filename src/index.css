@@ -26,6 +26,9 @@
   --color-on-ink: #4a463f;  /* texte secondaire posé sur le bouton principal */
   --color-group: #24211d;   /* groupes arrondis (listes, avis) posés sur le fond */
   --color-group-sheet: #28241f; /* les mêmes, posés dans une feuille levée */
+  /* Deux couleurs d'état à sens unique (DESIGN.md), à côté du signal : */
+  --color-status-done: #9fb59a;    /* vert sauge : « fait », rien d'autre */
+  --color-status-current: #8fa6b8; /* bleu ardoise : « en cours », rien d'autre */
 
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
@@ -52,8 +55,6 @@
   /* Fond d'un groupe arrondi : `group` sur le fond, `group-sheet` dans une
      feuille (le panneau de `Sheet` repose `--surface`). En Tailwind : `bg-surface`. */
   --color-surface: var(--surface);
-  /* État « fait » d'un exo (pastille du Sommaire et de l'index de la Salle). */
-  --color-status-done: var(--status-done);
 }
 
 :root {
@@ -64,11 +65,6 @@
   --sig: #f6d236;
   /* Fond des groupes arrondis, relu par `bg-surface` ; une feuille le change. */
   --surface: var(--color-group);
-  /* Couleur de l'état « fait » (pastille pleine, texte noir chaud dessus). EN
-     ATTENDANT le choix de l'utilisateur : le signal. Une valeur ici suffit à la
-     changer partout ; le contraste du noir chaud dessus se prouve dans
-     scripts/contrast.mjs. */
-  --status-done: var(--sig);
 
   /* Encoches du système, lues une seule fois ici : tout le calcul de hauteur
      passe par ces deux variables (et les tests peuvent les surcharger, Chromium

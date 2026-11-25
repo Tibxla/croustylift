@@ -162,7 +162,7 @@ Ce que le système rejette : les trackers de muscu classiques (Hevy, Strong, Fit
 
 ## Colors
 
-Palette **retenue** : onze valeurs, toutes définies une fois dans `src/index.css` (`@theme`), en hexadécimal. Ratios WCAG sur le fond, mesurés par `npm run contrast`.
+Palette **retenue** : treize valeurs, toutes définies une fois dans `src/index.css` (`@theme`), en hexadécimal. Ratios WCAG sur le fond, mesurés par `npm run contrast`.
 
 ### Neutres
 
@@ -176,6 +176,14 @@ Palette **retenue** : onze valeurs, toutes définies une fois dans `src/index.cs
 - **Gris repère** (`#6b6761`, `--color-dim`, 3,4:1) : repères non textuels (graduations, filet de fourchette), texte de 24 px au moins seulement.
 - **Filet** (`#3a3733`, `--color-line`, 1,6:1) : filets et séparateurs, jamais porteurs de sens seuls ; aplat de pression.
 - **Encre sur blanc** (`#4a463f`, `--color-on-ink`, 8,3:1 sur le blanc cassé) : texte secondaire posé sur le bouton principal.
+
+### Couleurs d'état
+
+Deux tons doux et désaturés, chacun à **un seul sens**, comme le signal (trois couleurs à sens unique en tout : le signal pour « mieux que », le vert sauge pour « fait », l'ardoise pour « en cours ») :
+
+- **Vert sauge** (`#9fb59a`, `--color-status-done`) : un exo fait. Pastille pleine, texte noir chaud dessus (8,8:1) ; en texte, 7,3:1 sur un groupe.
+- **Bleu ardoise** (`#8fa6b8`, `--color-status-current`) : un exo en cours. Pastille pleine, texte noir chaud dessus (7,6:1) ; en texte, 6,4:1 sur un groupe.
+- Jamais ailleurs : ni bouton, ni lien, ni sélection, ni série battue (le signal), ni confirmation. Toujours avec le signe et le mot (triade).
 
 ### Le signal
 
@@ -245,7 +253,7 @@ Palette **retenue** : onze valeurs, toutes définies une fois dans `src/index.cs
 - **Alignement** : texte courant et titres à 20 px du bord (`px-5`) ; blocs (groupes, avis, segments) à 16 px. Le texte dans un bloc tombe ainsi à 32 px.
 - **Instrument de la Salle** : ses rayons et le retrait de ses plaques sont des jetons (`src/index.css`) : `--radius-plate` 18 px (`rounded-plate`, les trois plaques, au rayon des groupes), `--radius-cell` 10 px (`rounded-cell`, la pastille d'une case de la bande, d'un chiffre choisi, d'un mot actif), `--plate-inset` 12 px (8 sous 360 px, pour garder des cases de 44 px). Les plaques prennent le fond de groupe (`bg-surface`) et rognent la règle à leurs coins ; Logger prend `rounded-block`.
 - **Pastilles de sélection** (reprises du traitement « Doux », 25/11) : ce qui est choisi ou en cours se pose dans une pastille arrondie de 10 px, sans soulignement : la série en cours de la bande (fond de groupe, débordant de 8 px à gauche, sans changer la hauteur), le chiffre choisi de Reps et de RIR (aplat de filet, sous le petit carré de la Référence, qui reste visible), le mot actif de la navigation. Le choix à segments (`Choice`) suit la même logique. Jamais de pastille au signal.
-- **Pastilles d'état d'un exo** (`StatePill`) : Sommaire, index de l'instrument, fin de séance. « Fait » en pastille pleine `--status-done` avec la coche et le mot en noir chaud ; « en cours » en contour blanc cassé ; « à faire » gris sans pastille ; « passé » gris barré. `--status-done` vaut le signal EN ATTENDANT le choix de l'utilisateur : c'est une exception provisoire à la règle des deux sens du signal. Noir chaud sur chaque couleur prédéfinie : 6,4:1 au moins (`npm run contrast`).
+- **Pastilles d'état d'un exo** (`StatePill`) : Sommaire, index de l'instrument, fin de séance. « Fait » en pastille pleine vert sauge (`status-done`), coche et mot en noir chaud ; « en cours » en pastille pleine bleu ardoise (`status-current`), cercle à moitié plein et mot en noir chaud ; « à faire » gris sans pastille ; « passé » gris barré.
 - **Filets** : 1 px `--color-line`, à l'intérieur d'un groupe seulement ; trait épais de 2 px en `--color-muted` pour séparer deux familles de contenu.
 - Pas de pilule de badge, pas de `rounded-2xl`, pas de cercle décoratif. Les seuls cercles sont les marques d'état d'un exo.
 
