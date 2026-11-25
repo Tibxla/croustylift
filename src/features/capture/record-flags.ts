@@ -10,7 +10,7 @@ import {
   type PersonalRecord,
   type PersonalRecordBySide,
 } from '../../domain/pr';
-import type { PerformedSet } from '../../domain/types';
+import type { PerformedSet, Side } from '../../domain/types';
 
 /** Le type de record qu'une série bat : e1RM, charge, ou les deux. */
 export type RecordKind = 'e1rm' | 'weight-reps' | 'both';
@@ -86,6 +86,21 @@ export function computeRecordFlagsBySide(
     if (weightReps) return 'weight-reps';
     return null;
   });
+}
+
+/**
+ * Le record COURANT : l'historique (`historical`, `null` au premier passage)
+ * avancé par les séries du jour, avec la règle des marqueurs (`absorb` : une
+ * égalité ne le déplace pas). En unilatéral, `side` ne garde que les séries de ce
+ * côté (une ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`) et
+ * `historical` est le record de ce côté. C'est le repère « Record » de
+ * l'instrument, face auquel le brouillon se situe en direct (draft-score.ts).
+ * `null` : aucun record, ni historique ni du jour.
+ */
+export function currentRecord(sets: readonly PerformedSet[], historical: PersonalRecord | null, side?: Side): PersonalRecord | null {
+  const mine = side ? sets.filter((s) => (s.side === 'right' ? 'right' : 'left') === side) : sets;
+  if (mine.length === 0) return historical;
+  return mine.reduce(absorb, historical ?? { bestE1rm: null, bestE1rmSet: null, bestWeightReps: null });
 }
 
 /** Intègre une série dans un record courant (pour faire avancer la comparaison). */
