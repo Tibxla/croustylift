@@ -350,7 +350,7 @@ export function ExerciseCapture({
   const openWords = useCallback(() => setWordsOpen(true), []);
   const closeWords = useCallback(() => setWordsOpen(false), []);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
-  // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
+  // reste au-dessus du pied, unilatéral et nom long compris.
   const compact = useCompact();
   // Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : un cran de plus.
   const tight = useCompactTight();

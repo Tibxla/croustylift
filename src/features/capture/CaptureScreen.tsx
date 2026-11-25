@@ -1405,7 +1405,7 @@ type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
 /** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
  *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, pas de
- *  ligne (elle pousserait la rangée RIR sous la barre du pouce) : seules les
+ *  ligne (elle pousserait les plaques sous le pied) : seules les
  *  alarmes s'y disent, le bouton Sommaire garde la progression. */
 function SalleSync() {
   const sync = useSyncState();

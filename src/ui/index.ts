@@ -7,7 +7,10 @@
 // (`text-sig`, `var(--sig)`, réglable dans Réglages, jaune par défaut). Il est
 // réservé à deux sens et à rien d'autre :
 //   1. l'aiguille de la règle (« c'est ici que tu es ») ;
-//   2. le ▲ « mieux que la Référence » (série battue, record, pente en hausse).
+//   2. le ▲ « mieux que » : série battue, record, pente en hausse, et le
+//      brouillon de la Salle au-dessus de la Référence ou du Record, en direct
+//      (choix de l'utilisateur du 25/11, ADR 0010 amendé le 2026-11-25 ; des
+//      mots de position, jamais « battue » avant le log).
 // Le signal n'est jamais un fond, jamais un bouton, jamais un lien, jamais un
 // interrupteur activé, jamais une sélection. Il ne touche jamais le blanc cassé
 // (1,3:1). Égalé reste blanc cassé (▬), en deçà reste gris (▼) : un statut =
