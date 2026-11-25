@@ -143,6 +143,18 @@ describe('draftScore : « Cette série », « Dernière fois », « Record »', 
     expect(score.record).toEqual({ kind: 'record', label: 'e1RM', value: '130', standing: { v: 'down', word: 'en dessous', gap: '−13,3' } });
   });
 
+  it('record chargé dont la série n’a pas de RIR : jugé sur l’e1RM du record, celui des badges', () => {
+    // bestE1rm = 100 × 5 @2 = 120 ; la série porteuse a perdu son RIR. Relue à
+    // RIR 0, elle vaudrait 116,7 et le brouillon à 120 se dirait « au-dessus ».
+    const score = draftScore({
+      draft: { weightKg: 100, reps: 5, rir: 2 },
+      refSet: null,
+      hasReference: true,
+      record: { bestE1rm: 120, bestE1rmSet: { weightKg: 100, reps: 5 }, bestWeightReps: { weightKg: 100, reps: 5 } },
+    });
+    expect(score.record).toEqual({ kind: 'record', label: 'e1RM', value: '120', standing: { v: 'eq', word: 'à égalité', gap: null } });
+  });
+
   it('brouillon invalide : la mesure manque, les repères restent, sans position', () => {
     const score = draftScore({
       draft: { weightKg: 100, reps: 0, rir: 1 },

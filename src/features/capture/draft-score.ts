@@ -65,8 +65,8 @@ export function standingVs(draft: Performance, target: Performance): Standing | 
   return standingOf(order, gap);
 }
 
-/** Face à un e1RM seul (record d'ancien format, sans sa série) : la règle stricte
- *  de `isE1rmRecord`, sur la mesure entière. */
+/** Face à l'e1RM d'un record chargé : la règle stricte de `isE1rmRecord`, sur la
+ *  mesure entière. La série du record ne sert qu'au record tenu à 0 kg. */
 function standingVsE1rm(draft: Performance, best: number): Standing | null {
   if (!measurable(draft)) return null;
   const e1rm = draftE1rm(draft.weightKg, draft.reps, draft.rir) ?? 0;
@@ -116,7 +116,10 @@ export function draftScore({
             kind: 'record',
             label: 'e1RM',
             value: formatE1rm(record.bestE1rm),
-            standing: holder ? standingVs(draft, holder) : standingVsE1rm(draft, record.bestE1rm),
+            // Jugé sur l'e1RM du record, comme les badges (`isE1rmRecord`) : la
+            // série porteuse peut avoir perdu son RIR, et relue à RIR 0 elle
+            // vaudrait moins que le record affiché.
+            standing: standingVsE1rm(draft, record.bestE1rm),
           };
   }
 
