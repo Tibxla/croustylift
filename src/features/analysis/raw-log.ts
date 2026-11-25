@@ -5,7 +5,8 @@
 //
 // Forme produite : une entrée par EXÉCUTION (une séance un jour donné), la plus
 // récente en tête (on consulte d'abord ce qu'on vient de faire), et dans chaque
-// exécution les exos travaillés, chacun avec ses séries triées par order. Pure,
+// exécution les exos travaillés dans l'ordre où ils ont été faits, chacun avec
+// ses séries triées par order. Pure,
 // sans dépendance réseau : la couche data (`loadRawLog`) ne fait que l'alimenter.
 
 /** Une série loggée, dans la forme brute lue de `performed_sets`. */
@@ -33,6 +34,12 @@ export interface RawLogSet {
  * de valeur dans le récap (cf. issue #32).
  */
 export interface RawLogExecutionMeta {
+  /**
+   * Id de la séance jouée, toutes versions confondues (`null` si exécution
+   * hors-template) : la Référence d'une série se cherche dans la même séance
+   * (cf. journal-verdicts). Absent = inconnu, traité comme hors séance.
+   */
+  seanceId?: string | null
   /** Nom de la séance jouée (`null` si exécution hors-template). */
   sessionName: string | null
   /**
@@ -60,6 +67,13 @@ export interface RawLogRow extends RawLogExecutionMeta {
   createdAt?: string
   exerciseId: string
   exerciseName: string
+  /**
+   * Rang de l'exo dans la séance (`performed_sets.exercise_position`), s'il a été
+   * écrit. Prime sur l'heure de saisie pour ranger les exos d'une séance.
+   */
+  exercisePosition?: number | null
+  /** Timestamp ISO de saisie de la série : l'exo se range à sa première série. */
+  setCreatedAt?: string
   set: RawLogSet
 }
 
@@ -89,16 +103,37 @@ function sideRank(side: RawLogSet['side']): number {
   return 0
 }
 
+/** Ce qui range un exo dans sa séance : son rang s'il est écrit, sa première série. */
+interface ExerciseRank {
+  position: number | null
+  firstSetAt: string
+}
+
+/**
+ * Ordre des exos d'une séance : on la relit comme on l'a vécue (l'ordre porte la
+ * fatigue, cf. Référence). Le rang écrit (`exercise_position`) d'abord quand les
+ * deux exos en ont un, puis l'heure de la PREMIÈRE série de chaque exo, le nom
+ * (locale fr) en dernier recours.
+ */
+function compareExercises(a: RawLogExercise, b: RawLogExercise, rank: Map<RawLogExercise, ExerciseRank>): number {
+  const ra = rank.get(a)!
+  const rb = rank.get(b)!
+  if (ra.position !== null && rb.position !== null && ra.position !== rb.position) return ra.position - rb.position
+  if (ra.firstSetAt && rb.firstSetAt && ra.firstSetAt !== rb.firstSetAt) return ra.firstSetAt.localeCompare(rb.firstSetAt)
+  return a.name.localeCompare(b.name, 'fr')
+}
+
 /**
  * Regroupe des lignes plates `(exécution, exo, série)` en log brut consultable :
  * exécutions triées par date DÉCROISSANTE (la plus récente en tête ; le même
- * jour, la plus récemment créée d'abord, puis l'id), exos triés
- * par nom (locale fr), séries triées par order croissant (et, à order égal pour
- * une série unilatérale, gauche avant droite). Pure.
+ * jour, la plus récemment créée d'abord, puis l'id), exos dans l'ordre de la
+ * séance (`compareExercises`), séries triées par order croissant (et, à order
+ * égal pour une série unilatérale, gauche avant droite). Pure.
  */
 export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
   const byExecution = new Map<string, RawLogEntry>()
   const createdAtOf = new Map<string, string>()
+  const rank = new Map<RawLogExercise, ExerciseRank>()
 
   for (const row of rows) {
     let entry = byExecution.get(row.executionId)
@@ -108,6 +143,7 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
       entry = {
         executionId: row.executionId,
         date: row.date,
+        seanceId: row.seanceId ?? null,
         sessionName: row.sessionName,
         routineName: row.routineName,
         bpmAvg: row.bpmAvg,
@@ -122,14 +158,18 @@ export function buildRawLog(rows: RawLogRow[]): RawLogEntry[] {
     if (!exercise) {
       exercise = { exerciseId: row.exerciseId, name: row.exerciseName, sets: [] }
       entry.exercises.push(exercise)
+      rank.set(exercise, { position: row.exercisePosition ?? null, firstSetAt: row.setCreatedAt ?? '' })
     }
     exercise.sets.push(row.set)
+    const r = rank.get(exercise)!
+    if (r.position === null && row.exercisePosition != null) r.position = row.exercisePosition
+    if (row.setCreatedAt && (!r.firstSetAt || row.setCreatedAt < r.firstSetAt)) r.firstSetAt = row.setCreatedAt
   }
 
   const entries = [...byExecution.values()]
 
   for (const entry of entries) {
-    entry.exercises.sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+    entry.exercises.sort((a, b) => compareExercises(a, b, rank))
     for (const exercise of entry.exercises) {
       exercise.sets.sort(
         (a, b) => a.order - b.order || sideRank(a.side) - sideRank(b.side),

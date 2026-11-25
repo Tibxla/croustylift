@@ -1,13 +1,15 @@
-// Les saisies refusées par le serveur (quarantaine de la file, ADR 0018), lues
+// Les saisies refusées par le serveur (registre d'écritures, ADR 0018), lues
 // par un humain : quoi, quand, pourquoi. Pur, testé ; l'écran est
 // RefusedWritesSheet.tsx.
 //
-// La file ne porte que des identifiants : le nom de l'exo vient du catalogue
-// local (lu par l'appelant, hors ligne compris), la date d'une séance de son op
-// de création quand elle est connue. La raison est la chaîne stockée par la
-// file : « <code SQLSTATE> : <message> » pour un refus de la base (traduite
-// par `errorMessage`, comme partout), ou la dépendance à une séance refusée.
-import type { RefusedWrite } from '../features/capture/outbox';
+// Ce module ne fait qu'AFFICHER ce que le registre rend (`RefusedWrite`,
+// outbox.ts) : qui retient une saisie (`heldBy`), ce qui partira avec elle
+// (`dependents`). Il ne déduit rien du texte d'un motif, et ne relit pas le
+// registre. Le nom de l'exo vient du catalogue local (lu par l'appelant, hors
+// ligne compris), la date d'une séance de son op de création. Le motif est la
+// chaîne gardée avec le refus : « <code SQLSTATE> : <message> », traduite par
+// `errorMessage`, comme partout.
+import type { GestureOutcome, RefusedWrite } from '../features/capture/outbox';
 import { errorMessage } from '../lib/error-message';
 
 export interface RefusalText {
@@ -51,6 +53,16 @@ function kg(n: number): string {
 
 /** Refus d'une valeur : la renvoyer telle quelle échouera à l'identique. */
 const VALUE_REFUSALS = new Set(['23514', '22003', '22001', '23502']);
+/**
+ * Donnée mal formée : toute la classe 22 de Postgres (« data exception » :
+ * 22P02 texte illisible pour son type, 22007 date invalide, 22023 paramètre
+ * invalide…), hors les dépassements déjà dans `VALUE_REFUSALS`. La file la met
+ * en quarantaine (`isPermanentRejection`, outbox.ts) ; la renvoyer échouera à
+ * l'identique, et recharger l'écran n'y change rien.
+ */
+const isMalformed = (code: string) => /^22[0-9A-Z]{3}$/.test(code) && !VALUE_REFUSALS.has(code);
+/** Refus que renvoyer ne lèvera pas : valeur, donnée mal formée, élément lié supprimé. */
+const isValueRefusal = (code: string) => VALUE_REFUSALS.has(code) || isMalformed(code) || code === '23503';
 const SILENT = 'Le serveur l’a refusée sans dire pourquoi.';
 /** Message intégré de Postgres ou PostgREST (anglais), par opposition au motif
  *  français écrit par un trigger, qui passe tel quel (cf. lib/error-message). */
@@ -62,7 +74,7 @@ const isBuiltIn = (message: string) => /^([a-z]|JSON )/.test(message);
  * si renvoyer peut servir, sinon d'abandonner. Le code SQLSTATE ne s'affiche
  * pas (il reste dans le relevé de diagnostic).
  */
-export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'op'>): string {
+export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'heldBy'>): string {
   if (entry.superseded) return 'La séance a été créée depuis : ce refus n’a plus d’effet.';
   const reason = entry.reason ?? '';
   if (isDependent(entry)) return 'Elle repart avec sa séance.';
@@ -71,6 +83,9 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
     const [, code = '', message = ''] = m;
     if (isBuiltIn(message) && VALUE_REFUSALS.has(code)) {
       return 'Une valeur dépasse ce que le serveur accepte : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
+    }
+    if (isBuiltIn(message) && isMalformed(code)) {
+      return 'Une donnée est mal formée : la renvoyer échouera encore. Abandonne-la et ressaisis-la.';
     }
     if (isBuiltIn(message) && code === '23503') return 'Elle visait un élément supprimé depuis un autre appareil. Abandonne-la.';
     const text = errorMessage({ code, message }).trim();
@@ -83,26 +98,45 @@ export function refusalReason(entry: Pick<RefusedWrite, 'reason' | 'superseded' 
 /**
  * Renvoyer telle quelle peut-il aboutir ? Non pour une création de séance
  * dépassée, une saisie retenue par sa séance (elle repart avec elle), une valeur
- * refusée ou un élément lié supprimé : le serveur refuserait à l'identique.
+ * refusée, une donnée mal formée ou un élément lié supprimé : le serveur
+ * refuserait à l'identique.
  */
-export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded'>): boolean {
+export function canRetry(entry: Pick<RefusedWrite, 'reason' | 'superseded' | 'heldBy'>): boolean {
   if (entry.superseded || isDependent(entry)) return false;
   const m = /^([0-9A-Z]{5}) : ([\s\S]*)$/.exec(entry.reason ?? '');
   if (!m) return true;
   const [, code = '', message = ''] = m;
-  return !(isBuiltIn(message) && (VALUE_REFUSALS.has(code) || code === '23503'));
+  return !(isBuiltIn(message) && isValueRefusal(code));
 }
 
 /** Retenue seulement parce que la création de sa séance a été refusée. */
-export function isDependent(entry: Pick<RefusedWrite, 'reason'>): boolean {
-  return (entry.reason ?? '').startsWith('dépend de l');
+export function isDependent(entry: Pick<RefusedWrite, 'heldBy'>): boolean {
+  return entry.heldBy !== undefined;
 }
 
-/** Les saisies retenues par la création refusée de cette séance (même exécution). */
-export function dependentsOf(execution: RefusedWrite, entries: readonly RefusedWrite[]): RefusedWrite[] {
-  if (execution.op.type !== 'upsertExecution') return [];
-  const id = execution.op.id;
-  return entries.filter((e) => e !== execution && isDependent(e) && e.reason.includes(id));
+/**
+ * Ce que l'abandon de cette saisie emporte avec elle, dit dans la confirmation ;
+ * vide si rien n'en dépend. Une série refusée emporte sa correction (elle
+ * n'aurait plus de ligne à corriger) ; le début d'une séance emporte les
+ * saisies qu'il retenait.
+ */
+export function abandonWarning(entry: Pick<RefusedWrite, 'op' | 'dependents'>): string {
+  const deps = entry.dependents;
+  if (deps.length === 0) return '';
+  const op = entry.op;
+  if (op.type === 'insertSet' || op.type === 'patchSet') {
+    const corrections = deps.filter(
+      (dep) => dep.type === 'patchSet' && dep.id === op.id && dep.only === 'values',
+    );
+    if (corrections.length === deps.length) {
+      return corrections.length > 1
+        ? `Tes ${corrections.length} corrections de la série ${op.setOrder} seront aussi abandonnées.`
+        : `Ta correction de la série ${op.setOrder} sera aussi abandonnée.`;
+    }
+  }
+  return deps.length > 1
+    ? `Les ${deps.length} saisies qui en dépendent partent avec elle.`
+    : 'La saisie qui en dépend part avec elle.';
 }
 
 /** Une note tronquée pour la liste. */
@@ -127,7 +161,8 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
     case 'patchSet': {
       const side = op.side === 'left' ? ' · gauche' : op.side === 'right' ? ' · droite' : '';
       const values = `${kg(op.weightKg)} kg × ${op.reps} · RIR ${op.rir}${side}`;
-      const kind = op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : 'nouveau rang';
+      const kind =
+        op.type === 'insertSet' ? null : op.only === 'values' ? 'correction' : op.only === 'side' ? 'nouveau côté' : 'nouveau rang';
       return { ...base, what: withExo(`Série ${op.setOrder}`, op.exerciseId), detail: kind ? `${kind} · ${values}` : values };
     }
     case 'deleteSet':
@@ -153,3 +188,13 @@ export function describeRefusal(entry: RefusedWrite, lookup: RefusalLookup): Ref
       return { ...base, what: 'Retrait d’une séance vide', detail: '' };
   }
 }
+
+/**
+ * Ce que la feuille dit quand un geste n'a rien fait (`retryRefused` ou
+ * `abandonRefused` n'a pas rendu `'done'`, outbox.ts).
+ */
+export const GESTURE_TEXT: Record<Exclude<GestureOutcome, 'done'>, string> = {
+  gone: 'Cette saisie a déjà été réglée, depuis un autre onglet.',
+  busy: 'Un envoi est en cours dans un autre onglet. Réessaie dans un instant.',
+  unsaved: 'L’appareil n’a pas pu l’enregistrer (stockage plein) : rien n’a changé. Réessaie une fois de la place libérée.',
+};

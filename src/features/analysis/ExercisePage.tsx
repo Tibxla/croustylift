@@ -32,6 +32,8 @@ import { E1rmChart } from './E1rmChart';
 import { formatDay, rateCaption, sessionsLabel } from './rate-period';
 import { SecondaryChart } from './SecondaryChart';
 import { SlopeStatus } from './SlopeStatus';
+import { WordsHelp } from './WordsHelp';
+import { useOnline } from '../../lib/use-dated-load';
 import { measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label';
 
 export function ExercisePage({
@@ -149,6 +151,7 @@ export function ExercisePage({
             {note && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{note}</p>}
             {holes && <p className="mt-1 text-[13px] leading-[1.45] text-faint">{holes}.</p>}
             {cut && <p className="mt-1 text-[13px] leading-[1.45] text-faint">Trait coupé : plus de trois semaines sans séance.</p>}
+            <WordsHelp terms={unit === 'reps' ? ['pente', 'bloc'] : ['e1rm', 'pente', 'bloc']} />
           </div>
 
           {multi && <Legend curves={seanceCurves} shown={shown} onToggle={toggle} year={year} />}
@@ -251,15 +254,23 @@ function Legend({
   );
 }
 
-type ExecLoad = { phase: 'loading' } | { phase: 'error'; message: string } | { phase: 'ready'; executions: ExerciseExecution[] };
+type ExecLoad =
+  | { phase: 'loading' }
+  | { phase: 'offline' }
+  | { phase: 'error'; message: string }
+  | { phase: 'ready'; executions: ExerciseExecution[] };
 
-/** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`). */
+/** Les exécutions de l'exo, relues à l'ouverture de sa page (montée par `key`).
+ *  Hors ligne, rien n'est lancé (on attendait 7 s pour rien) ; le retour du
+ *  réseau relance la lecture. */
 function useExecutions(
   exerciseId: string,
   load: (exerciseId: string) => Promise<{ executions: ExerciseExecution[] }>,
 ): ExecLoad {
   const [state, setState] = useState<ExecLoad>({ phase: 'loading' });
+  const online = useOnline();
   useEffect(() => {
+    if (!online) return;
     let active = true;
     load(exerciseId).then(
       ({ executions }) => {
@@ -272,8 +283,8 @@ function useExecutions(
     return () => {
       active = false;
     };
-  }, [exerciseId, load]);
-  return state;
+  }, [exerciseId, load, online]);
+  return !online && state.phase !== 'ready' ? { phase: 'offline' } : state;
 }
 
 const sideWord = (s: 'left' | 'right') => (s === 'left' ? 'gauche' : 'droite');
@@ -295,12 +306,24 @@ function PointSets({
   const sets = exec ? [...exec.sets].sort((a, b) => a.order - b.order || (a.side ?? '').localeCompare(b.side ?? '')) : [];
   return (
     <section aria-labelledby="exo-series-point">
-      <SectionTitle id="exo-series-point" aside={exec ? `${formatInt(liftedKg(exec.sets))} kg soulevés` : undefined}>
+      <SectionTitle id="exo-series-point" aside={
+          exec ? (
+            // Chiffres tabulaires, comme au Journal : l'espace des milliers s'y voit (« 1 370 »).
+            <>
+              <span className="tnum">{formatInt(liftedKg(exec.sets))}</span>
+              {'\u00a0kg soulevés'}
+            </>
+          ) : undefined
+        }>
         Séries du {date}
       </SectionTitle>
       {phase === 'loading' ? (
         <p role="status" className="border-t border-line px-5 py-3 text-[15px] text-muted">
           Chargement des séries…
+        </p>
+      ) : phase === 'offline' ? (
+        <p role="status" className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+          Les séries se lisent avec le réseau. La courbe, elle, est là.
         </p>
       ) : !exec ? (
         <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
@@ -352,7 +375,14 @@ function Facts({
   const last = lead.curve[lead.curve.length - 1];
   const delta = first && last ? Math.round((last.e1rm - first.e1rm) * 10) / 10 : null;
   const unitWord = unit === 'reps' ? 'reps' : 'kg';
-  const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))} ${unitWord}`;
+  const signed = (d: number) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${fmtValue(Math.abs(d))}\u00a0${unitWord}`;
+  /** Un nombre et son unité, comme dans la liste de l'Analyse (« 217 kg »). */
+  const withUnit = (value: string, word: string) => (
+    <>
+      {value}
+      <span className="ml-1 text-[14px] font-normal text-muted">{word}</span>
+    </>
+  );
   return (
     <section aria-labelledby="exo-faits">
       <SectionTitle id="exo-faits">Faits</SectionTitle>
@@ -363,19 +393,21 @@ function Facts({
             meta={`${facts.record.set.weightKg === 0 ? `${facts.record.set.reps} reps` : `${formatWeight(facts.record.set.weightKg)} kg × ${facts.record.set.reps}`} · RIR ${facts.record.set.rir}${
               facts.record.date ? `, ${formatDay(facts.record.date, year)}` : ''
             }`}
-            value={fmtValue(facts.record.value)}
+            value={withUnit(fmtValue(facts.record.value), unitWord)}
           />
         )}
         {facts.heaviest && unit === 'kg' && (
           <Row
             title="Charge la plus lourde"
             meta={`${formatWeight(facts.heaviest.weightKg)} kg × ${facts.heaviest.reps}${facts.heaviest.date ? `, ${formatDay(facts.heaviest.date, year)}` : ''}`}
-            value={formatWeight(facts.heaviest.weightKg)}
+            value={withUnit(formatWeight(facts.heaviest.weightKg), 'kg')}
           />
         )}
         {delta !== null && first && lead.curve.length > 1 && (
           <Row
-            title={`Depuis la 1ʳᵉ ${lead.seanceName}`}
+            // La mesure se nomme : « +163,5 kg » seul se lisait comme des kilos de
+            // plus sur la barre.
+            title={`${unit === 'reps' ? 'Reps effectives' : 'e1RM'} depuis la 1ʳᵉ ${lead.seanceName}`}
             meta={`${sessionsLabel(lead.curve.length)} depuis le ${formatDay(first.date, year)}`}
             // Un écart depuis le départ n'est ni une série battue, ni un record, ni
             // une pente : blanc cassé, avec son signe et son chiffre.

@@ -175,7 +175,7 @@ export interface ExecutionSetRow {
 }
 
 const EXECUTION_SET_SELECT =
-  'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )';
+  'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercise_position, exercises ( name ), executions ( performed_on, created_at, started_at, seance_versions ( seance_id, seances ( name, routine_id, routines ( name ) ) ) )';
 
 /** Les exécutions d'un exo, avec son nom de catalogue (`null` si l'exo a disparu). */
 export interface ExerciseExecutions extends LoadedExecutions {
@@ -237,7 +237,7 @@ export function groupExecutionRows(rows: ExecutionSetRow[]): Map<string, Exercis
       rir: row.rir,
       order: row.set_order,
       // Côté unilatéral (issue #46) : la courbe primaire suit le côté faible
-      // (weakSideE1rm) -> le domaine a besoin des deux côtés. null = bilatéral.
+      // (firstSeriesWeakSet) -> le domaine a besoin des deux côtés. null = bilatéral.
       side: row.side === 'left' || row.side === 'right' ? row.side : undefined,
     });
   }
@@ -705,6 +705,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
     side: string | null;
     execution_id: string;
     exercise_id: string;
+    exercise_position: number | null;
     exercises: { name: string } | null;
     executions: {
       performed_on: string;
@@ -712,6 +713,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
       bpm_avg: number | null;
       duration_min: number | null;
       seance_versions: {
+        seance_id: string;
         seances: { name: string; routines: { name: string } | null } | null;
       } | null;
     } | null;
@@ -726,7 +728,7 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
         supabase
           .from('performed_sets')
           .select(
-            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercises ( name ), executions ( performed_on, created_at, bpm_avg, duration_min, seance_versions ( seances ( name, routines ( name ) ) ) )',
+            'id, created_at, weight_kg, reps, rir, set_order, side, execution_id, exercise_id, exercise_position, exercises ( name ), executions ( performed_on, created_at, bpm_avg, duration_min, seance_versions ( seance_id, seances ( name, routines ( name ) ) ) )',
           )
           .order('id')
           .limit(limit),
@@ -752,6 +754,11 @@ export async function loadRawLog(): Promise<RawLogEntry[]> {
             row.exercises?.name ?? '(exercice inconnu)',
             overrides.get(row.exercise_id),
           ),
+          // L'ordre des exos dans la séance (cf. `buildRawLog`).
+          exercisePosition: row.exercise_position,
+          setCreatedAt: row.created_at,
+          // La séance toutes versions : la Référence d'une série s'y cherche.
+          seanceId: execution.seance_versions?.seance_id ?? null,
           sessionName: execution.seance_versions?.seances?.name ?? null,
           routineName: execution.seance_versions?.seances?.routines?.name ?? null,
           bpmAvg: execution.bpm_avg === null ? null : Number(execution.bpm_avg),

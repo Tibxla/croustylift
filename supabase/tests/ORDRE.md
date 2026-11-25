@@ -1,4 +1,4 @@
-# Ordre de déploiement des migrations 0015 à 0025
+# Ordre de déploiement des migrations 0015 à 0027
 
 Les numéros ne donnent pas l'ordre. Quatre migrations (0016, 0018, 0021, 0022) refuseraient des écritures que le client encore déployé produit : elles attendent le nouveau client, puis le passage des anciens. Le banc local (`banc/lancer.sh`) rejoue exactement cet ordre.
 
@@ -17,6 +17,9 @@ Avant chaque migration : sa requête de contrôle préalable, en commentaire en 
 7. `0023_reorder_seances.sql`
 8. `0024_import_transactionnel.sql`
 9. `0025_delete_execution_if_empty.sql` : la suppression conditionnelle d'une exécution ouverte et vide (« Changer de séance » dans la Salle). À appliquer AVANT le déploiement du client qui l'appelle (`deleteExecutionIfEmpty`, `src/features/capture/data.ts`) : sans elle, ce client ne supprime rien et une exécution vide reste ouverte (la prochaine ouverture l'adopte). Un repli non atomique a été retiré le 24/11 : il pouvait emporter une série acquittée par un autre appareil.
+
+10. `0026_reorder_seances_revision.sql` : le réordonnancement sous révision (voir sa section plus bas). À appliquer AVANT le client qui l'appelle.
+11. `0027_creer_seance.sql` : la création d'une séance et de sa version 1 en une transaction (voir sa section plus bas). Après 0026, AVANT le client qui l'appelle.
 
 Effet visible sur le client en place : aucun.
 
@@ -64,3 +67,29 @@ Une PWA restée ouverte ou hors ligne garde l'ancien code et, dans sa file, des 
 Toutes appliquées en prod : étape 1 le 2026-11-23 au soir (0024 le 24 au matin), client déployé le 2026-11-24, étape 4 le 2026-11-24, chaque fois avec contrôle préalable vide et test de contrôle sans `ECHEC`. La table `exercise_overrides` de la prod venait d'une version antérieure de 0007 (policies `_own`, index et trigger absents) : 0015 la réaligne avant tout. L'étape 3 n'a pas attendu une confirmation appareil par appareil : 0016, 0021 et 0022 ne gênent que l'inscription et l'import de l'ancien client, 0018 ne pouvait refuser qu'une seconde note du même couple, envoyée en quarantaine et renvoyable.
 
 `0025_delete_execution_if_empty.sql` est postérieure à ce déploiement : passée au banc local, appliquée en prod le 2026-11-24 vers 17 h (contrôle préalable vide, test de contrôle sans `ECHEC`), AVANT la fusion du client de la refonte E qui l'appelle.
+
+## 0026 : réordonnancement sous révision
+
+`0026_reorder_seances_revision.sql` ajoute `reorder_seances_revision(p_routine_id, p_expected_ids, p_seance_ids)` : la base verrouille les séances de la routine, compare l'ordre courant à l'ordre affiché par le client, puis écrit, ou refuse (PT409, « l'ordre a changé depuis sa lecture ») sans rien toucher. Elle ferme la course où un appareil réécrivait toutes les positions depuis un ordre dépassé et annulait en silence un déplacement fait ailleurs. Elle pose aussi le trigger `seances_en_fin` : une séance ajoutée ou désarchivée va en fin de routine, position calculée par la base sous un verrou de la routine commun avec le réordonnancement (un ajout concurrent attend, puis se place après ; l'import garde ses positions). `reorder_seances` (0023) reste en base : l'ancien client l'appelle encore.
+
+Elle passe AVANT le déploiement du client qui l'appelle (`reorderSeances`, `src/features/authoring/data.ts`). Ce client marche aussi sans elle : la fonction absente (PGRST202), il revient à `reorder_seances`, sans contrôle de révision, comme le client d'avant.
+
+1. Contrôle préalable (en tête du fichier) : une seule ligne, `reorder_seances(uuid,uuid[])`, et aucun trigger `seances_en_fin`.
+2. Appliquer la migration (attente de verrou bornée à 5 s, rejouable).
+3. Test de contrôle `supabase/tests/0026_reorder_seances_revision.sql` : aucune ligne `ECHEC`.
+4. Déployer le client.
+
+Passée au banc local le 2026-11-24 (succès sur ordre à jour ; refus sur ordre dépassé, appel sans compte, autre compte ; deux appareils en même temps : le second attend puis est refusé ; ajout pendant un réordonnancement : attend puis va en fin ; trois séances en position 0 puis un ajout : en fin, et le réordonnancement d'avant l'ajout est refusé ; désarchivage en fin). Appliquée en prod le 2026-11-25 vers 10 h (contrôle préalable conforme, test de contrôle sans `ECHEC`), avant le client qui l'appelle.
+
+## 0027 : créer une séance en une transaction
+
+`0027_creer_seance.sql` ajoute `create_seance(p_seance_id, p_routine_id, p_name, p_prescriptions)` : la séance, sa version 1 et, pour une copie, ses prescriptions, d'un seul tenant. Le client créait la séance puis sa version en deux requêtes : une coupure entre les deux laissait une séance que la Salle refuse de lancer, et le nouvel essai butait sur l'unicité du nom. L'id vient du client : une demande rejouée parce que sa réponse s'est perdue rend la séance déjà créée, sans doublon. La position est posée en fin de routine, puis recalculée par le trigger `seances_en_fin` de 0026 : 0027 passe APRÈS 0026.
+
+Elle passe AVANT le déploiement du client qui l'appelle (`createSeance` et `duplicateSeance`, `src/features/authoring/data.ts`). Ce client marche aussi sans elle : la fonction absente (PGRST202), il revient aux requêtes séparées, comme le client d'avant.
+
+1. Contrôle préalable (en tête du fichier) : aucune ligne.
+2. Appliquer la migration (attente de verrou bornée à 5 s, rejouable).
+3. Test de contrôle `supabase/tests/0027_creer_seance.sql` : aucune ligne `ECHEC`.
+4. Déployer le client (après 0026 et 0027).
+
+Passée au banc local le 2026-11-24 (création avec sa version et ses prescriptions, en fin de routine ; rejeu du même id sans doublon ; même id pour une autre séance refusé ; autre compte refusé, rien de créé ; nom en double refusé en 23505, ni séance ni version orpheline ; appel sans compte refusé). Appliquée en prod le 2026-11-25 vers 10 h, après 0026 (contrôle préalable vide, test de contrôle sans `ECHEC`), avant le client qui l'appelle.

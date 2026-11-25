@@ -131,29 +131,6 @@ function decideWinner(
   return a > b ? 'first' : 'second'
 }
 
-/**
- * Compare deux blocs d'un même exercice par vitesse de progression e1RM.
- * Découpe les exécutions par fenêtre de bloc, mesure la pente %/semaine de
- * chacun, puis désigne le plus rapide (ou `null` faute de données).
- */
-export function compareBlocks(
-  executions: ExerciseExecution[],
-  exerciseId: string,
-  first: Block,
-  second: Block,
-): BlockComparison {
-  const unit = curveUnit(executions, exerciseId)
-  const firstProgression = progressionOf(executions, exerciseId, first, unit)
-  const secondProgression = progressionOf(executions, exerciseId, second, unit)
-
-  return {
-    first: firstProgression,
-    second: secondProgression,
-    unit,
-    winner: decideWinner(firstProgression.weeklyRate, secondProgression.weeklyRate),
-  }
-}
-
 // --- Couples bloc + séance (ADR 0016) -----------------------------------------
 //
 // Une option de comparaison est un bloc lu dans UNE séance. Deux routines se
@@ -222,7 +199,11 @@ export function summarizeBlockSeances(
   )
 }
 
-/** Compare deux couples bloc + séance par vitesse de progression e1RM. */
+/**
+ * Compare deux couples bloc + séance par vitesse de progression e1RM. Découpe
+ * les exécutions de chaque séance par fenêtre de bloc, mesure la pente
+ * %/semaine de chacun, puis désigne le plus rapide (ou `null` faute de données).
+ */
 export function compareBlockSeances(
   executions: ExerciseExecution[],
   exerciseId: string,
@@ -267,4 +248,36 @@ export function defaultComparisonPair(
     if (blockKey(options[i]!.block) !== latestBlock) return [i, second]
   }
   return [second - 1, second]
+}
+
+/** L'identité d'une option : son bloc et sa séance, stable quand la liste change. */
+export function comparisonOptionKey(option: BlockSeance): string {
+  return `${blockKey(option.block)}:${option.seanceId}`
+}
+
+/**
+ * Les index `[A, B]` à comparer, d'après les options CHOISIES par leur identité
+ * (`comparisonOptionKey`, `null` = pas de choix de ce côté). Un choix par rang
+ * ne survivait pas à une revalidation : une option disparue décalait les autres
+ * (« Rien à comparer » alors que deux restaient), un nouvel ordre substituait
+ * une autre option. Un côté sans choix, ou dont l'option a disparu, prend celle
+ * de la paire par défaut, et l'autre de la paire si celle-là est déjà de
+ * l'autre côté. `null` sous deux options.
+ */
+export function resolveComparisonPair(
+  options: readonly BlockSeance[],
+  picked: { a: string | null; b: string | null },
+): [number, number] | null {
+  const pair = defaultComparisonPair(options)
+  if (pair === null) return null
+  const find = (key: string | null) => {
+    const at = key === null ? -1 : options.findIndex((o) => comparisonOptionKey(o) === key)
+    return at < 0 ? null : at
+  }
+  let a = find(picked.a)
+  let b = find(picked.b)
+  if (a !== null && a === b) b = null
+  if (a === null) a = pair[0] !== b ? pair[0] : pair[1]
+  if (b === null) b = pair[1] !== a ? pair[1] : pair[0]
+  return [a, b]
 }

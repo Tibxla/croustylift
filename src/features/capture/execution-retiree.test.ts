@@ -1,5 +1,5 @@
-// Une séance clôturée, annulée ou supprimée dont l'écriture n'est pas encore
-// acquittée n'est pas reprise par la Capture.
+// Une séance clôturée, annulée, supprimée ou quittée par « Changer de séance »
+// dont l'écriture n'est pas encore acquittée n'est pas reprise par la Capture.
 //
 // Le bug : Clôture et Annulation effacent l'état local AVANT que leur écriture
 // soit acquittée. Capture rouverte le même jour avant l'envoi (clôture en salle
@@ -18,6 +18,8 @@ const server = vi.hoisted(() => ({
   duringRead: null as (() => void) | null,
   /** Notes datées de l'exécution, telles que la base les rend. */
   notes: [] as { id: string; exercise_id: string; body: string; created_at: string }[],
+  /** Séries de l'exécution, telles que la base les rend. */
+  sets: [] as { id: string; exercise_id: string; weight_kg: number; reps: number; rir: number; set_order: number; side: string | null }[],
 }));
 
 vi.mock('../../lib/supabase', () => {
@@ -51,12 +53,12 @@ vi.mock('../../lib/supabase', () => {
       return query;
     }
     if (table === 'performed_sets' || table === 'dated_notes') {
-      // Séries et notes de l'exécution : select → eq → order. Aucune série ici.
+      // Séries et notes de l'exécution : select → eq → order.
       const query = {
         select: () => query,
         eq: () => query,
         order: () =>
-          Promise.resolve({ data: table === 'dated_notes' ? server.notes : [], error: null }),
+          Promise.resolve({ data: table === 'dated_notes' ? server.notes : server.sets, error: null }),
       };
       return query;
     }
@@ -65,9 +67,11 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from } };
 });
 
-import { isExecutionRetiredInQueue, loadTodayExecution, loadTodayExecutionWithin } from './data';
+import { isExecutionRetired, loadTodayExecution, loadTodayExecutionWithin, type TodayExecution } from './data';
+import { datedNotesReality, executionReality } from './execution-reality';
 import { reconcileDatedNotes } from './state';
-import { clearQueue, enqueue, type OutboxOp } from './outbox';
+import { clearQueue, enqueue, writesSince, type LocalWrite, type OutboxOp } from './outbox';
+import { otherTabAcknowledgesAll } from '../../test/registry';
 import { saveLocalAccount } from '../../lib/local-account';
 
 class MemoryStorage {
@@ -99,6 +103,26 @@ const cloture = (id: string): OutboxOp => ({
   closedAt: '2026-11-23T19:02:00.000Z',
 });
 const suppression = (id: string): OutboxOp => ({ type: 'deleteExecution', id });
+/** Le ménage de « Changer de séance » : supprimée par la base si encore ouverte et vide. */
+const changement = (id: string): OutboxOp => ({ type: 'deleteExecutionIfEmpty', id, exerciseIds: [] });
+
+/** Des écritures locales telles que le registre les rend (`writesSince`). */
+const writes = (ops: OutboxOp[], fate: LocalWrite['fate'] = 'pending'): LocalWrite[] =>
+  ops.map((op, i) => ({ uid: `u${i}`, n: i + 1, op, fate }));
+const isExecutionRetiredInQueue = (id: string, ops: OutboxOp[], carriesEntries = false) =>
+  isExecutionRetired(id, writes(ops), carriesEntries);
+
+/**
+ * Ce que la Capture AFFICHE d'une lecture, au moment de s'en servir : sa
+ * réponse, plus les écritures locales qu'elle ne contient pas.
+ */
+const shown = (today: TodayExecution) => {
+  const since = writesSince(today.stamp);
+  return {
+    progress: executionReality({ executionId: today.executionId, read: today.progress, writes: since }),
+    datedNotes: datedNotesReality(today.executionId, today.datedNotes, since),
+  };
+};
 
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage =
@@ -108,15 +132,35 @@ beforeEach(() => {
   server.openExecutionId = 'exec-1';
   server.duringRead = null;
   server.notes = [];
+  server.sets = [];
 });
 
-describe('isExecutionRetiredInQueue', () => {
+describe('isExecutionRetired (les écritures locales retirent-elles l’exécution ?)', () => {
+  it('clôture ou suppression REFUSÉE par la base : elle ne retire rien', () => {
+    expect(isExecutionRetired('exec-1', writes([cloture('exec-1')], 'refused'))).toBe(false);
+    expect(isExecutionRetired('exec-1', writes([suppression('exec-1')], 'refused'))).toBe(false);
+  });
+
+  it('clôture ACQUITTÉE après le départ de la lecture : retirée, comme en attente', () => {
+    expect(isExecutionRetired('exec-1', writes([cloture('exec-1')], 'acked'))).toBe(true);
+  });
+
   it('clôture en attente de cette exécution : retirée', () => {
     expect(isExecutionRetiredInQueue('exec-1', [cloture('exec-1')])).toBe(true);
   });
 
   it('suppression en attente de cette exécution : retirée', () => {
     expect(isExecutionRetiredInQueue('exec-1', [suppression('exec-1')])).toBe(true);
+  });
+
+  it('suppression conditionnelle (« Changer de séance ») de cette exécution, vide : retirée', () => {
+    expect(isExecutionRetiredInQueue('exec-1', [changement('exec-1')])).toBe(true);
+  });
+
+  it('suppression conditionnelle d’une exécution qui porte déjà une saisie : la base la garde, pas retirée', () => {
+    expect(isExecutionRetiredInQueue('exec-1', [changement('exec-1')], true)).toBe(false);
+    // Une suppression sans condition, elle, retire quoi qu'il y ait dedans.
+    expect(isExecutionRetiredInQueue('exec-1', [suppression('exec-1')], true)).toBe(true);
   });
 
   it('clôture ou suppression d’une AUTRE exécution : sans effet', () => {
@@ -164,10 +208,56 @@ describe('loadTodayExecution et les écritures en attente', () => {
 
   it('clôture acquittée PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
     enqueue(cloture('exec-1'));
-    // Le flush lancé au même montage vide la file avant le retour de la lecture,
+    // Le flush lancé au même montage l'acquitte avant le retour de la lecture,
     // dont la réponse montre encore l'exécution ouverte.
-    server.duringRead = () => clearQueue();
+    server.duringRead = () => otherTabAcknowledgesAll();
     expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  // Le scénario : la séance s'ouvre à 18 h 00 (exec-1, son début acquitté), on
+  // la quitte aussitôt par « Changer de séance » sans rien saisir. Sur un réseau
+  // lent, la suppression conditionnelle attend encore quand on rouvre la même
+  // séance vingt minutes plus tard : la base montre toujours exec-1 ouverte,
+  // `started_at` à 18 h 00. Adoptée, la séance rouverte comptait ces vingt
+  // minutes dans sa durée. Elle repart désormais vierge (nouvelle exécution,
+  // nouveau début), et la suppression en file part comme prévu.
+  it('« Changer de séance » pas encore envoyé : la séance quittée n’est pas réadoptée avec son ancien début', async () => {
+    enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+    expect(await loadTodayExecution('seance-1', '2026-11-23', 'exec-1')).toBeNull();
+  });
+
+  it('« Changer de séance » enfilé PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
+    server.duringRead = () => void enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » acquitté PENDANT la lecture : la réponse, partie avant, est écartée', async () => {
+    enqueue(changement('exec-1'));
+    server.duringRead = () => otherTabAcknowledgesAll();
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » en file, mais une série arrivée d’un autre appareil : la base garde l’exécution, elle reste adoptée', async () => {
+    server.sets = [{ id: 'set-a', exercise_id: 'bench', weight_kg: 80, reps: 8, rir: 2, set_order: 1, side: null }];
+    enqueue(changement('exec-1'));
+    const today = await loadTodayExecution('seance-1', '2026-11-23');
+    expect(today?.executionId).toBe('exec-1');
+    expect(today?.progress.bench?.setIds).toEqual(['set-a']);
+  });
+
+  it('« Changer de séance » après une série loggée puis annulée ici : vide pour la base, pas réadoptée', async () => {
+    // La série est encore en base, sa suppression attend devant le ménage.
+    server.sets = [{ id: 'set-a', exercise_id: 'bench', weight_kg: 80, reps: 8, rir: 2, set_order: 1, side: null }];
+    enqueue({ type: 'deleteSet', id: 'set-a', exerciseIds: ['bench'] });
+    enqueue(changement('exec-1'));
+    expect(await loadTodayExecution('seance-1', '2026-11-23')).toBeNull();
+  });
+
+  it('« Changer de séance » d’une note laissée par un autre onglet : la base garde l’exécution, elle reste adoptée', async () => {
+    server.notes = [{ id: 'note-h', exercise_id: 'bench', body: 'coude gauche', created_at: '2026-11-23T18:05:00Z' }];
+    enqueue(changement('exec-1'));
+    expect((await loadTodayExecution('seance-1', '2026-11-23'))?.executionId).toBe('exec-1');
   });
 
   it('clôture en attente d’une autre exécution : celle du jour reste adoptée', async () => {
@@ -197,56 +287,49 @@ describe('loadTodayExecution et les écritures de notes en attente', () => {
     server.notes = [noteBench, noteSquat];
   });
 
-  it('rien en attente : les notes de la base sont rendues, aucune clé relevée', async () => {
+  it('rien en attente : les notes de la base sont rendues', async () => {
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
-    expect(today!.pendingNoteKeys).toEqual([]);
+    expect(Object.keys(shown(today!).datedNotes).sort()).toEqual(['bench', 'squat']);
   });
 
-  it('effacement encore en file au retour : la note n’est pas rendue', async () => {
+  it('effacement encore en attente au retour : la note n’est pas affichée', async () => {
     enqueue(effacement('bench'));
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes)).toEqual(['squat']);
-    expect(today!.pendingNoteKeys).toEqual(['bench']);
+    expect(Object.keys(shown(today!).datedNotes)).toEqual(['squat']);
   });
 
-  it('effacement ACQUITTÉ pendant le trajet (file vide au retour) : la note n’est ni rendue ni réadoptée', async () => {
+  it('effacement ACQUITTÉ pendant le trajet : la note n’est ni affichée ni réadoptée', async () => {
     enqueue(effacement('bench'));
-    // Un autre onglet vide la file pendant que la réponse, qui porte encore la
+    // Un autre onglet l'envoie pendant que la réponse, qui porte encore la
     // note, est en route.
-    server.duringRead = () => clearQueue();
+    server.duringRead = () => otherTabAcknowledgesAll();
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes)).toEqual(['squat']);
-    expect(today!.pendingNoteKeys).toEqual(['bench']);
+    // La réponse BRUTE porte encore la note : c'est l'estampille qui l'écarte.
+    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
+    expect(Object.keys(shown(today!).datedNotes)).toEqual(['squat']);
 
-    // La réponse tardive arrive sur une Capture qui ne connaît aucune note : la
-    // file relue à l'arrivée est vide, seules les clés relevées par la lecture
-    // retiennent la note effacée.
-    const adoptees = reconcileDatedNotes({}, { bench: { id: 'note-h', body: 'coude gauche' }, ...today!.datedNotes }, today!.pendingNoteKeys);
-    expect(adoptees).toEqual({ squat: { id: 'note-s', body: 'talons' } });
+    // La réponse tardive arrive sur une Capture qui ne connaît aucune note.
+    expect(reconcileDatedNotes({}, shown(today!).datedNotes)).toEqual({ squat: { id: 'note-s', body: 'talons' } });
   });
 
-  it('effacement enfilé PENDANT la lecture : la note n’est pas rendue', async () => {
+  it('effacement enfilé PENDANT la lecture : la note n’est pas affichée', async () => {
     server.duringRead = () => void enqueue(effacement('squat'));
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes)).toEqual(['bench']);
+    expect(Object.keys(shown(today!).datedNotes)).toEqual(['bench']);
   });
 
   it('effacement hérité (id seul) : retire la note de cet id, pas les autres', async () => {
     enqueue({ type: 'deleteDatedNote', id: 'note-s' });
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes)).toEqual(['bench']);
-    expect(today!.pendingNoteKeys).toEqual(['note-s']);
+    expect(Object.keys(shown(today!).datedNotes)).toEqual(['bench']);
   });
 
-  it('écriture (pas effacement) en attente : la note de la base reste rendue, sa clé est relevée', async () => {
+  it('écriture (pas effacement) acquittée pendant le trajet : son corps passe par-dessus la version périmée de la base', async () => {
     enqueue({ type: 'upsertDatedNote', id: 'id-deterministe', executionId: 'exec-1', exerciseId: 'bench', body: 'corrigée' });
-    server.duringRead = () => clearQueue();
+    server.duringRead = () => otherTabAcknowledgesAll();
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
-    // La version de la base est périmée pour cet exo : elle ne sera pas adoptée.
-    expect(today!.pendingNoteKeys).toEqual(['bench']);
-    expect(reconcileDatedNotes({}, today!.datedNotes, today!.pendingNoteKeys)).toEqual({
+    expect(shown(today!).datedNotes).toEqual({
+      bench: { id: 'note-h', body: 'corrigée' },
       squat: { id: 'note-s', body: 'talons' },
     });
   });
@@ -254,14 +337,14 @@ describe('loadTodayExecution et les écritures de notes en attente', () => {
   it('effacement d’une note d’une AUTRE exécution : sans effet', async () => {
     enqueue({ type: 'deleteDatedNote', id: 'x', executionId: 'exec-2', exerciseId: 'bench' });
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(Object.keys(today!.datedNotes).sort()).toEqual(['bench', 'squat']);
-    expect(today!.pendingNoteKeys).toEqual([]);
+    expect(Object.keys(shown(today!).datedNotes).sort()).toEqual(['bench', 'squat']);
   });
 });
 
-// Les écritures de séries se relèvent comme le reste, aux deux bouts de la
-// lecture : la Capture les rejoue sur la réponse, partie avant elles.
-describe('loadTodayExecution et les écritures de séries en attente', () => {
+// Les écritures de séries suivent la même estampille : la Capture applique sur
+// la réponse, partie avant elles, celles qui attendaient au départ (même
+// acquittées pendant le trajet) et celles enfilées pendant.
+describe('loadTodayExecution et les écritures de séries', () => {
   const serie = (id: string, setOrder: number): OutboxOp => ({
     type: 'insertSet',
     id,
@@ -273,26 +356,28 @@ describe('loadTodayExecution et les écritures de séries en attente', () => {
     rir: 2,
   });
 
-  it('rend, dans l’ordre de la file, celles d’avant la lecture (même acquittées pendant le trajet) et celles enfilées pendant', async () => {
+  it('acquittées pendant le trajet ou enfilées pendant : toutes appliquées, dans l’ordre', async () => {
+    server.sets = [{ id: 'a', exercise_id: 'bench', weight_kg: 80, reps: 8, rir: 2, set_order: 1, side: null }];
     enqueue({ type: 'deleteSet', id: 'a' });
     enqueue(serie('b', 1));
     server.duringRead = () => {
-      clearQueue(); // un autre onglet a tout envoyé pendant le trajet
+      otherTabAcknowledgesAll(); // un autre onglet a tout envoyé pendant le trajet
       enqueue(serie('c', 2)); // et le Journal a écrit de nouveau
     };
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(today!.pendingSetOps.map((op) => `${op.type}:${op.id}`)).toEqual([
-      'deleteSet:a',
-      'insertSet:b',
-      'insertSet:c',
+    expect(writesSince(today!.stamp).map((w) => `${w.op.type}:${w.op.id}:${w.fate}`)).toEqual([
+      'deleteSet:a:acked',
+      'insertSet:b:acked',
+      'insertSet:c:pending',
     ]);
-    // Valeurs et rangs complets, pas seulement les ids.
-    expect(today!.pendingSetOps[1]).toMatchObject({ setOrder: 1, weightKg: 80 });
+    // La réponse, figée au départ, porte encore `a` ; le tableau montre b et c.
+    expect(today!.progress.bench?.setIds).toEqual(['a']);
+    expect(shown(today!).progress.bench?.setIds).toEqual(['b', 'c']);
   });
 
-  it('rien en file : aucune écriture à rejouer', async () => {
+  it('rien de local : la réponse telle quelle', async () => {
     const today = await loadTodayExecution('seance-1', '2026-11-23', 'exec-1');
-    expect(today!.pendingSetOps).toEqual([]);
+    expect(writesSince(today!.stamp)).toEqual([]);
   });
 });
 

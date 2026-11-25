@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { datedNoteOutboxOp, exerciseNoteOutboxOp, pendingDatedNoteKeys } from './data';
+import { datedNoteOutboxOp, exerciseNoteOutboxOp } from './data';
 
 describe('datedNoteOutboxOp', () => {
   it('corps non vide -> op upsertDatedNote avec le corps NORMALISÉ', () => {
@@ -56,24 +56,5 @@ describe('exerciseNoteOutboxOp', () => {
       body: '   ',
     });
     expect(op).toEqual({ type: 'deleteExerciseNote', id: 'bench' });
-  });
-});
-
-describe('pendingDatedNoteKeys', () => {
-  it('rend les exos de l’exécution dont une écriture de note attend, et l’id des effacements sans couple', () => {
-    const keys = pendingDatedNoteKeys(
-      [
-        { type: 'upsertDatedNote', id: 'n1', executionId: 'exec-1', exerciseId: 'bench', body: 'x' },
-        { type: 'deleteDatedNote', id: 'n2', executionId: 'exec-1', exerciseId: 'squat' },
-        // Op d'un bundle antérieur : ni exécution ni exo, seulement l'id de la note.
-        { type: 'deleteDatedNote', id: 'n-ancien' },
-        // Autre exécution, autre type : ignorés.
-        { type: 'upsertDatedNote', id: 'n3', executionId: 'exec-2', exerciseId: 'row', body: 'y' },
-        { type: 'deleteDatedNote', id: 'n4', executionId: 'exec-2', exerciseId: 'curl' },
-        { type: 'upsertExerciseNote', id: 'dips', body: 'z' },
-      ],
-      'exec-1',
-    );
-    expect(keys).toEqual(['bench', 'squat', 'n-ancien']);
   });
 });

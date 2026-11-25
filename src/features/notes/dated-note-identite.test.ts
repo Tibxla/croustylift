@@ -88,7 +88,8 @@ vi.mock('../../lib/supabase', () => {
   return { supabase: { from } };
 });
 
-import { adoptLegacyOps, clearQueue, flush, readQuarantine, readQueue } from '../capture/outbox';
+import { adoptLegacyOps, clearQueue, flush, listRefused, readQueue } from '../capture/outbox';
+import { legacyQueueWrites, REGISTRY_KEY, storedWrites } from '../../test/registry';
 import { syncFns } from '../capture/sync';
 import { datedNoteId } from './dated-note-id';
 import {
@@ -279,12 +280,14 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     adoptLegacyOps();
     // L'effacement hérité a reçu le couple de l'écriture, et c'est persisté.
     expect(readQueue()[1]).toMatchObject({ type: 'deleteDatedNote', id: EN_FILE, executionId: EXEC, exerciseId: EXO });
-    expect(JSON.parse(localStorage.getItem('croustylift:outbox')!)[1]).toMatchObject({ executionId: EXEC, exerciseId: EXO });
+    expect(storedWrites()[1]?.op).toMatchObject({ executionId: EXEC, exerciseId: EXO });
+    // L'ancienne file a quitté l'appareil : le registre fait foi.
+    expect(legacyQueueWrites()).toEqual([]);
 
     const result = await flush(syncFns);
     expect(result.remaining).toBe(0);
     expect(server.rows).toEqual([]);
-    expect(readQuarantine()).toEqual([]);
+    expect(listRefused()).toEqual([]);
   });
 
   it('stockage plein au démarrage : le complément, qui ne peut pas s’écrire, tient en mémoire et part quand même', async () => {
@@ -295,16 +298,17 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
       { ...legacyWrite, _uid: 'uid-ecriture' },
       { ...legacyDelete, _uid: 'uid-effacement' },
     ]);
-    const before = localStorage.getItem('croustylift:outbox');
-    // Le stockage refuse désormais toute écriture de la file (le blob complété est plus gros).
+    const before = legacyQueueWrites();
+    // Le stockage refuse toute écriture du registre : la conversion ne peut pas s'écrire.
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
     adoptLegacyOps();
-    expect(localStorage.getItem('croustylift:outbox')).toBe(before);
+    // L'ancienne file reste la seule trace sur l'appareil : elle n'est pas vidée.
+    expect(legacyQueueWrites()).toEqual(before);
     // La file LUE porte bien l'effacement complété, une seule fois, après l'écriture.
     expect(readQueue().map((op) => op.type)).toEqual(['upsertDatedNote', 'deleteDatedNote']);
     expect(readQueue()[1]).toMatchObject({ _uid: 'uid-effacement', executionId: EXEC, exerciseId: EXO });
@@ -327,7 +331,7 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     ]);
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
 
@@ -396,11 +400,10 @@ describe('rejeu d’une file héritée : écriture puis effacement de la même n
     expect(readQueue()[1]).not.toHaveProperty('executionId');
   });
 
-  it('une file déjà au format courant n’est pas réécrite', () => {
-    const ops = [legacyWrite, { ...legacyDelete, executionId: EXEC, exerciseId: EXO }];
-    legacyQueue(ops);
-    const before = localStorage.getItem('croustylift:outbox');
+  it('une file déjà complète entre au registre telle quelle', () => {
+    legacyQueue([legacyWrite, { ...legacyDelete, executionId: EXEC, exerciseId: EXO }]);
     adoptLegacyOps();
-    expect(localStorage.getItem('croustylift:outbox')).toBe(before);
+    expect(readQueue().map((op) => op.type)).toEqual(['upsertDatedNote', 'deleteDatedNote']);
+    expect(readQueue()[1]).toMatchObject({ id: EN_FILE, executionId: EXEC, exerciseId: EXO });
   });
 });

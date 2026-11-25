@@ -8,8 +8,9 @@
 // l'utilisateur est justement en salle, hors ligne, en train de saisir.
 //
 // Deux paliers, du moins utile au plus utile, et un plancher :
-//   1. les repères « tu notais » et le catalogue d'exos (confort : le repère est
-//      tolérant, le catalogue ne sert qu'à ajouter un exo) ;
+//   1. les repères « tu notais », le catalogue d'exos et les copies des écrans
+//      au calme, Séances et Analyse (confort : le repère est tolérant, le
+//      catalogue ne sert qu'à ajouter un exo, les écrans au calme se relisent) ;
 //   2. l'historique et la note des exos qui ne sont dans AUCUN template en copie
 //      NI dans une séance en cours (exos d'anciens plans, exos ajoutés un autre
 //      jour à la volée) ;
@@ -18,16 +19,20 @@
 //     templates en copie et des séances en cours. Une séance en cours porte
 //     parfois un exo AJOUTÉ ou remplaçant, absent de tout template : ses copies
 //     évincées, la réouverture hors ligne l'ignorait, avec ses séries.
-// Si cela ne suffit pas, la file tient en mémoire (cf. outbox, `writeQueue`).
+// Si cela ne suffit pas : une saisie neuve tient en mémoire, une transition du
+// registre s'écrit sans grandir ou n'a pas lieu (cf. outbox, `commit`).
 //
 // Module sans dépendance vers les couches d'accès : l'outbox et l'état de
 // capture l'appellent, et les couches d'accès importent l'outbox.
 import { cachedKeys, dropRead, peekRead } from '../../lib/read-cache';
+import { VIEW_PREFIX } from '../../lib/dated-read';
 import { EXERCISE_NOTE_PREFIX, EXERCISES_KEY, SEANCE_TEMPLATE_PREFIX } from './plan-copies';
 import { CAPTURE_STATE_PREFIX } from './storage-keys';
 
 const EXERCISE_ROWS_PREFIX = 'exo-execs:';
-const COMFORT_PREFIXES = ['last-exec:', 'prev-notes:'];
+// Les copies des écrans au calme (Séances, Analyse, `VIEW_PREFIX`) partent avec
+// le confort : elles se relisent au retour du réseau, et le Journal peut peser.
+const COMFORT_PREFIXES = ['last-exec:', 'prev-notes:', VIEW_PREFIX];
 
 /** Les exos des templates en copie : leurs lectures sont sur le chemin d'ouverture. */
 function plannedExerciseIds(): Set<string> {

@@ -87,6 +87,10 @@ describe('exerciseStatus', () => {
     expect(exerciseStatus(bench, done([]))).toBe('pas-fait');
     expect(exerciseStatus(bench, done([ps(80, 8, 2, 1), ps(80, 8, 2, 2)]))).toBe('en-cours');
     expect(exerciseStatus(bench, done([ps(80, 8, 2, 1), ps(80, 8, 2, 2), ps(80, 8, 2, 3)]))).toBe('fait');
+    // Au-delà du minimum : toujours fait (ancien `statusOf`).
+    expect(
+      exerciseStatus(bench, done([ps(80, 8, 2, 1), ps(80, 8, 2, 2), ps(80, 8, 2, 3), ps(80, 8, 2, 4)])),
+    ).toBe('fait');
   });
 
   it('unilatéral : une série compte quand elle existe, pas une ligne par côté', () => {
@@ -96,6 +100,8 @@ describe('exerciseStatus', () => {
 
   it('passé prime : un exo passé reste « passé » même avec des séries', () => {
     expect(exerciseStatus(bench, done([ps(80, 8, 2, 1)], true))).toBe('passe');
+    // Même au minimum du plan atteint (ancien `statusOf`).
+    expect(exerciseStatus(bench, done([ps(80, 8, 2, 1), ps(80, 8, 2, 2), ps(80, 8, 2, 3)], true))).toBe('passe');
     expect(exerciseStatus(bench, done([], true))).toBe('passe');
   });
 });
@@ -133,18 +139,18 @@ describe('buildSessionRecap', () => {
   });
 
   it('battues, égalées, records : par exo et au total', () => {
-    expect(of('bench')).toMatchObject({ beaten: 0, matched: 1, records: 1 });
-    expect(of('curl')).toMatchObject({ beaten: 1, matched: 1, records: 0 });
-    expect(of('row')).toMatchObject({ beaten: 0, matched: 0, records: 0 });
+    expect(of('bench')).toMatchObject({ beaten: 0, matched: 1 });
+    expect(of('bench').newRecords).toHaveLength(1);
+    expect(of('curl')).toMatchObject({ beaten: 1, matched: 1, newRecords: [] });
+    expect(of('row')).toMatchObject({ beaten: 0, matched: 0, newRecords: [] });
     expect(recap.beaten).toBe(1);
-    expect(recap.matched).toBe(2);
+    expect(recap.records).toHaveLength(1);
   });
 
   it('nouveaux records : l’exo et son meilleur e1RM du jour parmi les séries qui battent le record', () => {
     const record = {
       exerciseId: 'bench',
       name: 'Développé couché',
-      e1rm: estimateE1rm(85, 8, 2),
       axis: 'e1rm',
       unit: 'kg',
       value: estimateE1rm(85, 8, 2),
@@ -153,8 +159,7 @@ describe('buildSessionRecap', () => {
     };
     expect(recap.records).toEqual([record]);
     expect(of('bench').newRecords).toEqual([record]);
-    expect(of('bench').recordE1rm).toBe(estimateE1rm(85, 8, 2));
-    expect(of('row').recordE1rm).toBeNull();
+    expect(of('row').newRecords).toEqual([]);
   });
 
   it('kg soulevés : par exo et au total, les deux côtés comptés', () => {
@@ -190,7 +195,7 @@ describe('buildSessionRecap', () => {
 
   it('séance vide : tout à zéro, aucun record', () => {
     const empty = buildSessionRecap(session, state({}));
-    expect(empty).toMatchObject({ setsLogged: 0, beaten: 0, matched: 0, liftedKg: 0, records: [] });
+    expect(empty).toMatchObject({ setsLogged: 0, beaten: 0, liftedKg: 0, records: [] });
   });
 });
 
@@ -244,7 +249,6 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
     const record = {
       exerciseId: 'pullup',
       name: 'Tractions',
-      e1rm: null,
       axis: 'e1rm',
       unit: 'reps',
       value: 13,
@@ -253,7 +257,7 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
     };
     expect(recap.records).toEqual([record]);
     const exo = recap.exercises.find((e) => e.exerciseId === 'pullup')!;
-    expect(exo).toMatchObject({ records: 1, recordE1rm: null, newRecords: [record] });
+    expect(exo.newRecords).toEqual([record]);
   });
 
   it('à 0 kg, la meilleure série du jour se départage aux reps effectives', () => {
@@ -269,7 +273,6 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
     const record = {
       exerciseId: 'squat',
       name: 'Squat',
-      e1rm: null,
       axis: 'charge',
       unit: 'kg',
       value: 125,
@@ -277,19 +280,15 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
       set: { weightKg: 125, reps: 1, rir: 0 },
     };
     expect(recap.records).toEqual([record]);
-    expect(recap.exercises.find((e) => e.exerciseId === 'squat')).toMatchObject({
-      records: 1,
-      recordE1rm: null,
-      newRecords: [record],
-    });
+    expect(recap.exercises.find((e) => e.exerciseId === 'squat')!.newRecords).toEqual([record]);
   });
 
   it('records d’e1RM et de charge tenus par deux séries distinctes : les deux figurent', () => {
     // 100 × 10 @ 2 bat l'e1RM (136,7) sans dépasser 120 kg ; 125 × 1 bat la charge seule.
     const recap = recapOf({ squat: done([ps(100, 10, 2, 1), ps(125, 1, 0, 2)]) });
     expect(recap.records).toMatchObject([
-      { axis: 'e1rm', unit: 'kg', value: estimateE1rm(100, 10, 2), e1rm: estimateE1rm(100, 10, 2) },
-      { axis: 'charge', unit: 'kg', value: 125, e1rm: null },
+      { axis: 'e1rm', unit: 'kg', value: estimateE1rm(100, 10, 2) },
+      { axis: 'charge', unit: 'kg', value: 125 },
     ]);
     expect(recap.records).toHaveLength(2);
   });
@@ -308,7 +307,6 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
       {
         exerciseId: 'pullup',
         name: 'Tractions',
-        e1rm: null,
         axis: 'charge',
         unit: 'reps',
         value: 11,
@@ -327,8 +325,6 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
       { exerciseId: 'curl', axis: 'e1rm', unit: 'kg', side: 'right', value: estimateE1rm(13, 10, 2) },
     ]);
     expect(recap.records).toHaveLength(2);
-    // Le champ historique garde le meilleur des deux côtés.
-    expect(recap.exercises.find((e) => e.exerciseId === 'curl')!.recordE1rm).toBe(estimateE1rm(14, 10, 2));
   });
 });
 

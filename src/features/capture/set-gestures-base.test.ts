@@ -71,13 +71,13 @@ import {
   flush,
   hasUnpersistedOps,
   listRefused,
-  readQuarantine,
   readQueue,
   retryRefused,
 } from './outbox';
 import { correctSet, deleteSet, type SetGesture } from './set-gestures';
 import { captureReducer, initialState, type CaptureState } from './state';
 import { syncFns } from './sync';
+import { REGISTRY_KEY, storedWrites } from '../../test/registry';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -186,14 +186,32 @@ describe('deux onglets : une correction et une suppression de la même séance',
 // ligne, la suppression partait seule et la série restante gardait le rang 2.
 describe('quota atteint au milieu d’un geste', () => {
   const persisted = () =>
-    (JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]') as { type: string; id: string; only?: string }[]).map(
-      (op) => `${op.type}:${op.id}${op.only ? `:${op.only}` : ''}`,
-    );
-  /** Le stockage n'accepte la file que jusqu'à `max` caractères. */
-  const capOutbox = (max: number) => {
+    storedWrites()
+      .filter((write) => write.fate === 'pending')
+      .map(({ op }) => `${op.type}:${op.id}${'only' in op ? `:${op.only}` : ''}`);
+  /** La place que prend, seule, la première écriture du geste. */
+  const sizeWithFirstOnly = (gesture: SetGesture): number => {
+    const sizes: number[] = [];
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox' && v.length > max) throw new Error('QuotaExceededError');
+      sizes.push(v.length);
+      setItem(k, v);
+    };
+    enqueueAll([gesture.ops[0]!]);
+    localStorage.setItem = setItem;
+    clearQueue();
+    return sizes[0]!;
+  };
+  /** L'appareil n'accepte les écritures du registre que jusqu'à `max` caractères en tout. */
+  const capRegistry = (max: number) => {
+    const setItem = localStorage.setItem.bind(localStorage);
+    const sizes = new Map<string, number>();
+    localStorage.setItem = (k: string, v: string) => {
+      if (k.startsWith(REGISTRY_KEY)) {
+        const total = [...sizes].reduce((sum, [key, size]) => sum + (key === k ? 0 : size), 0) + v.length;
+        if (total > max) throw new Error('QuotaExceededError');
+        sizes.set(k, v.length);
+      }
       setItem(k, v);
     };
   };
@@ -202,7 +220,7 @@ describe('quota atteint au milieu d’un geste', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const gesture = deleteSet(tab(), BENCH, 's1')!;
     // Assez pour le seul `deleteSet`, pas pour les deux remontées qui le suivent.
-    capOutbox(JSON.stringify([gesture.ops[0]]).length + 200);
+    capRegistry(sizeWithFirstOnly(gesture) + 60);
     enqueueAll(gesture.ops);
     expect(persisted()).toEqual([]);
     expect(readQueue().map((op) => op.type)).toEqual(['deleteSet', 'patchSet', 'patchSet']);
@@ -213,7 +231,7 @@ describe('quota atteint au milieu d’un geste', () => {
   it('le défaut, sans unité : enfilées une à une, la suppression est écrite seule', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const gesture = deleteSet(tab(), BENCH, 's1')!;
-    capOutbox(JSON.stringify([gesture.ops[0]]).length + 200);
+    capRegistry(sizeWithFirstOnly(gesture) + 60);
     gesture.ops.forEach((op) => enqueue(op));
     expect(persisted()).toEqual(['deleteSet:s1']);
     vi.restoreAllMocks();
@@ -243,7 +261,7 @@ describe('quota atteint au milieu d’un geste', () => {
 // corrigée ou supprimée. Le refus ne doit ni disparaître avant que son
 // remplaçant soit en lieu sûr, ni rester « renvoyable » une fois dépassé.
 describe('écriture refusée, puis corrigée ou supprimée', () => {
-  const quarantined = () => readQuarantine().map((q) => `${q.op.type}:${q.op.id}:${(q.op as { weightKg?: number }).weightKg ?? ''}`);
+  const quarantined = () => listRefused().map((q) => `${q.op.type}:${q.op.id}:${(q.op as { weightKg?: number }).weightKg ?? ''}`);
   /** Une quatrième série saisie avec une charge que la base refuse. */
   const withRefusedS4 = async (): Promise<CaptureState> => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -265,7 +283,7 @@ describe('écriture refusée, puis corrigée ou supprimée', () => {
     };
   };
 
-  it('enfiler un geste ne touche jamais à la quarantaine (elle ne change que sous le verrou du flush)', async () => {
+  it('enfiler une correction ne lève pas le refus, et tient en UNE écriture de l’appareil', async () => {
     const state = await withRefusedS4();
     const writes: string[] = [];
     const setItem = localStorage.setItem.bind(localStorage);
@@ -274,15 +292,19 @@ describe('écriture refusée, puis corrigée ou supprimée', () => {
       setItem(k, v);
     };
     enqueueAll(correctSet(state, BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);
-    expect(writes).toEqual(['croustylift:outbox']);
+    // Une seule écriture, dans une clé à elle : jamais une réécriture du registre.
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^croustylift:registre:in:/);
     expect(quarantined()).toEqual(['insertSet:s4:123456']);
+    // Le registre sait que la correction dépend de ce refus (abandon, feuille).
+    expect(listRefused()[0]?.dependents).toMatchObject([{ type: 'patchSet', id: 's4', only: 'values', weightKg: 100 }]);
   });
 
   it('stockage plein : le refus reste tant que la correction ne tient qu’en mémoire', async () => {
     const state = await withRefusedS4();
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     enqueueAll(correctSet(state, BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);
@@ -310,14 +332,16 @@ describe('écriture refusée, puis corrigée ou supprimée', () => {
       (row as Row).weight_kg = 123457;
     };
     await flush(syncFns);
-    expect(readQuarantine()).toHaveLength(1);
+    expect(listRefused()).toHaveLength(1);
     expect(readQueue()).toEqual([]);
   });
 
-  it('série refusée puis supprimée : le refus est levé une fois la suppression acquittée', async () => {
+  it('série refusée puis supprimée : la suppression efface le refus dès qu’elle est enfilée', async () => {
     const state = await withRefusedS4();
+    // Un seul enregistrement : la suppression et le retrait du refus sont écrits
+    // d'un coup. Plus rien ne peut « renvoyer » la série supprimée.
     enqueueAll(deleteSet(state, BENCH, 's4')!.ops);
-    expect(quarantined()).toEqual(['insertSet:s4:123456']);
+    expect(quarantined()).toEqual([]);
     await flush(syncFns);
     expect(quarantined()).toEqual([]);
     expect(base()).toEqual(['s1:80kg@1', 's2:80kg@2', 's3:80kg@3']);
@@ -405,9 +429,9 @@ describe('refus qui arrive APRÈS le geste suivant (insertion encore en vol)', (
     expect(listRefused()).toEqual([]);
     clearQueue();
 
-    // 3. Une correction (écriture partielle) attend derrière : le refus reste
-    //    en quarantaine, elle en a besoin pour reconstituer la série, mais il
-    //    n'est pas renvoyable tant qu'elle est en file.
+    // 3. Une correction (écriture partielle) attend derrière : le refus reste,
+    //    elle en a besoin pour reconstituer la série. Le renvoyer est sans
+    //    risque : il garde sa place AVANT la correction, qui passe donc après.
     enqueue(insertS4(123456));
     enqueueAll(correctSet(s4State(123456), BENCH, 's4', { weightKg: 100, reps: 8, rir: 2 })!.ops);
     let sentOnce = false;
@@ -421,9 +445,14 @@ describe('refus qui arrive APRÈS le geste suivant (insertion encore en vol)', (
     });
     const refused = listRefused();
     expect(refused.map((r) => r.op.id)).toEqual(['s4']);
-    expect(retryRefused(refused[0]!.refusalId)).toBe(false);
     expect(readQueue()).toHaveLength(1);
-    // Le réseau revient : la série part entière et corrigée, le refus tombe.
+    expect(await retryRefused(refused[0]!.refusalId)).toBe('done');
+    expect(readQueue().map((op) => `${op.type}:${(op as { weightKg?: number }).weightKg}`)).toEqual([
+      'insertSet:123456',
+      'patchSet:100',
+    ]);
+    // Le réseau revient : l'ancienne saisie est refusée de nouveau, la série
+    // part entière et corrigée, et plus rien ne reste à renvoyer.
     await flush(syncFns);
     expect(base()).toContain('s4:100kg@4');
     expect(listRefused()).toEqual([]);
@@ -434,6 +463,6 @@ describe('refus qui arrive APRÈS le geste suivant (insertion encore en vol)', (
     await flush(syncFns);
     const refused = listRefused();
     expect(refused.map((r) => r.op.id)).toEqual(['s4']);
-    expect(retryRefused(refused[0]!.refusalId)).toBe(true);
+    expect(await retryRefused(refused[0]!.refusalId)).toBe('done');
   });
 });

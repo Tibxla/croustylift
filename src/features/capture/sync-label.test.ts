@@ -1,61 +1,13 @@
-// Libellés de l'état de synchro : la quarantaine ne se cache jamais derrière
-// « Synchronisé », et une Déconnexion refusée à cause d'elle dit pourquoi.
+// Libellés des saisies retenues : une Déconnexion refusée à cause de la
+// quarantaine dit pourquoi. La ligne de synchro est testée dans
+// shell/sync-line.test.ts.
 import { describe, it, expect } from 'vitest';
 import {
   arrivalGuardLabel,
   heldWritesNotice,
   signOutRefusalLabel,
-  syncBannerLabel,
   unsavedWritesLabel,
 } from './sync-label';
-
-describe('syncBannerLabel', () => {
-  it('rien en file, rien en quarantaine : synchronisé, en vert', () => {
-    expect(syncBannerLabel({ pending: 0, quarantined: 0, online: true })).toEqual({
-      tone: 'good',
-      label: 'Synchronisé. Tout est en base.',
-    });
-  });
-
-  it('file vide mais quarantaine non vide : jamais « Synchronisé », en ambre', () => {
-    expect(syncBannerLabel({ pending: 0, quarantined: 1, online: true })).toEqual({
-      tone: 'warn',
-      label: '1 saisie refusée par le serveur, non envoyée.',
-    });
-    expect(syncBannerLabel({ pending: 0, quarantined: 3, online: false })).toEqual({
-      tone: 'warn',
-      label: '3 saisies refusées par le serveur, non envoyées.',
-    });
-  });
-
-  it('file en attente sans quarantaine : libellés d’avant', () => {
-    expect(syncBannerLabel({ pending: 2, quarantined: 0, online: true })).toEqual({
-      tone: 'info',
-      label: 'Synchronisation… 2 en attente.',
-    });
-    expect(syncBannerLabel({ pending: 2, quarantined: 0, online: false })).toEqual({
-      tone: 'warn',
-      label: 'Hors ligne. 2 en attente, gardé sur l’appareil.',
-    });
-  });
-
-  it('file en attente ET quarantaine : les deux sont dits, en ambre', () => {
-    expect(syncBannerLabel({ pending: 2, quarantined: 1, online: true })).toEqual({
-      tone: 'warn',
-      label: 'Synchronisation… 2 en attente. 1 saisie refusée par le serveur, non envoyée.',
-    });
-  });
-
-  it('aucun cas avec quarantaine ne contient « Synchronisé »', () => {
-    for (const pending of [0, 1, 5]) {
-      for (const online of [true, false]) {
-        const { label, tone } = syncBannerLabel({ pending, quarantined: 2, online });
-        expect(label).not.toContain('Synchronisé');
-        expect(tone).toBe('warn');
-      }
-    }
-  });
-});
 
 describe('signOutRefusalLabel', () => {
   it('seulement des saisies en attente : revenir en ligne suffit', () => {
@@ -146,26 +98,5 @@ describe('arrivalGuardLabel', () => {
         'et ce lien ouvre un autre compte (b@exemple.com). ' +
         'Reviens à la connexion et connecte-toi avec a@exemple.com pour les envoyer.',
     );
-  });
-});
-
-describe('syncBannerLabel, stockage plein', () => {
-  it('ne dit jamais « Synchronisé » quand les saisies ne tiennent qu’en mémoire', () => {
-    const { tone, label } = syncBannerLabel({
-      pending: 2,
-      quarantined: 0,
-      online: true,
-      unsaved: true,
-    });
-    expect(tone).toBe('warn');
-    expect(label).toBe(
-      'Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte. 2 en attente d’envoi.',
-    );
-  });
-
-  it('file vide mais séance en cours non sauvegardée : l’avertissement reste', () => {
-    expect(
-      syncBannerLabel({ pending: 0, quarantined: 0, online: true, unsaved: true }).label,
-    ).toBe('Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte.');
   });
 });

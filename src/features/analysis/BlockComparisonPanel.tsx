@@ -11,22 +11,23 @@
 //
 // Séparation CHARGEMENT / PRÉSENTATION : `ComparisonView` est pur (exécutions +
 // blocs + séances déjà chargés), `BlockComparisonPanel` fait la lecture
-// Supabase. Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
+// Supabase, en copie datée comme le reste de l'Analyse (hors ligne : la copie,
+// ou une phrase). Tout le calcul vient du domaine pur (`summarizeBlockSeances`,
 // `compareBlockSeances`, `defaultComparisonPair`).
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { Block, ExerciseExecution } from '../../domain/types';
-import { blockKey } from '../../domain/block';
 import {
   compareBlockSeances,
-  defaultComparisonPair,
+  comparisonOptionKey,
+  resolveComparisonPair,
   summarizeBlockSeances,
   type BlockSeanceProgression,
 } from '../../domain/block-comparison';
-import { EmptyState, List, Row, Sheet, Status } from '../../ui';
-import { errorMessage } from '../../lib/error-message';
+import { CopyNote, EmptyState, List, OfflineState, Row, Sheet, Status } from '../../ui';
+import { BLOCKS_VIEW_PREFIX } from '../../lib/dated-read';
+import { useDatedLoad } from '../../lib/use-dated-load';
 import { loadBlockComparisonData, type SeanceInfo } from './data';
-import { seanceRoutineLabel } from './block-label';
-import { shortDay } from './chart-time';
+import { blockPeriodLabel, seanceRoutineLabel } from './block-label';
 import { toWeeklySeries } from './comparison-series';
 import { ComparisonChart } from './ComparisonChart';
 import { formatRate } from './format';
@@ -35,45 +36,45 @@ import { rateVerdict, SLOPE_WORD } from './slope-words';
 import { winnerVerdict } from './trend';
 import { measureLabel, rateNote } from './unit-label';
 
-type LoadState =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'ready'; executions: ExerciseExecution[]; blocks: Block[]; seances: Map<string, SeanceInfo> };
+/** La lecture d'un exo, en copie datée (lib/dated-read) : la `Map` des séances
+ *  passe en paires, la copie passe par JSON. */
+interface ComparisonCopy {
+  executions: ExerciseExecution[];
+  blocks: Block[];
+  seances: [string, SeanceInfo][];
+}
 
-/** Lecture puis présentation. À monter avec `key={exerciseId}` : un exo, un chargement. */
+/** Lecture puis présentation. À monter avec `key={exerciseId}` : un exo, un chargement.
+ *  Hors ligne : la dernière copie, datée ; sans copie, une phrase, jamais « Erreur ». */
 export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
-  const [load, setLoad] = useState<LoadState>({ phase: 'loading' });
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
-        if (active) setLoad({ phase: 'ready', executions, blocks, seances });
-      } catch (err) {
-        if (active) setLoad({ phase: 'error', message: errorMessage(err) });
-      }
-    })();
-    return () => {
-      active = false;
-    };
+  const fetchComparison = useCallback(async (): Promise<ComparisonCopy> => {
+    const { executions, blocks, seances } = await loadBlockComparisonData(exerciseId);
+    return { executions, blocks, seances: [...seances] };
   }, [exerciseId]);
+  const { state, online, showDate } = useDatedLoad(`${BLOCKS_VIEW_PREFIX}${exerciseId}`, fetchComparison);
+  const seances = useMemo(() => new Map(state.phase === 'ready' ? state.value.seances : []), [state]);
 
-  if (load.phase === 'loading') {
+  if (state.phase === 'loading') {
     return (
       <p role="status" className="px-5 py-6 text-[15px] text-muted">
         Chargement des blocs…
       </p>
     );
   }
-  if (load.phase === 'error') {
+  if (state.phase === 'offline') return <OfflineState surface="La comparaison des blocs" />;
+  if (state.phase === 'error') {
     return (
       <p role="alert" className="mx-5 mt-4 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
-        <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {load.message}
+        <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {state.message}
       </p>
     );
   }
-  return <ComparisonView exerciseId={exerciseId} executions={load.executions} blocks={load.blocks} seances={load.seances} />;
+  return (
+    <>
+      {showDate && <CopyNote at={state.at} online={online} />}
+      <ComparisonView exerciseId={exerciseId} executions={state.value.executions} blocks={state.value.blocks} seances={seances} />
+    </>
+  );
 }
 
 // --- Présentation (pure, montable sans réseau) -------------------------------
@@ -81,10 +82,6 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
 /** « Push · PPL » : la séance d'une option, toujours avec sa routine. */
 const seanceOf = (o: BlockSeanceProgression, seances: ReadonlyMap<string, SeanceInfo>) =>
   seanceRoutineLabel(seances.get(o.seanceId));
-
-/** « du 28/03 au 23/11 », « depuis le 23/11 » : la période d'un bloc en mots. */
-const periodOf = (block: Block) =>
-  block.end === null ? `depuis le ${shortDay(block.start)}` : `du ${shortDay(block.start)} au ${shortDay(block.end)}`;
 
 /**
  * Le nom d'une option : sa séance, et sa période dès qu'une autre option porte
@@ -96,7 +93,7 @@ function optionName(
   seances: ReadonlyMap<string, SeanceInfo>,
 ): string {
   const name = seanceOf(o, seances);
-  return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${periodOf(o.block)}` : name;
+  return options.filter((x) => seanceOf(x, seances) === name).length > 1 ? `${name}, ${blockPeriodLabel(o.block)}` : name;
 }
 
 /** La période en méta d'une option, sauf si son nom la porte déjà (« du 28/03 au 23/11 · »). */
@@ -105,7 +102,7 @@ function datesOf(
   options: readonly BlockSeanceProgression[],
   seances: ReadonlyMap<string, SeanceInfo>,
 ): string {
-  return optionName(o, options, seances) === seanceOf(o, seances) ? `${periodOf(o.block)} · ` : '';
+  return optionName(o, options, seances) === seanceOf(o, seances) ? `${blockPeriodLabel(o.block)} · ` : '';
 }
 
 /** La pente d'une option en signe + mot, ou ce qui lui manque. */
@@ -131,13 +128,15 @@ export function ComparisonView({
   // la dernière option étant la plus récente.
   const options = useMemo(() => summarizeBlockSeances(executions, exerciseId, blocks), [executions, exerciseId, blocks]);
   // Pré-sélection : la plus récente face à la plus récente d'un autre bloc. Un
-  // choix de l'utilisateur la remplace, côté par côté.
-  const pair = useMemo(() => defaultComparisonPair(options), [options]);
-  const [picked, setPicked] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
+  // choix de l'utilisateur la remplace, côté par côté, retenu par l'IDENTITÉ de
+  // l'option (bloc + séance) : une revalidation qui retire ou réordonne des
+  // options ne le déplace pas (`resolveComparisonPair`).
+  const [picked, setPicked] = useState<{ a: string | null; b: string | null }>({ a: null, b: null });
   const [picking, setPicking] = useState<'a' | 'b' | null>(null);
+  const pair = useMemo(() => resolveComparisonPair(options, picked), [options, picked]);
 
-  const ia = picked.a ?? pair?.[0] ?? null;
-  const ib = picked.b ?? pair?.[1] ?? null;
+  const ia = pair?.[0] ?? null;
+  const ib = pair?.[1] ?? null;
   const a = ia === null ? undefined : options[ia];
   const b = ib === null ? undefined : options[ib];
 
@@ -179,7 +178,7 @@ export function ComparisonView({
               </>
             }
             onClick={() => setPicking(side)}
-            ariaLabel={`Option ${side.toUpperCase()} : ${optionName(o, options, seances)}, ${periodOf(o.block)}. Changer`}
+            ariaLabel={`Option ${side.toUpperCase()} : ${optionName(o, options, seances)}, ${blockPeriodLabel(o.block)}. Changer`}
           />
         ))}
       </List>
@@ -204,7 +203,7 @@ export function ComparisonView({
               const taken = index === other;
               return (
                 <Row
-                  key={`${blockKey(o.block)}:${o.seanceId}`}
+                  key={comparisonOptionKey(o)}
                   title={optionName(o, options, seances)}
                   meta={`${datesOf(o, options, seances)}${sessionsLabel(o.pointCount)}${o.weeklyRate === null ? ', pas de pente' : ''}`}
                   value={taken ? <span className="text-[14px] font-normal text-faint">déjà en {picking === 'a' ? 'B' : 'A'}</span> : undefined}
@@ -215,7 +214,8 @@ export function ComparisonView({
                     taken
                       ? undefined
                       : () => {
-                          setPicked((p) => (picking === 'a' ? { ...p, a: index } : { ...p, b: index }));
+                          const key = comparisonOptionKey(o);
+                          setPicked((p) => (picking === 'a' ? { ...p, a: key } : { ...p, b: key }));
                           setPicking(null);
                         }
                   }

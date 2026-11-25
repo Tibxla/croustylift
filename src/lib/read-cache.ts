@@ -57,6 +57,30 @@ interface Envelope {
    * n'est plus servie d'abord, seulement en secours quand le réseau ne répond pas.
    */
   stale?: true;
+  /**
+   * Copie À RAFRAÎCHIR (`markToRefresh`) : une écriture acquittée l'a rendue
+   * fausse, mais elle se montre encore d'abord (revalidée aussitôt), là où une
+   * copie périmée cède la place au réseau.
+   */
+  refresh?: true;
+  /**
+   * ESTAMPILLE de la lecture qui a écrit cette copie, relevée à son départ
+   * (`setReadStamper`). Dit quelles écritures locales la copie ne peut pas
+   * contenir. Absente d'une copie écrite avant ce champ, ou sans estampilleur.
+   */
+  stamp?: number;
+}
+
+/**
+ * Estampilleur des lectures : relevé au DÉPART de chaque lecture réseau, et
+ * gardé avec la copie qu'elle écrit (`cachedReadStamped`, `peekReadStamped`).
+ * Posé par la couche qui tient le registre d'écritures (capture/data.ts) : le
+ * cache n'en connaît que le nombre. Sans estampilleur, aucune copie n'en porte.
+ */
+let stamper: (() => number) | null = null;
+
+export function setReadStamper(next: (() => number) | null): void {
+  stamper = next;
 }
 
 /** Registre mémoire des revalidations connues de cette session (clé → refetch). */
@@ -94,6 +118,16 @@ function fullKey(userId: string, key: string): string {
  */
 const invalidatedAt = new Map<string, number>();
 
+/**
+ * Copies PÉRIMÉES dont la marque n'a pas pu s'écrire (stockage plein) : la
+ * péremption est tenue ici, en mémoire, et la copie reste en place comme
+ * secours (hors ligne, l'écran qui la lit doit encore s'ouvrir). Levée dès
+ * qu'une valeur neuve s'écrit dans la copie.
+ */
+const staleInMemory = new Set<string>();
+/** Même chose pour la marque « à rafraîchir » (`markToRefresh`). */
+const refreshInMemory = new Set<string>();
+
 /** La lecture `seq` de `storageKey` est-elle partie avant une invalidation de sa clé ? */
 function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
   for (const [prefix, at] of invalidatedAt) {
@@ -103,7 +137,7 @@ function departedBeforeInvalidation(storageKey: string, seq: number): boolean {
 }
 
 /** Lit une entrée. `null` = absente ou illisible (jamais « valeur null »). */
-function readEntry<T>(key: string): { value: T; stale: boolean } | null {
+function readEntry<T>(key: string): { value: T; stale: boolean; refresh: boolean; stamp: number | null } | null {
   if (typeof localStorage === 'undefined') return null;
   const raw = localStorage.getItem(key);
   if (!raw) return null;
@@ -115,7 +149,13 @@ function readEntry<T>(key: string): { value: T; stale: boolean } | null {
       (parsed as Envelope).v === 1 &&
       'value' in (parsed as Envelope)
     ) {
-      return { value: (parsed as Envelope).value as T, stale: (parsed as Envelope).stale === true };
+      const envelope = parsed as Envelope;
+      return {
+        value: envelope.value as T,
+        stale: envelope.stale === true || staleInMemory.has(key),
+        refresh: envelope.refresh === true || refreshInMemory.has(key),
+        stamp: typeof envelope.stamp === 'number' ? envelope.stamp : null,
+      };
     }
     return null;
   } catch {
@@ -125,31 +165,58 @@ function readEntry<T>(key: string): { value: T; stale: boolean } | null {
 
 /**
  * Écrit une entrée (dégrade en silence si quota plein / mode privé), puis
- * prévient les abonnés (`onReadWritten`) si le CONTENU a changé.
+ * prévient les abonnés (`onReadWritten`) si le CONTENU ou l'estampille a changé.
  */
-function writeEntry(key: string, value: unknown): void {
-  if (typeof localStorage === 'undefined') return;
+function writeEntry(key: string, value: unknown, stamp: number | null = null): boolean {
+  if (typeof localStorage === 'undefined') return false;
   try {
-    const before = localStorage.getItem(key);
-    const after = JSON.stringify({ v: 1, value } satisfies Envelope);
+    const before = readEntry<unknown>(key);
+    const after = JSON.stringify({ v: 1, value, ...(stamp !== null ? { stamp } : {}) } satisfies Envelope);
     localStorage.setItem(key, after);
-    if (before !== after) notifyWritten(key);
+    staleInMemory.delete(key);
+    refreshInMemory.delete(key);
+    // Un CONTENU qui change prévient les abonnés ; une copie relue à
+    // l'identique sous la même estampille ne fait bouger aucun écran. Sous une
+    // AUTRE estampille, elle prévient aussi : l'estampille ne change que si une
+    // écriture locale a été enfilée ou acquittée entre les deux lectures, et ce
+    // que le lecteur ajoute à la copie (`writesSince`) n'est alors plus le même
+    // (une correction acquittée entre-temps, que la base ne porte plus). Une
+    // copie périmée ou à rafraîchir qui redevient fraîche prévient aussi.
+    if (
+      before === null ||
+      before.stale ||
+      before.refresh ||
+      before.stamp !== stamp ||
+      JSON.stringify(before.value) !== JSON.stringify(value)
+    ) {
+      notifyWritten(key);
+    }
+    return true;
   } catch {
     // Sans copie persistée, la lecture repartira sur le réseau la prochaine
     // fois : dégradation acceptable, on ne bloque jamais la lecture en cours.
+    return false;
   }
 }
 
 /** Abonnés aux écritures de copies (cf. `onReadWritten`). */
 const writeListeners = new Set<(key: string) => void>();
 
+/** Abonnés aux réponses acceptées (cf. `onReadAccepted`). */
+const acceptListeners = new Set<(key: string, value: unknown, persisted: boolean) => void>();
+
+/** La clé sans l'étiquette du compte reconnu, `null` si elle est d'un autre compte. */
+function unscoped(storageKey: string): string | null {
+  const account = loadLocalAccount();
+  if (!account) return null;
+  const scope = fullKey(account.userId, '');
+  return storageKey.startsWith(scope) ? storageKey.slice(scope.length) : null;
+}
+
 function notifyWritten(storageKey: string): void {
   if (writeListeners.size === 0) return;
-  const account = loadLocalAccount();
-  if (!account) return;
-  const scope = fullKey(account.userId, '');
-  if (!storageKey.startsWith(scope)) return;
-  const key = storageKey.slice(scope.length);
+  const key = unscoped(storageKey);
+  if (key === null) return;
   for (const listener of [...writeListeners]) listener(key);
 }
 
@@ -164,8 +231,36 @@ function notifyWritten(storageKey: string): void {
  */
 export function onReadWritten(listener: (key: string) => void): () => void {
   writeListeners.add(listener);
+  // Une copie réécrite par un AUTRE onglet (événement `storage`, que le
+  // navigateur n'envoie qu'aux autres) prévient aussi : sans cela, la Référence
+  // montée ici gardait sa valeur d'avant, et une relecture faite ensuite d'ici
+  // trouvait la copie déjà à jour, donc ne prévenait personne non plus.
+  const fromOtherTab = (event: Event) => {
+    const { key, newValue } = event as StorageEvent;
+    const account = loadLocalAccount();
+    if (!account || typeof key !== 'string' || newValue === null) return;
+    const scope = fullKey(account.userId, '');
+    if (key.startsWith(scope)) listener(key.slice(scope.length));
+  };
+  const tabs = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
+  if (tabs) window.addEventListener('storage', fromOtherTab);
   return () => {
     writeListeners.delete(listener);
+    if (tabs) window.removeEventListener('storage', fromOtherTab);
+  };
+}
+
+/**
+ * S'abonne aux réponses réseau ACCEPTÉES par les gardes d'ordre
+ * (`guardedFetch`), avec leur valeur, que la copie ait pu s'écrire ou non : un
+ * stockage plein ne doit pas cacher à l'écran monté la lecture qui vient de
+ * réussir (il garderait sinon l'ancienne copie). `persisted` dit si la copie a
+ * pu s'écrire : sinon elle est restée l'ancienne. Rend le désabonnement.
+ */
+export function onReadAccepted(listener: (key: string, value: unknown, persisted: boolean) => void): () => void {
+  acceptListeners.add(listener);
+  return () => {
+    acceptListeners.delete(listener);
   };
 }
 
@@ -183,22 +278,43 @@ async function guardedFetch<T>(
   fetcher: () => Promise<T>,
   raisesFloor = false,
 ): Promise<T> {
+  return (await guardedFetchStamped(userId, storageKey, fetcher, raisesFloor)).value;
+}
+
+/** `guardedFetch`, qui rend aussi l'estampille relevée au départ de la lecture. */
+async function guardedFetchStamped<T>(
+  userId: string,
+  storageKey: string,
+  fetcher: () => Promise<T>,
+  raisesFloor = false,
+): Promise<{ value: T; stamp: number | null }> {
   readSeq += 1;
   const seq = readSeq;
   const gen = purgeGen;
+  const scope = fullKey(userId, '');
+  const ackAt = ackGeneration(userId, storageKey.slice(scope.length));
   if (raisesFloor) floor.set(storageKey, seq);
+  const stamp = stamper ? stamper() : null;
   const value = await fetcher();
+  // Vérifiée JUSTE avant d'écrire (rien d'asynchrone entre les deux) : une
+  // écriture acquittée depuis le départ, dans cet onglet ou un autre, a changé
+  // la génération partagée ; la réponse décrit la base d'avant, elle est jetée.
   if (
     gen === purgeGen &&
+    ackGeneration(userId, storageKey.slice(scope.length)) === ackAt &&
     seq >= (floor.get(storageKey) ?? 0) &&
     seq > (lastWritten.get(storageKey) ?? 0) &&
     !departedBeforeInvalidation(storageKey, seq) &&
     loadLocalAccount()?.userId === userId
   ) {
-    writeEntry(storageKey, value);
+    // Écrite ou non (quota plein), la réponse est la plus fraîche acceptée :
+    // elle fixe l'ordre et part aux abonnés (`onReadAccepted`).
+    const persisted = writeEntry(storageKey, value, stamp);
     lastWritten.set(storageKey, seq);
+    const key = acceptListeners.size > 0 ? unscoped(storageKey) : null;
+    if (key !== null) for (const listener of [...acceptListeners]) listener(key, value, persisted);
   }
-  return value;
+  return { value, stamp };
 }
 
 /** Borne une promesse : rejette après `ms` (la promesse d'origine continue). */
@@ -227,25 +343,48 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * pendant qu'une revalidation silencieuse met la copie à jour pour la
  * prochaine lecture. Sans copie : on attend le réseau et on sème le cache.
  */
-export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+export async function cachedRead<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  { replay = true }: { replay?: boolean } = {},
+): Promise<T> {
+  return (await cachedReadStamped(key, fetcher, { replay })).value;
+}
+
+/**
+ * `cachedRead`, qui rend aussi l'ESTAMPILLE de ce qu'il sert : celle de la
+ * lecture qui a écrit la copie servie, ou celle de la lecture réseau qui vient
+ * de répondre. `null` : copie d'avant ce champ, ou aucun estampilleur posé.
+ */
+export async function cachedReadStamped<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  { replay = true }: { replay?: boolean } = {},
+): Promise<{ value: T; stamp: number | null }> {
   const account = loadLocalAccount();
-  if (!account) return fetcher();
+  if (!account) {
+    const stamp = stamper ? stamper() : null;
+    return { value: await fetcher(), stamp };
+  }
 
   const storageKey = fullKey(account.userId, key);
   const refresh = async () => {
     await guardedFetch(account.userId, storageKey, fetcher);
   };
-  revalidators.set(storageKey, refresh);
+  // `replay: false` : la copie n'est jamais rejouée par `revalidateReadCache`
+  // (après chaque flush). Pour les lectures lourdes des écrans au calme, relues
+  // seulement à l'ouverture de leur écran (lib/dated-read).
+  if (replay) revalidators.set(storageKey, refresh);
 
   const cached = readEntry<T>(storageKey);
   if (cached !== null && !cached.stale) {
     // Revalidation en arrière-plan : hors-ligne elle échoue en silence, la
     // copie servie reste la vérité locale jusqu'au prochain passage en ligne.
     void refresh().catch(() => {});
-    return cached.value;
+    return { value: cached.value, stamp: cached.stamp };
   }
 
-  const attempt = guardedFetch(account.userId, storageKey, fetcher);
+  const attempt = guardedFetchStamped(account.userId, storageKey, fetcher);
   if (cached === null) return attempt;
   // Copie PÉRIMÉE par une écriture faite d'ici (`invalidateReads`) : réseau
   // d'abord, borné ; la copie ne sert qu'en secours (hors ligne, wifi zombie).
@@ -254,7 +393,7 @@ export async function cachedRead<T>(key: string, fetcher: () => Promise<T>): Pro
   try {
     return await withTimeout(attempt, NETWORK_FIRST_TIMEOUT_MS);
   } catch {
-    return cached.value;
+    return { value: cached.value, stamp: cached.stamp };
   }
 }
 
@@ -280,11 +419,92 @@ export function invalidateReads(prefixes: readonly string[]): void {
       try {
         localStorage.setItem(
           storageKey,
-          JSON.stringify({ v: 1, value: entry.value, stale: true } satisfies Envelope),
+          JSON.stringify({
+            v: 1,
+            value: entry.value,
+            stale: true,
+            ...(entry.stamp !== null ? { stamp: entry.stamp } : {}),
+          } satisfies Envelope),
         );
       } catch {
-        // Quota plein : faute de pouvoir la marquer, la copie fausse est retirée.
-        localStorage.removeItem(storageKey);
+        // Quota plein : la marque est tenue en mémoire. La copie n'est JAMAIS
+        // retirée : hors ligne, c'est tout ce que l'écran a à montrer.
+        staleInMemory.add(storageKey);
+      }
+    }
+  }
+}
+
+/**
+ * GÉNÉRATIONS D'ACQUITTEMENT, partagées par les onglets (stockage) : par
+ * compte, un compteur par préfixe de clé, que `markToRefresh` incrémente quand
+ * une écriture est acquittée. Une lecture note la génération de sa clé à son
+ * départ ; sa réponse n'écrit la copie que si elle n'a pas changé. Sans elle,
+ * la garde d'écriture était propre à chaque onglet et ne prenait effet qu'à la
+ * réception du message : un autre onglet, dont la lecture partie avant un
+ * DELETE répondait avant le message, écrasait la copie fraîche.
+ */
+const ACK_GEN_PREFIX = 'croustylift:ackgen';
+
+function ackGenerations(userId: string): Record<string, number> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(`${ACK_GEN_PREFIX}:${userId}`) ?? '{}');
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** La génération d'une clé : celles des préfixes qui la couvrent. */
+function ackGeneration(userId: string, key: string): string {
+  const gens = ackGenerations(userId);
+  return Object.keys(gens)
+    .filter((prefix) => key.startsWith(prefix))
+    .sort()
+    .map((prefix) => `${prefix}=${gens[prefix]}`)
+    .join('|');
+}
+
+/**
+ * Marque À RAFRAÎCHIR les copies dont la clé commence par un des préfixes : une
+ * écriture vient d'être ACQUITTÉE (ici ou dans un autre onglet) et les rend
+ * fausses. Contrairement à `invalidateReads`, la copie se montre encore
+ * d'abord, puis sa revalidation la remplace ; elle n'est plus tenue pour
+ * fraîche (`peekFreshRead`). Les lectures de ces clés encore en vol sont
+ * parties avant l'acquittement : leur réponse n'écrit plus la copie. La marque
+ * est écrite dans la copie (stockage partagé par les onglets) ; stockage plein,
+ * elle est tenue en mémoire, et la copie n'est jamais retirée.
+ */
+export function markToRefresh(prefixes: readonly string[]): void {
+  const account = loadLocalAccount();
+  if (!account || typeof localStorage === 'undefined') return;
+  // Garde locale, et génération partagée avec les autres onglets.
+  for (const prefix of prefixes) invalidatedAt.set(fullKey(account.userId, prefix), readSeq);
+  const gens = ackGenerations(account.userId);
+  for (const prefix of prefixes) gens[prefix] = (gens[prefix] ?? 0) + 1;
+  try {
+    localStorage.setItem(`${ACK_GEN_PREFIX}:${account.userId}`, JSON.stringify(gens));
+  } catch {
+    // Stockage plein : la garde locale tient seule pour cet onglet.
+  }
+  for (const prefix of prefixes) {
+    for (const key of cachedKeys(prefix)) {
+      const storageKey = fullKey(account.userId, key);
+      const entry = readEntry<unknown>(storageKey);
+      if (entry === null || entry.stale || entry.refresh) continue;
+      try {
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({
+            v: 1,
+            value: entry.value,
+            refresh: true,
+            ...(entry.stamp !== null ? { stamp: entry.stamp } : {}),
+          } satisfies Envelope),
+        );
+      } catch {
+        refreshInMemory.add(storageKey);
       }
     }
   }
@@ -333,9 +553,15 @@ export function seedRead(key: string, value: unknown, writerId?: string): void {
  * copies contiennent une ligne supprimée), pas pour servir un écran.
  */
 export function peekRead<T>(key: string): T | null {
+  return peekReadStamped<T>(key)?.value ?? null;
+}
+
+/** `peekRead`, avec l'estampille de la copie (cf. `cachedReadStamped`). */
+export function peekReadStamped<T>(key: string): { value: T; stamp: number | null } | null {
   const account = loadLocalAccount();
   if (!account) return null;
-  return readEntry<T>(fullKey(account.userId, key))?.value ?? null;
+  const entry = readEntry<T>(fullKey(account.userId, key));
+  return entry === null ? null : { value: entry.value, stamp: entry.stamp };
 }
 
 /**
@@ -348,7 +574,7 @@ export function peekFreshRead<T>(key: string): T | null {
   const account = loadLocalAccount();
   if (!account) return null;
   const entry = readEntry<T>(fullKey(account.userId, key));
-  return entry && !entry.stale ? entry.value : null;
+  return entry && !entry.stale && !entry.refresh ? entry.value : null;
 }
 
 /**
@@ -361,6 +587,8 @@ export function dropRead(key: string): void {
   if (!account || typeof localStorage === 'undefined') return;
   const storageKey = fullKey(account.userId, key);
   revalidators.delete(storageKey);
+  staleInMemory.delete(storageKey);
+  refreshInMemory.delete(storageKey);
   try {
     localStorage.removeItem(storageKey);
   } catch {
@@ -411,7 +639,8 @@ export async function networkFirstRead<T>(
 }
 
 /**
- * Rejoue toutes les revalidations connues de la session (no-op hors-ligne).
+ * Rejoue toutes les revalidations connues de la session (no-op hors-ligne),
+ * sauf celles des lectures marquées `replay: false` (cf. `cachedRead`).
  * Appelée après un flush d'outbox réussi (App). L'historique des exos touchés
  * par le flush est en plus relu par `flushOutbox` lui-même, sous seuil (sync.ts).
  */
@@ -430,13 +659,15 @@ export function clearReadCache(): void {
   lastWritten.clear();
   floor.clear();
   invalidatedAt.clear();
+  staleInMemory.clear();
+  refreshInMemory.clear();
   purgeGen += 1;
   if (typeof localStorage === 'undefined') return;
   try {
     const doomed: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key !== null && key.startsWith(`${PREFIX}:`)) doomed.push(key);
+      if (key !== null && (key.startsWith(`${PREFIX}:`) || key.startsWith(`${ACK_GEN_PREFIX}:`))) doomed.push(key);
     }
     for (const key of doomed) localStorage.removeItem(key);
   } catch {

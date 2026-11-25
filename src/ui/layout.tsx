@@ -80,12 +80,6 @@ export function SectionTitle({ children, aside, id }: { children: ReactNode; asi
   );
 }
 
-/** Filet horizontal. `inset` : aligné sur la marge d'écran. `strong` : trait de
- *  2 px qui sépare deux familles de contenu. */
-export function Rule({ inset = true, strong = false }: { inset?: boolean; strong?: boolean }) {
-  return <hr className={`border-0 ${strong ? 'h-[2px] bg-muted' : 'h-px bg-line'} ${inset ? 'mx-5' : ''}`} />;
-}
-
 /** Ligne de liste : titre, méta dessous, valeur à droite, chevron si `onClick`
  *  (« ouvrir »). `chevron={false}` : le toucher ne mène nulle part (il ajoute,
  *  par exemple) ; `mark` pose alors à sa place une icône décorative qui dit le
@@ -148,7 +142,10 @@ export function Row({
       )}
     </>
   );
-  const cls = 'flex min-h-14 min-w-0 flex-1 items-start gap-3 py-3 text-left';
+  // Un titre seul (ni méta ni valeur) se centre sur la ligne, à la hauteur du
+  // chevron ; sinon tout part du haut, pour les titres sur deux lignes.
+  const bare = !meta && value === undefined && valueMeta === undefined;
+  const cls = `flex min-h-14 min-w-0 flex-1 ${bare ? 'items-center' : 'items-start'} gap-3 py-3 text-left`;
   return (
     <li className="relative flex items-center gap-3 border-b border-line px-5">
       {onClick ? (

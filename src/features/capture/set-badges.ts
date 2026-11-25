@@ -13,8 +13,8 @@
 // Un seul badge par ligne, hiérarchie RECORD > battu > égalisé : si une série bat
 // son record, on montre « Record » (pas aussi « battu », redondant).
 import { comparePerformance } from '../../domain/e1rm';
-import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
-import type { PerformedSet } from '../../domain/types';
+import { heavier, type PersonalRecord, type PersonalRecordBySide } from '../../domain/pr';
+import type { PerformedSet, Side } from '../../domain/types';
 import {
   computeRecordFlags,
   computeRecordFlagsBySide,
@@ -88,6 +88,37 @@ export function summarizeBadges(sets: PerformedSet[], badges: SetBadge[]): Badge
   return summary;
 }
 
+/**
+ * Le mot d'un record selon son type : « record charge » pour un record de charge
+ * seule (`weight-reps`), « record » pour un record d'e1RM (seul ou avec la
+ * charge). La case « Record » de l'instrument montre le record d'e1RM : un
+ * « ▲ record » posé sur une série qui ne bat que la charge laissait croire à une
+ * erreur de l'app.
+ */
+function recordKindWord(kind: RecordKind): 'record' | 'record charge' {
+  return kind === 'weight-reps' ? 'record charge' : 'record';
+}
+
+/** Le statut d'une série en signe + mot, un seul pour la bande, la feuille de
+ *  correction et le bilan : record (signal), battue (signal), égalée. `short` :
+ *  le mot dans une case de la bande (66 à 92 px), où « record charge » ne tient
+ *  pas : « charge » seul, le nom lu garde le mot entier. */
+export function badgeStatus(badge: SetBadge): { v: 'up' | 'eq'; word: string; short: string } | null {
+  if (!badge) return null;
+  if (badge.axis === 'record') {
+    const word = recordKindWord(badge.record);
+    return { v: 'up', word, short: word === 'record charge' ? 'charge' : word };
+  }
+  return badge.verdict === 'battu' ? { v: 'up', word: 'battue', short: 'battue' } : { v: 'eq', word: 'égalée', short: 'égalée' };
+}
+
+/** Le mot d'un groupe de records (bilan de l'exo, récap) : « record charge »
+ *  seulement quand TOUS ses records sont de charge seule. */
+export function recordWord(badges: readonly SetBadge[]): 'record' | 'record charge' {
+  const kinds = badges.flatMap((b) => (b?.axis === 'record' ? [b.record] : []));
+  return kinds.length > 0 && kinds.every((k) => k === 'weight-reps') ? 'record charge' : 'record';
+}
+
 /** Combine les deux axes en un seul badge, priorité Record > battu > égalisé. */
 function combine(record: RecordKind | null, ref: RefVerdict): SetBadge {
   if (record) return { axis: 'record', record };
@@ -126,4 +157,42 @@ export function computeSetBadgesBySide(
 ): SetBadge[] {
   const recordFlags = computeRecordFlagsBySide(sets, records);
   return sets.map((s, i) => combine(recordFlags[i] ?? null, referenceVerdict(s, reference)));
+}
+
+/** Un record du jour : son axe, son côté (`null` en bilatéral) et la série qui le porte. */
+export interface DayRecord {
+  axis: 'e1rm' | 'charge';
+  side: Side | null;
+  set: PerformedSet;
+}
+
+/**
+ * Les records du jour d'un exo, LE décompte de la fin de séance (session-recap)
+ * et du résumé du Journal (journal-verdicts) : au plus un par axe et par côté,
+ * la meilleure série du jour parmi celles qui portent le badge de cet axe
+ * (`comparePerformance` pour l'e1RM, `heavier` pour la charge). Une série qui
+ * bat les deux records ne compte qu'une fois, sur l'axe e1rm : le record de
+ * charge ne s'ajoute que s'il est tenu par une AUTRE série. Deux séries qui
+ * passent tour à tour le record provisoire font donc UN record. Ordre : gauche
+ * puis droite, e1rm puis charge. `badges` est aligné par index sur `sets` ; une
+ * ligne unilatérale sans côté (donnée inattendue) compte à gauche, comme
+ * `computeRecordFlagsBySide`.
+ */
+export function dayRecords(sets: readonly PerformedSet[], badges: readonly SetBadge[], unilateral: boolean): DayRecord[] {
+  const sideOf = (set: PerformedSet): Side | null => (unilateral ? (set.side === 'right' ? 'right' : 'left') : null);
+  const sides: (Side | null)[] = unilateral ? ['left', 'right'] : [null];
+  const records: DayRecord[] = [];
+  for (const side of sides) {
+    let bestE1rm: PerformedSet | null = null;
+    let bestCharge: PerformedSet | null = null;
+    sets.forEach((set, index) => {
+      const badge = badges[index];
+      if (badge?.axis !== 'record' || sideOf(set) !== side) return;
+      if (badge.record !== 'weight-reps' && (bestE1rm === null || comparePerformance(set, bestE1rm) > 0)) bestE1rm = set;
+      if (badge.record !== 'e1rm' && (bestCharge === null || heavier(bestCharge, set))) bestCharge = set;
+    });
+    if (bestE1rm !== null) records.push({ axis: 'e1rm', side, set: bestE1rm });
+    if (bestCharge !== null && bestCharge !== bestE1rm) records.push({ axis: 'charge', side, set: bestCharge });
+  }
+  return records;
 }

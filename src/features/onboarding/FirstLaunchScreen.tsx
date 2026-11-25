@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { errorMessage } from '../../lib/error-message';
 import { formatRange } from '../capture/format';
+import { glossaryLine } from '../../lib/glossary-text';
 import { FieldError, PrimaryButton, RadioMark, Screen, ScreenHeader, SectionTitle, TextField } from '../../ui';
 import { firstNameProblem } from './template';
 import {
@@ -120,16 +121,20 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
               onSelect={() => setWithTemplate(true)}
             />
             {withTemplate && (
-              <ol aria-label="Exercices du modèle" className="border-b border-line py-1.5 pl-[62px] pr-5">
-                {STARTER_TEMPLATE.exercises.map(({ name, prescription: p }) => (
-                  <li key={name} className="flex items-baseline justify-between gap-3 py-1 text-[15px] leading-[1.3]">
-                    <span className="min-w-0 text-ink">{name}</span>
-                    <span className="flex-none whitespace-nowrap text-[14px] text-muted">
-                      {formatRange(p.sets)} × {formatRange(p.reps)} · RIR {formatRange(p.rir)}
-                    </span>
-                  </li>
-                ))}
-              </ol>
+              <div className="border-b border-line">
+                <ol aria-label="Exercices du modèle" className="py-1.5 pl-[62px] pr-5">
+                  {STARTER_TEMPLATE.exercises.map(({ name, prescription: p }) => (
+                    <li key={name} className="flex items-baseline justify-between gap-3 py-1 text-[15px] leading-[1.3]">
+                      <span className="min-w-0 text-ink">{name}</span>
+                      <span className="flex-none whitespace-nowrap text-[14px] text-muted">
+                        {formatRange(p.sets)} × {formatRange(p.reps)} · RIR {formatRange(p.rir)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                {/* Première apparition du RIR : une phrase, sans plus. */}
+                <p className="pb-2.5 pl-[62px] pr-5 text-[14px] leading-[1.4] text-muted">{glossaryLine('rir')}</p>
+              </div>
             )}
             <StartOption
               selected={!withTemplate}

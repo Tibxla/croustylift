@@ -34,9 +34,7 @@ export type IconName =
   | 'plus'
   | 'more'
   | 'edit'
-  | 'trash'
   | 'note'
-  | 'reorder'
   | 'eye'
   | 'eye-off'
   | 'chevron-down'
@@ -61,24 +59,11 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M14.5 7.5l3 3" />
     </>
   ),
-  trash: (
-    <>
-      <path d="M4 7h16M9.5 7V4.5h5V7" />
-      <path d="M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5" />
-    </>
-  ),
   // page cornée à deux lignes : une note écrite
   note: (
     <>
       <path d="M6 3.5h8.5L19 8v12.5H6z" />
       <path d="M14 3.5V8.5h5M9 13h7M9 16.5h5" />
-    </>
-  ),
-  // ⇅ réordonner
-  reorder: (
-    <>
-      <path d="M8 19V5M4.5 8.5 8 5l3.5 3.5" />
-      <path d="M16 5v14M12.5 15.5 16 19l3.5-3.5" />
     </>
   ),
   eye: (
@@ -183,7 +168,7 @@ export function Chevron({ dir = 'right' }: { dir?: 'right' | 'left' }) {
 
 /** Bouton icône seule, 44 × 44 px. `framed` : contour net (action d'en-tête, même
  *  famille que le bouton secondaire) ; sans cadre dans une ligne de liste, où il
- *  se range comme le chevron. `pressed` : bascule (aria-pressed). */
+ *  se range comme le chevron. */
 export function IconButton({
   icon,
   label,
@@ -191,8 +176,6 @@ export function IconButton({
   framed = false,
   tone = 'ink',
   dot = false,
-  pressed,
-  disabled,
   className = '',
 }: {
   icon: IconName;
@@ -203,8 +186,6 @@ export function IconButton({
   tone?: 'ink' | 'muted';
   /** Indice « il y a déjà quelque chose » (note écrite). */
   dot?: boolean;
-  pressed?: boolean;
-  disabled?: boolean;
   className?: string;
 }) {
   const look = framed
@@ -215,9 +196,7 @@ export function IconButton({
       type="button"
       onClick={onClick}
       aria-label={label}
-      aria-pressed={pressed}
-      disabled={disabled}
-      className={`ui-press relative inline-flex h-11 w-11 flex-none items-center justify-center rounded-block disabled:text-dim ${look} ${className}`}
+      className={`ui-press relative inline-flex h-11 w-11 flex-none items-center justify-center rounded-block ${look} ${className}`}
     >
       <Icon name={icon} />
       {dot && <span aria-hidden className="absolute right-[8px] top-[8px] h-[6px] w-[6px] bg-ink" />}

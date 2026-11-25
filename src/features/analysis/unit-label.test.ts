@@ -1,19 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { heroLabel, measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label'
+import { measureLabel, rateNote, secondaryLabel, zeroLoadHolesLabel } from './unit-label'
 
 describe('libellés de l’unité d’une courbe', () => {
   it('un exo jamais chargé dit « reps », jamais « e1RM »', () => {
     expect(measureLabel('reps')).toBe('reps eff.')
-    expect(heroLabel('reps')).toBe('Reps effectives')
     expect(secondaryLabel('reps')).toBe('reps eff. moyennes')
-    for (const label of [measureLabel('reps'), heroLabel('reps'), secondaryLabel('reps')]) {
+    for (const label of [measureLabel('reps'), secondaryLabel('reps')]) {
       expect(label).not.toMatch(/e1RM/)
     }
   })
 
   it('le cas général garde l’e1RM', () => {
     expect(measureLabel('kg')).toBe('e1RM')
-    expect(heroLabel('kg')).toBe('e1RM estimé')
     expect(secondaryLabel('kg')).toBe('e1RM moyen')
   })
 

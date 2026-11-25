@@ -1,36 +1,20 @@
-// Tests du câblage outbox -> Supabase (sync.ts).
+// Tests du câblage registre d'écritures -> Supabase (sync.ts).
 //
-// On cible le BUG M4 : `flushOps` ne doit PAS se fier au `remaining` GLOBAL du
-// FlushResult (qui peut être périmé quand un flush est déjà en vol), mais
-// recompter SES propres ops (les ids qu'il a enfilés) encore présentes en file.
+// On cible le BUG M4 : `flushOps` ne doit PAS se fier au `remaining` GLOBAL de la
+// passe (qui peut dater d'avant l'enfilement de nos ops, quand un flush est déjà
+// en vol), mais rendre le SORT de ses propres écritures.
 //
-// Stratégie de mock :
-//   - `./outbox` : on garde les vraies fonctions de file (enqueue/readQueue/
-//     clearQueue, sur un polyfill localStorage mémoire) mais on REMPLACE `flush`
-//     par un mock contrôlable — c'est lui qui simule une passe « menteuse » (un
-//     flush en vol qui renvoie remaining: 0 sans avoir drainé NOS ops).
-//   - `./data` et `../notes/data` : neutralisés (syncFns les référence à l'import,
-//     on ne veut surtout pas toucher Supabase ici).
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import type { FlushResult, OutboxOp } from './outbox';
+// Stratégie de mock : le registre et sa passe d'envoi sont RÉELS ; seule la
+// couche Supabase est remplacée (`./data`, `../notes/data`), pour décider de ce
+// que la base accepte, refuse, ou laisse sans réponse.
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import type { OutboxOp } from './outbox';
 
 // --- Mocks de modules -------------------------------------------------------
 
-// `flush` est remplacé par un mock ; le reste de l'outbox reste RÉEL (vraie file).
-// `vi.hoisted` : le mock doit exister AVANT le hoisting de `vi.mock` (sinon
-// ReferenceError, la factory s'exécute avant l'init du `const`).
-const { flushMock } = vi.hoisted(() => ({
-  flushMock: vi.fn<(...args: unknown[]) => Promise<FlushResult>>(),
-}));
-vi.mock('./outbox', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./outbox')>();
-  return { ...actual, flush: flushMock };
-});
-
-// Les data-layers Supabase : neutralisés (jamais appelés dans ces tests, mais
-// syncFns les capture à l'import → il faut des stubs présents).
 vi.mock('./data', () => ({
   deleteExecutionById: vi.fn(),
+  deleteExecutionIfEmpty: vi.fn(),
   deleteSetById: vi.fn(),
   patchSet: vi.fn(),
   exercisesHoldingRows: vi.fn(() => []),
@@ -46,18 +30,25 @@ vi.mock('../notes/data', () => ({
   upsertExerciseNoteRow: vi.fn(),
   deleteExerciseNoteByExercise: vi.fn(),
 }));
+vi.mock('../../lib/session-identity', () => ({ sessionUserId: async () => 'user-1' }));
 
-import { flushOps, syncFns } from './sync';
-import { enqueue, readQueue } from './outbox';
-// `./data` est mocké plus haut : cet import récupère la vi.fn() pour asserter
-// l'argument reçu par data.updateExecution (chaîne closed_at).
-import { updateExecution } from './data';
+import { flushOps, flushOutbox, syncFns } from './sync';
+import { enqueue, listRefused, purgeByExecution, readQueue } from './outbox';
+// `./data` est mocké plus haut : ces imports récupèrent les vi.fn().
+import { refreshExerciseRows, updateExecution, upsertExecution, upsertSet } from './data';
 import { deleteDatedNoteByCouple, deleteDatedNoteById } from '../notes/data';
+import { saveLocalAccount } from '../../lib/local-account';
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
 class MemoryStorage {
   private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(i: number): string | null {
+    return [...this.store.keys()][i] ?? null;
+  }
   getItem(k: string): string | null {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
@@ -75,8 +66,20 @@ class MemoryStorage {
 beforeEach(() => {
   (globalThis as unknown as { localStorage: Storage }).localStorage =
     new MemoryStorage() as unknown as Storage;
-  flushMock.mockReset();
+  saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+  for (const fn of [upsertExecution, upsertSet, refreshExerciseRows] as Mock[]) {
+    fn.mockReset();
+    fn.mockResolvedValue(undefined);
+  }
+  vi.spyOn(console, 'error').mockImplementation(() => {});
 });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+const refusal = (code = '23503') => Promise.reject(Object.assign(new Error('rejet'), { code }));
 
 // --- Fabriques d'ops --------------------------------------------------------
 
@@ -96,53 +99,37 @@ function setOp(id: string, executionId: string): OutboxOp {
   };
 }
 
-// --- BUG M4 : remaining PROPRE, pas le remaining global ---------------------
+// --- BUG M4 : le sort de NOS écritures, pas le remaining global ----------------
 
-describe('flushOps (remaining propre, BUG M4)', () => {
-  it('enfile ses ops dans la file (durables avant le flush)', async () => {
-    // flush « réussit » globalement et draine la file (cas nominal en ligne).
-    (flushMock as Mock).mockImplementation(async () => {
-      (globalThis.localStorage as Storage).removeItem('croustylift:outbox');
-      return { remaining: 0, flushed: 2 };
-    });
+describe('flushOps (le sort de ses propres écritures, BUG M4)', () => {
+  it('enfile ses ops (durables avant l’envoi), et rend 0 quand la base les a toutes', async () => {
+    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
 
-    const ops = [execOp('e1'), setOp('s1', 'e1')];
-    const res = await flushOps(ops);
-
-    expect(flushMock).toHaveBeenCalledTimes(1);
-    expect(res).toEqual({ remaining: 0, pending: 0, refused: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, pending: 0, refused: 0, flushed: 2 });
+    expect(upsertSet).toHaveBeenCalledTimes(1);
   });
 
-  it('NE renvoie PAS remaining: 0 quand un flush en vol n’a pas vu nos ops', async () => {
-    // Cœur du bug : un flush déjà en vol renvoie SA promesse, dont le remaining
-    // reflète l'état AVANT qu'on enfile nos ops. Ici il ment (remaining: 0) et NE
-    // DRAINE PAS la file. flushOps doit recompter SES ids encore présents.
-    (flushMock as Mock).mockResolvedValue({ remaining: 0, flushed: 5 });
+  it('NE rend PAS remaining: 0 quand la passe en vol s’est arrêtée avant nos ops', async () => {
+    // Cœur du bug : un flush déjà en vol rend SA promesse. Ici il s'arrête sur une
+    // écriture d'avant (hors ligne) : son résultat ne dit rien de nos ops.
+    enqueue(execOp('avant'));
+    let fail!: (err: unknown) => void;
+    (upsertExecution as Mock).mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    const inFlight = flushOutbox();
+    await vi.waitFor(() => expect(typeof fail).toBe('function'));
 
-    const ops = [execOp('e1'), setOp('s1', 'e1')];
-    const res = await flushOps(ops);
+    const ours = flushOps([execOp('e1'), setOp('s1', 'e1')]);
+    fail(new TypeError('Failed to fetch'));
+    const res = await ours;
+    await inFlight;
 
-    // Nos 2 ops dorment toujours en file → remaining PROPRE = 2 (pas 0).
-    expect(res.remaining).toBe(2);
-    // flushed reste celui de la passe (indicatif, best-effort).
-    expect(res.flushed).toBe(5);
-    // Les ops sont bien encore là, dans l'ordre.
-    expect(readQueue().map((o) => o.id)).toEqual(['e1', 's1']);
+    // Nos 2 ops attendent toujours : remaining PROPRE = 2.
+    expect(res).toMatchObject({ remaining: 2, pending: 2, refused: 0 });
+    expect(readQueue().map((o) => o.id)).toEqual(['avant', 'e1', 's1']);
   });
 
-  it('une de nos ops partie en QUARANTAINE n’est pas un succès : elle compte dans remaining', async () => {
-    // La base a refusé la série : le flush l'a sortie de la file pour la
-    // quarantaine. Rien n'est en base, l'éditeur ne doit pas se fermer.
-    (flushMock as Mock).mockImplementation(async () => {
-      const queue = readQueue();
-      const refused = queue.find((op) => op.id === 's1');
-      (globalThis.localStorage as Storage).setItem('croustylift:outbox', JSON.stringify([]));
-      (globalThis.localStorage as Storage).setItem(
-        'croustylift:outbox:quarantine',
-        JSON.stringify([{ op: refused, reason: '23503 : rejet', at: '2026-11-23T10:00:00Z' }]),
-      );
-      return { remaining: 0, flushed: 1 };
-    });
+  it('une de nos ops REFUSÉE par la base n’est pas un succès : elle compte dans remaining', async () => {
+    (upsertSet as Mock).mockImplementation(() => refusal());
 
     const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
 
@@ -151,75 +138,52 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     expect(res).toMatchObject({ pending: 0, refused: 1 });
   });
 
-  it('une de nos ops encore en file est « en attente », pas « refusée »', async () => {
-    (flushMock as Mock).mockImplementation(async () => ({ remaining: 2, flushed: 0 }));
+  it('une de nos ops qui attend encore est « en attente », pas « refusée »', async () => {
+    (upsertExecution as Mock).mockImplementation(offline);
 
     const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
 
     expect(res).toMatchObject({ remaining: 2, pending: 2, refused: 0 });
   });
 
-  it('deux onglets : une purge de la quarantaine pendant la passe ne cache pas notre op refusée', async () => {
-    // Une saisie refusée plus tôt, d'une autre séance, est déjà en quarantaine.
-    (globalThis.localStorage as Storage).setItem(
-      'croustylift:outbox:quarantine',
-      JSON.stringify([
-        { op: setOp('ancienne', 'autre-exec'), reason: '23514 : rejet', at: '2026-11-22T10:00:00Z' },
-      ]),
-    );
-    (flushMock as Mock).mockImplementation(async () => {
-      const refused = readQueue().find((op) => op.id === 's1');
-      (globalThis.localStorage as Storage).setItem('croustylift:outbox', JSON.stringify([]));
-      // Pendant la passe, l'autre onglet annule sa séance : l'ancienne entrée
-      // quitte la quarantaine, et notre op refusée y prend la PREMIÈRE place.
-      (globalThis.localStorage as Storage).setItem(
-        'croustylift:outbox:quarantine',
-        JSON.stringify([{ op: refused, reason: '23503 : rejet', at: '2026-11-23T10:00:00Z' }]),
-      );
-      return { remaining: 0, flushed: 0 };
+  it('une op retenue par le refus de sa séance compte comme refusée', async () => {
+    (upsertExecution as Mock).mockImplementation(() => refusal());
+
+    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
+
+    expect(res).toMatchObject({ remaining: 2, pending: 0, refused: 2 });
+  });
+
+  it('un autre refus réglé pendant la passe ne cache pas notre op refusée', async () => {
+    // Une saisie refusée plus tôt, d'une autre séance, est déjà mise de côté.
+    (upsertSet as Mock).mockImplementationOnce(() => refusal('23514'));
+    await flushOps([setOp('ancienne', 'autre-exec')]);
+    expect(listRefused()).toHaveLength(1);
+    // Pendant notre passe, cette séance est annulée : son refus disparaît, et le
+    // nôtre devient le seul de la liste.
+    (upsertSet as Mock).mockImplementationOnce(() => {
+      purgeByExecution('autre-exec');
+      return refusal();
     });
 
     const res = await flushOps([setOp('s1', 'e1')]);
 
-    // Repérée par position (« les entrées d'après notre enfilement »), notre op
-    // refusée passait pour une sauvegarde réussie.
+    // Repérée par position dans la liste des refus, notre op refusée passait
+    // pour une sauvegarde réussie. Elle se retrouve par son identité.
     expect(res).toMatchObject({ remaining: 1, pending: 0, refused: 1 });
   });
 
-  it('une op d’un AUTRE lot, de même id que la nôtre, ne compte pas pour nous', async () => {
-    // Même ligne corrigée deux fois : la première correction attend déjà en file.
-    enqueue(setOp('s1', 'e1'));
-    (flushMock as Mock).mockImplementation(async () => {
-      // Seule NOTRE op (la dernière enfilée) passe ; l'ancienne reste en file.
-      (globalThis.localStorage as Storage).setItem(
-        'croustylift:outbox',
-        JSON.stringify(readQueue().slice(0, 1)),
-      );
-      return { remaining: 1, flushed: 1 };
-    });
-
-    const res = await flushOps([setOp('s1', 'e1')]);
-
-    expect(res).toMatchObject({ remaining: 0, pending: 0, refused: 0 });
-  });
-
-  it('ne compte QUE nos ops, pas celles d’une AUTRE exécution restée en file', async () => {
-    // Une op d'une autre exécution est déjà en file (offline) et le flush n'en
-    // draine aucune. flushOps ne doit compter QUE ses ids, pas l'op étrangère.
-    (flushMock as Mock).mockImplementation(async () => {
-      // Le flush ne retire rien (offline) ; il renvoie un remaining global de 3.
-      return { remaining: 3, flushed: 0 };
-    });
-    // Pré-remplit la file avec une op d'une AUTRE exécution.
-    const { enqueue } = await import('./outbox');
+  it('ne compte QUE nos ops, pas celles d’un autre compte restées sur l’appareil', async () => {
+    saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
     enqueue(setOp('autre', 'exec-autre'));
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
 
-    const ops = [execOp('e1'), setOp('s1', 'e1')];
-    const res = await flushOps(ops);
+    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
 
-    // remaining PROPRE = nos 2 ids (e1, s1), pas les 3 de la file globale.
-    expect(res.remaining).toBe(2);
-    expect(readQueue().map((o) => o.id)).toEqual(['autre', 'e1', 's1']);
+    // Aucune de NOS ops ne reste : succès vrai, l'éditeur peut se fermer, même
+    // si le registre n'est pas vide.
+    expect(res).toMatchObject({ remaining: 0, pending: 0, refused: 0 });
+    expect(readQueue().map((o) => o.id)).toEqual(['autre']);
   });
 
   it('chaîne closed_at : syncFns.updateExecution transmet closedAt à data (séance « rangée », jamais ressuscitée)', async () => {
@@ -245,25 +209,6 @@ describe('flushOps (remaining propre, BUG M4)', () => {
     });
   });
 
-  it('remaining propre = 0 quand le flush A bien drainé NOS ops (succès réel)', async () => {
-    // Le flush draine effectivement nos ops : remaining propre tombe à 0 même si
-    // une op étrangère reste (on ne la compte pas).
-    const { enqueue } = await import('./outbox');
-    enqueue(setOp('autre', 'exec-autre'));
-    (flushMock as Mock).mockImplementation(async () => {
-      // Simule un flush qui retire NOS ops (e1, s1) mais laisse l'op étrangère.
-      const stayed = readQueue().filter((o) => o.id === 'autre');
-      (globalThis.localStorage as Storage).setItem('croustylift:outbox', JSON.stringify(stayed));
-      return { remaining: 1, flushed: 2 };
-    });
-
-    const res = await flushOps([execOp('e1'), setOp('s1', 'e1')]);
-
-    // Aucune de NOS ops ne reste → remaining propre = 0 (succès vrai, l'éditeur
-    // peut se fermer), même si la file globale n'est pas vide (op étrangère).
-    expect(res.remaining).toBe(0);
-    expect(readQueue().map((o) => o.id)).toEqual(['autre']);
-  });
 });
 
 describe('syncFns.deleteDatedNote', () => {

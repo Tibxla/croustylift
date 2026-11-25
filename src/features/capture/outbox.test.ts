@@ -9,39 +9,62 @@ import {
   abandonRefused,
   clearOwnQueue,
   heldCounts,
-  enqueueTracked,
+  enqueueAll,
   listRefused,
-  pendingAmong,
   retryRefused,
   storageFailing,
-  refusedAmong,
   enqueue,
   flush,
   readQueue,
   pendingCount,
   clearQueue,
   purgeByExecution,
-  mergeByEnqueueTime,
   adoptLegacyOps,
   readOwnQueue,
-  readQuarantine,
-  quarantineCount,
-  heldCount,
+  fatesOf,
   type SyncFns,
   type OutboxOp,
   type InsertSetOp,
   type PatchSetOp,
 } from './outbox';
 import { clearLocalAccount, saveLocalAccount } from '../../lib/local-account';
+import { legacyQueueWrites, otherTabRewrites, REGISTRY_KEY, registrySettled, storedWrites } from '../../test/registry';
 
 // La file persistée porte un `_seq` interne (identité de file, cf. outbox.ts) : on
 // le retire pour comparer la FORME MÉTIER des ops par égalité profonde (toEqual).
+/** Tout ce que l'appareil retient, tous comptes confondus (file et quarantaine). */
+const heldTotal = () => {
+  const { own, foreign } = heldCounts();
+  return own + foreign;
+};
+
+// Vues de test sur l'interface du registre : les saisies refusées ou retenues
+// du compte reconnu (`listRefused`), et le sort de ses propres écritures.
+const readQuarantine = () => listRefused();
+const quarantineCount = () => listRefused().length;
+const pendingAmong = (uids: readonly string[]) => fatesOf(uids).filter((f) => f === 'pending').length;
+const refusedAmong = (uids: readonly string[]) => fatesOf(uids).filter((f) => f === 'refused').length;
+
+const persisted = () => storedWrites();
+/** Retire la première écriture en attente (un autre onglet l'a envoyée, ou purgée). */
+const dropFirstPending = () =>
+  otherTabRewrites((entries) => {
+    const first = entries.findIndex((e) => e.fate === 'pending');
+    return entries.filter((_, i) => i !== first);
+  });
+
 const queueNoSeq = () => readQueue().map(({ _seq, _owner, _uid, _at, ...op }) => op);
 
 // --- Polyfill localStorage (mémoire) ----------------------------------------
 
 class MemoryStorage {
   private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  key(i: number): string | null {
+    return [...this.store.keys()][i] ?? null;
+  }
   getItem(k: string): string | null {
     return this.store.has(k) ? (this.store.get(k) as string) : null;
   }
@@ -139,7 +162,7 @@ describe('flush (succès)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(pendingCount()).toBe(0);
     expect(readQueue()).toEqual([]);
   });
@@ -192,7 +215,7 @@ describe('flush (succès)', () => {
     // Aucune autre SyncFn n'est touchée par cette op.
     expect(fns.deleteSet).not.toHaveBeenCalled();
     // Flush réussi : l'op est retirée, la file est vide.
-    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
     expect(pendingCount()).toBe(0);
     expect(readQueue()).toEqual([]);
   });
@@ -255,9 +278,7 @@ describe('flush (succès)', () => {
       n += 1;
       // Pendant le traitement de la 1ʳᵉ op, une mutation concurrente (ex. purge)
       // retire EXACTEMENT la tête traitée, laissant la 2ᵉ op (même type,id) en tête.
-      if (n === 1) {
-        localStorage.setItem('croustylift:outbox', JSON.stringify(readQueue().slice(1)));
-      }
+      if (n === 1) dropFirstPending();
     });
 
     await flush(fns);
@@ -274,8 +295,7 @@ describe('flush (succès)', () => {
     // était retirée à la place de la première, sans jamais avoir été envoyée.
     enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 100 });
     enqueue({ type: 'updateExecution', id: 'exec-1', bpmAvg: 200 });
-    const [first, second] = readQueue();
-    localStorage.setItem('croustylift:outbox', JSON.stringify([first, { ...second, _seq: first!._seq }]));
+    otherTabRewrites(([first, second]) => [first!, { ...second!, n: first!.n }]);
 
     const fns = okFns();
     const sent: (number | null | undefined)[] = [];
@@ -283,9 +303,7 @@ describe('flush (succès)', () => {
       async (op: { bpmAvg?: number | null }) => {
         sent.push(op.bpmAvg);
         // L'autre onglet a déjà envoyé et retiré la première pendant notre requête.
-        if (sent.length === 1) {
-          localStorage.setItem('croustylift:outbox', JSON.stringify(readQueue().slice(1)));
-        }
+        if (sent.length === 1) dropFirstPending();
       },
     );
 
@@ -296,8 +314,8 @@ describe('flush (succès)', () => {
   });
 
   it('chaque op enfilée reçoit une identité unique, rendue à l’appelant', () => {
-    const a = enqueueTracked({ type: 'deleteSet', id: 's1' });
-    const b = enqueueTracked({ type: 'deleteSet', id: 's1' });
+    const [a] = enqueueAll([{ type: 'deleteSet', id: 's1' }]) as [string];
+    const [b] = enqueueAll([{ type: 'deleteSet', id: 's1' }]) as [string];
 
     expect(a).not.toBe(b);
     expect(readQueue().map((op) => op._uid)).toEqual([a, b]);
@@ -331,7 +349,7 @@ describe('enqueue : étiquette de compte quand le marqueur n’a pas pu être é
 
     expect(readQueue()[0]?._owner).toBe('user-a');
     const fns = okFns();
-    expect(await flush(fns, async () => 'user-a')).toEqual({ remaining: 0, flushed: 1 });
+    expect(await flush(fns, async () => 'user-a')).toMatchObject({ remaining: 0, flushed: 1 });
     clearLocalAccount();
   });
 });
@@ -366,7 +384,7 @@ describe('flush : verrou entre onglets', () => {
     enqueue(execOp());
     const fns = okFns();
 
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 1 });
   });
 
   it('verrou pris par un autre onglet : rien n’est envoyé d’ici, la file reste', async () => {
@@ -374,7 +392,7 @@ describe('flush : verrou entre onglets', () => {
     enqueue(execOp());
     const fns = okFns();
 
-    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    expect(await flush(fns)).toMatchObject({ remaining: 1, flushed: 0 });
     expect(fns.calls()).toEqual([]);
     expect(readQueue()).toHaveLength(1);
   });
@@ -388,9 +406,9 @@ describe('flush : verrou entre onglets', () => {
 
     await flush(fns);
     vi.advanceTimersByTime(61_000);
-    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    expect(await flush(fns)).toMatchObject({ remaining: 1, flushed: 0 });
     vi.advanceTimersByTime(600_000);
-    expect(await flush(fns)).toEqual({ remaining: 1, flushed: 0 });
+    expect(await flush(fns)).toMatchObject({ remaining: 1, flushed: 0 });
 
     expect(state.stolen).toBe(0);
     expect(fns.calls()).toEqual([]);
@@ -403,7 +421,7 @@ describe('flush : verrou entre onglets', () => {
     enqueue(execOp());
     const fns = okFns();
 
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 1 });
   });
 });
 
@@ -444,7 +462,7 @@ describe('flush (échec réseau)', () => {
     const ok = okFns();
     const res = await flush(ok);
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(pendingCount()).toBe(0);
     expect(ok.calls().map((o) => o.id)).toEqual(['s1', 's2']);
   });
@@ -458,7 +476,7 @@ describe('flush (échec réseau)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 2, flushed: 0 });
     expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 's1']);
   });
 });
@@ -477,7 +495,7 @@ describe('idempotence', () => {
     // File vide : rien à rejouer, aucune SyncFn rappelée (pas d’effet de bord).
     const second = okFns();
     const res = await flush(second);
-    expect(res).toEqual({ remaining: 0, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 0 });
     expect(second.calls()).toHaveLength(0);
   });
 
@@ -535,7 +553,7 @@ describe('persistance', () => {
 
     clearQueue();
 
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(persisted()).toEqual([]);
     expect(localStorage.getItem(CORRUPT)).toBeNull();
   });
 });
@@ -571,6 +589,21 @@ describe('readQueue (blob corrompu, issue F11)', () => {
     expect(readQueue()).toEqual([]);
     expect(localStorage.getItem(CORRUPT_KEY)).toBe(blob);
     expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
+  });
+
+  it('enregistrement du registre illisible → reparti vide, blob PRÉSERVÉ de côté', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const blob = '{ "v": 1, "entries": [ pas du JSON';
+    localStorage.setItem(REGISTRY_KEY, blob);
+
+    expect(readQueue()).toEqual([]);
+    expect(localStorage.getItem(CORRUPT_KEY)).toBe(blob);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // La saisie suivante repart sur un enregistrement neuf.
+    enqueue(execOp());
+    expect(readQueue()).toHaveLength(1);
 
     warn.mockRestore();
   });
@@ -635,7 +668,7 @@ describe('flush (ré-armement, issue F12)', () => {
     expect((fns.insertSet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toMatchObject({
       id: 's1',
     });
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
   });
 
   it('ré-arme jusqu’à vider même si une op est injectée à la TOUTE fin de file', async () => {
@@ -661,7 +694,7 @@ describe('flush (ré-armement, issue F12)', () => {
     expect(
       (fns.insertSet as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].id),
     ).toEqual(['s1', 's2']);
-    expect(res).toEqual({ remaining: 0, flushed: 3 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 3 });
   });
 
   it('reste borné : un échec en tête arrête le ré-armement (pas de boucle infinie)', async () => {
@@ -674,7 +707,7 @@ describe('flush (ré-armement, issue F12)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 1, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 1, flushed: 1 });
     expect(readQueue().map((o) => o.id)).toEqual(['s1']);
   });
 });
@@ -724,7 +757,7 @@ describe('flush (concurrence réelle, sérialisation inFlight)', () => {
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 's1']);
     // Résultat partagé, file vidée.
     expect(res1).toBe(res2);
-    expect(res1).toEqual({ remaining: 0, flushed: 2 });
+    expect(res1).toMatchObject({ remaining: 0, flushed: 2 });
     expect(pendingCount()).toBe(0);
   });
 });
@@ -852,7 +885,7 @@ describe('note d’instructions (upsert/deleteExerciseNote)', () => {
     });
     // Aucune autre SyncFn touchée ; flush réussi → file vidée.
     expect(fns.deleteExerciseNote).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
     expect(readQueue()).toEqual([]);
   });
 
@@ -868,7 +901,7 @@ describe('note d’instructions (upsert/deleteExerciseNote)', () => {
       id: 'squat',
     });
     expect(fns.upsertExerciseNote).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
     expect(readQueue()).toEqual([]);
   });
 
@@ -1015,7 +1048,7 @@ describe('flush (session vérifiée)', () => {
     const res = await flush(fns, async () => null);
 
     expect(fns.calls()).toEqual([]);
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 2, flushed: 0 });
     expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
   });
 
@@ -1036,7 +1069,7 @@ describe('flush (session vérifiée)', () => {
 
     const res = await flush(fns, async () => 'user-1');
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
   });
 
   it('session perdue PENDANT une passe : l’op en cours n’est pas acquittée, la suite n’est pas tentée', async () => {
@@ -1054,7 +1087,7 @@ describe('flush (session vérifiée)', () => {
 
     expect(fns.updateExecution).toHaveBeenCalledTimes(1);
     expect(fns.deleteSet).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 2, flushed: 0 });
     expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
   });
 
@@ -1066,7 +1099,7 @@ describe('flush (session vérifiée)', () => {
 
     const res = await flush(fns, async () => 'user-1');
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
   });
 });
@@ -1102,7 +1135,7 @@ describe('file liée à un compte', () => {
     const res = await flush(fns, async () => 'user-b');
 
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-b']);
-    expect(res).toEqual({ remaining: 3, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 3, flushed: 1 });
     // Les ops de A sont intactes, dans leur ordre d'enfilement.
     expect(readQueue().map((o) => o.id)).toEqual(['exec-a', 'set-a', 'set-a-2']);
   });
@@ -1117,7 +1150,7 @@ describe('file liée à un compte', () => {
 
     const res = await flush(fns, async () => 'user-a');
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((o) => o.id)).toEqual(['exec-a', 'set-a']);
   });
 
@@ -1148,7 +1181,7 @@ describe('file liée à un compte', () => {
     const fns = okFns();
     const res = await flush(fns, async () => 'user-b');
     expect(fns.calls()).toEqual([]);
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 2, flushed: 0 });
   });
 
   it('sans compte local reconnu, une op sans compte reste en file sous une session vérifiée', async () => {
@@ -1199,7 +1232,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 0, flushed: 3 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 3 });
     expect(insertSet.mock.calls.map(([op]) => op.id)).toEqual(['set-refuse', 'set-2']);
     expect(fns.updateExecution).toHaveBeenCalledTimes(1);
     expect(pendingCount()).toBe(0);
@@ -1222,7 +1255,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     const res = await flush(fns);
 
     expect(insertSet).toHaveBeenCalledTimes(1);
-    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
     expect(quarantineCount()).toBe(1);
   });
 
@@ -1243,7 +1276,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 2, flushed: 0 });
     expect(fns.insertSet).not.toHaveBeenCalled();
     expect(quarantineCount()).toBe(0);
     expect(readQueue().map((o) => o.id)).toEqual(['exec-1', 'set-1']);
@@ -1270,7 +1303,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((o) => o.id)).toEqual(['set-sain']);
     expect(fns.upsertDatedNote).not.toHaveBeenCalled();
     expect(fns.updateExecution).not.toHaveBeenCalled();
@@ -1294,7 +1327,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     const res = await flush(fns);
 
     expect(fns.insertSet).not.toHaveBeenCalled();
-    expect(res).toEqual({ remaining: 0, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 0 });
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['exec-refusee', 'set-tardif']);
   });
 
@@ -1313,7 +1346,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
     enqueue(setOp('set-1', 1, 'exec-1'));
     const res = await flush(fns);
 
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.insertSet).toHaveBeenCalledTimes(1);
     // L'op refusée reste conservée, mais ne retient plus les suivantes.
     expect(quarantineCount()).toBe(1);
@@ -1333,7 +1366,7 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns, async () => session);
 
-    expect(res).toEqual({ remaining: 1, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 1, flushed: 0 });
     expect(quarantineCount()).toBe(0);
   });
 
@@ -1347,12 +1380,12 @@ describe('quarantaine (rejet définitif de la base)', () => {
 
     const res = await flush(fns, async () => 'user-1');
 
-    expect(res).toEqual({ remaining: 0, flushed: 0 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 0 });
     expect(quarantineCount()).toBe(1);
     expect(readQuarantine()[0]?.op._owner).toBe('user-1');
   });
 
-  it('heldCount compte file et quarantaine ; clearQueue purge les deux', async () => {
+  it('heldCounts compte file et quarantaine ; clearQueue purge les deux', async () => {
     enqueue(setOp('set-refuse', 1));
     const fns = okFns();
     fns.insertSet = vi.fn(async () => {
@@ -1362,52 +1395,73 @@ describe('quarantaine (rejet définitif de la base)', () => {
     enqueue({ type: 'deleteSet', id: 'set-9' });
 
     expect(pendingCount()).toBe(1);
-    expect(heldCount()).toBe(2);
+    expect(heldTotal()).toBe(2);
+    // Sans compte reconnu, une op sans compte est tenue pour la sienne.
+    expect(heldCounts()).toEqual({ own: 2, ownRefused: 1, foreign: 0 });
 
     clearQueue();
-    expect(heldCount()).toBe(0);
+    expect(heldTotal()).toBe(0);
     expect(readQuarantine()).toEqual([]);
   });
 
-  it('quarantaine impossible à écrire (quota) : l’op reste en file, la passe s’arrête', async () => {
+  it('refus impossible à écrire (stockage plein) : il n’a pas lieu, la passe s’arrête sans rien retirer ni rien renvoyer en boucle', async () => {
+    // Un refus s'écrit en grandissant (son motif). Appareil plein : la
+    // transition n'a pas lieu (ADR 0025). La saisie reste en attente, la
+    // suivante aussi, et les passes suivantes ne reposent pas la question à la
+    // base tant que la place n'est pas revenue.
     enqueue(setOp('set-refuse', 1));
     enqueue(setOp('set-2', 2));
     const fns = okFns();
-    fns.insertSet = vi.fn(async () => {
-      throw rejet('23503');
+    fns.insertSet = vi.fn(async (op: InsertSetOp) => {
+      if (op.id === 'set-refuse') throw rejet('23503');
     });
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
+    let full = true;
     store.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox:quarantine') throw new Error('QuotaExceededError');
-      setItem(k, v);
-    };
-
-    const res = await flush(fns);
-
-    expect(res).toEqual({ remaining: 2, flushed: 0 });
-    expect(readQueue().map((o) => o.id)).toEqual(['set-refuse', 'set-2']);
-  });
-
-  it('retrait de la file impossible à persister (quota) : l’op n’est pas rejouée en boucle, la passe finit en mémoire', async () => {
-    enqueue(execOp('exec-1'));
-    enqueue(setOp('set-1', 1));
-    const fns = okFns();
-    const store = globalThis.localStorage;
-    const setItem = store.setItem.bind(store);
-    store.setItem = (k: string, v: string) => {
-      if (k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const res = await flush(fns);
 
-    // Le retrait de la première op n'a pas pu s'écrire : le miroir mémoire le
-    // tient, donc elle n'est envoyée qu'UNE fois et la passe continue.
+    expect(res).toMatchObject({ remaining: 2, flushed: 0, settled: [] });
+    expect(listRefused()).toEqual([]);
+    expect(persisted().map((w) => `${w.op.id}:${w.fate}`)).toEqual(['set-refuse:pending', 'set-2:pending']);
+    expect(storageFailing()).toBe(true);
+    // Cinq déclencheurs de plus (saisie, retour du réseau, montage) : aucune requête.
+    for (let i = 0; i < 5; i += 1) await flush(fns);
+    expect(fns.insertSet).toHaveBeenCalledTimes(1);
+
+    // La place revient : le refus s'écrit, et la suite part.
+    full = false;
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 1 });
+    expect(listRefused().map((q) => q.op.id)).toEqual(['set-refuse']);
+    expect(storageFailing()).toBe(false);
+    expect(fns.insertSet).toHaveBeenCalledTimes(3);
+  });
+
+  it('enregistrement impossible à écrire (quota) : une écriture acquittée quitte sa source, elle n’est pas rejouée', async () => {
+    enqueue(execOp('exec-1'));
+    enqueue(setOp('set-1', 1));
+    const fns = okFns();
+    const store = globalThis.localStorage;
+    const setItem = store.setItem.bind(store);
+    store.setItem = (k: string, v: string) => {
+      if (k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
+      setItem(k, v);
+    };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await flush(fns);
+
+    // Rien n'entre à l'enregistrement, mais chaque écriture acquittée est
+    // retirée de sa clé de la boîte d'entrée (retirer passe toujours) : elle
+    // n'est envoyée qu'UNE fois et la passe continue.
     expect(fns.upsertExecution).toHaveBeenCalledTimes(1);
     expect(fns.insertSet).toHaveBeenCalledTimes(1);
-    expect(res).toEqual({ remaining: 0, flushed: 2 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 2 });
     clearQueue();
   });
 });
@@ -1417,14 +1471,14 @@ describe('quarantaine (rejet définitif de la base)', () => {
 // Avant : l'écriture refusée était signalée en console et c'est tout. L'op
 // enfilée n'existait nulle part, la bannière disait « Synchronisé ».
 
-describe('stockage plein (quota) : miroir mémoire de la file', () => {
+describe('stockage plein (quota) : les saisies que l’appareil refuse tiennent en mémoire', () => {
   /** Le stockage refuse toute écriture de la file tant que `full` est vrai. */
   function quota(): { full: boolean } {
     const state = { full: true };
     const store = globalThis.localStorage;
     const setItem = store.setItem.bind(store);
     store.setItem = (k: string, v: string) => {
-      if (state.full && k === 'croustylift:outbox') throw new Error('QuotaExceededError');
+      if (state.full && k.startsWith(REGISTRY_KEY)) throw new Error('QuotaExceededError');
       setItem(k, v);
     };
     return state;
@@ -1448,22 +1502,22 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     expect(pendingCount()).toBe(2);
     expect(storageFailing()).toBe(true);
     // Rien n'a pu être écrit sur l'appareil.
-    expect(localStorage.getItem('croustylift:outbox')).toBeNull();
+    expect(localStorage.getItem(REGISTRY_KEY)).toBeNull();
   });
 
-  it('le flush envoie ce que tient le miroir', async () => {
+  it('le flush envoie ce que tient la mémoire', async () => {
     quota();
     enqueue(execOp());
     enqueue(setOp('s1', 1));
     const fns = okFns();
 
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.calls().map((op) => op.id)).toEqual(['exec-1', 's1']);
-    // File vide : la retirer du stockage passe toujours, le miroir est rendu.
+    // Acquittées, elles quittent la mémoire : plus rien n'est refusé.
     expect(storageFailing()).toBe(false);
   });
 
-  it('dès que le stockage accepte de nouveau, la file est persistée et le miroir rendu', () => {
+  it('dès que le stockage accepte de nouveau, elles sont écrites sur l’appareil', () => {
     const state = quota();
     enqueue(execOp());
     expect(storageFailing()).toBe(true);
@@ -1472,7 +1526,7 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     enqueue(setOp('s1', 1));
 
     expect(storageFailing()).toBe(false);
-    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(2);
+    expect(persisted()).toHaveLength(2);
   });
 
   it('le cache de lecture cède la place avant de renoncer au stockage', () => {
@@ -1505,7 +1559,7 @@ describe('stockage plein (quota) : miroir mémoire de la file', () => {
     enqueue(execOp());
 
     expect(storageFailing()).toBe(false);
-    expect(JSON.parse(localStorage.getItem('croustylift:outbox') ?? '[]')).toHaveLength(1);
+    expect(persisted()).toHaveLength(1);
     expect(localStorage.getItem('croustylift:readcache:user-1:exo-execs:e1')).toBeNull();
   });
 
@@ -1556,7 +1610,7 @@ describe('purgeByExecution et quarantaine', () => {
     purgeByExecution('exec-abandon');
 
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['set-autre']);
-    expect(heldCount()).toBe(1);
+    expect(heldTotal()).toBe(1);
   });
 
   it('ne touche pas la quarantaine d’un AUTRE compte pour la même exécution', async () => {
@@ -1571,6 +1625,10 @@ describe('purgeByExecution et quarantaine', () => {
 
     purgeByExecution('exec-1');
 
+    // Le refus du compte B n'est pas visible d'ici (`listRefused`), mais il est
+    // toujours retenu sur l'appareil.
+    expect(heldCounts()).toEqual({ own: 0, ownRefused: 0, foreign: 1 });
+    saveLocalAccount(compteB);
     expect(readQuarantine().map((q) => q.op.id)).toEqual(['set-b']);
   });
 
@@ -1589,7 +1647,7 @@ describe('purgeByExecution et quarantaine', () => {
     expect(quarantineCount()).toBe(0);
     // La passe continue sur ce qui reste.
     expect(fns.deleteSet).toHaveBeenCalledTimes(1);
-    expect(res).toEqual({ remaining: 0, flushed: 1 });
+    expect(res).toMatchObject({ remaining: 0, flushed: 1 });
   });
 });
 
@@ -1631,19 +1689,19 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
     await refuseOneSet();
     const [refused] = listRefused();
 
-    expect(retryRefused(refused!.refusalId)).toBe(true);
+    expect(await retryRefused(refused!.refusalId)).toBe('done');
     expect(quarantineCount()).toBe(0);
     expect(readQueue().map((op) => op.id)).toEqual(['set-refuse']);
 
     const fns = okFns();
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 1 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 1 });
     expect(fns.calls().map((op) => op.id)).toEqual(['set-refuse']);
   });
 
   it('renvoyer une saisie que la base refuse encore : elle revient en quarantaine', async () => {
     const fns = await refuseOneSet();
 
-    retryRefused(listRefused()[0]!.refusalId);
+    await retryRefused(listRefused()[0]!.refusalId);
     await flush(fns);
 
     expect(readQueue()).toEqual([]);
@@ -1653,18 +1711,18 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
   it('abandonner : la saisie quitte la quarantaine sans jamais partir', async () => {
     await refuseOneSet();
 
-    expect(abandonRefused(listRefused()[0]!.refusalId)).toBe(true);
+    expect(await abandonRefused(listRefused()[0]!.refusalId)).toBe('done');
 
     expect(quarantineCount()).toBe(0);
     expect(readQueue()).toEqual([]);
-    expect(heldCount()).toBe(0);
+    expect(heldTotal()).toBe(0);
   });
 
   it('identité inconnue : rien ne bouge', async () => {
     await refuseOneSet();
 
-    expect(retryRefused('inconnue')).toBe(false);
-    expect(abandonRefused('inconnue')).toBe(false);
+    expect(await retryRefused('inconnue')).toBe('gone');
+    expect(await abandonRefused('inconnue')).toBe('gone');
     expect(quarantineCount()).toBe(1);
   });
 
@@ -1681,7 +1739,7 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
     expect(quarantineCount()).toBe(4);
     const parent = listRefused().find((q) => q.op.type === 'upsertExecution')!;
 
-    expect(retryRefused(parent.refusalId)).toBe(true);
+    expect(await retryRefused(parent.refusalId)).toBe('done');
 
     expect(quarantineCount()).toBe(0);
     expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual([
@@ -1690,7 +1748,7 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
       'insertSet:s2',
       'updateExecution:exec-refusee',
     ]);
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 4 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 4 });
   });
 
   it('les saisies refusées d’un autre compte ne sont ni listées, ni renvoyées, ni abandonnées', async () => {
@@ -1699,9 +1757,9 @@ describe('saisies refusées (quarantaine) : lister, renvoyer, abandonner', () =>
     saveLocalAccount({ userId: 'user-2', email: 'autre@exemple.com' });
 
     expect(listRefused()).toEqual([]);
-    expect(retryRefused(id)).toBe(false);
-    expect(abandonRefused(id)).toBe(false);
-    expect(quarantineCount()).toBe(1);
+    expect(await retryRefused(id)).toBe('gone');
+    expect(await abandonRefused(id)).toBe('gone');
+    expect(heldCounts().foreign).toBe(1);
   });
 });
 
@@ -1727,7 +1785,7 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
 
     expect(heldCounts()).toEqual({ own: 1, ownRefused: 0, foreign: 2 });
     // Le compteur global, lui, compte toujours tout.
-    expect(heldCount()).toBe(3);
+    expect(heldTotal()).toBe(3);
   });
 
   it('une op sans compte (bundle antérieur) est tenue pour celle du compte reconnu', () => {
@@ -1745,77 +1803,17 @@ describe('écritures retenues par compte (heldCounts, clearOwnQueue)', () => {
 
     clearOwnQueue();
 
-    expect(readQueue()).toEqual([foreignOp]);
-    expect(readQuarantine()).toEqual([foreignRefused]);
+    expect(queueNoSeq()).toEqual([{ type: 'deleteSet', id: 'serie-de-b' }]);
+    expect(readQueue().map((op) => op._owner)).toEqual(['user-b']);
     expect(heldCounts()).toEqual({ own: 0, ownRefused: 0, foreign: 2 });
+    // Le refus de B est toujours là pour lui.
+    saveLocalAccount({ userId: 'user-b', email: 'b@exemple.com' });
+    expect(readQuarantine().map((q) => q.op.id)).toEqual(['refus-de-b']);
   });
 
   it('seul le forçage (clearQueue) jette tout', () => {
     clearQueue();
-    expect(heldCount()).toBe(0);
-  });
-});
-
-describe('mergeByEnqueueTime (écritures en mémoire replacées à leur instant)', () => {
-  const at = (id: string, _at?: number): OutboxOp => ({ type: 'deleteSet', id, ...(_at === undefined ? {} : { _at }) });
-  const ids = (ops: OutboxOp[]) => ops.map((op) => op.id);
-  /** Op portant son identité d'enfilement (clé de `seenBefore`), avec ou sans instant. */
-  const uid = (id: string, _at?: number): OutboxOp => ({ ...at(id, _at), _uid: id });
-
-  it('rien en mémoire : la file persistée telle quelle', () => {
-    const persisted = [at('p1', 10), at('p2', 20)];
-    expect(mergeByEnqueueTime(persisted, [])).toBe(persisted);
-  });
-
-  it('une écriture en mémoire passe avant la première persistée plus récente', () => {
-    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p3', 30)], [at('m2', 20)]))).toEqual(['p1', 'm2', 'p3']);
-  });
-
-  it('plus récente que toute la file persistée : en fin, comme avant', () => {
-    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p2', 20)], [at('m3', 30), at('m4', 40)]))).toEqual([
-      'p1',
-      'p2',
-      'm3',
-      'm4',
-    ]);
-  });
-
-  it('à instant égal, la persistée d’abord', () => {
-    expect(ids(mergeByEnqueueTime([at('p', 20)], [at('m', 20)]))).toEqual(['p', 'm']);
-  });
-
-  it('chaque liste garde son ordre interne (exécution avant ses séries)', () => {
-    const merged = mergeByEnqueueTime([at('p1', 10), at('p4', 40)], [at('m2', 20), at('m3', 30), at('m5', 50)]);
-    expect(ids(merged)).toEqual(['p1', 'm2', 'm3', 'p4', 'm5']);
-  });
-
-  it('ops sans instant, sans mémoire de la file : persistée, tenue pour plus ancienne ; en mémoire, laissée en fin', () => {
-    expect(ids(mergeByEnqueueTime([at('vieille'), at('p2', 20)], [at('m1', 10)]))).toEqual(['vieille', 'm1', 'p2']);
-    expect(ids(mergeByEnqueueTime([at('p1', 10), at('p2', 20)], [at('sans-instant'), at('m0', 5)]))).toEqual([
-      'p1',
-      'p2',
-      'sans-instant',
-      'm0',
-    ]);
-  });
-
-  it('op persistée sans instant : plus ancienne si la file la portait déjà, plus récente si elle est apparue depuis', () => {
-    // `m` est entrée en mémoire quand la file portait `vieille` seulement.
-    const seen = new Map([['m', new Set(['vieille'])]]);
-    const merged = mergeByEnqueueTime([uid('vieille'), uid('apparue-depuis')], [uid('m', 10)], seen);
-    expect(ids(merged)).toEqual(['vieille', 'm', 'apparue-depuis']);
-  });
-
-  it('entre deux ops datées, l’instant décide toujours, même avec la mémoire de la file', () => {
-    const seen = new Map([['m', new Set<string>()]]);
-    expect(ids(mergeByEnqueueTime([uid('p', 5)], [uid('m', 10)], seen))).toEqual(['p', 'm']);
-    expect(ids(mergeByEnqueueTime([uid('p', 20)], [uid('m', 10)], seen))).toEqual(['m', 'p']);
-  });
-
-  it('op en mémoire sans instant (complétée au démarrage) : après ce que la file portait, avant ce qui est apparu depuis', () => {
-    const seen = new Map([['sans-instant', new Set(['p1'])]]);
-    const merged = mergeByEnqueueTime([uid('p1', 10), uid('p2', 20)], [uid('sans-instant')], seen);
-    expect(ids(merged)).toEqual(['p1', 'sans-instant', 'p2']);
+    expect(heldTotal()).toBe(0);
   });
 });
 
@@ -1846,7 +1844,7 @@ describe('écritures partielles (patchSet)', () => {
     enqueue(patchOp('s2', 'values', { weightKg: 90 }));
     const fns = okFns();
 
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.insertSet).not.toHaveBeenCalled();
     expect(fns.patchSet).toHaveBeenCalledTimes(1);
     expect(fns.patchSet).toHaveBeenCalledWith(
@@ -1864,7 +1862,7 @@ describe('écritures partielles (patchSet)', () => {
     expect(readQueue()[0]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
 
     const fns = okFns();
-    expect(await flush(fns)).toEqual({ remaining: 0, flushed: 2 });
+    expect(await flush(fns)).toMatchObject({ remaining: 0, flushed: 2 });
     expect(fns.insertSet).not.toHaveBeenCalled();
     expect(fns.calls().map((op) => `${op.type}:${op.id}:${(op as PatchSetOp).only}`)).toEqual([
       'patchSet:s2:values',
@@ -1878,11 +1876,11 @@ describe('écritures partielles (patchSet)', () => {
     expect('only' in readQueue()[0]!).toBe(false);
   });
 
-  it('file héritée réécrite : la forme héritée ne survit pas à la prochaine écriture de la file', () => {
+  it('file héritée : la forme héritée entre convertie au registre à la prochaine écriture sous verrou', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([legacyPartial('s2', 'values')]));
     enqueue(execOp());
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as { type: string }[];
-    expect(raw.map((op) => op.type)).toEqual(['patchSet', 'upsertExecution']);
+    await registrySettled();
+    expect(persisted().map((e) => e.op.type)).toEqual(['patchSet', 'upsertExecution']);
   });
 
   it('insertion refusée puis correction : la série part entière, reconstituée, et le refus est levé', async () => {
@@ -1944,7 +1942,7 @@ describe('écritures partielles (patchSet)', () => {
   // Lue convertie, l'ancienne forme restait BRUTE dans le stockage tant que rien
   // ne réécrivait la file : un onglet de main sur la même origine la rejouait
   // alors en upsert complet (90 kg remis à 80). Le démarrage la réécrit.
-  it('au démarrage, la forme héritée est réécrite sur l’appareil, file et quarantaine', () => {
+  it('au démarrage, l’ancienne file et l’ancienne quarantaine entrent au registre et quittent l’appareil', async () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify([{ ...execOp(), _uid: 'u-exec' }, legacyPartial('s2', 'values', { weightKg: 90 })]),
@@ -1956,18 +1954,27 @@ describe('écritures partielles (patchSet)', () => {
     expect(rawLegacyPartials()).toEqual(['s2', 's9']);
 
     adoptLegacyOps();
+    // Converties tout de suite pour la page ; l'écriture suit, sous le verrou.
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
+    await registrySettled();
 
-    expect(rawLegacyPartials()).toEqual([]);
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as OutboxOp[];
-    expect(raw.map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
-    expect(raw[1]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
+    // Les anciennes clés sont effacées : un onglet resté sur l'ancienne version
+    // n'y trouve plus rien à rejouer.
+    expect(legacyQueueWrites()).toEqual([]);
+    expect(localStorage.getItem(QUARANTINE_KEY)).toBeNull();
+    expect(readQueue().map((op) => `${op.type}:${op.id}`)).toEqual(['upsertExecution:exec-1', 'patchSet:s2']);
+    expect(readQueue()[1]).toMatchObject({ only: 'values', weightKg: 90, _uid: 'uid-s2-values' });
     expect(readQuarantine()[0]).toMatchObject({ op: { type: 'patchSet', id: 's9' }, reason: '23514 : rejet' });
   });
 
-  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([{ ...execOp(), _uid: 'u-exec', _owner: 'user-1' }]));
+  it('au démarrage, rien d’hérité : le stockage n’est pas réécrit', async () => {
+    saveLocalAccount({ userId: 'user-1', email: 'toi@exemple.com' });
+    enqueue(execOp());
+    adoptLegacyOps();
+    await registrySettled();
     const setItem = vi.spyOn(localStorage, 'setItem');
     adoptLegacyOps();
+    await registrySettled();
     expect(setItem).not.toHaveBeenCalled();
   });
 

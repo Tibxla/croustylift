@@ -60,27 +60,6 @@ export function datedNoteOutboxOp(params: {
 }
 
 /**
- * Les notes datées de l'exécution `executionId` dont une écriture attend encore
- * en file : leurs exos, et l'id de la note pour une op d'effacement d'un bundle
- * antérieur (qui ne porte ni exécution ni exo). Sert à la réconciliation d'une
- * réponse tardive de la base (`reconcileDatedNotes`, capture/state) : la base
- * ne connaît pas encore ces écritures, sa version de ces notes est périmée.
- * Logique PURE.
- */
-export function pendingDatedNoteKeys(queue: readonly OutboxOp[], executionId: string): string[] {
-  const keys: string[] = [];
-  for (const op of queue) {
-    if (op.type === 'upsertDatedNote') {
-      if (op.executionId === executionId) keys.push(op.exerciseId);
-    } else if (op.type === 'deleteDatedNote') {
-      if (op.executionId === undefined || op.exerciseId === undefined) keys.push(op.id);
-      else if (op.executionId === executionId) keys.push(op.exerciseId);
-    }
-  }
-  return keys;
-}
-
-/**
  * Décide l'op d'outbox pour une note d'INSTRUCTIONS (issue #52, blind F3), à
  * partir du corps saisi :
  *   - corps réel  -> `upsertExerciseNote` (corps NORMALISÉ) ;
@@ -163,28 +142,6 @@ async function writeExerciseNote(exerciseId: string, body: string): Promise<void
 // Note datée (dated_notes) — saisie en Capture, le jour de la séance
 // =====================================================================
 
-/**
- * Corps de la note datée d'un exo pour une exécution (chaîne vide si aucune).
- * Une exécution n'a normalement qu'une note par exo (l'UI n'en crée qu'une) ;
- * on prend la plus récente par sécurité (`limit(1)`). Sert à RÉHYDRATER la
- * saisie en Capture après un reload.
- */
-export async function loadDatedNote(
-  executionId: string,
-  exerciseId: string,
-): Promise<string> {
-  const { data, error } = await supabase
-    .from('dated_notes')
-    .select('body')
-    .eq('execution_id', executionId)
-    .eq('exercise_id', exerciseId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.body ?? '';
-}
-
 /** Violation d'unicité (Postgres 23505) : ici, le couple de la migration 0018. */
 function isUniqueViolation(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === '23505';
@@ -193,7 +150,7 @@ function isUniqueViolation(error: unknown): boolean {
 /**
  * L'id de la note datée que la base tient pour ce couple (exécution, exercice),
  * ou `null`. S'il y en a plusieurs (doublons d'avant la migration 0018), la plus
- * récente : celle que lisent `loadDatedNote` et la réhydratation de la Capture.
+ * récente : celle que lit la réhydratation de la Capture.
  */
 async function findDatedNoteId(executionId: string, exerciseId: string): Promise<string | null> {
   const { data, error } = await supabase

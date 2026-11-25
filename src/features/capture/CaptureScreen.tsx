@@ -47,7 +47,6 @@ import {
 } from './session-edit';
 import {
   datedNoteOutboxOp,
-  pendingDatedNoteKeys,
   exerciseNoteOutboxOp,
 } from '../notes/data';
 import { datedNoteId } from '../notes/dated-note-id';
@@ -62,7 +61,6 @@ import {
   isExecutionStarted,
   isResumable,
   loadPersisted,
-  mergeProgress,
   newId,
   nextSetOrder,
   pendingSide,
@@ -71,10 +69,9 @@ import {
   persistedVersionIds,
   pruneStaleCaptureStates,
   previousDayIso,
-  applyQueuedSets,
-  reconcileProgress,
-  withReconciledProgress,
+  openingState,
   resolveCaptureDate,
+  onSetsAbandoned,
   shouldReanchorLaunch,
   todayIso,
   type DatedNoteDraft,
@@ -83,13 +80,14 @@ import {
 import {
   enqueue,
   enqueueAll,
-  isSetInsertion,
   OUTBOX_CHANGED_EVENT,
   purgeByExecution,
   readOwnQueue,
   readQueue,
-  unionOfQueueReads,
+  readStamp,
+  writesSince,
   type OutboxOp,
+  type ReadStamp,
 } from './outbox';
 // Le câblage outbox→Supabase est partagé avec l'édition d'une séance passée
 // (sync.ts) : un seul objet `syncFns`, dédupliqué pour qu'un type d'op (ex. le
@@ -107,12 +105,16 @@ import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
 import { useGoToSurface } from '../../shell/navigation';
-import { syncLine, type SyncState } from '../../shell/sync-line';
+import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
 import { SessionEnd, type SessionEndValues } from './SessionEnd';
 import { elapsedMinutesSince } from './summary';
-import { buildSessionRecap } from './session-recap';
+import { sommaireDetail } from './sommaire-detail';
+import { isDoubleTap, type LogStamp } from './log-guard';
+import { onQueueChanged } from './queue-changes';
+import { mergePendingExecutions, peekSeancesMeta, readAckedExecutions, seanceMetaLine } from './seance-meta';
+import { buildSessionRecap, performedToday } from './session-recap';
 import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
@@ -180,19 +182,13 @@ interface CaptureInit {
   datedNotes: Record<string, DatedNoteDraft>;
   restored: CaptureState | null;
   /**
-   * Non nul quand la base a RÉPONDU pour l'exécution que tient l'état local : le
-   * réalisé se réconcilie alors par identifiant (la base fait foi, plus les
-   * séries dont l'insertion attend, listées ici) au lieu de la fusion par
-   * longueur, qui n'est que le repli sans réponse (cf. `reconcileProgress`).
+   * L'estampille de la lecture de la base (`TodayExecution.stamp`) quand elle a
+   * RÉPONDU pour l'exécution adoptée : `progress` et `datedNotes` sont alors
+   * cette lecture, et le tableau y applique les écritures locales qu'elle ne
+   * contient pas (execution-reality.ts). `null` : la base n'a pas répondu, ou
+   * rien n'existe encore ; l'état local, s'il y en a un, tient lieu de lecture.
    */
-  pendingSetIds: string[] | null;
-  /**
-   * La file d'écritures du compte, lue à l'ouverture : ses écritures de séries
-   * pour cette exécution sont appliquées au réalisé final (`applyQueuedSets`),
-   * que la base ait répondu ou non. Une série ajoutée depuis le Journal et pas
-   * encore envoyée entre ainsi dans le tableau, et son rang est pris.
-   */
-  queuedOps: OutboxOp[];
+  readStamp: ReadStamp | null;
 }
 
 /**
@@ -230,7 +226,7 @@ export function CaptureScreen() {
   // Elle GARDE la réponse arrivée avant le montage du tableau (le chargement
   // continue après la borne de 3 s), étiquetée par génération de chargement et
   // par exécution, jusqu'à ce que ce tableau-là vienne la prendre.
-  const [lateBox] = useState(() => createLateMailbox<ReconcileAction>());
+  const [lateBox] = useState(() => createLateMailbox<TodayExecution>());
   // L'état courant du tableau monté, lu à la demande (adoption tardive, cf.
   // `canAdoptLateExecution`). Posé par le tableau à son montage, retiré au
   // démontage.
@@ -385,14 +381,10 @@ export function CaptureScreen() {
         progress: today?.progress ?? {},
         datedNotes: today?.datedNotes ?? {},
         restored,
-        pendingSetIds:
-          today && restored && today.executionId === restored.executionId
-            ? today.pendingSetIds
-            : null,
-        // Avec celles que la lecture du jour a relevées à ses deux bouts : une
-        // écriture acquittée pendant son trajet n'est plus en file, et la
-        // réponse, partie avant, ne la porte pas.
-        queuedOps: unionOfQueueReads(today?.pendingSetOps ?? [], readOwnQueue()),
+        // La base a répondu pour l'exécution adoptée : sa lecture fait foi. Si
+        // l'état local tient une AUTRE exécution, c'est lui qui prime (cf. le
+        // réducteur) et cette lecture ne le concerne pas.
+        readStamp: today && (!restored || today.executionId === restored.executionId) ? today.stamp : null,
       };
       initRef.current = init;
       setLoad({
@@ -452,47 +444,18 @@ export function CaptureScreen() {
       // Mais la réponse tardive qui la concerne porte peut-être des séries
       // écrites ailleurs (autre appareil, journal) : ignorée, le rang suivant
       // doublait un rang déjà pris. Elle est donc remise au tableau monté, qui
-      // réconcilie son réalisé par identifiant sans se remonter (ni l'exo ouvert
-      // ni le brouillon ne bougent). `knownAtDeparture` : ce que l'état local
-      // portait au départ de la lecture, pour ne pas défaire ce que l'utilisateur
-      // a saisi ou annulé pendant le trajet.
+      // établit son réalisé sur elle sans se remonter (ni l'exo ouvert ni le
+      // brouillon ne bougent). Elle porte l'estampille de son départ : ce que
+      // l'utilisateur a saisi, corrigé ou annulé pendant le trajet est au
+      // registre et lui est appliqué par-dessus (execution-reality.ts).
       if (late && restored !== null) {
         const gen = loadGenRef.current;
-        const knownAtDeparture = Object.values(restored.progress).flatMap((p) =>
-          p.setIds.filter((id): id is string => id !== null),
-        );
         void late.then((lateToday) => {
           if (!lateToday || !active() || loadGenRef.current !== gen) return;
           if (lateToday.executionId !== restored.executionId) return;
-          const queue = readQueue();
           // Remise par la boîte : le tableau n'est peut-être pas encore monté.
-          lateBox.post(gen, restored.executionId, {
-            type: 'reconcile-progress',
-            base: lateToday.progress,
-            pendingSetIds: [
-              ...lateToday.pendingSetIds,
-              ...queue.filter(isSetInsertion).map((op) => op.id),
-            ],
-            knownAtDeparture,
-            // Avec ses valeurs : une série corrigée ici pendant le trajet garde
-            // sa valeur locale (cf. `reconcileProgress`).
-            departure: restored.progress,
-            // Les notes datées aussi : une note écrite ailleurs (autre appareil,
-            // ancien client) que l'état local ignore est adoptée ; une note
-            // locale ou en attente d'envoi n'est jamais touchée. Les écritures
-            // de notes se relèvent comme les séries, avant et après la lecture
-            // (`lateToday.pendingNoteKeys`) puis à l'arrivée : un effacement
-            // acquitté pendant le trajet a vidé la file, la réponse, partie
-            // avant, porte encore la note.
-            // Les écritures de séries qui chevauchent la lecture sont rejouées
-            // sur le réalisé réconcilié, valeurs et rangs complets.
-            queuedOps: unionOfQueueReads(lateToday.pendingSetOps, readOwnQueue()),
-            datedNotes: lateToday.datedNotes,
-            pendingNoteKeys: [
-              ...lateToday.pendingNoteKeys,
-              ...pendingDatedNoteKeys(queue, restored.executionId),
-            ],
-          });
+          // Il relève les écritures locales au moment d'appliquer la réponse.
+          lateBox.post(gen, restored.executionId, lateToday);
         });
       }
     },
@@ -641,9 +604,10 @@ export function CaptureScreen() {
 
 /**
  * « Quelle séance ? » à l'arrivée en Salle, parmi les séances de la routine
- * courante. N'apparaît que si la routine en a au moins deux (une seule est
- * chargée direct ; aucune affiche l'état vide). Une ligne par séance, dans
- * l'ordre de la routine ; le nom suffit, rien d'inventé autour.
+ * courante. Une ligne par séance, dans l'ordre de la routine : son nom, et
+ * dessous quand elle a été faite pour la dernière fois et combien d'exos elle
+ * compte (seance-meta.ts), pour ne pas lancer la mauvaise d'une routine A/B. La
+ * liste s'affiche sans attendre cette méta : sa ligne est réservée.
  */
 function SeancePicker({
   seances,
@@ -653,13 +617,51 @@ function SeancePicker({
   onPick: (seance: SeanceChoice) => void;
 }) {
   const go = useGoToSurface();
+  const idsKey = seances.map((s) => s.id).join(',');
+  const [stored, setStored] = useState(peekSeancesMeta);
+  const [queue, setQueue] = useState(readOwnQueue);
+  useEffect(() => {
+    // La lecture réseau est chargée à la demande (seance-meta-load.ts) : sans
+    // elle, la copie locale reste ce qui s'affiche.
+    let watch: { stop: () => void; revalidate: () => void } | null = null;
+    let alive = true;
+    // La file a pu changer (flush ici ou ailleurs, geste, retour du réseau) :
+    // on relit la file ET la méta, tant que le sélecteur est monté. Une
+    // exécution acquittée quitte la file : sa date doit venir de la base.
+    const offQueue = onQueueChanged(() => {
+      setQueue(readOwnQueue());
+      watch?.revalidate();
+    });
+    void import('./seance-meta-load').then(
+      (m) => {
+        if (alive) watch = m.watchSeancesMeta(idsKey ? idsKey.split(',') : [], setStored);
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+      offQueue();
+      watch?.stop();
+    };
+  }, [idsKey]);
+  // La file, plus les exécutions acquittées qu'aucune relecture n'a encore
+  // apportées (seance-meta.ts) : relues à chaque changement de la file ou de la
+  // méta.
+  const meta = useMemo(() => mergePendingExecutions(stored, [...queue, ...readAckedExecutions()]), [stored, queue]);
+  const today = todayIso();
   return (
     <div className="flex flex-1 flex-col">
       <SalleSync />
       <ScreenHeader title="Quelle séance ?" meta="Parmi celles de ta routine courante." />
       <List label="Séances de la routine courante">
         {seances.map((seance) => (
-          <Row key={seance.id} title={seance.name} onClick={() => onPick(seance)} />
+          <Row
+            key={seance.id}
+            title={seance.name}
+            // Espace insécable tant que rien n'est connu : la hauteur est tenue.
+            meta={seanceMetaLine(meta[seance.id] ?? null, today) ?? '\u00a0'}
+            onClick={() => onPick(seance)}
+          />
         ))}
       </List>
       {/* La question, puis le chemin sur sa propre ligne : la même mise en
@@ -736,7 +738,7 @@ function CaptureBoard({
   template: Session;
   extras: (SessionExercise | null)[];
   /** Boîte des réponses tardives de la base (cf. `loadSeance`, late-reality.ts). */
-  lateBox: LateMailbox<ReconcileAction>;
+  lateBox: LateMailbox<TodayExecution>;
   /** Où le tableau dépose de quoi lire son état courant (cf. CaptureScreen). */
   boardStateRef: { current: (() => CaptureState) | null };
   /** Génération du chargement dont ce tableau est issu : il ne prend que ses réponses. */
@@ -830,23 +832,15 @@ function CaptureBoard({
     // L'exécution porte la version de séance adoptée au chargement ; un état
     // local qui a déjà la sienne la garde à la fusion (cf. mergeProgress).
     const versioned = { ...fromSupabase, seanceVersionId };
-    // Dernier temps, dans tous les cas : les écritures de séries de cette
-    // exécution encore en file (cf. `CaptureInit.queuedOps`).
-    const { queuedOps } = init;
-    const withQueued = (built: CaptureState): CaptureState => {
-      const progress = applyQueuedSets(built.progress, queuedOps, built.executionId);
-      return withReconciledProgress(built, progress);
-    };
-    if (!restored) return withQueued(versioned);
-    const merged = mergeProgress(versioned, restored);
-    // La base a répondu pour cette exécution : elle fait foi pour les séries,
-    // plus celles dont l'insertion attend. Sans cela une série supprimée depuis
-    // le Journal revenait ici, le cache local étant le plus long.
-    const { pendingSetIds } = init;
-    if (pendingSetIds === null) return withQueued(merged);
-    return withQueued({
-      ...merged,
-      progress: reconcileProgress(restored.progress, progress, { pendingSetIds }),
+    // LE RÉALISÉ : la réponse de la base quand elle a répondu pour cette
+    // exécution, sinon ce que l'appareil a gardé, plus les écritures locales
+    // que cette lecture ne contient pas (`openingState`, state.ts).
+    return openingState({
+      hydrated: versioned,
+      restored,
+      read: init.readStamp !== null ? { progress, datedNotes, stamp: init.readStamp } : null,
+      writesSince,
+      asOf: readStamp(),
     });
   });
 
@@ -885,12 +879,36 @@ function CaptureBoard({
   const [mountedExecutionId] = useState(() => state.executionId);
   useEffect(
     () =>
-      lateBox.register(generation, mountedExecutionId, (action) => {
+      lateBox.register(generation, mountedExecutionId, (lateToday) => {
+        // Les écritures locales que la réponse ne contient pas, relevées
+        // MAINTENANT : la boîte a pu la garder le temps du montage.
+        const asOf = readStamp();
+        const action: ReconcileAction = {
+          type: 'reconcile-progress',
+          base: lateToday.progress,
+          writes: writesSince(lateToday.stamp),
+          asOf,
+          datedNotes: lateToday.datedNotes,
+        };
         dispatch(action);
         stateRef.current = captureReducer(stateRef.current, action);
         setRealityEpoch((n) => n + 1);
       }),
     [lateBox, generation, mountedExecutionId],
+  );
+  // Séries abandonnées dans la feuille des saisies refusées : elles quittent le
+  // tableau tout de suite, sans attendre une réponse de la base (hors ligne,
+  // elle ne vient pas), que l'abandon vienne de cet onglet ou d'un autre. Même
+  // pas que pour une réponse tardive.
+  useEffect(
+    () =>
+      onSetsAbandoned((setIds) => {
+        const action = { type: 'forget-sets', setIds } as const;
+        dispatch(action);
+        stateRef.current = captureReducer(stateRef.current, action);
+        setRealityEpoch((n) => n + 1);
+      }),
+    [],
   );
   // L'état courant, pour qui doit juger le tableau tel qu'il est (adoption
   // tardive) et non tel qu'il a pu être enregistré.
@@ -1066,7 +1084,7 @@ function CaptureBoard({
     [enqueueExecutionOnce],
   );
   const handleCorrectSet = useCallback(
-    (exerciseId: string, setId: string, values: SetEntry) =>
+    (exerciseId: string, setId: string, values: Partial<SetEntry>) =>
       applySetGesture(correctSet(stateRef.current, exerciseId, setId, values)),
     [applySetGesture],
   );
@@ -1177,7 +1195,7 @@ function CaptureBoard({
   }, []);
 
   // Phase locale de fin de séance + durée chronométrée. Déclarés AVANT les callbacks
-  // qui les utilisent (handleReset/handleNewSession/openFinish) : sinon `setPhase` est
+  // qui les utilisent (handleNewSession/openFinish) : sinon `setPhase` est
   // référencé avant sa déclaration, ce qui empêche la mémoïsation d'openFinish d'être
   // préservée (React Compiler). `phase` : capture (sélecteur + panneaux) -> finishing
   // (clôture, BPM optionnel). `durationMin` null = cas dégénéré (startedAt absent).
@@ -1226,7 +1244,7 @@ function CaptureBoard({
   }, [session, date, onExitToLaunch]);
 
   // --- Flux de fin de séance ------------------------------------------------
-  // `phase`/`durationMin` sont déclarés plus haut (avant handleReset/openFinish).
+  // `phase`/`durationMin` sont déclarés plus haut (avant handleNewSession/openFinish).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
   // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
   // La semaine (séries par muscle contre le prévu) se lit à l'ouverture de la
@@ -1236,7 +1254,12 @@ function CaptureBoard({
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
     setWeek(null);
-    void loadWeekMuscles({ seanceId: session.id, dateIso: date, currentExecutionId: state.executionId }).then(setWeek);
+    void loadWeekMuscles({
+      seanceId: session.id,
+      dateIso: date,
+      currentExecutionId: state.executionId,
+      currentStartedAt: state.startedAt,
+    }).then(setWeek);
   }, [state.startedAt, state.executionId, session.id, date]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
@@ -1245,11 +1268,7 @@ function CaptureBoard({
   );
 
   const recap = buildSessionRecap(session, state);
-  const today = session.exercises.map((ex) => ({
-    unilateral: ex.unilateral ?? false,
-    primaryMuscles: ex.primaryMuscles ?? [],
-    sets: getProgress(state, ex.exerciseId).sets,
-  }));
+  const today = performedToday(session, state);
 
   // La séance reprise est-elle celle d'un jour PASSÉ (restée ouverte) ? `date` est
   // figée au montage ; « hier » ou plus (cf. `formatRelativeDay`).
@@ -1338,7 +1357,7 @@ function CaptureBoard({
           exercise={activeExercise}
           progress={getProgress(state, activeExercise.exerciseId)}
           index={indexItems}
-          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId)) } : null}
+          next={nextEx ? { exerciseId: nextEx.exerciseId, name: nextEx.name, resume: resumeWord(getProgress(state, nextEx.exerciseId), nextEx.unilateral ?? false) } : null}
           done={counts.done}
           total={session.exercises.length}
           canFinish={loggedAny}
@@ -1390,23 +1409,13 @@ import type { CaptureAction, CaptureState, ExerciseProgress } from './state';
 type ReconcileAction = Extract<CaptureAction, { type: 'reconcile-progress' }>;
 
 /** Ligne de synchro de la Salle, hors instrument : rien quand tout est envoyé
- *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, l'état
- *  tient dans le bouton Sommaire : une ligne de plus pousserait la rangée RIR
- *  sous la barre du pouce. */
+ *  (même ligne que le shell, src/shell/sync-line.ts). Sur l'instrument, pas de
+ *  ligne (elle pousserait la rangée RIR sous la barre du pouce) : seules les
+ *  alarmes s'y disent, le bouton Sommaire garde la progression. */
 function SalleSync() {
   const sync = useSyncState();
   const openRefused = useOpenRefusedWrites();
   return <SyncBanner line={syncLine(sync)} action={refusedAction(sync.refused, openRefused)} />;
-}
-
-/** Ce que dit le bouton Sommaire sous son nom : l'envoi en attente s'il y en a
- *  (l'instrument n'a pas de ligne de synchro), sinon les exos réglés. */
-function sommaireDetail(sync: SyncState, done: number, total: number): string {
-  if (sync.unsaved) return 'stockage plein';
-  if (sync.offline) return sync.pending > 0 ? `hors ligne · ${sync.pending}` : 'hors ligne';
-  if (sync.pending > 0) return `envoi · ${sync.pending}`;
-  if (sync.refused > 0) return `${sync.refused} refusée${sync.refused > 1 ? 's' : ''}`;
-  return `${done} sur ${total} faits`;
 }
 
 /** Libellé de « Logger » : le côté en unilatéral, le rang sinon, « une de plus »
@@ -1417,11 +1426,19 @@ function logLabel(side: Side | null, rank: number, plannedMax: number): string {
 }
 
 /** Bouton de la rangée du haut de la barre : deux lignes, même gabarit pour
- *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales). */
+ *  Sommaire et Exo suivant (même hauteur, même ligne de base, marges égales).
+ *  Sous 340 px (320) : marges de 8 px et titre à 15 px, sinon « Sommai… » et
+ *  « Exo sui… » (cf. la colonne du milieu, `BAR_GRID`). */
 const BAR_BTN =
-  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line';
+  'ui-press flex h-12 min-w-0 flex-col items-start justify-center rounded-block border-[1.5px] border-ink bg-raise px-2.5 text-left active:bg-line [@media(max-width:339px)]:px-2';
 /** Titre d'un bouton de la rangée du haut : une ligne, jamais deux (360 px). */
-const BAR_TITLE = 'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink';
+const BAR_TITLE =
+  'w-full truncate whitespace-nowrap text-[16px] font-medium leading-tight text-ink [@media(max-width:339px)]:text-[15px]';
+/** Rangée du haut : colonne du milieu (Annuler) à largeur bornée, Sommaire et
+ *  Exo suivant gardent la même largeur, qu'Annuler soit là ou non ; resserrée
+ *  sous 340 px pour laisser leurs titres entiers. */
+const BAR_GRID =
+  'mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2 [@media(max-width:339px)]:grid-cols-[1fr_minmax(48px,60px)_1fr]';
 
 function CapturePanel({
   exercise,
@@ -1464,7 +1481,7 @@ function CapturePanel({
   onSaveDatedNote: (body: string) => void;
   /** Enregistre la note d'instructions de l'exo, éditée sur place (issue #52). */
   onSaveExerciseNote: (body: string) => void;
-  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
   onDeleteSet: (setId: string) => void;
 }) {
   // Brouillon de la série courante remonté ici pour que la barre du bas puisse
@@ -1498,15 +1515,21 @@ function CapturePanel({
   const [announce, setAnnounce] = useState('');
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
+  // Garde contre le rebond de doigt (log-guard.ts) : un second Logger du même
+  // exo sous 600 ms (250 ms si le côté a basculé) n'écrit rien et n'annonce rien.
+  const lastLogRef = useRef<LogStamp | null>(null);
   const logSet = useCallback(
-    (set: { weightKg: number; reps: number; rir: number }) => {
+    (set: { weightKg: number; reps: number; rir: number; side?: Side }) => {
+      const stamp: LogStamp = { exerciseId: exercise.exerciseId, side: set.side, at: performance.now() };
+      if (isDoubleTap(lastLogRef.current, stamp)) return;
+      lastLogRef.current = stamp;
       onLog(set);
       const where = currentSide ? ` côté ${sideLabel(currentSide)}` : '';
       setAnnounce(
         `Série ${rank}${where} loggée : ${set.weightKg} kilos, ${set.reps} répétitions, RIR ${set.rir}.`,
       );
     },
-    [onLog, rank, currentSide],
+    [onLog, rank, currentSide, exercise.exerciseId],
   );
 
   const label = logLabel(currentSide, rank, exercise.prescription.sets.max);
@@ -1521,7 +1544,8 @@ function CapturePanel({
   // Sur l'instrument, l'envoi en attente tient dans le bouton Sommaire ; mais un
   // stockage plein (fermer l'app perdrait des saisies) ou des saisies refusées
   // par le serveur se disent en clair, en tête.
-  const alarm = sync.unsaved || sync.refused > 0 ? syncLine(sync) : null;
+  const alarm = sync.unsaved || sync.full || sync.outdated || sync.refused > 0 ? syncLine(sync) : null;
+  const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
   return (
@@ -1559,27 +1583,21 @@ function CapturePanel({
           suivant, chacun à sa place, même gabarit. Rangée du bas : Logger, le
           geste répété, toujours au même endroit, sans enfoncement. Rien ne change
           de place quand le minimum du plan est atteint (décision du 23/11). */}
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1">
-        {/* Colonne du milieu à largeur fixe : Sommaire et Exo suivant gardent la
-            même largeur, qu'Annuler soit là ou non. */}
-        <div className="mb-1.5 grid grid-cols-[1fr_minmax(56px,76px)_1fr] gap-2">
+      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
+        <div className={BAR_GRID}>
           <button
             type="button"
             onClick={() => dispatch({ type: 'back-to-picker' })}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
-              sync.offline || sync.pending > 0 ? `, ${sync.pending} saisies en attente d’envoi` : ''
+              detail.alarm ? `, ${detail.text}` : ''
             }`}
             className={BAR_BTN}
           >
             <span className={BAR_TITLE}>Sommaire</span>
-            {/* Une file en attente (ou un refus, un stockage plein) se voit d'un coup
-                d'œil : blanc cassé demi-gras, comme dans le prototype. */}
-            <span
-              className={`tnum w-full truncate text-[13px] leading-tight ${
-                sync.offline || sync.pending > 0 || sync.refused > 0 || sync.unsaved ? 'font-semibold text-ink' : 'text-muted'
-              }`}
-            >
-              {sommaireDetail(sync, done, total)}
+            {/* La progression, toujours (sommaire-detail.ts) ; une alarme (stockage
+                plein, refus) prend sa place, en blanc cassé demi-gras. */}
+            <span className={`tnum w-full truncate text-[13px] leading-tight ${detail.alarm ? 'font-semibold text-ink' : 'text-muted'}`}>
+              {detail.text}
             </span>
           </button>
           {undoWhat ? (
@@ -1592,7 +1610,7 @@ function CapturePanel({
               aria-label={undoWhat.aria}
               className="flex h-12 min-w-0 flex-col items-center justify-center px-1 text-center active:opacity-70"
             >
-              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4">Annuler</span>
+              <span className="text-[16px] leading-tight text-ink underline decoration-1 underline-offset-4 [@media(max-width:339px)]:text-[15px]">Annuler</span>
               <span className="tnum truncate text-[13px] leading-tight text-muted">{undoWhat.sub}</span>
             </button>
           ) : (

@@ -18,7 +18,7 @@
 // principal.
 import { useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { useCompact } from '../../ui';
+import { useCompact, useCompactTight } from '../../ui';
 import { formatWeight } from './format';
 import { parseTypedValue, WEIGHT_MAX_KG } from './stepper-utils';
 
@@ -38,8 +38,11 @@ function Kg() {
 }
 
 export function WeightReadout({ value, onChange }: { value: number; onChange: (kg: number) => void }) {
-  // Écran bas (360×780) : 56 px au lieu de 72, pour garder RIR au-dessus de la barre.
-  const base = useCompact() ? 56 : 72;
+  // Écran bas (360×780) : 56 px au lieu de 72 ; très bas (375×667) : 48 px. La
+  // rangée RIR reste au-dessus de la barre.
+  const compact = useCompact();
+  const tight = useCompactTight();
+  const base = tight ? 48 : compact ? 56 : 72;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   // La valeur d'avant la saisie, rendue par Échap ou un champ vide.
@@ -118,7 +121,10 @@ export function WeightReadout({ value, onChange }: { value: number; onChange: (k
             }}
             onBlur={(e) => close(e.currentTarget.value)}
             className={`focus-own tnum min-w-[0.6em] border-b-2 border-ink bg-transparent p-0 text-center text-ink outline-none ${FACE}`}
-            style={{ fontSize: fit.size, width: fit.width || undefined }}
+            // Hauteur = taille du texte, bordure comprise : sans elle le champ
+            // dépassait la boîte (89 px pour 72, `overflow-hidden`) et son
+            // soulignement, le seul signe « je tape ici », était rogné.
+            style={{ fontSize: fit.size, height: fit.size, width: fit.width || undefined }}
           />
           <Kg />
         </span>

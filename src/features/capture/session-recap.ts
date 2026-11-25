@@ -6,7 +6,9 @@
 //   - `buildSessionRecap(session, state)` : la séance exo par exo (état, séries
 //     faites contre le prévu, séries battues et égalées, records, kg soulevés,
 //     côté resté seul en unilatéral, provenance), et les totaux : séries
-//     loggées, battues, égalées, nouveaux records, kg soulevés, exos par état ;
+//     loggées, battues, nouveaux records, kg soulevés, exos par état ;
+//   - `performedToday(session, state)` : les séries du jour de chaque exo, avec
+//     son mouvement et ses muscles, pour le décompte par muscle ;
 //   - `exerciseStatus(exo, réalisé)` : 'fait', 'en-cours', 'passe', 'pas-fait'.
 //     Un seul mot pour un exo commencé, partout : « en cours » ;
 //   - `weekSetsByMuscle({ before, today, planned })` : séries de la semaine par
@@ -16,9 +18,8 @@
 //     prescriptions de toutes les séances de la routine ;
 //   - `nudgeDuration(minutes, sens)` : la durée corrigée d'un cran de 5 min.
 //
-// Ce module ne remplace pas `buildSummary` (summary.ts), que l'écran actuel
-// consomme : il le complète. Les décomptes par muscle restent ceux du domaine
-// (`countPerformedSets`, `countPlannedSets`, ADR 0006 : pondérés par les reps).
+// Les décomptes par muscle sont ceux du domaine (`countPerformedSets`,
+// `countPlannedSets`, ADR 0006 : pondérés par les reps).
 //
 // Battues, égalées, records : les mêmes badges que dans l'instrument
 // (`computeSetBadges`, ADR 0010), donc recalculés quand une série est corrigée
@@ -36,9 +37,7 @@
 //     faites (c'est ce qu'il compare à poids égal) : jamais « 0 kg » ni e1RM nul ;
 //   - `side` : 'left' ou 'right' en unilatéral (chaque côté a son record, ADR
 //     0010), `null` en bilatéral ;
-//   - `set` : la série qui le porte (poids, reps, RIR), pour l'afficher ;
-//   - `e1rm` : champ historique, l'e1RM en kg d'un record d'e1RM chargé, `null`
-//     pour un record en reps ou un record de charge.
+//   - `set` : la série qui le porte (poids, reps, RIR), pour l'afficher.
 // Au plus un record par axe et par côté : la meilleure série du jour parmi
 // celles qui portent le badge de cet axe (`comparePerformance` pour l'e1RM,
 // `heavier` pour la charge). Une série qui bat les deux records (badge 'both')
@@ -46,9 +45,8 @@
 // s'il est tenu par une AUTRE série que celle du record d'e1RM du même côté.
 // Ordre : gauche puis droite, e1rm puis charge.
 
-import { comparePerformance, effectiveReps, estimateE1rm, isZeroLoad } from '../../domain/e1rm';
+import { effectiveReps, estimateE1rm, isZeroLoad } from '../../domain/e1rm';
 import { liftedKg } from '../../domain/lifted';
-import { heavier } from '../../domain/pr';
 import {
   countLogicalSetsDone,
   countPerformedSets,
@@ -61,7 +59,7 @@ import type { PerformedSet, Range, Side } from '../../domain/types';
 import { currentSetOrder, sidesDoneAt } from '../../domain/unilateral';
 import { orderMusclesCanonical } from '../authoring/exercise-input';
 import type { ExerciseOrigin, Session, SessionExercise } from './fixtures';
-import { computeSetBadges, computeSetBadgesBySide, summarizeBadges } from './set-badges';
+import { computeSetBadges, computeSetBadgesBySide, dayRecords, summarizeBadges } from './set-badges';
 import { getProgress, type CaptureState, type ExerciseProgress } from './state';
 import { SESSION_DURATION_MAX_MIN } from './summary';
 
@@ -101,8 +99,6 @@ export interface RecapRecord {
   side: Side | null;
   /** La série qui porte le record. */
   set: { weightKg: number; reps: number; rir: number };
-  /** L'e1RM en kg d'un record d'e1RM chargé, `null` sinon (jamais 0 pour un record à 0 kg). */
-  e1rm: number | null;
 }
 
 /** Un exo dans le récap de fin de séance. */
@@ -118,14 +114,6 @@ export interface ExerciseRecap {
   beaten: number;
   /** Séries (lignes) qui égalent la dernière fois. */
   matched: number;
-  /** Séries (lignes) qui battent un record personnel, e1RM ou charge. */
-  records: number;
-  /**
-   * Meilleur e1RM du jour en kg parmi les séries qui battent le record d'e1RM
-   * (les deux côtés confondus en unilatéral), sinon `null`. `null` aussi pour un
-   * record à 0 kg, qui se lit en reps : voir `newRecords`.
-   */
-  recordE1rm: number | null;
   /** Les nouveaux records du jour de cet exo, par axe et par côté (cf. en-tête). */
   newRecords: RecapRecord[];
   /** kg soulevés sur cet exo. */
@@ -145,7 +133,6 @@ export interface SessionRecap {
   /** Séries logiques loggées dans la séance. */
   setsLogged: number;
   beaten: number;
-  matched: number;
   /**
    * Les nouveaux records du jour : ceux de chaque exo (`newRecords`), dans
    * l'ordre de la séance. Records de charge et records par côté compris.
@@ -156,8 +143,8 @@ export interface SessionRecap {
 }
 
 /**
- * Les records du jour d'un exo, au plus un par axe et par côté (cf. en-tête).
- * `badges` est aligné par index sur `sets`.
+ * Les records du jour d'un exo, au plus un par axe et par côté (cf. en-tête) :
+ * le décompte partagé avec le Journal (`dayRecords`, set-badges).
  */
 function recordsOf(
   exercise: SessionExercise,
@@ -165,47 +152,31 @@ function recordsOf(
   badges: ReturnType<typeof computeSetBadges>,
   unilateral: boolean,
 ): RecapRecord[] {
-  // Même rangement que `computeRecordFlagsBySide` : une ligne unilatérale sans
-  // côté (donnée inattendue) compte à gauche.
-  const sideOf = (set: PerformedSet): Side | null => (unilateral ? (set.side === 'right' ? 'right' : 'left') : null);
-  const sides: (Side | null)[] = unilateral ? ['left', 'right'] : [null];
-  const records: RecapRecord[] = [];
-  for (const side of sides) {
-    let bestE1rm: PerformedSet | null = null;
-    let bestCharge: PerformedSet | null = null;
-    sets.forEach((set, index) => {
-      const badge = badges[index];
-      if (badge?.axis !== 'record' || sideOf(set) !== side) return;
-      if (badge.record !== 'weight-reps' && (bestE1rm === null || comparePerformance(set, bestE1rm) > 0)) {
-        bestE1rm = set;
-      }
-      if (badge.record !== 'e1rm' && (bestCharge === null || heavier(bestCharge, set))) bestCharge = set;
-    });
-    const base = { exerciseId: exercise.exerciseId, name: exercise.name, side };
-    if (bestE1rm !== null) records.push({ ...base, ...e1rmRecord(bestE1rm) });
-    if (bestCharge !== null && bestCharge !== bestE1rm) records.push({ ...base, ...chargeRecord(bestCharge) });
-  }
-  return records;
+  const base = { exerciseId: exercise.exerciseId, name: exercise.name };
+  return dayRecords(sets, badges, unilateral).map(({ axis, side, set }) => ({
+    ...base,
+    side,
+    ...(axis === 'e1rm' ? e1rmRecord(set) : chargeRecord(set)),
+  }));
 }
 
-type RecordReading = Pick<RecapRecord, 'axis' | 'unit' | 'value' | 'set' | 'e1rm'>;
+type RecordReading = Pick<RecapRecord, 'axis' | 'unit' | 'value' | 'set'>;
 
 const setOf = ({ weightKg, reps, rir }: PerformedSet) => ({ weightKg, reps, rir });
 
 /** Un record d'e1RM : en kg, ou en reps effectives à 0 kg (ADR 0013). */
 function e1rmRecord(set: PerformedSet): RecordReading {
   if (isZeroLoad(set.weightKg)) {
-    return { axis: 'e1rm', unit: 'reps', value: effectiveReps(set.reps, set.rir), set: setOf(set), e1rm: null };
+    return { axis: 'e1rm', unit: 'reps', value: effectiveReps(set.reps, set.rir), set: setOf(set) };
   }
-  const e1rm = estimateE1rm(set.weightKg, set.reps, set.rir);
-  return { axis: 'e1rm', unit: 'kg', value: e1rm, set: setOf(set), e1rm };
+  return { axis: 'e1rm', unit: 'kg', value: estimateE1rm(set.weightKg, set.reps, set.rir), set: setOf(set) };
 }
 
 /** Un record de charge : le poids en kg, ou les reps faites à 0 kg. */
 function chargeRecord(set: PerformedSet): RecordReading {
   return isZeroLoad(set.weightKg)
-    ? { axis: 'charge', unit: 'reps', value: set.reps, set: setOf(set), e1rm: null }
-    : { axis: 'charge', unit: 'kg', value: set.weightKg, set: setOf(set), e1rm: null };
+    ? { axis: 'charge', unit: 'reps', value: set.reps, set: setOf(set) }
+    : { axis: 'charge', unit: 'kg', value: set.weightKg, set: setOf(set) };
 }
 
 function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): ExerciseRecap {
@@ -223,10 +194,6 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
   const verdicts = summarizeBadges(progress.sets, badges).total;
 
   const newRecords = recordsOf(exercise, progress.sets, badges, unilateral);
-  let recordE1rm: number | null = null;
-  for (const record of newRecords) {
-    if (record.e1rm !== null && (recordE1rm === null || record.e1rm > recordE1rm)) recordE1rm = record.e1rm;
-  }
 
   // Unilatéral : la série en cours est-elle restée à un seul côté ?
   let openSide: Side | null = null;
@@ -243,8 +210,6 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
     setsPlanned: exercise.prescription.sets,
     beaten: verdicts.battu,
     matched: verdicts.egalise,
-    records: verdicts.record,
-    recordE1rm,
     newRecords,
     liftedKg: liftedKg(progress.sets),
     openSide,
@@ -266,10 +231,22 @@ export function buildSessionRecap(session: Session, state: CaptureState): Sessio
     counts,
     setsLogged: sum((e) => e.setsDone),
     beaten: sum((e) => e.beaten),
-    matched: sum((e) => e.matched),
     records: exercises.flatMap((e) => e.newRecords),
     liftedKg: sum((e) => e.liftedKg),
   };
+}
+
+/**
+ * Les séries du jour de chaque exo de la séance, avec son mouvement et ses
+ * muscles principaux : l'entrée du décompte par muscle (`countPerformedSets`,
+ * `weekSetsByMuscle`). Un exo passé garde ses séries : elles ont été faites.
+ */
+export function performedToday(session: Session, state: CaptureState): PerformedExercise[] {
+  return session.exercises.map((ex) => ({
+    unilateral: ex.unilateral ?? false,
+    primaryMuscles: ex.primaryMuscles ?? [],
+    sets: getProgress(state, ex.exerciseId).sets,
+  }));
 }
 
 // --- Séries de la semaine par muscle, contre le prévu -------------------------

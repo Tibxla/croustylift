@@ -104,6 +104,15 @@ describe('evictNonEssentialCopies', () => {
     expect(copies()).toEqual([...ESSENTIAL, 'exo-execs:curl', 'exo-note:curl'].sort());
   });
 
+  it('palier 1 : les copies des écrans au calme (Séances, Analyse) partent aussi', () => {
+    put('vue:journal', 'x'.repeat(400));
+    put('vue:routine:r1', { routines: [] });
+    expect(evictNonEssentialCopies(1)).toBe(5);
+    expect(copies()).not.toContain('vue:journal');
+    expect(copies()).not.toContain('vue:routine:r1');
+    expect(copies()).toEqual(expect.arrayContaining(ESSENTIAL));
+  });
+
   it('palier 2 : l’historique et la note des exos hors plan partent, ceux du plan restent', () => {
     expect(evictNonEssentialCopies(2)).toBe(2);
     expect(copies()).not.toContain('exo-execs:curl');

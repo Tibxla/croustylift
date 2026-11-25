@@ -14,6 +14,10 @@
 // événements, qui remontent à travers le portail, ne marquent pas le brouillon
 // comme touché.
 //
+// Les libellés « e1RM » (mesure du brouillon) et « RIR » (rangée) se touchent :
+// une feuille basse dit en une phrase ce que veut dire chaque mot
+// (src/lib/glossary-text.ts), sans ligne de plus sur l'instrument.
+//
 // Mesure du brouillon : un chiffre seul, jamais un verdict « battrait » (cf.
 // draft-e1rm.ts) : l'écart se lit sans signe ni couleur. Les statuts en signal
 // (battue, record) ne portent que sur des séries réellement faites (ADR 0010).
@@ -25,10 +29,11 @@ import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, slotOfOrde
 import { isBlankNote } from '../../domain/notes';
 import type { PerformedSet, Side } from '../../domain/types';
 import { useReglages } from '../../settings/reglages';
-import { IconButton, NumberRow, Ruler, StateMark, Status, useCompact } from '../../ui';
+import { IconButton, NumberRow, Ruler, Sheet, StateMark, Status, useCompact, useCompactTight } from '../../ui';
+import { GLOSSARY_TEXT } from '../../lib/glossary-text';
 import type { SessionExercise } from './fixtures';
 import type { ExerciseProgress } from './state';
-import { seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
+import { loggedSetsKey, seedDraft, shouldReproposeSide, shouldReseedDraft } from './capture-seed';
 import { formatPerf, perfReadout } from './perf-readout';
 import { draftE1rm } from './draft-e1rm';
 import { ExerciseIndex, type IndexItem } from './ExerciseIndex';
@@ -36,11 +41,12 @@ import { ExerciseRecapSheet } from './ExerciseRecapSheet';
 import { NotesSheet } from './NotesSheet';
 import { SetBand, UniSetBand } from './SetBand';
 import { WeightReadout } from './WeightReadout';
-import { computeSetBadges, computeSetBadgesBySide, summarizeBadges, type SetBadge } from './set-badges';
+import { computeSetBadges, computeSetBadgesBySide, recordWord, summarizeBadges, type SetBadge } from './set-badges';
 import { formatE1rm, formatRange, formatWeight } from './format';
 import { roundWeightKg } from './stepper-utils';
 import { SetEditSheet } from './SetEditSheet';
 import type { SetEntry } from './set-gestures';
+import { weightGraduations } from './weight-graduations';
 
 interface ExerciseCaptureProps {
   exercise: SessionExercise;
@@ -69,7 +75,7 @@ interface ExerciseCaptureProps {
   /** Enregistre la note d'instructions de l'exo (issue #52), corps vidé = supprimée. */
   onSaveExerciseNote: (body: string) => void;
   /** Corrige la série d'id `setId` (poids, reps, RIR). */
-  onCorrectSet: (setId: string, values: SetEntry) => void;
+  onCorrectSet: (setId: string, values: Partial<SetEntry>) => void;
   /** Supprime la série de la ligne d'id `setId` (les deux côtés en unilatéral). */
   onDeleteSet: (setId: string) => void;
 }
@@ -88,14 +94,16 @@ function signed(n: number, decimals: number): string {
 }
 
 /** Écart du brouillon à la Référence, dans la mesure du juge (e1RM, ou reps
- *  effectives à 0 kg des deux côtés). Null si les deux ne se comparent pas. */
-function gapToRef(draft: PerformedSet, ref: PerformedSet): string | null {
+ *  effectives à 0 kg des deux côtés), avec le nom de cette mesure : un « +3,3 kg »
+ *  sans nom se lisait comme 3,3 kg à ajouter sur la barre. Null si les deux ne se
+ *  comparent pas. */
+function gapToRef(draft: PerformedSet, ref: PerformedSet): { measure: 'e1RM' | 'reps eff.'; value: string; unit: string } | null {
   if (isZeroLoad(draft.weightKg) && isZeroLoad(ref.weightKg)) {
-    return `${signed(effectiveReps(draft.reps, draft.rir) - effectiveReps(ref.reps, ref.rir), 0)} reps`;
+    return { measure: 'reps eff.', value: signed(effectiveReps(draft.reps, draft.rir) - effectiveReps(ref.reps, ref.rir), 0), unit: 'reps' };
   }
   const a = draftE1rm(draft.weightKg, draft.reps, draft.rir);
   const b = draftE1rm(ref.weightKg, ref.reps, ref.rir);
-  return a === null || b === null ? null : `${signed(a - b, 1)} kg`;
+  return a === null || b === null ? null : { measure: 'e1RM', value: signed(a - b, 1), unit: 'kg' };
 }
 
 export function ExerciseCapture({
@@ -205,12 +213,17 @@ export function ExerciseCapture({
   );
 
   // Brouillon de la série courante (steppers), pré-rempli par `seedDraft` (issue
-  // #58, logique pure testée) : poids reporté de la dernière série loggée dès la
-  // 2ᵉ, reps cadrées sur la borne basse prescrite. En unilatéral (issue #46/#63),
+  // #58 et décision du 24/11, logique pure testée) : poids et reps reportés de la
+  // dernière série loggée dès la 2ᵉ, de la Référence à la 1ʳᵉ, la borne basse
+  // prescrite sans aucun repère. En unilatéral (issue #46/#63),
   // on passe le côté CHOISI pour aligner le repère sur la bonne ligne G/D (série
   // logique + côté), au lieu de dériver avec les rangs doublés. Ré-amorcé au
   // changement d'exo, au log/annulation d'une série (loggedCount), ou au bascule
-  // de côté (currentSide), pour reproposer le repère du côté visé.
+  // de côté (currentSide), pour reproposer le repère du côté visé. Recalculé
+  // aussi quand le CONTENU des séries change (`loggedSetsKey`) : une correction
+  // ne change pas leur nombre. Ce recalcul seul est un changement d'historique,
+  // qui laisse en place un brouillon déjà touché (cf. l'effet plus bas).
+  const setsKey = loggedSetsKey(progress.sets);
   const seed = useMemo(
     () =>
       seedDraft({
@@ -225,7 +238,7 @@ export function ExerciseCapture({
     // La référence et son repli sont dans les dépendances : ils peuvent changer
     // sous l'écran (Référence suivie en direct, cf. CaptureScreen).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [exercise.exerciseId, loggedCount, currentSide, reference, exercise.fallbackReference],
+    [exercise.exerciseId, loggedCount, setsKey, currentSide, reference, exercise.fallbackReference],
   );
 
   const [weightKg, setWeightKg] = useState(seed.weightKg);
@@ -291,8 +304,7 @@ export function ExerciseCapture({
   const livePerf = perfReadout(weightKg, reps, rir);
 
   // Statut de fin (si au moins le minimum prescrit est atteint), en SÉRIES
-  // complètes (une série unilatérale = gauche + droite). Le badge de déviation
-  // reste cantonné au bilatéral (le diff prescription/réel par côté est hors #46).
+  // complètes (une série unilatérale = gauche + droite).
   const reachedMin = completedSets >= prescription.sets.min;
   // Borne HAUTE prescrite : c'est ELLE qui déclenche le récap de fin d'exo (et non
   // le min), pour ne pas couper l'enchaînement quand on vise encore une série de
@@ -327,9 +339,15 @@ export function ExerciseCapture({
   const closeEdit = useCallback(() => setEditId(null), [setEditId]);
   const closeNotes = useCallback(() => setNotesOpen(false), [setNotesOpen]);
   const closeRecap = useCallback(() => setRecapOpen(false), [setRecapOpen]);
+  // RIR et e1RM expliqués au toucher de leur libellé (UX 6 de l'audit du 24/11).
+  const [wordsOpen, setWordsOpen] = useState(false);
+  const openWords = useCallback(() => setWordsOpen(true), []);
+  const closeWords = useCallback(() => setWordsOpen(false), []);
   // Écran bas (≤ 800 px, ex. 360×780) : tout se resserre pour que la rangée RIR
   // reste au-dessus de la barre du pouce, unilatéral et nom long compris.
   const compact = useCompact();
+  // Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : un cran de plus.
+  const tight = useCompactTight();
   const hasNote =
     !isBlankNote(datedNote) || !isBlankNote(perExerciseNote) || !!(exercise.previousDatedNote && !isBlankNote(exercise.previousDatedNote.body));
   const draft: PerformedSet = { order: rank, weightKg, reps, rir, side: currentSide ?? undefined };
@@ -342,10 +360,9 @@ export function ExerciseCapture({
         : { value: formatE1rm(displayRecord.bestE1rm), unit: 'kg' }
       : null;
   const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
-  // Graduations de la règle en CRANS (pas libre, ex. 1,75 kg) : une majeure
-  // étiquetée environ tous les 5 kg, une moyenne à mi-chemin si elle tombe juste.
-  const majorEvery = Math.max(1, Math.round(5 / stepKg));
-  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
+  // Graduations de la règle en CRANS du pas réglé : les étiquettes tombent sur
+  // des poids ronds (weight-graduations.ts).
+  const { majorEvery, midEvery } = weightGraduations(stepKg);
   // Les côtés déjà faits de la série en cours, et sa place (ce que dit le
   // sélecteur : « faite pour la série n ») ; pas `rank`, qui suit le côté choisi.
   const currentOrder = currentSetOrder(progress.sets);
@@ -363,10 +380,13 @@ export function ExerciseCapture({
             barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
           className={`truncate font-[650] leading-[1.05] tracking-[-0.03em] text-ink ${
-            compact
-              ? exercise.name.length <= 18
-                ? 'text-[28px]'
-                : 'text-[22px] leading-[29px]'
+            tight
+              ? // Écran très bas : tout nom au cran de 22 px, sur sa propre hauteur.
+                'text-[22px]'
+              : compact
+                ? exercise.name.length <= 18
+                  ? 'text-[28px]'
+                  : 'text-[22px] leading-[29px]'
               : exercise.name.length <= 18
                 ? 'text-[32px]'
                 : exercise.name.length <= 24
@@ -381,13 +401,27 @@ export function ExerciseCapture({
             <button
               type="button"
               onClick={() => setRecapOpen(true)}
-              aria-label={`Bilan de l’exo, ${completedSets} série${completedSets > 1 ? 's' : ''} : voir le récap`}
+              aria-label={`Bilan de l’exo, ${completedSets} série${completedSets > 1 ? 's' : ''}${verdicts.record > 0 ? `, ${recordWord(badges)}` : ''} : voir le récap`}
               className="-my-3 flex min-h-11 min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap"
             >
               <StateMark state="done" size={15} className="font-medium text-ink underline decoration-dim decoration-1 underline-offset-[5px]">
                 fait · {completedSets} série{completedSets > 1 ? 's' : ''}
               </StateMark>
-              {verdicts.record > 0 && <Status v="up" word="record" />}
+              {verdicts.record > 0 &&
+                (recordWord(badges) === 'record charge' ? (
+                  // Sous 340 px, « fait · 3 séries ▲ record charge » ne tient
+                  // pas : « ▲ charge », comme dans la bande ; le nom lu le dit.
+                  <>
+                    <span className="contents [@media(max-width:339px)]:hidden">
+                      <Status v="up" word="record charge" />
+                    </span>
+                    <span className="hidden [@media(max-width:339px)]:contents">
+                      <Status v="up" word="charge" />
+                    </span>
+                  </>
+                ) : (
+                  <Status v="up" word="record" />
+                ))}
               {verdicts.record === 0 && verdicts.battu > 0 && <Status v="up" word={`${verdicts.battu} battue${verdicts.battu > 1 ? 's' : ''}`} />}
               {verdicts.record === 0 && verdicts.battu === 0 && verdicts.egalise > 0 && (
                 <Status v="eq" word={`${verdicts.egalise} égalée${verdicts.egalise > 1 ? 's' : ''}`} />
@@ -465,7 +499,7 @@ export function ExerciseCapture({
           <WeightReadout value={weightKg} onChange={(kg) => setWeightKg(roundWeightKg(kg))} />
         </div>
 
-        <div className={compact ? 'mt-1' : 'mt-2'}>
+        <div className={tight ? 'mt-0.5' : compact ? 'mt-1' : 'mt-2'}>
           <Ruler
             key={stepKg}
             label="Poids"
@@ -483,13 +517,39 @@ export function ExerciseCapture({
         </div>
 
         {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
-        <dl className={`grid grid-cols-3 gap-3 px-5 ${compact ? 'pt-0.5' : ''}`}>
-          <Measure compact={compact} label={livePerf?.label ?? 'e1RM'} live>
+        {/* Écran bas : une ligne, sans « kg » (le libellé nomme la mesure) ; le
+            milieu prend la place que les deux bords laissent, pour que « Écart
+            e1RM » et son chiffre ne touchent pas « Record » (360 px). */}
+        <dl
+          className={`grid gap-3 px-5 ${
+            compact ? `grid-cols-[auto_minmax(0,1fr)_auto] ${tight ? '' : 'pt-0.5'}` : 'grid-cols-3'
+          }`}
+        >
+          <Measure
+            compact={compact}
+            label={livePerf?.label ?? 'e1RM'}
+            live
+            // « reps eff. » à 0 kg : ce n'est pas l'e1RM, pas sa définition.
+            onLabel={(livePerf?.label ?? 'e1RM') === 'e1RM' ? openWords : undefined}
+            labelHint="e1RM, ce que ça veut dire"
+          >
             {livePerf ? <Figure value={livePerf.value} unit={livePerf.unit} compact={compact} /> : <Missing compact={compact}>·</Missing>}
           </Measure>
-          <Measure compact={compact} label={compact ? 'Écart' : 'Écart à la réf.'}>
+          {/* L'écart nomme sa mesure (« Écart e1RM »), sans verdict : signe, ni
+              couleur ni ▲ (ADR 0010, draft-e1rm.ts). */}
+          <Measure
+            compact={compact}
+            center
+            // Sous 340 px (320), « Écart e1RM » et son chiffre ne tiennent pas
+            // entre leurs voisines : « Écart » seul, le chiffre n'y porte pas « kg ».
+            label={
+              <>
+                Écart<span className={compact ? '[@media(max-width:339px)]:hidden' : ''}> {gap?.measure ?? 'e1RM'}</span>
+              </>
+            }
+          >
             {gap ? (
-              <Figure value={gap.split(' ')[0]!} unit={gap.split(' ')[1] ?? null} compact={compact} />
+              <Figure value={gap.value} unit={gap.unit} compact={compact} />
             ) : (
               <Missing compact={compact}>{compact ? 'sans réf.' : 'aucune réf.'}</Missing>
             )}
@@ -527,6 +587,8 @@ export function ExerciseCapture({
             refValue={refToBeat?.rir ?? null}
             onPick={setRir}
             compact={compact}
+            onLabel={openWords}
+            labelHint="RIR, ce que ça veut dire"
           />
         </div>
       </div>
@@ -556,6 +618,7 @@ export function ExerciseCapture({
         onSaveDatedNote={onSaveDatedNote}
         onSaveInstructions={onSaveExerciseNote}
       />
+      <WordsSheet open={wordsOpen} onClose={closeWords} />
       <ExerciseRecapSheet
         open={recapOpen}
         name={exercise.name}
@@ -582,12 +645,63 @@ export function ExerciseCapture({
 
 /** Une mesure sous la règle : son nom, puis le chiffre (sur la même ligne en
  *  écran bas). */
-function Measure({ label, compact, right = false, live = false, children }: { label: string; compact: boolean; right?: boolean; live?: boolean; children: ReactNode }) {
+function Measure({
+  label,
+  compact,
+  right = false,
+  center = false,
+  live = false,
+  onLabel,
+  labelHint,
+  children,
+}: {
+  label: ReactNode;
+  compact: boolean;
+  right?: boolean;
+  /** Écran bas : centrée entre ses deux voisines. */
+  center?: boolean;
+  live?: boolean;
+  /** Le libellé se touche et ouvre la définition du mot (glossary-text.ts). */
+  onLabel?: () => void;
+  labelHint?: string;
+  children: ReactNode;
+}) {
   return (
-    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : ''} min-w-0`}>
-      <dt className="flex-none text-[13px] text-muted">{label}</dt>
+    <div aria-live={live ? 'polite' : undefined} className={`${compact ? 'flex items-baseline gap-1.5' : ''} ${right ? (compact ? 'justify-end' : 'text-right') : center && compact ? 'justify-center' : ''} min-w-0`}>
+      <dt className="flex-none text-[13px] text-muted">
+        {onLabel ? (
+          <button
+            type="button"
+            onClick={onLabel}
+            aria-label={labelHint}
+            className="-mx-2 min-w-11 px-2 text-left underline decoration-dim decoration-1 underline-offset-[3px] active:opacity-70"
+          >
+            {label}
+          </button>
+        ) : (
+          label
+        )}
+      </dt>
       {children}
     </div>
+  );
+}
+
+/** Les deux mots de l'instrument expliqués, en une feuille basse (rien ne pousse
+ *  la rangée RIR sous la barre) : une phrase chacun, la même source que le
+ *  premier lancement et l'Analyse (glossary-text.ts). */
+function WordsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Sheet open={open} title="RIR et e1RM" onClose={onClose}>
+      <div className="flex flex-col gap-3 px-5 pb-4 text-[16px] leading-[1.45]">
+        {(['rir', 'e1rm'] as const).map((key) => (
+          <p key={key} className="max-w-[40ch] text-muted">
+            <span className="font-semibold text-ink">{GLOSSARY_TEXT[key].term}</span> : {GLOSSARY_TEXT[key].definition.charAt(0).toLowerCase()}
+            {GLOSSARY_TEXT[key].definition.slice(1)}
+          </p>
+        ))}
+      </div>
+    </Sheet>
   );
 }
 
@@ -595,7 +709,7 @@ function Figure({ value, unit, compact, muted = false }: { value: string; unit: 
   return (
     <dd className={`tnum whitespace-nowrap font-medium leading-none tracking-[-0.01em] ${muted ? 'text-muted' : 'text-ink'} ${compact ? 'text-[17px]' : 'mt-1 text-[22px]'}`}>
       {value}
-      {unit && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
+      {unit && !(compact && unit === 'kg') && <span className="ml-1 text-[13px] font-normal text-faint">{unit}</span>}
     </dd>
   );
 }
@@ -637,7 +751,7 @@ function RefValue({
   }
   return (
     <p className="flex items-baseline justify-between gap-3 text-[14px]">
-      <span className="text-muted">réf. série {rank}</span>
+      <span className="shrink-0 whitespace-nowrap text-muted">réf. série {rank}</span>
       <span className="tnum min-w-0 truncate font-medium text-ink">
         {values}
         {perf && <span className="font-normal text-muted"> · {perf}</span>}

@@ -1,59 +1,15 @@
-// Libellés de l'état de synchro (bannière de la Capture, Déconnexion refusée,
-// enregistrement d'une correction depuis le journal).
+// Libellés des saisies retenues sur l'appareil (Déconnexion refusée, garde
+// d'arrivée, écran de connexion, enregistrement d'une correction depuis le
+// journal). La ligne de synchro du shell est `shell/sync-line.ts`.
 //
 // Logique PURE, sans React : ce que l'utilisateur lit selon ce que l'appareil
 // retient. Une op en QUARANTAINE (rejetée par la base, cf. outbox) n'est plus
-// « en attente » mais n'est pas en base non plus : la bannière ne dit donc
-// jamais « Synchronisé » tant qu'il en reste, et une Déconnexion refusée à
+// « en attente » mais n'est pas en base non plus : une Déconnexion refusée à
 // cause d'elle dit la vraie raison (revenir en ligne n'y changerait rien).
-
-/** Ton de la bannière : vert discret, info (synchro en cours), ambre (attention). */
-export type SyncTone = 'good' | 'info' | 'warn';
 
 /** « 1 saisie refusée par le serveur » / « 2 saisies refusées par le serveur ». */
 function refusedSubject(count: number): string {
   return `${count} saisie${count > 1 ? 's' : ''} refusée${count > 1 ? 's' : ''} par le serveur`;
-}
-
-/**
- * Ton et texte de la bannière de synchro. `pending` : ops en file ;
- * `quarantined` : ops rejetées par la base, mises de côté. L'ambre (jamais le
- * rouge) signale une quarantaine non vide, quel que soit l'état de la file.
- */
-export function syncBannerLabel(input: {
-  pending: number;
-  quarantined: number;
-  online: boolean;
-  /**
-   * Le stockage de l'appareil refuse les écritures (plein) : la file ou la
-   * séance en cours ne tiennent qu'en mémoire. Prime sur tout le reste, en
-   * ambre : fermer l'app maintenant perdrait des saisies.
-   */
-  unsaved?: boolean;
-}): { tone: SyncTone; label: string } {
-  const { pending, quarantined, online } = input;
-  if (input.unsaved) {
-    const waiting = pending > 0 ? ` ${pending} en attente d’envoi.` : '';
-    return {
-      tone: 'warn',
-      label: `Stockage de l’appareil plein : tes saisies ne sont pas sauvegardées ici. Garde l’app ouverte.${waiting}`,
-    };
-  }
-  const refused =
-    quarantined > 0
-      ? `${refusedSubject(quarantined)}, non envoyée${quarantined > 1 ? 's' : ''}.`
-      : null;
-
-  if (pending === 0) {
-    return refused
-      ? { tone: 'warn', label: refused }
-      : { tone: 'good', label: 'Synchronisé. Tout est en base.' };
-  }
-  const waiting = online
-    ? `Synchronisation… ${pending} en attente.`
-    : `Hors ligne. ${pending} en attente, gardé sur l’appareil.`;
-  if (refused) return { tone: 'warn', label: `${waiting} ${refused}` };
-  return { tone: online ? 'info' : 'warn', label: waiting };
 }
 
 /**

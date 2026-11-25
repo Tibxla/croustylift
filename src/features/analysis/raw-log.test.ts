@@ -124,7 +124,37 @@ describe('buildRawLog', () => {
     ])
   })
 
-  it('trie les exos d’une exécution par nom (locale fr)', () => {
+  it('range les exos d’une séance dans l’ordre où ils ont été faits, pas par nom', () => {
+    const log = buildRawLog([
+      row({ exerciseId: 'bench', exerciseName: 'Développé couché', setCreatedAt: '2026-01-08T18:00:00Z' }),
+      row({ exerciseId: 'row', exerciseName: 'Tirage horizontal', setCreatedAt: '2026-01-08T18:10:00Z' }),
+      row({ exerciseId: 'curl', exerciseName: 'Curl biceps', setCreatedAt: '2026-01-08T18:20:00Z' }),
+    ])
+
+    expect(log[0]!.exercises.map((e) => e.name)).toEqual(['Développé couché', 'Tirage horizontal', 'Curl biceps'])
+  })
+
+  it('l’ordre d’un exo est celui de sa PREMIÈRE série, quel que soit l’ordre d’arrivée des lignes', () => {
+    const log = buildRawLog([
+      row({ exerciseId: 'curl', exerciseName: 'Curl biceps', setCreatedAt: '2026-01-08T18:20:00Z', set: set({ order: 1 }) }),
+      row({ exerciseId: 'bench', exerciseName: 'Développé couché', setCreatedAt: '2026-01-08T18:30:00Z', set: set({ order: 2 }) }),
+      row({ exerciseId: 'bench', exerciseName: 'Développé couché', setCreatedAt: '2026-01-08T18:00:00Z', set: set({ order: 1 }) }),
+    ])
+
+    expect(log[0]!.exercises.map((e) => e.exerciseId)).toEqual(['bench', 'curl'])
+  })
+
+  it('le rang de l’exo dans la séance (`exercise_position`) prime sur l’heure de saisie', () => {
+    const log = buildRawLog([
+      row({ exerciseId: 'curl', exerciseName: 'Curl biceps', exercisePosition: 2, setCreatedAt: '2026-01-08T18:00:00Z' }),
+      row({ exerciseId: 'bench', exerciseName: 'Développé couché', exercisePosition: 0, setCreatedAt: '2026-01-08T18:20:00Z' }),
+      row({ exerciseId: 'row', exerciseName: 'Tirage horizontal', exercisePosition: 1, setCreatedAt: '2026-01-08T18:10:00Z' }),
+    ])
+
+    expect(log[0]!.exercises.map((e) => e.exerciseId)).toEqual(['bench', 'row', 'curl'])
+  })
+
+  it('sans rang ni heure qui départage, le nom tranche (locale fr)', () => {
     const log = buildRawLog([
       row({ exerciseId: 'z', exerciseName: 'Élévations' }),
       row({ exerciseId: 'a', exerciseName: 'Curl' }),

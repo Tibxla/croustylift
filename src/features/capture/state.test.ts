@@ -1,12 +1,11 @@
-// Tests unitaires du reducer de capture et de ses helpers (getProgress, statusOf).
+// Tests unitaires du reducer de capture et de ses helpers (getProgress, hydratedState…).
 //
 // Pas de localStorage, pas de React : logique pure uniquement.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   captureReducer,
   getProgress,
   getDatedNote,
-  statusOf,
   initialState,
   isExecutionStarted,
   isPristine,
@@ -17,12 +16,13 @@ import {
   capturePersistFailing,
   persistedVersionIds,
   pruneStaleCaptureStates,
-  applyQueuedSets,
   canAdoptLateExecution,
   reconcileDatedNotes,
-  reconcileProgress,
   clearCaptureState,
   clearOwnCaptureState,
+  forgetAbandonedSets,
+  onSetsAbandoned,
+  SETS_ABANDONED_CHANNEL,
   hydratedState,
   mergeProgress,
   loadPersisted,
@@ -78,58 +78,6 @@ describe('getProgress', () => {
     const p = getProgress(after, 'bench-press');
     expect(p.sets).toHaveLength(1);
     expect(p.sets[0]).toMatchObject({ weightKg: 80, reps: 8, rir: 2, order: 1 });
-  });
-});
-
-// --- statusOf ----------------------------------------------------------------
-
-describe('statusOf', () => {
-  const empty: ExerciseProgress = { sets: [], setIds: [], skipped: false };
-
-  it('todo : aucune série, non passé', () => {
-    expect(statusOf(empty, 3)).toBe('todo');
-  });
-
-  it('skipped : marqué passé, indépendamment des séries', () => {
-    const p: ExerciseProgress = { sets: [], setIds: [], skipped: true };
-    expect(statusOf(p, 3)).toBe('skipped');
-  });
-
-  it('in-progress : des séries mais pas encore le min prescrit', () => {
-    const p: ExerciseProgress = {
-      sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
-      setIds: ['s1'],
-      skipped: false,
-    };
-    expect(statusOf(p, 3)).toBe('in-progress');
-  });
-
-  it('done : atteint exactement le min prescrit', () => {
-    const sets = [
-      { weightKg: 80, reps: 8, rir: 2, order: 1 },
-      { weightKg: 80, reps: 8, rir: 2, order: 2 },
-      { weightKg: 80, reps: 8, rir: 2, order: 3 },
-    ];
-    const p: ExerciseProgress = { sets, setIds: ['s1', 's2', 's3'], skipped: false };
-    expect(statusOf(p, 3)).toBe('done');
-  });
-
-  it('done : dépasse le min prescrit', () => {
-    const sets = [
-      { weightKg: 80, reps: 8, rir: 2, order: 1 },
-      { weightKg: 80, reps: 8, rir: 2, order: 2 },
-      { weightKg: 80, reps: 8, rir: 2, order: 3 },
-      { weightKg: 80, reps: 8, rir: 2, order: 4 },
-    ];
-    const p: ExerciseProgress = { sets, setIds: ['s1', 's2', 's3', 's4'], skipped: false };
-    // prescribedMin = 3, 4 séries loggées -> done
-    expect(statusOf(p, 3)).toBe('done');
-  });
-
-  it('skipped prime sur tout le reste (même si des séries sont loggées)', () => {
-    const sets = [{ weightKg: 80, reps: 8, rir: 2, order: 1 }];
-    const p: ExerciseProgress = { sets, setIds: ['s1'], skipped: true };
-    expect(statusOf(p, 3)).toBe('skipped');
   });
 });
 
@@ -455,43 +403,6 @@ describe('captureReducer — skip-exercise / unskip-exercise', () => {
   });
 });
 
-// --- captureReducer — reset --------------------------------------------------
-
-describe('captureReducer — reset', () => {
-  it('vide le progrès et met à jour executionId', () => {
-    let state = mkState();
-    state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId: 's1', set: set1 });
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-new' });
-    expect(after.progress).toEqual({});
-    expect(after.executionId).toBe('exec-new');
-    expect(after.activeExerciseId).toBeNull();
-  });
-
-  it('conserve le sessionId', () => {
-    const state = mkState();
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-2' });
-    expect(after.sessionId).toBe(state.sessionId);
-  });
-
-  it('vide les notes datées (elles visaient l’exécution précédente, désormais close)', () => {
-    let state = mkState();
-    state = captureReducer(state, {
-      type: 'set-dated-note',
-      exerciseId: 'bench-press',
-      noteId: 'note-1',
-      body: 'note du jour',
-    });
-    const after = captureReducer(state, { type: 'reset', executionId: 'exec-new' });
-    expect(getDatedNote(after, 'bench-press')).toBeNull();
-  });
-
-  it('lève la clôture : une séance neuve repart en cours (closedAt null)', () => {
-    const closed = captureReducer(mkState(), { type: 'close', closedAt: 1_700_000 });
-    const after = captureReducer(closed, { type: 'reset', executionId: 'exec-3' });
-    expect(after.closedAt).toBeNull();
-  });
-});
-
 // --- captureReducer — close --------------------------------------------------
 
 describe('captureReducer — close', () => {
@@ -547,6 +458,14 @@ describe('hydratedState', () => {
     // Pas de progrès à réhydrater : capture vierge sous la date donnée.
     expect(state.progress).toEqual({});
     expect(state.date).toBe('2026-06-18');
+    // Séance neuve (ancienne action `reset`) : même séance, rien de l'exécution
+    // d'avant (ni notes, ni disposition, ni suivi), et pas close.
+    expect(state.sessionId).toBe(upperA.id);
+    expect(state.activeExerciseId).toBeNull();
+    expect(state.datedNotes).toEqual({});
+    expect(state.closedAt).toBeNull();
+    expect(state.layout).toBeUndefined();
+    expect(state.asOf).toBeUndefined();
   });
 
   it('ignore un exo sans série (réalisé vide) et porte les notes datées', () => {
@@ -565,11 +484,15 @@ describe('hydratedState', () => {
   });
 });
 
-// --- mergeProgress (fusion Supabase ↔ cache local au montage) -----------------
+// --- mergeProgress (état local ↔ base au montage) ----------------------------
+//
+// Il n'existe plus de fusion par longueur (« la liste la plus longue gagne ») :
+// le réalisé final est établi par la règle unique (`executionReality`,
+// execution-reality.test.ts), sur la réponse de la base quand elle a répondu,
+// sinon sur le réalisé local que cette fonction garde tel quel.
 
 describe('mergeProgress', () => {
-  // États « en cours » : `a` = hydraté de Supabase (ids réels), `b` = cache local
-  // (ids client). On fabrique `b` à partir de `a` puis on le déforme par exo.
+  // `a` = hydraté de la base (ids réels), `b` = état gardé par l'appareil.
   const supa = (
     progress: Record<string, HydratedProgress>,
     executionId = 'exec-supa',
@@ -581,169 +504,33 @@ describe('mergeProgress', () => {
     ...overrides,
   });
 
-  it('garde le réalisé le PLUS AVANCÉ par exo', () => {
-    const a = supa({
-      'bench-press': {
-        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
-        setIds: ['real-1'],
-      },
-    });
-    const b = local({
-      progress: {
-        'bench-press': {
-          sets: [
-            { weightKg: 80, reps: 8, rir: 2, order: 1 },
-            { weightKg: 82, reps: 6, rir: 1, order: 2 },
-          ],
-          setIds: ['c-1', 'c-2'],
-          skipped: false,
-        },
-      },
-    });
-    const merged = mergeProgress(a, b);
-    // b est plus long → on le garde.
-    expect(getProgress(merged, 'bench-press').sets).toHaveLength(2);
-  });
-
-  it('executionId et startedAt viennent du LOCAL (exécution en cours, ops en outbox)', () => {
-    const a = supa({});
-    const b = local({});
-    const merged = mergeProgress(a, b);
+  it('executionId et startedAt viennent du LOCAL (exécution en cours, écritures au registre)', () => {
+    const merged = mergeProgress(supa({}), local({}));
     expect(merged.executionId).toBe('exec-local');
     expect(merged.startedAt).toBe(555_000);
   });
 
-  it('à longueur égale, garde la base Supabase (a) qui porte les ids réels', () => {
-    const a = supa({
-      'bench-press': {
-        sets: [
-          { weightKg: 80, reps: 8, rir: 2, order: 1 },
-          { weightKg: 82, reps: 6, rir: 1, order: 2 },
-        ],
-        setIds: ['real-1', 'real-2'],
-      },
-    });
-    // Local de même longueur mais ids client : à égalité, Supabase fait foi.
-    const b = local({
-      progress: {
-        'bench-press': {
-          sets: [
-            { weightKg: 80, reps: 8, rir: 2, order: 1 },
-            { weightKg: 82, reps: 6, rir: 1, order: 2 },
-          ],
-          setIds: ['c-1', 'c-2'],
-          skipped: false,
-        },
-      },
-    });
-    const merged = mergeProgress(a, b);
-    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1', 'real-2']);
+  it('le réalisé gardé est celui de l’état local, exos passés compris', () => {
+    const a = supa({ 'bench-press': { sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }], setIds: ['real-1'] } });
+    const progress = {
+      'bench-press': { sets: [{ weightKg: 82, reps: 6, rir: 1, order: 1 }], setIds: ['c-1'], skipped: false },
+      squat: { sets: [], setIds: [], skipped: true },
+    };
+    expect(mergeProgress(a, local({ progress })).progress).toBe(progress);
   });
 
-  it('complète un setId null de la base la plus avancée par l’id de l’autre source', () => {
-    // Base la plus avancée = local (3 séries) MAIS son 1ᵉʳ id manque (cache ancien
-    // format). On le complète par l'id réel de la base au même index : aucune série
-    // ne reste sans id annulable (objectif du fix H2/F1).
-    const a = supa({
-      'bench-press': {
-        sets: [
-          { weightKg: 80, reps: 8, rir: 2, order: 1 },
-          { weightKg: 82, reps: 6, rir: 1, order: 2 },
-        ],
-        setIds: ['real-1', 'real-2'],
-      },
+  it('les notes datées se réunissent par exo, le local d’abord', () => {
+    const a = { ...supa({}), datedNotes: { bench: { id: 'b1', body: 'base' }, squat: { id: 'b2', body: 'base' } } };
+    const b = local({ datedNotes: { bench: { id: 'l1', body: 'local' } } });
+    expect(mergeProgress(a, b).datedNotes).toEqual({
+      bench: { id: 'l1', body: 'local' },
+      squat: { id: 'b2', body: 'base' },
     });
-    const b = local({
-      progress: {
-        'bench-press': {
-          sets: [
-            { weightKg: 80, reps: 8, rir: 2, order: 1 },
-            { weightKg: 82, reps: 6, rir: 1, order: 2 },
-            { weightKg: 84, reps: 5, rir: 0, order: 3 },
-          ],
-          setIds: [null, 'c-2', 'c-3'],
-          skipped: false,
-        },
-      },
-    });
-    const merged = mergeProgress(a, b);
-    const p = getProgress(merged, 'bench-press');
-    expect(p.sets).toHaveLength(3);
-    // index 0 : null du local complété par real-1 ; les autres gardent l'id local ;
-    // index 2 : la base n'a pas de 3ᵉ id → reste l'id client local (c-3).
-    expect(p.setIds).toEqual(['real-1', 'c-2', 'c-3']);
-  });
-
-  it('unilatéral : complète un setId null par (order, side), pas par index (ordre G/D croisé)', () => {
-    // base = local (plus avancé, 3 séries) en ordre de SAISIE (droite d'abord, #63),
-    // avec l'id de la série GAUCHE@1 manquant (cache ancien format).
-    const b = local({
-      progress: {
-        curl: {
-          sets: [
-            { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'right' },
-            { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'left' },
-            { weightKg: 20, reps: 10, rir: 1, order: 2, side: 'right' },
-          ],
-          setIds: ['c-r1', null, 'c-r2'],
-          skipped: false,
-        },
-      },
-    });
-    // other = Supabase, TRIÉ (gauche avant droite) : ordre DIFFÉRENT du local.
-    const a = supa({
-      curl: {
-        sets: [
-          { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'left' },
-          { weightKg: 20, reps: 12, rir: 2, order: 1, side: 'right' },
-        ],
-        setIds: ['real-l1', 'real-r1'],
-      },
-    });
-    const merged = mergeProgress(a, b);
-    // L'id manquant (gauche@1) est complété par l'id GAUCHE de la base (real-l1),
-    // PAS par l'id au même index (real-r1 = la droite) : alignement par (order, side).
-    // L'alignement par index brut aurait croisé les côtés → undo de la mauvaise ligne.
-    expect(getProgress(merged, 'curl').setIds).toEqual(['c-r1', 'real-l1', 'c-r2']);
-  });
-
-  it('un exo présent dans une seule source est conservé tel quel', () => {
-    const a = supa({
-      'bench-press': {
-        sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }],
-        setIds: ['real-1'],
-      },
-    });
-    const b = local({}); // aucun progrès local
-    const merged = mergeProgress(a, b);
-    expect(getProgress(merged, 'bench-press').setIds).toEqual(['real-1']);
   });
 
   it('reste « en cours » : closedAt null après fusion', () => {
     const merged = mergeProgress(supa({}), local({}));
     expect(merged.closedAt).toBeNull();
-  });
-});
-
-// --- progression (statut global via statusOf) --------------------------------
-
-describe('progression globale via statusOf', () => {
-  it('séquence todo -> in-progress -> done en loggant 3 séries (min=3)', () => {
-    let state = mkState();
-    // prescribedMin = 3 (upperA bench-press sets.min = 3)
-    const exId = 'bench-press';
-    const min = upperA.exercises.find((e) => e.exerciseId === exId)!.prescription.sets.min;
-
-    expect(statusOf(getProgress(state, exId), min)).toBe('todo');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's1', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('in-progress');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's2', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('in-progress');
-
-    state = captureReducer(state, { type: 'log-set', exerciseId: exId, setId: 's3', set: set1 });
-    expect(statusOf(getProgress(state, exId), min)).toBe('done');
   });
 });
 
@@ -1427,10 +1214,6 @@ describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
     expect(fromBase.layout).toBeUndefined();
   });
 
-  it('une nouvelle exécution (reset) repart sans disposition', () => {
-    expect(captureReducer(edited(), { type: 'reset', executionId: 'exec-2' }).layout).toBeUndefined();
-  });
-
   it('les entrées mal formées d’un état persisté sont écartées', () => {
     const key = 'croustylift:capture:' + upperA.id + ':2026-11-23';
     localStorage.setItem(
@@ -1458,190 +1241,41 @@ describe('disposition de la séance (exos ajoutés ou remplacés)', () => {
   });
 });
 
-// Reprise EN LIGNE d'une exécution que l'appareil tient déjà : la base a
-// répondu, elle fait foi pour ses séries, et les opérations locales encore en
-// attente s'appliquent par-dessus, par identifiant. La fusion « la liste la plus
-// longue gagne » (mergeProgress) ne reste que le repli sans réponse de la base.
-describe('reconcileProgress (la base fait foi, plus les écritures en attente)', () => {
-  const set = (order: number, weightKg = 80) => ({ weightKg, reps: 8, rir: 2, order });
-  const local = (ids: (string | null)[], skipped = false): Record<string, ExerciseProgress> => ({
-    bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids, skipped },
-  });
-  const base = (ids: string[]): Record<string, HydratedProgress> =>
-    ids.length === 0 ? {} : { bench: { sets: ids.map((_, i) => set(i + 1)), setIds: ids } };
-  const ids = (progress: Record<string, ExerciseProgress>) => progress.bench?.setIds;
-
-  it('série supprimée depuis le Journal, suppression acquittée : elle ne revient pas en Capture', () => {
-    // Le cache local porte encore deux séries ; la base n'en rend plus qu'une et
-    // rien n'attend en file. Avant : la liste la plus longue (le cache) gagnait.
-    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: [] });
-
-    expect(ids(progress)).toEqual(['s1']);
-    expect(nextSetOrder(progress.bench!, undefined)).toBe(2);
-  });
-
-  it('série loggée hors ligne, pas encore envoyée : elle reste (son insertion attend)', () => {
-    const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), { pendingSetIds: ['s2'] });
-
-    expect(ids(progress)).toEqual(['s1', 's2']);
-  });
-
-  it('série écrite ailleurs (journal, autre appareil) : elle arrive, le rang suivant la compte', () => {
-    const progress = reconcileProgress(local(['s1']), base(['s1', 's-ailleurs']), {
-      pendingSetIds: [],
-    });
-
-    expect(ids(progress)).toEqual(['s1', 's-ailleurs']);
-    expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
-  });
-
-  it('toutes les séries d’un exo supprimées ailleurs : l’exo sort du réalisé', () => {
-    expect(reconcileProgress(local(['s1']), base([]), { pendingSetIds: [] })).toEqual({});
-  });
-
-  it('un exo passé reste passé, même sans série', () => {
-    const progress = reconcileProgress(local([], true), base([]), { pendingSetIds: [] });
-    expect(progress.bench).toEqual({ sets: [], setIds: [], skipped: true });
-  });
-
-  it('une série locale sans id (cache d’ancien format) reste si la base n’a rien à ce rang', () => {
-    const progress = reconcileProgress(local([null, null]), base(['s1']), { pendingSetIds: [] });
-    // Rang 1 : la base l'a (avec son id). Rang 2 : inconnu de la base, gardé.
-    expect(ids(progress)).toEqual(['s1', null]);
-  });
-
-  describe('réponse TARDIVE, appliquée à un tableau déjà monté', () => {
-    it('une série loggée pendant le trajet de la lecture est gardée, même déjà acquittée', () => {
-      // Au départ de la lecture : s1. Pendant le trajet : s2 loggée ET acquittée
-      // (absente de la réponse, partie avant ; absente de la file, déjà vidée).
-      const progress = reconcileProgress(local(['s1', 's2']), base(['s1']), {
-        pendingSetIds: [],
-        knownAtDeparture: ['s1'],
-      });
-
-      expect(ids(progress)).toEqual(['s1', 's2']);
-    });
-
-    it('une série annulée pendant le trajet ne revient pas, même si la réponse la porte encore', () => {
-      const progress = reconcileProgress(local(['s1']), base(['s1', 's2']), {
-        pendingSetIds: [],
-        knownAtDeparture: ['s1', 's2'],
-      });
-
-      expect(ids(progress)).toEqual(['s1']);
-    });
-
-    it('la série écrite ailleurs avant le départ arrive : le rang suivant ne double pas', () => {
-      // A tient s1. B a synchronisé s2. La lecture de A répond après 4 s.
-      const progress = reconcileProgress(local(['s1']), base(['s1', 's2-de-b']), {
-        pendingSetIds: [],
-        knownAtDeparture: ['s1'],
-      });
-
-      expect(nextSetOrder(progress.bench!, undefined)).toBe(3);
-    });
-  });
-
-  it('le reducer applique une réponse tardive sans toucher au reste de l’état', () => {
+// Réponse de la base sur un tableau déjà monté : le réducteur établit le réalisé
+// par la règle unique (scénarios dans execution-reality.test.ts et
+// set-gestures.test.ts) et ne touche à rien d'autre.
+describe('réponse tardive : le reste de l’état ne bouge pas', () => {
+  it('exo ouvert, disposition et exécution sont gardés, l’estampille est posée', () => {
     const state: CaptureState = {
       ...initialState(upperA, '2026-11-23'),
       executionId: 'exec-1',
       activeExerciseId: 'bench',
-      progress: local(['s1']),
+      progress: { bench: { sets: [{ weightKg: 80, reps: 8, rir: 2, order: 1 }], setIds: ['s1'], skipped: false } },
       layout: [{ kind: 'added', exerciseId: 'curl', name: 'Curl', unilateral: false, primaryMuscles: [] }],
     };
 
     const next = captureReducer(state, {
       type: 'reconcile-progress',
-      base: base(['s1', 's2-de-b']),
-      pendingSetIds: [],
-      knownAtDeparture: ['s1'],
+      base: {
+        bench: {
+          sets: [
+            { weightKg: 80, reps: 8, rir: 2, order: 1 },
+            { weightKg: 80, reps: 8, rir: 2, order: 2 },
+          ],
+          setIds: ['s1', 's2-de-b'],
+        },
+      },
+      writes: [],
+      asOf: 42,
     });
 
     expect(next.progress.bench?.setIds).toEqual(['s1', 's2-de-b']);
+    // Le rang suivant ne double pas celui de la série écrite ailleurs.
+    expect(nextSetOrder(next.progress.bench!, undefined)).toBe(3);
     expect(next.activeExerciseId).toBe('bench');
     expect(next.layout).toEqual(state.layout);
     expect(next.executionId).toBe('exec-1');
-  });
-});
-
-// Une série ajoutée depuis le Journal à l'exécution en cours, encore en file :
-// ni la base ni l'état de la Capture ne la portent. Le tableau repris l'ignorait
-// et la série suivante prenait son rang.
-describe('applyQueuedSets (écritures de séries en file appliquées au réalisé)', () => {
-  const ps = (order: number, side?: 'left' | 'right') => ({ weightKg: 80, reps: 8, rir: 2, order, ...(side ? { side } : {}) });
-  const insert = (id: string, setOrder: number, over: Record<string, unknown> = {}) =>
-    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2, ...over }) as const;
-  const tableau = (ids: (string | null)[], skipped = false) => ({
-    bench: { sets: ids.map((_, i) => ps(i + 1)), setIds: ids, skipped },
-  });
-  const nextOrder = (progress: Record<string, { sets: { order: number }[] }>) =>
-    Math.max(0, ...(progress.bench?.sets.map((s) => s.order) ?? [])) + 1;
-
-  it('base muette (hors ligne) : la série du Journal entre, le rang suivant est le 3', () => {
-    // La Capture a loggé le rang 1 ; le Journal a ajouté le rang 2, encore en file.
-    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1), insert('s2-journal', 2)], 'exec-1');
-    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
-    expect(progress.bench?.sets.map((s) => s.order)).toEqual([1, 2]);
-    expect(nextOrder(progress)).toBe(3);
-  });
-
-  it('base répondue sans la série (pas encore envoyée) : elle entre aussi', () => {
-    // Réalisé réconcilié avec la base : rang 1 seulement.
-    const reconciled = reconcileProgress(tableau(['s1']), { bench: { sets: [ps(1)], setIds: ['s1'] } }, {
-      pendingSetIds: ['s2-journal'],
-    });
-    const progress = applyQueuedSets(reconciled, [insert('s2-journal', 2)], 'exec-1');
-    expect(progress.bench?.setIds).toEqual(['s1', 's2-journal']);
-    expect(nextOrder(progress)).toBe(3);
-  });
-
-  it('tableau vide, série en file sur un exo jamais ouvert : l’exo apparaît avec sa série', () => {
-    const progress = applyQueuedSets({}, [insert('s1-journal', 1, { exerciseId: 'squat' })], 'exec-1');
-    expect(progress.squat).toEqual({ sets: [ps(1)], setIds: ['s1-journal'], skipped: false });
-  });
-
-  it('une série déjà au tableau n’est pas doublée, et rien ne change', () => {
-    const before = tableau(['s1', 's2']);
-    expect(applyQueuedSets(before, [insert('s1', 1), insert('s2', 2)], 'exec-1')).toBe(before);
-  });
-
-  it('une correction en file (même id, autres valeurs) remplace la série', () => {
-    const progress = applyQueuedSets(tableau(['s1']), [insert('s1', 1, { weightKg: 85 })], 'exec-1');
-    expect(progress.bench?.sets).toEqual([{ ...ps(1), weightKg: 85 }]);
-    expect(progress.bench?.setIds).toEqual(['s1']);
-  });
-
-  it('ordre de la file : insérée puis supprimée, la série ne revient pas', () => {
-    const before = tableau(['s1']);
-    const progress = applyQueuedSets(before, [insert('s2', 2), { type: 'deleteSet', id: 's2' }], 'exec-1');
-    expect(progress.bench?.setIds).toEqual(['s1']);
-  });
-
-  it('une suppression en file retire une série du tableau ; l’exo vide sort, sauf s’il est passé', () => {
-    expect(applyQueuedSets(tableau(['s1']), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({});
-    expect(applyQueuedSets(tableau(['s1'], true), [{ type: 'deleteSet', id: 's1' }], 'exec-1')).toEqual({
-      bench: { sets: [], setIds: [], skipped: true },
-    });
-  });
-
-  it('les séries d’une AUTRE exécution ne sont pas prises', () => {
-    const before = tableau(['s1']);
-    expect(applyQueuedSets(before, [insert('ailleurs', 2, { executionId: 'exec-2' })], 'exec-1')).toBe(before);
-  });
-
-  it('unilatéral : retri par rang puis gauche avant droite', () => {
-    const before = {
-      curl: { sets: [ps(1, 'left'), ps(2, 'left')], setIds: ['l1', 'l2'], skipped: false },
-    };
-    const progress = applyQueuedSets(before, [insert('r1', 1, { exerciseId: 'curl', side: 'right' })], 'exec-1');
-    expect(progress.curl?.setIds).toEqual(['l1', 'r1', 'l2']);
-    expect(progress.curl?.sets.map((s) => `${s.order}${s.side}`)).toEqual(['1left', '1right', '2left']);
-  });
-
-  it('une série sans id (cache d’ancien format) reste en place', () => {
-    const progress = applyQueuedSets(tableau([null]), [insert('s2', 2)], 'exec-1');
-    expect(progress.bench?.setIds).toEqual([null, 's2']);
+    expect(next.asOf).toBe(42);
   });
 });
 
@@ -1649,33 +1283,39 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
   const baseNote = { id: 'id-historique', body: 'écrite sous l’ancien client' };
 
   it('une note de la base que l’état local ignorait est adoptée, avec son id', () => {
-    expect(reconcileDatedNotes({}, { bench: baseNote }, [])).toEqual({ bench: baseNote });
+    expect(reconcileDatedNotes({}, { bench: baseNote })).toEqual({ bench: baseNote });
   });
 
   it('une édition locale est préservée, la base ne l’écrase pas', () => {
     const local = { bench: { id: 'id-local', body: 'en cours de saisie' } };
-    const next = reconcileDatedNotes(local, { bench: baseNote }, []);
+    const next = reconcileDatedNotes(local, { bench: baseNote });
     expect(next).toBe(local);
   });
 
   it('une note vidée localement reste vidée (un effacement est une édition)', () => {
     const local = { bench: { id: 'id-local', body: '' } };
-    expect(reconcileDatedNotes(local, { bench: baseNote }, [])).toBe(local);
+    expect(reconcileDatedNotes(local, { bench: baseNote })).toBe(local);
   });
 
-  it('une écriture de la note attend en file : la base, déjà périmée, n’est pas adoptée', () => {
-    // Par exo (op actuelle) ou par id de note (op d'effacement d'un bundle antérieur).
-    expect(reconcileDatedNotes({}, { bench: baseNote }, ['bench'])).toEqual({});
-    expect(reconcileDatedNotes({}, { bench: baseNote }, ['id-historique'])).toEqual({});
+  it('une note effacée ici, effacement encore en attente : la base, déjà périmée, n’est pas réadoptée', () => {
+    // Le réducteur applique d'abord les écritures de notes locales à la lecture.
+    const state: CaptureState = { ...initialState(upperA, '2026-11-23'), executionId: 'exec-1' };
+    const next = captureReducer(state, {
+      type: 'reconcile-progress',
+      base: {},
+      writes: [
+        { uid: 'u1', n: 1, fate: 'pending', op: { type: 'deleteDatedNote', id: 'n', executionId: 'exec-1', exerciseId: 'bench' } },
+        // Effacement d'un bundle antérieur : il ne porte que l'id de la note.
+        { uid: 'u2', n: 2, fate: 'pending', op: { type: 'deleteDatedNote', id: 'n-squat' } },
+      ],
+      datedNotes: { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' }, row: { id: 'n-row', body: 'x' } },
+    });
+    expect(next.datedNotes).toEqual({ row: { id: 'n-row', body: 'x' } });
   });
 
   it('chaque exo est jugé séparément', () => {
     const local = { bench: { id: 'id-local', body: 'la mienne' } };
-    const next = reconcileDatedNotes(
-      local,
-      { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' }, row: { id: 'n-row', body: 'x' } },
-      ['row'],
-    );
+    const next = reconcileDatedNotes(local, { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' } });
     expect(next).toEqual({
       bench: { id: 'id-local', body: 'la mienne' },
       squat: { id: 'n-squat', body: 'talons au sol' },
@@ -1684,7 +1324,7 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
 
   it('rien à adopter : l’état local est rendu tel quel', () => {
     const local = { bench: { id: 'id-local', body: 'x' } };
-    expect(reconcileDatedNotes(local, {}, [])).toBe(local);
+    expect(reconcileDatedNotes(local, {})).toBe(local);
   });
 
   it('le reducer réconcilie les notes avec les séries, sans toucher une note locale', () => {
@@ -1696,10 +1336,8 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
     const next = captureReducer(state, {
       type: 'reconcile-progress',
       base: {},
-      pendingSetIds: [],
-      knownAtDeparture: [],
+      writes: [],
       datedNotes: { bench: baseNote, squat: { id: 'n-squat', body: 'talons au sol' } },
-      pendingNoteKeys: [],
     });
     expect(next.datedNotes).toEqual({
       bench: { id: 'id-local', body: 'en cours' },
@@ -1712,67 +1350,8 @@ describe('reconcileDatedNotes (réponse tardive : le local prime, l’inconnu es
       ...initialState(upperA, '2026-11-23'),
       datedNotes: { bench: { id: 'id-local', body: 'en cours' } },
     };
-    const next = captureReducer(state, {
-      type: 'reconcile-progress',
-      base: {},
-      pendingSetIds: [],
-      knownAtDeparture: [],
-    });
+    const next = captureReducer(state, { type: 'reconcile-progress', base: {}, writes: [] });
     expect(next.datedNotes).toBe(state.datedNotes);
-  });
-});
-
-// Le Journal supprime A et décale B et C aux rangs 1 et 2 ; la Capture reprend
-// ces valeurs depuis la file. Une lecture partie AVANT arrive ensuite : elle
-// porte encore A, et B et C aux rangs 2 et 3. Elle défaisait la renumérotation,
-// et la série suivante prenait le rang 4 en laissant un trou.
-describe('réponse tardive et renumérotation faite dans le Journal', () => {
-  const ps = (order: number) => ({ weightKg: 80, reps: 8, rir: 2, order });
-  const insert = (id: string, setOrder: number) =>
-    ({ type: 'insertSet', id, executionId: 'exec-1', exerciseId: 'bench', setOrder, weightKg: 80, reps: 8, rir: 2 }) as const;
-  const journal = [{ type: 'deleteSet', id: 'a' } as const, insert('b', 1), insert('c', 2)];
-  /** Le tableau monté, déjà à jour de la file : B au rang 1, C au rang 2. */
-  const mounted = (): CaptureState => ({
-    ...initialState(upperA, '2026-11-24'),
-    executionId: 'exec-1',
-    progress: { bench: { sets: [ps(1), ps(2)], setIds: ['b', 'c'], skipped: false } },
-  });
-  /** La réponse tardive : l'état de la base d'avant les écritures du Journal. */
-  const late = {
-    type: 'reconcile-progress' as const,
-    base: { bench: { sets: [ps(1), ps(2), ps(3)], setIds: ['a', 'b', 'c'] } },
-    pendingSetIds: ['b', 'c'],
-    knownAtDeparture: ['a', 'b', 'c'],
-  };
-  const rangs = (state: CaptureState) =>
-    state.progress.bench?.sets.map((s, i) => `${state.progress.bench?.setIds[i]}@${s.order}`);
-
-  it('sans les écritures en file, la réponse reprend ses rangs d’avant (le défaut)', () => {
-    expect(rangs(captureReducer(mounted(), late))).toEqual(['b@2', 'c@3']);
-  });
-
-  it('les écritures qui chevauchent la lecture sont rejouées : B et C gardent les rangs 1 et 2', () => {
-    const next = captureReducer(mounted(), { ...late, queuedOps: [...journal] });
-    expect(rangs(next)).toEqual(['b@1', 'c@2']);
-    // La série suivante prend le rang 3, sans trou.
-    const logged = captureReducer(next, {
-      type: 'log-set',
-      exerciseId: 'bench',
-      setId: 'd',
-      set: { weightKg: 80, reps: 8, rir: 2 },
-    });
-    expect(rangs(logged)).toEqual(['b@1', 'c@2', 'd@3']);
-  });
-
-  it('même quand l’état local ignorait A : la suppression en file la retire de la réponse', () => {
-    const next = captureReducer(mounted(), { ...late, knownAtDeparture: ['b', 'c'], queuedOps: [...journal] });
-    expect(rangs(next)).toEqual(['b@1', 'c@2']);
-  });
-
-  it('une correction de valeur faite dans le Journal survit aussi à la réponse', () => {
-    const corrected = { ...insert('b', 1), weightKg: 85 };
-    const next = captureReducer(mounted(), { ...late, queuedOps: [journal[0]!, corrected, journal[2]!] });
-    expect(next.progress.bench?.sets[0]).toMatchObject({ weightKg: 85, order: 1 });
   });
 });
 
@@ -1858,5 +1437,99 @@ describe('isPristine (état abandonnable sans rien perdre)', () => {
     let state = captureReducer(fresh(), { type: 'open-exercise', exerciseId: 'bench-press' });
     state = captureReducer(state, { type: 'back-to-picker' });
     expect(isPristine(state)).toBe(true);
+  });
+});
+
+describe('série abandonnée dans la feuille des saisies refusées (troisième tour, constat H)', () => {
+  const DATE = '2026-06-18';
+  const insertion = (id: string) =>
+    ({ type: 'insertSet', id, executionId: 'e', exerciseId: 'bench-press', setOrder: 1, weightKg: 80, reps: 8, rir: 2 }) as const;
+
+  beforeEach(() => {
+    (globalThis as unknown as { localStorage: Storage }).localStorage =
+      new IndexableMemoryStorage() as unknown as Storage;
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function threeSets(): CaptureState {
+    let state = mkState();
+    for (const setId of ['s1', 's2', 's3']) {
+      state = captureReducer(state, { type: 'log-set', exerciseId: 'bench-press', setId, set: set1 });
+    }
+    return state;
+  }
+
+  it('le tableau monté la perd tout de suite, sans réponse de la base : les autres gardent leur rang', () => {
+    const state = captureReducer(threeSets(), { type: 'forget-sets', setIds: ['s2'] });
+
+    const progress = getProgress(state, 'bench-press');
+    expect(progress.setIds).toEqual(['s1', 's3']);
+    // Comme après une réponse de la base : rien n'est renuméroté ici.
+    expect(progress.sets.map((s) => s.order)).toEqual([1, 3]);
+  });
+
+  it('une série inconnue du tableau ne change rien', () => {
+    const state = threeSets();
+    expect(captureReducer(state, { type: 'forget-sets', setIds: ['ailleurs'] })).toBe(state);
+  });
+
+  it('l’état gardé par l’appareil la perd aussi : hors ligne, elle ne revient pas au remontage', () => {
+    persist(threeSets());
+
+    forgetAbandonedSets([insertion('s2'), { type: 'deleteSet', id: 's1' }]);
+
+    expect(getProgress(loadPersisted(upperA, DATE)!, 'bench-press').setIds).toEqual(['s1', 's3']);
+  });
+
+  it('prévient le tableau monté de cet onglet, avec les séries à retirer', () => {
+    const heard: string[][] = [];
+    const off = onSetsAbandoned((setIds) => heard.push(setIds));
+    heard.length = 0; // celles d'avant l'abonnement, remises d'entrée
+
+    forgetAbandonedSets([insertion('ici-1')]);
+    forgetAbandonedSets([{ type: 'deleteSet', id: 's1' }]);
+    off();
+    forgetAbandonedSets([insertion('ici-2')]);
+
+    expect(heard).toEqual([['ici-1']]);
+  });
+
+  it('prévient aussi les AUTRES onglets : leur tableau monté ne réécrit pas la série', async () => {
+    // Un autre onglet : pas la même fenêtre, le même canal.
+    const other = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    const heard = new Promise<unknown>((resolve) => (other.onmessage = (event) => resolve(event.data)));
+
+    forgetAbandonedSets([insertion('s2')]);
+
+    await expect(heard).resolves.toEqual(['s2']);
+    other.close();
+  });
+
+  it('ce qu’un autre onglet abandonne arrive au tableau monté ici', async () => {
+    const heard: string[] = [];
+    const off = onSetsAbandoned((setIds) => heard.push(...setIds));
+    const other = new BroadcastChannel(SETS_ABANDONED_CHANNEL);
+    other.postMessage(['ailleurs-1']);
+
+    await vi.waitFor(() => expect(heard).toContain('ailleurs-1'));
+    off();
+    other.close();
+  });
+
+  it('un tableau qui se monte APRÈS l’abandon (son état lu juste avant) l’apprend en s’abonnant', () => {
+    forgetAbandonedSets([insertion('tardive')]);
+
+    const heard: string[][] = [];
+    onSetsAbandoned((setIds) => heard.push(setIds))();
+
+    expect(heard.flat()).toContain('tardive');
+  });
+
+  it('une série du Journal RÉÉCRITE (elle existe en base) puis abandonnée reste au tableau', () => {
+    persist(threeSets());
+
+    forgetAbandonedSets([{ ...insertion('s2'), rewrites: true }]);
+
+    expect(getProgress(loadPersisted(upperA, DATE)!, 'bench-press').setIds).toEqual(['s1', 's2', 's3']);
   });
 });

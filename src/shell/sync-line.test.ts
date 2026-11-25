@@ -18,11 +18,40 @@ describe('syncLine', () => {
   });
 
   it('des saisies refusées se disent, seules ou avec la file', () => {
-    expect(syncLine({ ...base, refused: 2 })).toEqual({ title: 'Refusé par le serveur', detail: '2 saisies non envoyées' });
+    expect(syncLine({ ...base, refused: 2 })).toEqual({ title: '2 saisies refusées', detail: '' });
+    expect(syncLine({ ...base, refused: 1 })).toEqual({ title: '1 saisie refusée', detail: '' });
     expect(syncLine({ ...base, pending: 3, refused: 1 })?.detail).toBe('3 saisies en attente · 1 saisie refusée');
   });
 
   it('le stockage plein prime sur tout', () => {
     expect(syncLine({ pending: 3, refused: 1, offline: true, unsaved: true })?.title).toBe('Stockage plein');
+  });
+
+  // Reportés de l'ancienne bannière (`syncBannerLabel`).
+  it('des saisies refusées ne se cachent jamais, en ligne ou non, file vide ou non', () => {
+    for (const pending of [0, 1, 5]) {
+      for (const offline of [true, false]) {
+        const line = syncLine({ ...base, pending, offline, refused: 2 });
+        expect(line).not.toBeNull();
+        expect(`${line!.title} ${line!.detail}`).toMatch(/[Rr]efusé/);
+      }
+    }
+    expect(syncLine({ ...base, offline: true, refused: 1 })?.detail).toBe('les saisies restent sur cet appareil · 1 saisie refusée');
+  });
+
+  it('stockage plein, saisies en mémoire seulement : l’avertissement prime et dit ce qui reste à envoyer', () => {
+    const kept = 'tes saisies ne sont pas gardées ici, laisse l’app ouverte';
+    expect(syncLine({ ...base, unsaved: true })).toEqual({ title: 'Stockage plein', detail: kept });
+    expect(syncLine({ ...base, unsaved: true, pending: 2 })).toEqual({ title: 'Stockage plein', detail: `2 saisies à envoyer, ${kept}` });
+  });
+
+  it('stockage plein, tout est sur l’appareil : l’envoi est arrêté, avec ce qui reste à envoyer', () => {
+    expect(syncLine({ ...base, full: true, pending: 3, refused: 1 })).toEqual({
+      title: 'Stockage plein',
+      detail: 'envoi arrêté, 3 saisies sur l’appareil : libère de la place',
+    });
+    expect(syncLine({ ...base, full: true })).toEqual({ title: 'Stockage plein', detail: 'libère de la place sur cet appareil' });
+    // Des saisies en mémoire seulement : c'est elles qu'il faut dire d'abord.
+    expect(syncLine({ ...base, full: true, unsaved: true, pending: 1 })?.detail).toContain('pas gardées ici');
   });
 });

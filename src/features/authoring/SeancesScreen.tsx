@@ -27,7 +27,9 @@
 // Aucun usage du signal ici : rien n'y est « mieux que la dernière fois ».
 // Aucune confirmation par `window.confirm` : dans la feuille (`Confirm`), le
 // texte dit ce qui sera perdu.
-import { useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { ROUTINE_VIEW_PREFIX, ROUTINES_VIEW } from '../../lib/dated-read';
+import { useDatedLoad } from '../../lib/use-dated-load';
 import type { Database } from '../../lib/database.types';
 import {
   listRoutines,
@@ -56,9 +58,11 @@ import { menuLabel, routineMenu, seanceMenu } from './object-actions';
 import { requestLeave } from './seance-dirty';
 import { errorMessage } from '../../lib/error-message';
 import { exoCount, seanceCount } from './seance-format';
+import { reorderLock } from './reorder-lock';
 import { NameSheet, ReorderRow, RoutineActionsSheet, SeanceActionsSheet, StatusLine, type PlanFlash } from './seances-ui';
 import {
   ActionNote,
+  CopyNote,
   Disclosure,
   EmptyState,
   FieldError,
@@ -66,6 +70,7 @@ import {
   List,
   LoadError,
   Loading,
+  OfflineState,
   PrimaryButton,
   Row,
   Screen,
@@ -178,16 +183,30 @@ export function SeancesScreen() {
 // Routines
 // =====================================================================
 
-type RoutinesLoad =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | {
-      phase: 'ready';
-      routines: RoutineRow[];
-      currentRoutineId: string | null;
-      catalog: SeanceCatalogEntry[];
-      executedRoutineIds: ReadonlySet<string>;
-    };
+/**
+ * La liste des routines, lue d'un bloc et gardée en copie datée (lib/dated-read) :
+ * hors ligne, la dernière copie se montre avec sa date. Des tableaux, pas de
+ * `Set` : la copie passe par JSON.
+ */
+interface RoutinesData {
+  routines: RoutineRow[];
+  currentRoutineId: string | null;
+  catalog: SeanceCatalogEntry[];
+  executedRoutineIds: string[];
+}
+
+async function loadRoutinesData(): Promise<RoutinesData> {
+  // Lectures indépendantes, en parallèle. Le catalogue des séances donne le
+  // nombre de séances de chaque routine ; l'historique du plan dit qui
+  // s'archive et qui se supprime (ADR 0017).
+  const [routines, currentRoutineId, catalog, history] = await Promise.all([
+    listRoutines(),
+    getCurrentRoutineId(),
+    loadSeanceCatalog(),
+    loadPlanHistory(),
+  ]);
+  return { routines, currentRoutineId, catalog, executedRoutineIds: [...history.executedRoutineIds] };
+}
 
 function RoutinesContainer({
   flash,
@@ -198,65 +217,44 @@ function RoutinesContainer({
   onFlash: (note: PlanFlash | null) => void;
   onOpen: (routineId: string) => void;
 }) {
-  const [load, setLoad] = useState<RoutinesLoad>({ phase: 'loading' });
-  const [reloadKey, setReloadKey] = useState(0);
-  // Un rafraîchissement après une écriture garde la liste montée.
-  const reload = () => setReloadKey((k) => k + 1);
+  const { state, reload, refresh, online, showDate } = useDatedLoad(ROUTINES_VIEW, loadRoutinesData);
+  const executedRoutineIds = useMemo(
+    () => new Set(state.phase === 'ready' ? state.value.executedRoutineIds : []),
+    [state],
+  );
 
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        // Lectures indépendantes, en parallèle. Le catalogue des séances donne le
-        // nombre de séances de chaque routine ; l'historique du plan dit qui
-        // s'archive et qui se supprime (ADR 0017).
-        const [routines, currentRoutineId, catalog, history] = await Promise.all([
-          listRoutines(),
-          getCurrentRoutineId(),
-          loadSeanceCatalog(),
-          loadPlanHistory(),
-        ]);
-        if (!active) return;
-        setLoad({ phase: 'ready', routines, currentRoutineId, catalog, executedRoutineIds: history.executedRoutineIds });
-      } catch (err) {
-        if (!active) return;
-        setLoad({ phase: 'error', message: errorMessage(err) });
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [reloadKey]);
-
-  if (load.phase === 'loading') {
+  if (state.phase === 'loading') {
     return (
       <Screen>
-        <ScreenHeader title="Routines" />
+        <ScreenHeader title="Séances" />
         <Loading label="Chargement des routines…" />
       </Screen>
     );
   }
-  if (load.phase === 'error') {
+  if (state.phase === 'offline') {
     return (
       <Screen>
-        <ScreenHeader title="Routines" />
-        <LoadError
-          intro="Impossible de charger tes routines."
-          message={load.message}
-          onRetry={() => {
-            setLoad({ phase: 'loading' });
-            reload();
-          }}
-        />
+        <ScreenHeader title="Séances" />
+        <OfflineState surface="Séances" />
+      </Screen>
+    );
+  }
+  if (state.phase === 'error') {
+    return (
+      <Screen>
+        <ScreenHeader title="Séances" />
+        <LoadError intro="Impossible de charger tes routines." message={state.message} onRetry={reload} />
       </Screen>
     );
   }
 
+  const load = state.value;
   const currentName = load.routines.find((r) => r.id === load.currentRoutineId)?.name ?? null;
-  /** Écrit, rafraîchit la liste, puis dit ce qui vient d'arriver. */
+  /** Écrit, rafraîchit la liste, puis dit ce qui vient d'arriver. L'écriture a
+   *  marqué la copie périmée : la relecture passe par le réseau. */
   const write = async (action: () => Promise<unknown>, note: PlanFlash) => {
     await action();
-    reload();
+    refresh();
     onFlash(note);
   };
 
@@ -266,7 +264,9 @@ function RoutinesContainer({
       currentRoutineId={load.currentRoutineId}
       currentRoutineName={currentName}
       catalog={load.catalog}
-      executedRoutineIds={load.executedRoutineIds}
+      executedRoutineIds={executedRoutineIds}
+      copyAt={showDate ? state.at : null}
+      online={online}
       flash={flash}
       onOpen={onOpen}
       onCreate={async (name) => {
@@ -294,6 +294,8 @@ export function RoutinesView({
   currentRoutineName,
   catalog,
   executedRoutineIds,
+  copyAt = null,
+  online = true,
   flash,
   onOpen,
   onCreate,
@@ -310,6 +312,9 @@ export function RoutinesView({
   catalog: SeanceCatalogEntry[];
   /** Routines dont une séance a été exécutée : elles s'archivent (ADR 0017). */
   executedRoutineIds: ReadonlySet<string>;
+  /** La liste montrée est une copie locale de cette heure-là (hors ligne). */
+  copyAt?: number | null;
+  online?: boolean;
   flash: PlanFlash | null;
   onOpen: (routineId: string) => void;
   onCreate: (name: string) => Promise<void>;
@@ -353,7 +358,9 @@ export function RoutinesView({
 
   return (
     <Screen bottom={<PrimaryButton onClick={() => setCreating(true)}>Créer une routine</PrimaryButton>}>
-      <ScreenHeader title="Routines" />
+      {/* Le titre est le mot de la navigation ; ce qu'on y range se dit dessous. */}
+      <ScreenHeader title="Séances" meta="Tes routines, et les séances de chacune" />
+      {copyAt !== null && <CopyNote at={copyAt} online={online} />}
       {flash && <StatusLine flash={flash} onUnarchive={undo ? () => onUndoArchive(undo) : undefined} />}
       {live.length === 0 && archivedRoutines.length === 0 ? (
         <EmptyState
@@ -465,20 +472,15 @@ export function RoutinesView({
 // Une routine : ses séances
 // =====================================================================
 
-type RoutineLoad =
-  | { phase: 'loading' }
-  | { phase: 'error'; message: string }
-  | { phase: 'missing' }
-  | {
-      phase: 'ready';
-      routine: RoutineRow;
-      routines: RoutineRow[];
-      currentRoutineId: string | null;
-      seances: SeanceRow[];
-      catalog: SeanceCatalogEntry[];
-      executedSeanceIds: ReadonlySet<string>;
-      executedRoutineIds: ReadonlySet<string>;
-    };
+/** Une routine et ce qu'il faut pour sa page, en copie datée (cf. `RoutinesData`). */
+interface RoutineData {
+  routines: RoutineRow[];
+  currentRoutineId: string | null;
+  seances: SeanceRow[];
+  catalog: SeanceCatalogEntry[];
+  executedSeanceIds: string[];
+  executedRoutineIds: string[];
+}
 
 function RoutineContainer({
   routineId,
@@ -494,53 +496,32 @@ function RoutineContainer({
   onBack: (note?: PlanFlash) => void;
   onEdit: (seance: SeanceRow, ctx: EditorContext, note?: PlanFlash) => void;
 }) {
-  const [load, setLoad] = useState<RoutineLoad>({ phase: 'loading' });
-  const [reloadKey, setReloadKey] = useState(0);
+  // Le catalogue (ADR 0015) sert à la fois au nombre d'exos de chaque séance et
+  // à la copie d'une séance existante.
+  const fetchRoutine = useCallback(async (): Promise<RoutineData> => {
+    const [routines, currentRoutineId, seances, catalog, history] = await Promise.all([
+      listRoutines(),
+      getCurrentRoutineId(),
+      listSeances(routineId),
+      loadSeanceCatalog(),
+      loadPlanHistory(),
+    ]);
+    return {
+      routines,
+      currentRoutineId,
+      seances,
+      catalog,
+      executedSeanceIds: [...history.executedSeanceIds],
+      executedRoutineIds: [...history.executedRoutineIds],
+    };
+  }, [routineId]);
   // Un rafraîchissement après une écriture garde le contenu monté : pas de
   // saut en haut de page, pas de chargement affiché.
-  const reload = () => setReloadKey((k) => k + 1);
+  const { state, reload: retry, refresh: reload, online, showDate } = useDatedLoad(`${ROUTINE_VIEW_PREFIX}${routineId}`, fetchRoutine);
+  const executedSeanceIds = useMemo(() => new Set(state.phase === 'ready' ? state.value.executedSeanceIds : []), [state]);
 
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        // Le catalogue (ADR 0015) sert à la fois au nombre d'exos de chaque
-        // séance et à la copie d'une séance existante.
-        const [routines, currentRoutineId, seances, catalog, history] = await Promise.all([
-          listRoutines(),
-          getCurrentRoutineId(),
-          listSeances(routineId),
-          loadSeanceCatalog(),
-          loadPlanHistory(),
-        ]);
-        if (!active) return;
-        const routine = routines.find((r) => r.id === routineId);
-        if (!routine) {
-          setLoad({ phase: 'missing' });
-          return;
-        }
-        setLoad({
-          phase: 'ready',
-          routine,
-          routines,
-          currentRoutineId,
-          seances,
-          catalog,
-          executedSeanceIds: history.executedSeanceIds,
-          executedRoutineIds: history.executedRoutineIds,
-        });
-      } catch (err) {
-        if (!active) return;
-        setLoad({ phase: 'error', message: errorMessage(err) });
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [reloadKey, routineId]);
-
-  const back = { label: 'Routines', onClick: () => onBack() };
-  if (load.phase === 'loading') {
+  const back = { label: 'Séances', onClick: () => onBack() };
+  if (state.phase === 'loading') {
     return (
       <Screen>
         <ScreenHeader title="Routine" back={back} />
@@ -548,22 +529,25 @@ function RoutineContainer({
       </Screen>
     );
   }
-  if (load.phase === 'error') {
+  if (state.phase === 'offline') {
     return (
       <Screen>
         <ScreenHeader title="Routine" back={back} />
-        <LoadError
-          intro="Impossible de charger cette routine."
-          message={load.message}
-          onRetry={() => {
-            setLoad({ phase: 'loading' });
-            reload();
-          }}
-        />
+        <OfflineState surface="Séances" />
       </Screen>
     );
   }
-  if (load.phase === 'missing') {
+  if (state.phase === 'error') {
+    return (
+      <Screen>
+        <ScreenHeader title="Routine" back={back} />
+        <LoadError intro="Impossible de charger cette routine." message={state.message} onRetry={retry} />
+      </Screen>
+    );
+  }
+  const data = state.value;
+  const routine = data.routines.find((r) => r.id === routineId);
+  if (!routine) {
     return (
       <Screen>
         <ScreenHeader title="Routine introuvable" back={back} />
@@ -572,14 +556,14 @@ function RoutineContainer({
     );
   }
 
-  const { routine, seances } = load;
-  const isCurrent = routine.id === load.currentRoutineId;
-  const currentName = load.routines.find((r) => r.id === load.currentRoutineId)?.name ?? null;
+  const { seances } = data;
+  const isCurrent = routine.id === data.currentRoutineId;
+  const currentName = data.routines.find((r) => r.id === data.currentRoutineId)?.name ?? null;
   const takenNames = seances.map((s) => s.name);
   const ctxOf = (seance: SeanceRow): EditorContext => ({
     routine,
     isCurrentRoutine: isCurrent,
-    executed: load.executedSeanceIds.has(seance.id),
+    executed: executedSeanceIds.has(seance.id),
     takenNames,
   });
   /** Écrit, rafraîchit la page, puis dit ce qui vient d'arriver. */
@@ -594,10 +578,15 @@ function RoutineContainer({
       routine={routine}
       isCurrent={isCurrent}
       currentRoutineName={currentName}
-      executed={load.executedRoutineIds.has(routine.id)}
-      executedSeanceIds={load.executedSeanceIds}
+      executed={data.executedRoutineIds.includes(routine.id)}
+      executedSeanceIds={executedSeanceIds}
       seances={seances}
-      catalog={load.catalog}
+      catalog={data.catalog}
+      copyAt={showDate ? state.at : null}
+      online={online}
+      orderVerified={!state.copy}
+      orderLate={showDate}
+      onRetryOrder={reload}
       flash={flash}
       onBack={() => onBack()}
       onEdit={(seance) => onEdit(seance, ctxOf(seance))}
@@ -606,9 +595,13 @@ function RoutineContainer({
         // Une séance neuve s'ouvre aussitôt dans l'éditeur : on y ajoute ses exos.
         onEdit(created, { routine, isCurrentRoutine: isCurrent, executed: false, takenNames: [...takenNames, created.name] });
       }}
-      onReorder={async (orderedIds) => {
-        await reorderSeances(routine.id, orderedIds);
-        reload();
+      onReorder={async (orderedIds, expectedIds) => {
+        try {
+          await reorderSeances(routine.id, orderedIds, expectedIds);
+        } finally {
+          // Réussi ou refusé (ordre changé ailleurs) : l'ordre se relit.
+          reload();
+        }
       }}
       onRenameSeance={async (s, name) => {
         const renamed = await renameSeance(s.id, name);
@@ -652,6 +645,11 @@ export function RoutineView({
   executedSeanceIds,
   seances: allSeances,
   catalog,
+  copyAt = null,
+  online = true,
+  orderVerified = true,
+  orderLate = false,
+  onRetryOrder,
   flash,
   onBack,
   onEdit,
@@ -678,12 +676,22 @@ export function RoutineView({
   executedSeanceIds: ReadonlySet<string>;
   seances: SeanceRow[];
   catalog: SeanceCatalogEntry[];
+  /** La page montrée est une copie locale de cette heure-là (hors ligne). */
+  copyAt?: number | null;
+  online?: boolean;
+  /** L'ordre affiché vient d'une lecture réseau, pas d'une copie encore à revalider (reorder-lock). */
+  orderVerified?: boolean;
+  /** Copie montrée sans revalidation arrivée dans le délai (useDatedLoad `showDate`). */
+  orderLate?: boolean;
+  /** Relance la vérification de l'ordre, sans quitter la page. */
+  onRetryOrder?: () => void;
   flash: PlanFlash | null;
   onBack: () => void;
   onEdit: (seance: SeanceRow) => void;
   /** Crée une séance vierge (`sourceId` absent) ou la copie d'une existante. */
   onCreateSeance: (name: string, sourceId: string | null) => Promise<void>;
-  onReorder: (orderedIds: string[]) => Promise<void>;
+  /** `expectedIds` : l'ordre affiché d'où part le geste (contrôle de révision, migration 0026). */
+  onReorder: (orderedIds: string[], expectedIds: string[]) => Promise<void>;
   onRenameSeance: (seance: SeanceRow, name: string) => Promise<void>;
   onDuplicateSeance: (seance: SeanceRow, name: string) => Promise<void>;
   onArchiveSeance: (seance: SeanceRow) => Promise<void>;
@@ -720,6 +728,7 @@ export function RoutineView({
   const seanceItems = (s: SeanceRow) =>
     seanceMenu({ executed: executedSeanceIds.has(s.id), inCurrentRoutine: isCurrent, hasExercises: (exerciseCountOf(s.id) ?? 0) > 0 });
   const status = archivedRoutine ? 'archivée' : isCurrent ? 'routine courante' : null;
+  const lock = reorderLock({ moving, verified: orderVerified, online, late: orderLate });
   const undo = flash?.unarchive;
 
   async function run(action: () => Promise<void>) {
@@ -736,7 +745,8 @@ export function RoutineView({
 
   async function move(index: number, dir: -1 | 1) {
     const target = index + dir;
-    const ids = seances.map((s) => s.id);
+    const expected = seances.map((s) => s.id);
+    const ids = [...expected];
     const a = ids[index];
     const b = ids[target];
     if (a === undefined || b === undefined) return;
@@ -745,7 +755,7 @@ export function RoutineView({
     setMoving(true);
     setError(null);
     try {
-      await onReorder(ids);
+      await onReorder(ids, expected);
       setMoved(a);
     } catch (err) {
       setError(errorMessage(err));
@@ -784,7 +794,7 @@ export function RoutineView({
             {seanceCount(seances.length)}
           </>
         }
-        back={{ label: 'Routines', onClick: onBack }}
+        back={{ label: 'Séances', onClick: onBack }}
         action={
           archivedRoutine ? undefined : reorder ? (
             <SecondaryButton size="sm" onClick={toggleReorder} disabled={moving}>
@@ -810,6 +820,7 @@ export function RoutineView({
           )
         }
       />
+      {copyAt !== null && <CopyNote at={copyAt} online={online} />}
 
       {flash && <StatusLine flash={flash} onUnarchive={undo ? () => onUndoArchive(undo) : undefined} />}
 
@@ -849,7 +860,7 @@ export function RoutineView({
                   first={i === 0}
                   last={i === seances.length - 1}
                   moved={moved === s.id}
-                  disabled={moving}
+                  disabled={lock.disabled}
                   onMove={(d) => void move(i, d)}
                 />
               ) : (
@@ -878,6 +889,12 @@ export function RoutineView({
               ),
             )}
           </List>
+          {reorder && lock.note && (
+            <p role="status" className="flex flex-wrap items-center gap-x-3 px-5 pt-3 text-[14px] leading-[1.45] text-muted">
+              {lock.note}
+              {lock.retry && onRetryOrder && <TextLink onClick={onRetryOrder}>Réessayer</TextLink>}
+            </p>
+          )}
           {reorder && error && <FieldError className="mx-5">{error}</FieldError>}
         </>
       )}

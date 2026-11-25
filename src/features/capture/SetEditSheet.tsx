@@ -22,12 +22,13 @@ import { useReglages } from '../../settings/reglages';
 import { NumberRow, PrimaryButton, Ruler, SecondaryButton, Sheet, Status, TextLink } from '../../ui';
 import type { SessionExercise } from './fixtures';
 import { formatWeight } from './format';
-import { computeSetBadges, computeSetBadgesBySide, type SetBadge } from './set-badges';
+import { badgeStatus, computeSetBadges, computeSetBadgesBySide } from './set-badges';
 import type { SetEntry } from './set-gestures';
 import { deletionPreview } from './set-ranks';
 import type { ExerciseProgress } from './state';
 import { roundWeightKg } from './stepper-utils';
 import { WeightReadout } from './WeightReadout';
+import { weightGraduations } from './weight-graduations';
 
 const REPS_ROW_MAX = 50;
 const RIR_ROW_MAX = 10;
@@ -36,12 +37,6 @@ const RULER_MAX_KG = 500;
 const sideWord = (s: Side) => (s === 'left' ? 'gauche' : 'droite');
 const values = (s: SetEntry) => `${formatWeight(s.weightKg)} × ${s.reps} · RIR ${s.rir}`;
 
-/** Le badge d'une série en signe + mot, ou `null` (aucun). */
-function badgeWord(badge: SetBadge): { v: 'up' | 'eq'; word: string } | null {
-  if (!badge) return null;
-  if (badge.axis === 'record') return { v: 'up', word: 'record' };
-  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
-}
 
 export function SetEditSheet({
   exercise,
@@ -55,15 +50,23 @@ export function SetEditSheet({
   progress: ExerciseProgress;
   /** La ligne corrigée (présente dans `progress`, cf. le parent). */
   setId: string;
-  /** Enregistre les nouvelles valeurs de la ligne (le parent ne fait rien si rien ne change). */
-  onSave: (values: SetEntry) => void;
+  /** Enregistre ce que l'utilisateur a RÉGLÉ, et cela seul (le parent ne fait rien si rien ne change). */
+  onSave: (values: Partial<SetEntry>) => void;
   /** Supprime la série de cette ligne (les deux côtés d'une paire unilatérale). */
   onDelete: () => void;
   onClose: () => void;
 }) {
   const index = progress.setIds.indexOf(setId);
   const orig = progress.sets[index] as PerformedSet;
-  const [v, setV] = useState<SetEntry>({ weightKg: orig.weightKg, reps: orig.reps, rir: orig.rir });
+  // Ce que l'utilisateur a réglé, colonne par colonne. Une colonne qu'il n'a pas
+  // touchée suit la ligne : si une réponse tardive de la base la change pendant
+  // que la feuille est ouverte, c'est la nouvelle valeur qui s'affiche, et elle
+  // n'est pas réécrite à l'enregistrement.
+  const [edits, setV] = useState<Partial<SetEntry>>({});
+  const v = useMemo<SetEntry>(
+    () => ({ weightKg: orig.weightKg, reps: orig.reps, rir: orig.rir, ...edits }),
+    [orig.weightKg, orig.reps, orig.rir, edits],
+  );
   const [ask, setAsk] = useState(false);
   const { stepKg } = useReglages();
 
@@ -88,7 +91,7 @@ export function SetEditSheet({
           },
         )
       : computeSetBadges(sets, exercise.reference ?? null, exercise.personalRecord ?? null);
-    return badgeWord(badges[index] ?? null);
+    return badgeStatus(badges[index] ?? null);
   }, [progress.sets, index, v, unilateral, exercise.reference, exercise.personalRecord, exercise.personalRecordBySide]);
 
   // Ce que la suppression emporte, selon la règle du geste (`deletionPreview`) :
@@ -97,8 +100,7 @@ export function SetEditSheet({
   const { bothSides, movedRanks: later } = deletionPreview(progress.sets, index);
   const what = side ? `Série ${rank}, ${sideWord(side)}` : `Série ${rank}`;
   const changed = v.weightKg !== orig.weightKg || v.reps !== orig.reps || v.rir !== orig.rir;
-  const majorEvery = Math.max(1, Math.round(5 / stepKg));
-  const midEvery = majorEvery % 2 === 0 ? majorEvery / 2 : 0;
+  const { majorEvery, midEvery } = weightGraduations(stepKg);
 
   const gone =
     bothSides
@@ -120,7 +122,7 @@ export function SetEditSheet({
             meta={values(v)}
             ariaLabel={`Enregistrer la série ${rank}${side ? ` ${sideWord(side)}` : ''}, ${values(v)}`}
             onClick={() => {
-              if (changed) onSave(v);
+              if (changed) onSave(edits);
               onClose();
             }}
           >

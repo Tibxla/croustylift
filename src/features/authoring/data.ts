@@ -39,6 +39,7 @@ import {
 } from '../exercises/deletion-guard';
 import { loadExerciseOverrides } from '../exercises/overrides';
 import { invalidatePlanCopies } from '../capture/plan-copies';
+import { invalidateViews, SEANCES_VIEWS } from '../../lib/dated-read';
 import { withReloadBlocked } from '../../pwa/blockers';
 import { translateConstraintError } from '../../lib/db-errors';
 import {
@@ -59,7 +60,8 @@ export const PLAN_WRITE_BLOCK = 'ecriture-plan';
 /**
  * Enveloppe de TOUTE écriture du plan (routines, séances, versions, exos perso) :
  * une fois l'écriture finie, les copies du plan servies à la Capture sont
- * marquées périmées (cf. capture/plan-copies). Même en échec : une écriture en
+ * marquées périmées (cf. capture/plan-copies), comme celles de Séances
+ * (lib/dated-read). Même en échec : une écriture en
  * plusieurs temps peut avoir commencé, et une invalidation de trop ne coûte
  * qu'une lecture réseau.
  *
@@ -81,6 +83,10 @@ function planWrite<T>(write: () => Promise<T>): Promise<T> {
       throw translateConstraintError(err);
     } finally {
       invalidatePlanCopies();
+      // Les copies de Séances aussi : la relecture qui suit l'écriture doit voir
+      // ce qu'elle vient d'écrire (lib/dated-read). Celles de l'Analyse non :
+      // elles se relisent à l'ouverture de leur écran, copie montrée d'abord.
+      invalidateViews(SEANCES_VIEWS);
     }
   });
 }
@@ -536,36 +542,100 @@ export async function listSeances(routineId: string): Promise<SeanceRow[]> {
 }
 
 /**
- * Crée une séance en fin de routine (position = max + 1) ET sa version v1 VIDE,
- * pour qu'elle ait toujours une version courante (cf. invariant ADR 0001).
- * Renvoie la séance créée.
+ * Crée une séance en fin de routine ET sa version 1 (vide, ou avec les
+ * prescriptions d'une copie), pour qu'elle ait toujours une version courante
+ * (cf. invariant ADR 0001). Renvoie la séance créée.
  *
- * Pas de transaction client : si l'insert de la version échouait après la
- * séance, on aurait une séance sans version (template incomplet). On insère donc
- * la version juste après et on remonte l'erreur telle quelle le cas échéant.
+ * En UNE transaction côté serveur, par la RPC `create_seance` (migration
+ * 0027) : en deux requêtes, une coupure entre la séance et sa version laissait
+ * une séance que la Salle refuse de lancer, et le nouvel essai butait sur
+ * l'unicité du nom. L'id de la séance est tiré ici : une demande dont la
+ * réponse s'est perdue (erreur réseau, sans code de la base) est rejouée une
+ * fois avec le MÊME id, et la base rend la séance déjà créée sans doublon.
+ * Après deux échecs, l'id reste attaché au geste (`sourceId` : la séance copiée)
+ * : un nouvel essai le rejoue encore.
+ * La position n'est pas envoyée : la base la place en fin de routine, sous le
+ * verrou de la routine (trigger `seances_en_fin`, migration 0026).
+ *
+ * Tant que la fonction n'est pas en base : repli sur les requêtes séparées
+ * (séance à max + 1, version, puis version des prescriptions d'une copie),
+ * comme le client d'avant.
  */
+/** Les deux essais d'une création sont restés sans réponse : réessayer ne crée pas de doublon. */
+export const LOST_CREATION_MESSAGE =
+  'Pas de réponse du serveur. Réessaie : la séance ne sera pas créée deux fois.';
+
+/**
+ * Création restée SANS RÉPONSE (deux échecs réseau) : son id, par geste (routine,
+ * nom, séance copiée). Un nouvel essai du même geste rejoue cet id : si la
+ * première demande était passée, la base rend la séance déjà créée, au lieu de
+ * « nom déjà pris » ou d'une seconde copie. Oublié au premier succès ou refus de
+ * la base ; propre à la session (un rechargement clôt le geste).
+ */
+const unansweredCreations = new Map<string, string>();
+
 export async function createSeance(
   routineId: string,
   input: { name: string },
+  prescriptions: PrescriptionInput[] = [],
+  sourceId: string | null = null,
 ): Promise<SeanceRow> {
   return planWrite(async () => {
-    const existing = await listSeances(routineId);
-    const position = nextPosition(existing.map((s) => s.position));
-
-    const { data: seance, error: seanceErr } = await supabase
-      .from('seances')
-      .insert({ routine_id: routineId, name: input.name, position })
-      .select('*')
-      .single();
-    if (seanceErr) throw nameConflictError(seanceErr, 'seance', input.name);
-
-    const { error: versionErr } = await supabase
-      .from('seance_versions')
-      .insert({ seance_id: seance.id, version: 1 });
-    if (versionErr) throw versionErr;
-
-    return seance;
+    const gesture = JSON.stringify([routineId, input.name, sourceId]);
+    const seanceId = unansweredCreations.get(gesture) ?? crypto.randomUUID();
+    const rpc = supabase.rpc.bind(supabase) as unknown as (
+      fn: 'create_seance',
+      args: { p_seance_id: string; p_routine_id: string; p_name: string; p_prescriptions: unknown[] },
+    ) => PromiseLike<{ data: unknown; error: unknown }>;
+    const args = {
+      p_seance_id: seanceId,
+      p_routine_id: routineId,
+      p_name: input.name,
+      // Les colonnes de `prescriptions`, sans la version (posée par la base).
+      p_prescriptions: prescriptions.map((p) => ({
+        exercise_id: p.exerciseId,
+        position: p.position,
+        sets_min: p.sets.min,
+        sets_max: p.sets.max,
+        reps_min: p.reps.min,
+        reps_max: p.reps.max,
+        rir_min: p.rir.min,
+        rir_max: p.rir.max,
+      })),
+    };
+    const lost = (e: unknown) => e !== null && !(e as { code?: unknown }).code;
+    let { data, error } = await rpc('create_seance', args);
+    if (lost(error)) ({ data, error } = await rpc('create_seance', args));
+    if (lost(error)) {
+      unansweredCreations.set(gesture, seanceId);
+      throw new Error(LOST_CREATION_MESSAGE, { cause: error });
+    }
+    unansweredCreations.delete(gesture);
+    if (!error) return data as SeanceRow;
+    if (!isMissingFunction(error)) throw nameConflictError(error, 'seance', input.name);
+    return createSeanceInSteps(routineId, input.name, prescriptions);
   });
+}
+
+/** L'ancien chemin, en requêtes séparées : seulement sans `create_seance` en base. */
+async function createSeanceInSteps(routineId: string, name: string, prescriptions: PrescriptionInput[]): Promise<SeanceRow> {
+  const existing = await listSeances(routineId);
+  const position = nextPosition(existing.map((s) => s.position));
+
+  const { data: seance, error: seanceErr } = await supabase
+    .from('seances')
+    .insert({ routine_id: routineId, name, position })
+    .select('*')
+    .single();
+  if (seanceErr) throw nameConflictError(seanceErr, 'seance', name);
+
+  const { error: versionErr } = await supabase
+    .from('seance_versions')
+    .insert({ seance_id: seance.id, version: 1 });
+  if (versionErr) throw versionErr;
+
+  if (prescriptions.length > 0) await saveSeanceVersion(seance.id, prescriptions);
+  return seance;
 }
 
 /** Renomme une séance. */
@@ -621,6 +691,8 @@ export async function archiveSeance(id: string): Promise<void> {
  * Désarchive une séance : elle revient au plan, en fin de routine, et sa
  * Référence comme sa courbe reprennent. On la replace en dernière position :
  * pendant l'archivage, les séances actives ont pu être réordonnées sans elle.
+ * La base recalcule cette position sous le verrou de la routine (trigger
+ * `seances_en_fin`, migration 0026).
  */
 export async function unarchiveSeance(id: string): Promise<void> {
   return planWrite(async () => {
@@ -641,65 +713,63 @@ export async function unarchiveSeance(id: string): Promise<void> {
   });
 }
 
-/**
- * La RPC `reorder_seances` (migration 0023) est-elle disponible en base ? Oui
- * depuis le 2026-11-23 (0023 appliquée en prod) : le réordonnancement passe par
- * elle, en une transaction. L'ancien chemin (une mise à jour par séance) reste
- * derrière ce drapeau pour une base qui n'aurait pas la migration.
- */
-export const REORDER_SEANCES_RPC = true;
+/** Le refus d'un réordonnancement fait sur un ordre que la base a vu changer. */
+export const REORDER_CONFLICT_MESSAGE = 'L’ordre a changé sur un autre appareil : vérifie-le puis recommence.';
+
+/** La base a refusé : l'ordre affiché n'est plus le sien (PT409, migration 0026). */
+function isReorderConflict(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown } | null;
+  return e?.code === 'PT409' || (typeof e?.message === 'string' && e.message.includes('ordre a changé'));
+}
+
+/** PostgREST (PGRST202) ou Postgres (42883) ne trouvent pas la fonction. */
+function isMissingFunction(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === 'PGRST202' || code === '42883';
+}
 
 /**
  * Réordonne les séances d'une routine : réécrit `position` selon l'ordre fourni
  * (index 0 = première). `orderedIds` doit lister les séances de la routine ;
- * les positions sont réassignées 0..n-1.
+ * les positions sont réassignées 0..n-1. `expectedIds` : l'ordre AFFICHÉ, d'où
+ * part le geste.
  *
- * Deux chemins, choisis par `REORDER_SEANCES_RPC` : la RPC transactionnelle
- * (`reorderSeancesViaRpc`), ou, tant qu'elle n'est pas en base, une mise à jour
- * par séance, en série et sans transaction (pas de bulk upsert pour ne pas
- * risquer d'écrire owner_id via un upsert mal formé).
+ * En UNE transaction côté serveur, par la RPC `reorder_seances_revision`
+ * (migration 0026) : elle verrouille les séances de la routine, vérifie que
+ * l'ordre courant est encore `expectedIds`, puis écrit. Un ordre changé
+ * ailleurs entre-temps (autre appareil) est refusé : l'erreur porte
+ * `REORDER_CONFLICT_MESSAGE`, et l'appelant relit l'ordre. Sans ce contrôle,
+ * le geste réécrivait toutes les positions depuis un ordre dépassé et annulait
+ * en silence le déplacement fait ailleurs.
+ *
+ * Tant que la fonction n'est pas en base : repli sur `reorder_seances` (0023),
+ * sans contrôle de révision, comme le client d'avant. Les deux refusent
+ * (22023) un id en double ou hors de la routine.
  */
 export async function reorderSeances(
   routineId: string,
   orderedIds: string[],
+  expectedIds: string[],
 ): Promise<void> {
   return planWrite(async () => {
-    if (REORDER_SEANCES_RPC) {
-      await reorderSeancesViaRpc(routineId, orderedIds);
-      return;
-    }
-    for (let position = 0; position < orderedIds.length; position++) {
-      const id = orderedIds[position];
-      if (id === undefined) continue;
-      const { error } = await supabase
-        .from('seances')
-        .update({ position })
-        .eq('id', id);
-      if (error) throw error;
-    }
+    const rpc = supabase.rpc.bind(supabase) as unknown as (
+      fn: 'reorder_seances_revision',
+      args: { p_routine_id: string; p_expected_ids: string[]; p_seance_ids: string[] },
+    ) => PromiseLike<{ error: unknown }>;
+    const { error } = await rpc('reorder_seances_revision', {
+      p_routine_id: routineId,
+      p_expected_ids: expectedIds,
+      p_seance_ids: orderedIds,
+    });
+    if (!error) return;
+    if (isReorderConflict(error)) throw new Error(REORDER_CONFLICT_MESSAGE, { cause: error });
+    if (!isMissingFunction(error)) throw error;
+    const { error: legacy } = await supabase.rpc('reorder_seances', {
+      p_routine_id: routineId,
+      p_seance_ids: orderedIds,
+    });
+    if (legacy) throw legacy;
   });
-}
-
-/**
- * Réordonne les séances d'une routine en UNE transaction côté serveur :
- * `reorder_seances(p_routine_id uuid, p_seance_ids uuid[]) returns void`, qui
- * refuse (22023) un id en double ou hors de la routine. La fonction n'est pas
- * encore dans `database.types.ts` (migration 0023 à appliquer) : d'où le cast
- * local, à retirer quand les types seront régénérés.
- */
-export async function reorderSeancesViaRpc(
-  routineId: string,
-  orderedIds: string[],
-): Promise<void> {
-  const rpc = supabase.rpc.bind(supabase) as unknown as (
-    fn: 'reorder_seances',
-    args: { p_routine_id: string; p_seance_ids: string[] },
-  ) => PromiseLike<{ error: unknown }>;
-  const { error } = await rpc('reorder_seances', {
-    p_routine_id: routineId,
-    p_seance_ids: orderedIds,
-  });
-  if (error) throw error;
 }
 
 // =====================================================================
@@ -911,12 +981,7 @@ export async function duplicateSeance(
 ): Promise<SeanceRow> {
   return planWrite(async () => {
     const source = await loadSeanceEditor(sourceSeanceId);
-    const prescriptions = toDuplicatedPrescriptions(source);
-
-    const seance = await createSeance(routineId, { name });
-    if (prescriptions.length > 0) {
-      await saveSeanceVersion(seance.id, prescriptions);
-    }
-    return seance;
+    // La copie et ses prescriptions en une transaction (`create_seance`).
+    return createSeance(routineId, { name }, toDuplicatedPrescriptions(source), sourceSeanceId);
   });
 }

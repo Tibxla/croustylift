@@ -6,8 +6,10 @@ import { estimateE1rm } from '../../domain/e1rm';
 import type { PerformedSet, Side } from '../../domain/types';
 import type { PersonalRecord, PersonalRecordBySide } from '../../domain/pr';
 import {
+  badgeStatus,
   computeSetBadges,
   computeSetBadgesBySide,
+  recordWord,
   referenceVerdict,
   summarizeBadges,
 } from './set-badges';
@@ -223,5 +225,31 @@ describe('exo saisi à 0 kg : la Référence se juge aux reps effectives', () =>
     expect(computeSetBadges([set(5, 3, 0, 1)], null, record)).toEqual([
       { axis: 'record', record: 'both' },
     ]);
+  });
+});
+
+// « ▲ record » venait aussi d'un record de CHARGE seule, pendant que la case
+// Record de l'instrument montre le record d'e1RM : le mot dit lequel.
+describe('badgeStatus et recordWord : le mot suit le type de record', () => {
+  it('record d’e1RM, ou e1RM et charge ensemble : « record »', () => {
+    expect(badgeStatus({ axis: 'record', record: 'e1rm' })).toEqual({ v: 'up', word: 'record', short: 'record' });
+    expect(badgeStatus({ axis: 'record', record: 'both' })).toEqual({ v: 'up', word: 'record', short: 'record' });
+  });
+
+  it('record de charge seule : « record charge », « charge » dans une case de la bande', () => {
+    expect(badgeStatus({ axis: 'record', record: 'weight-reps' })).toEqual({ v: 'up', word: 'record charge', short: 'charge' });
+  });
+
+  it('battue, égalée, rien', () => {
+    expect(badgeStatus({ axis: 'reference', verdict: 'battu' })).toEqual({ v: 'up', word: 'battue', short: 'battue' });
+    expect(badgeStatus({ axis: 'reference', verdict: 'egalise' })).toEqual({ v: 'eq', word: 'égalée', short: 'égalée' });
+    expect(badgeStatus(null)).toBeNull();
+  });
+
+  it('recordWord : « record charge » seulement si tous les records sont de charge seule', () => {
+    expect(recordWord([{ axis: 'record', record: 'weight-reps' }, null, { axis: 'reference', verdict: 'battu' }])).toBe('record charge');
+    expect(recordWord([{ axis: 'record', record: 'weight-reps' }, { axis: 'record', record: 'e1rm' }])).toBe('record');
+    expect(recordWord([{ axis: 'record', record: 'both' }])).toBe('record');
+    expect(recordWord([null])).toBe('record');
   });
 });

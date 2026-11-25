@@ -4,7 +4,8 @@
 // En tête, une phrase de synthèse sur la ROUTINE COURANTE seulement : combien
 // d'exos de son plan montent, stagnent, reculent sur le bloc en cours, puis ce
 // qui n'a pas encore de pente. Dessous, une ligne par exo du plan, dans l'ordre
-// du plan : pente en clair, dernière mesure, date. Toucher une ligne ouvre la
+// du plan : pente en clair, dernière mesure, date ; la colonne est nommée une
+// fois, en tête de section (« e1RM, dernière séance »). Toucher une ligne ouvre la
 // courbe. Les exos hors plan (anciennes routines, ajouts ponctuels) suivent,
 // éteints : ils ne comptent pas dans la phrase mais restent lisibles.
 //
@@ -74,7 +75,9 @@ export function ExerciseList({
       </section>
 
       <section aria-labelledby="analyse-exos-plan">
-        <SectionTitle id="analyse-exos-plan" aside={plural(inPlan.length, 'exo')}>
+        {/* La colonne de droite se nomme une fois, ici : « 217 kg » seul se lisait
+            comme une charge soulevée. */}
+        <SectionTitle id="analyse-exos-plan" aside={inPlan.length > 0 ? 'e1RM, dernière séance' : undefined}>
           {scoped ? 'Exos de la routine' : 'Exos'}
         </SectionTitle>
         {inPlan.length === 0 ? (

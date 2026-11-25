@@ -33,6 +33,14 @@ function cells(sets: PerformedSet[], side: 'left' | 'right', plannedMax: number)
 }
 
 describe('UniSetBand', () => {
+  it('deux droites au même rang (doublon venu d’un autre appareil) : les deux se voient et se corrigent', () => {
+    const labels = cells([L(1), R(1, 10), R(1, 7)], 'left', 2);
+    expect(labels).toHaveLength(3);
+    expect(labels[0]).toBe('Corriger la série 1, gauche 12 × 10, droite 12 × 10');
+    expect(labels[1]).toBe('Corriger la série 2, gauche à faire, droite 12 × 7');
+    expect(labels[2]).toBe('Série 3 en cours, gauche à faire, droite à faire');
+  });
+
   it('trois gauches sur un exo prévu à deux séries : trois cases loggées, la 4e en cours à gauche', () => {
     const labels = cells([L(1, 10), L(2, 9), L(3, 8)], 'left', 2);
     expect(labels).toHaveLength(4);

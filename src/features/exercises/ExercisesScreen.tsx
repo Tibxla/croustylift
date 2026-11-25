@@ -2,8 +2,7 @@
 //
 // Architecture (calquée sur SeancesScreen / SeanceEditor) : on SÉPARE le
 // chargement Supabase de la PRÉSENTATION. `ExercisesView` est PUR (props =
-// données + callbacks) et se monte tel quel dans le harness de screenshot, sans
-// réseau. `ExercisesScreen` est le conteneur : il charge via listExercises (lit
+// données + callbacks), sans réseau. `ExercisesScreen` est le conteneur : il charge via listExercises (lit
 // base + perso), mute via create/update/deletePersonalExercise, et recharge.
 //
 // Périmètre (cf. GLOSSARY.md) :
@@ -14,9 +13,8 @@
 //   - exo PERSO (owner_id = auth.uid()) : créer, modifier (nom + muscles +
 //     unilatéral, « renommer » = changer le champ nom) et supprimer.
 //   - NOTE par exo (exercise_notes #26, déjà per-user) : éditable pour TOUS les
-//     exos (base ET perso) DANS le formulaire « Modifier / Personnaliser » (la note
-//     vit dans ExerciseForm, plus d'action note sur la carte de liste). Chargée à
-//     l'ouverture du form ; corps vide = suppression.
+//     exos (base ET perso) depuis la fiche, dans la feuille de note commune
+//     (NoteSheet) ; corps vide = suppression.
 //
 // Pages (kit E, DESIGN.md), en état local comme l'Analyse :
 //   liste     recherche au clavier (texte libre, admis), filtre par muscle
@@ -149,7 +147,7 @@ export function ExercisesScreen() {
   if (load.phase === 'loading') {
     return (
       <Page>
-        <ScreenHeader title="Exercices" />
+        <ScreenHeader title="Exos" />
         <Loading label="Chargement des exercices…" />
       </Page>
     );
@@ -158,7 +156,7 @@ export function ExercisesScreen() {
   if (load.phase === 'error') {
     return (
       <Page>
-        <ScreenHeader title="Exercices" />
+        <ScreenHeader title="Exos" />
         <LoadError intro="Impossible de charger tes exercices." message={load.message} onRetry={reload} />
       </Page>
     );
@@ -295,7 +293,7 @@ export function ExercisesView({
   if (page.kind === 'new') {
     return (
       <ExerciseForm
-        frame={{ title: 'Nouvel exo perso', meta: 'Visible de toi seul.', backLabel: 'Exercices' }}
+        frame={{ title: 'Nouvel exo perso', meta: 'Visible de toi seul.', backLabel: 'Exos' }}
         prefillName={page.prefill}
         submitLabel="Créer l’exo"
         submitBusyLabel="Création…"
@@ -440,7 +438,7 @@ function Catalogue({
         <PrimaryButton onClick={() => onCreate(typed && shown === 0 ? typed : undefined)}>Créer un exo perso</PrimaryButton>
       }
     >
-      <ScreenHeader title="Exercices" meta={`${exos(exercises.length)} · ${nPersonal} perso`} />
+      <ScreenHeader title="Exos" meta={`${exos(exercises.length)} · ${nPersonal} perso`} />
 
       {flash && <Flash>{flash}</Flash>}
 
@@ -603,7 +601,7 @@ function Fiche({
       <ScreenHeader
         title={exo.name}
         meta={origin}
-        back={{ label: 'Exercices', onClick: onBack }}
+        back={{ label: 'Exos', onClick: onBack }}
         action={
           <SecondaryButton size="sm" onClick={onEdit}>
             {base ? (overridden ? 'Modifier ta version' : 'Personnaliser') : 'Modifier'}
@@ -775,7 +773,7 @@ function Flash({ children }: { children: ReactNode }) {
 function Missing({ onBack }: { onBack: () => void }) {
   return (
     <Page>
-      <ScreenHeader title="Exercice introuvable" back={{ label: 'Exercices', onClick: onBack }} />
+      <ScreenHeader title="Exercice introuvable" back={{ label: 'Exos', onClick: onBack }} />
       <EmptyState title="Cet exercice n’existe plus." body="Il a peut-être été supprimé depuis un autre appareil." />
     </Page>
   );

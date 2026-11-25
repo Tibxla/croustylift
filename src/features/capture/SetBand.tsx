@@ -15,9 +15,9 @@
 import { useLayoutEffect, useRef, type MouseEvent } from 'react';
 import type { PerformedSet, Side } from '../../domain/types';
 import { pairSidesByOrder, targetSlotForSide } from '../../domain/unilateral';
-import { Sign, Status, TONE, type Verdict } from '../../ui';
+import { Sign, Status, TONE } from '../../ui';
 import { formatWeight } from './format';
-import type { SetBadge } from './set-badges';
+import { badgeStatus, type SetBadge } from './set-badges';
 
 interface Draft {
   weightKg: number;
@@ -25,12 +25,6 @@ interface Draft {
   rir: number;
 }
 
-/** Le statut d'une série, en signe + mot : record ou battue (signal), égalée. */
-function badgeStatus(badge: SetBadge): { v: Verdict; word: string } | null {
-  if (!badge) return null;
-  if (badge.axis === 'record') return { v: 'up', word: 'record' };
-  return badge.verdict === 'battu' ? { v: 'up', word: 'battue' } : { v: 'eq', word: 'égalée' };
-}
 
 const cell = (n: number) => `${formatWeight(n)}`;
 
@@ -52,7 +46,7 @@ const HEAD =
 const NOW_WORD = 'text-muted @min-[340px]:@max-[380px]:hidden';
 
 /** Une case loggée qui se touche : le bouton porte les marges de la case. */
-const CELL_BTN = 'block w-full min-w-0 pb-2 pr-2 text-left active:bg-line';
+const CELL_BTN = 'block w-full min-w-0 pb-2 pr-2 text-left active:bg-line [@media(max-height:700px)]:pb-1';
 /** Le poids d'une série loggée : souligné d'un filet gris, il se touche. */
 const EDITABLE = 'underline decoration-dim decoration-1 underline-offset-[5px]';
 
@@ -116,7 +110,7 @@ export function SetBand({
           <>
             <span aria-hidden className={HEAD}>
               <span className={`tnum ${isCurrent ? 'font-semibold text-ink' : 'text-faint'}`}>{rank}</span>
-              {st && <Status v={st.v} word={st.word} size={10} />}
+              {st && <Status v={st.v} word={st.short} size={10} />}
               {!s && isCurrent && <span className={NOW_WORD}>en cours</span>}
               {!s && !isCurrent && i >= plannedMax && <span className="text-faint">en plus</span>}
             </span>
@@ -132,7 +126,7 @@ export function SetBand({
           </>
         );
         return (
-          <li key={rank} aria-label={id ? undefined : label} className={`relative min-w-0 ${id ? '' : 'pb-2 pr-2'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+          <li key={rank} aria-label={id ? undefined : label} className={`relative min-w-0 ${id ? '' : 'pb-2 pr-2 [@media(max-height:700px)]:pb-1'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
             {id ? (
               <button type="button" aria-label={`Corriger la série ${label.slice('Série '.length)}`} className={CELL_BTN} onClick={() => onEdit(id)}>
                 {body}
@@ -257,7 +251,7 @@ export function UniSetBand({
           </>
         );
         return (
-          <li key={rank} aria-label={firstId ? undefined : label} className={`relative min-w-0 ${firstId ? '' : 'pb-2 pr-2'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
+          <li key={rank} aria-label={firstId ? undefined : label} className={`relative min-w-0 ${firstId ? '' : 'pb-2 pr-2 [@media(max-height:700px)]:pb-1'}`} style={{ flex: scroll ? '0 0 25%' : '1 1 0' }}>
             {firstId ? (
               <button type="button" aria-label={`Corriger la série ${label.slice('Série '.length)}`} className={CELL_BTN} onClick={pick}>
                 {body}
