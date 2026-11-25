@@ -144,8 +144,8 @@ export function SetEditSheet({
             meta={values(v)}
             ariaLabel={`Enregistrer la série ${rank}${shownSide ? ` ${sideWord(shownSide)}` : ''}, ${values(v)}`}
             onClick={() => {
-              if (changed) onSave(edits);
               if (sideChanged && shownSide) onChangeSide(shownSide);
+              if (changed) onSave(edits);
               onClose();
             }}
           >

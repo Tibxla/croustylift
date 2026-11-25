@@ -451,6 +451,24 @@ describe('changeSetSide (le côté d’une série, écrit seul)', () => {
     expect(getProgress(next, CURL).sets[2]).toEqual(ps(14, 9, 1, 2, 'right'));
   });
 
+  it('valeurs et côté réglés dans la même feuille : deux écritures de la même ligne, gardées toutes deux', async () => {
+    const base = fakeBase();
+    base.rows.set('l2', { setOrder: 2, weightKg: 12, reps: 9, rir: 1, side: 'left' });
+    const stamp = readStamp();
+    // « Enregistrer » (SetEditSheet) : le côté d'abord, puis les valeurs, calculées sur l'état rendu.
+    const sided = play(unilateral(), changeSetSide(unilateral(), CURL, 'l2', 'right')!);
+    const changed = play(sided, correctSet(sided, CURL, 'l2', { weightKg: 14 })!);
+    expect(readQueue().map((op) => (op.type === 'patchSet' ? `${op.id}:${op.only}` : op.type))).toEqual(['l2:side', 'l2:values']);
+    await flush(base.fns);
+    expect(base.sent).toEqual(['patch:l2:côté right', 'patch:l2:14x9']);
+    expect(base.rows.get('l2')).toEqual({ setOrder: 2, weightKg: 14, reps: 9, rir: 1, side: 'right' });
+    // Une lecture partie avant les deux gestes n'en défait aucun.
+    const next = answer(changed, stamp, {
+      [CURL]: { sets: [ps(12, 10, 2, 1, 'left'), ps(12, 9, 2, 1, 'right'), ps(12, 9, 1, 2, 'left')], setIds: ['l1', 'r1', 'l2'] },
+    });
+    expect(getProgress(next, CURL).sets[2]).toEqual(ps(14, 9, 1, 2, 'right'));
+  });
+
   it('insertion d’origine refusée : la série part entière, avec son nouveau côté', async () => {
     enqueue({ type: 'insertSet', id: 'l2', executionId: 'exec-1', exerciseId: CURL, setOrder: 2, weightKg: 12, reps: 9, rir: 1, side: 'left' });
     const refusing = fakeBase();

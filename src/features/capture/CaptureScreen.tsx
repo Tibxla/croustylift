@@ -1522,6 +1522,14 @@ function CapturePanel({
 
   // aria-live : annonce « série loggée » après chaque commit.
   const [announce, setAnnounce] = useState('');
+  // « Série 2, droite » : le rang lu dans la bande (rangs distincts, triés),
+  // comme la feuille de correction, et le côté en unilatéral.
+  const setWords = (setId: string, side: Side | undefined): string => {
+    const order = progress.sets[progress.setIds.indexOf(setId)]?.order ?? -1;
+    const n = [...new Set(progress.sets.map((s) => s.order))].sort((a, b) => a - b).indexOf(order) + 1;
+    return `Série ${n}${side ? `, ${sideLabel(side)}` : ''}`;
+  };
+  const sideJustSet = useRef<{ setId: string; side: Side } | null>(null);
   const sideLabel = (side: Side): string => (side === 'left' ? 'gauche' : 'droite');
 
   // Garde contre le rebond de doigt (log-guard.ts) : un second Logger du même
@@ -1576,21 +1584,26 @@ function CapturePanel({
         onCorrectSet={(setId, values) => {
           onCorrectSet(setId, values);
           // Les valeurs de la série après correction : `values` ne porte que ce
-          // qui a été réglé (« undefined kilos » sinon).
+          // qui a été réglé (« undefined kilos » sinon). Son côté : celui que la
+          // même feuille vient de lui donner, sinon le sien.
           const set = progress.sets[progress.setIds.indexOf(setId)];
           const after = set ? { ...set, ...values } : null;
+          const side = sideJustSet.current?.setId === setId ? sideJustSet.current.side : set?.side;
           setAnnounce(
             after
-              ? `Série corrigée : ${after.weightKg} kilos, ${after.reps} répétitions, RIR ${after.rir}.`
+              ? `${setWords(setId, side)} corrigée : ${after.weightKg} kilos, ${after.reps} répétitions, RIR ${after.rir}.`
               : 'Série corrigée.',
           );
         }}
         onChangeSetSide={(setId, side) => {
           onChangeSetSide(setId, side);
-          // Le rang lu dans la bande (rangs distincts, triés), comme la feuille.
-          const order = progress.sets[progress.setIds.indexOf(setId)]?.order;
-          const n = [...new Set(progress.sets.map((s) => s.order))].sort((a, b) => a - b).indexOf(order ?? -1) + 1;
-          setAnnounce(`Série ${n}, ${sideLabel(side)}.`);
+          setAnnounce(`${setWords(setId, side)}.`);
+          // La feuille enregistre le côté puis, dans le même geste, les valeurs :
+          // l'annonce de la correction dira le nouveau côté.
+          sideJustSet.current = { setId, side };
+          queueMicrotask(() => {
+            sideJustSet.current = null;
+          });
         }}
         onDeleteSet={(setId) => {
           onDeleteSet(setId);
