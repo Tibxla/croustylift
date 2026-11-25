@@ -52,6 +52,18 @@ describe('isCaptureEntryInProgress', () => {
     expect(check(entry({ startedAt: NOW - 3 * HOUR, datedNotes }))).toBe(true)
   })
 
+  it("un exo ajouté, remplacé ou passé du jour garde la séance en cours, lancement expiré", () => {
+    const layout = [{ kind: 'added', exerciseId: 'crunch', name: 'Crunch', unilateral: false, primaryMuscles: [] }]
+    const skipped = { exo: { sets: [], setIds: [], skipped: true } }
+    expect(check(entry({ startedAt: NOW - 3 * HOUR, layout }))).toBe(true)
+    expect(check(entry({ startedAt: NOW - 3 * HOUR, progress: skipped }))).toBe(true)
+  })
+
+  it("un exo ajouté la veille, sans série, ne retient pas la mise à jour", () => {
+    const layout = [{ kind: 'added', exerciseId: 'crunch', name: 'Crunch', unilateral: false, primaryMuscles: [] }]
+    expect(check(entry({ date: YESTERDAY, startedAt: NOW - 20 * HOUR, layout }))).toBe(false)
+  })
+
   it('séance de la veille avec des séries (à cheval sur minuit) : en cours', () => {
     const progress = { exo: { sets: [{ weightKg: 60, reps: 8 }] } }
     expect(check(entry({ date: YESTERDAY, startedAt: NOW - 20 * HOUR, progress }))).toBe(true)

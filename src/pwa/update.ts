@@ -29,7 +29,8 @@ import { LAUNCH_EXPIRY_MS } from '../features/capture/state'
  *
  * Mêmes bornes que la reprise de séance (`resolveCaptureDate`, `isResumable`) :
  * l'état d'aujourd'hui ou de la veille (séance à cheval sur minuit), portant au
- * moins une série ou une note datée, ou lancé depuis moins d'une heure. Un
+ * moins une série ou une note datée, ou lancé depuis moins d'une heure, ou celui
+ * d'aujourd'hui portant un exo ajouté, remplacé ou passé (`hasSeanceEdits`). Un
  * lancement oublié sans série, ou un état vieux de plusieurs jours, n'est plus
  * une séance en cours : il ne doit pas retenir la mise à jour indéfiniment.
  */
@@ -52,14 +53,20 @@ export function isCaptureEntryInProgress(
     startedAt?: unknown
     progress?: unknown
     datedNotes?: unknown
+    layout?: unknown
   }
   if (state.date !== today && state.date !== yesterday) return false
 
+  let skipped = false
   if (state.progress && typeof state.progress === 'object') {
     for (const value of Object.values(state.progress as Record<string, unknown>)) {
       const sets = (value as { sets?: unknown } | null)?.sets
       if (Array.isArray(sets) && sets.length > 0) return true
+      if ((value as { skipped?: unknown } | null)?.skipped === true) skipped = true
     }
+  }
+  if (state.date === today && (skipped || (Array.isArray(state.layout) && state.layout.length > 0))) {
+    return true
   }
   if (
     state.datedNotes &&

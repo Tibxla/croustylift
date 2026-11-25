@@ -959,6 +959,58 @@ describe('resolveCaptureDate', () => {
     expect(restored).toBeNull();
   });
 
+  // Bug du 25/11 : un exo ajouté depuis le Sommaire, sans aucune série dans la
+  // séance, disparaissait au rechargement une fois le lancement vieux d'1 h
+  // (l'état n'était plus repris, et le choix de la séance l'écrasait par un
+  // état neuf). Un geste sur la séance la garde ouverte, le jour même.
+  const expiredLaunch = () => Date.now() - (LAUNCH_EXPIRY_MS + 60_000);
+  const edit = (kind: 'added' | 'swapped', replaces?: string) => ({
+    kind,
+    exerciseId: 'crunch',
+    name: 'Crunch',
+    unilateral: false,
+    primaryMuscles: ['abdominaux'],
+    ...(replaces ? { replaces } : {}),
+  });
+
+  it('exo AJOUTÉ sans série, lancement expiré → la séance et son ajout sont repris', () => {
+    persist(captureReducer(mkState({ date: TODAY, startedAt: expiredLaunch() }), { type: 'edit-layout', edit: edit('added') }));
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored?.layout?.map((e) => e.exerciseId)).toEqual(['crunch']);
+  });
+
+  it('exo REMPLACÉ sans série, lancement expiré → le remplacement est repris', () => {
+    persist(captureReducer(mkState({ date: TODAY, startedAt: expiredLaunch() }), { type: 'edit-layout', edit: edit('swapped', 'bench-press') }));
+
+    const { restored } = resolveCaptureDate(upperA, TODAY);
+    expect(restored?.layout?.[0]).toMatchObject({ kind: 'swapped', exerciseId: 'crunch', replaces: 'bench-press' });
+  });
+
+  it('exo PASSÉ sans série, lancement expiré → la marque est reprise', () => {
+    persist(captureReducer(mkState({ date: TODAY, startedAt: expiredLaunch() }), { type: 'skip-exercise', exerciseId: 'bench-press' }));
+
+    const { restored } = resolveCaptureDate(upperA, TODAY);
+    expect(restored).not.toBeNull();
+    expect(getProgress(restored as CaptureState, 'bench-press').skipped).toBe(true);
+  });
+
+  it('une note datée seule, lancement expiré → reprise, comme une série (l’exécution est née)', () => {
+    persist(mkState({ date: TODAY, startedAt: expiredLaunch(), datedNotes: { 'bench-press': { id: 'n1', body: 'épaule' } } }));
+
+    const { restored } = resolveCaptureDate(upperA, TODAY);
+    expect(restored?.datedNotes['bench-press']?.body).toBe('épaule');
+  });
+
+  it('un geste ne rouvre pas la séance de la VEILLE sans série, lancement expiré', () => {
+    persist(captureReducer(mkState({ date: YESTERDAY, startedAt: expiredLaunch() }), { type: 'edit-layout', edit: edit('added') }));
+
+    const { date, restored } = resolveCaptureDate(upperA, TODAY);
+    expect(date).toBe(TODAY);
+    expect(restored).toBeNull();
+  });
+
   it('rien nulle part → capture vierge sous today (premier montage)', () => {
     const { date, restored } = resolveCaptureDate(upperA, TODAY);
     expect(date).toBe(TODAY);

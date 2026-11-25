@@ -198,8 +198,9 @@ interface CaptureInit {
 
 /**
  * Première séance de la routine qui a une capture REPRENABLE en cache local (ADR
- * 0011) : au moins une série loggée (séance en cours), ou un lancement de moins
- * d'1 h (démarrage récent). `null` si aucune — on montre alors l'écran de
+ * 0011, `isResumable`) : au moins une série loggée (séance en cours), un
+ * lancement de moins d'1 h (démarrage récent), ou un geste du jour sur la séance
+ * (exo ajouté, remplacé, passé). `null` si aucune — on montre alors l'écran de
  * lancement. `loadPersisted` ne lit que `session.id` pour la clé de cache, d'où la
  * séance minimale. On regarde aujourd'hui ET la veille (frontière minuit).
  */
@@ -210,7 +211,7 @@ function findResumableSeance(seances: SeanceChoice[]): SeanceChoice | null {
     const minimalSession: Session = { id: seance.id, name: seance.name, exercises: [] };
     for (const date of dates) {
       const restored = loadPersisted(minimalSession, date);
-      if (restored && isResumable(restored)) return seance;
+      if (restored && isResumable(restored, Date.now(), today)) return seance;
     }
   }
   return null;

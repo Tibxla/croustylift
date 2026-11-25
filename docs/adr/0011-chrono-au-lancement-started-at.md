@@ -37,3 +37,11 @@ Une exécution déjà née n'est jamais réancrée. Le réancrage ne vise que le
 La garde précédente était une ref de montage, remise à zéro à chaque changement d'onglet. Sur une séance de plus d'1 h, la série suivante réancrait le lancement et l'upsert réécrivait `started_at` en base : 1 h 30 de séance devenaient 25 min.
 
 La phrase « recopié tel quel via l'`upsertExecution` » reste vraie à la naissance de la ligne seulement. L'op est désormais une insertion seule (ADR 0021) : sa réaffirmation ne touche plus `started_at`.
+
+## Amendement du 2026-11-25
+
+Un geste sur la séance suspend l'expiration, le jour même. Un état du jour qui porte un exo ajouté, remplacé ou passé (`hasSeanceEdits`) se reprend même sans série et lancé depuis plus d'1 h. Une note datée compte comme une série : elle a fait naître l'exécution (`isExecutionStarted`), la séance est en cours quel que soit le jour. Le chrono expiré se réancre à la première série, comme avant (`shouldReanchorLaunch`).
+
+Ces gestes n'écrivent rien en base : ils ne vivent que dans l'état de capture. Passé 1 h sans série, cet état n'était plus repris, l'écran de lancement revenait, et choisir la séance l'écrasait par un état neuf. L'exo ajouté depuis le Sommaire disparaissait, alors qu'iOS tue l'app en salle.
+
+Un geste de la veille ne rouvre pas la séance d'hier le lendemain : la frontière minuit reste réservée aux séances qui ont une série, ou un lancement de moins d'1 h. Le garde-fou de mise à jour (`isCaptureEntryInProgress`) suit la même règle.
