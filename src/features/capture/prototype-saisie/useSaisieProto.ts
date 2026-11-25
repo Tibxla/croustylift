@@ -4,7 +4,7 @@
 // Version simplifiée d'ExerciseCapture (pas de garde « brouillon touché » face
 // aux réponses tardives de la base : le prototype n'écrit rien).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { effectiveReps, isZeroLoad } from '../../../domain/e1rm';
+import { comparePerformance, effectiveReps, isZeroLoad, type Performance } from '../../../domain/e1rm';
 import { isRepsRecord } from '../../../domain/pr';
 import { currentSetOrder, defaultSide, pairSidesByOrder, sidesDoneAt, targetSlotForSide } from '../../../domain/unilateral';
 import type { PerformedSet, Side } from '../../../domain/types';
@@ -52,6 +52,13 @@ export interface Saisie {
   gap: { measure: 'e1RM' | 'reps eff.'; value: string; unit: string } | null;
   live: ReturnType<typeof perfReadout>;
   record: { value: string; unit: string } | null;
+  /** Le brouillon face à la série de la dernière fois (même rang, même côté) :
+   *  signe de l'ordre (ADR 0010 : e1RM exact, reps effectives à 0 kg), et l'écart
+   *  signé dans la mesure du juge. Null sans Référence. */
+  vsRef: { sign: -1 | 0 | 1; gap: string; unit: string } | null;
+  /** Le record COURANT (historique + séries du jour, du côté visé) : sa mesure,
+   *  et le brouillon face à lui. Null sans record. */
+  recordNow: { value: string; unit: string; sign: -1 | 0 | 1; gap: string } | null;
   badges: SetBadge[];
   /** Clé qui change à chaque nouvelle saisie (exo, série, côté). */
   draftKey: string;
@@ -138,6 +145,32 @@ export function useSaisieProto(exercise: SessionExercise, progress: ExerciseProg
         : { value: formatE1rm(displayRecord.bestE1rm), unit: 'kg' }
       : null;
 
+  // Record courant : celui de l'historique, battu peut-être par une série du jour.
+  let best: Performance | null = displayRecord?.bestE1rmSet
+    ? { weightKg: displayRecord.bestE1rmSet.weightKg, reps: displayRecord.bestE1rmSet.reps, rir: displayRecord.bestE1rmSet.rir ?? 0 }
+    : null;
+  for (const set of progress.sets) {
+    if (unilateral && set.side !== side) continue;
+    if (!best || comparePerformance(set, best) > 0) best = set;
+  }
+  const measureOf = (p: Performance) =>
+    isZeroLoad(p.weightKg) ? { n: effectiveReps(p.reps, p.rir), unit: 'reps' } : { n: draftE1rm(p.weightKg, p.reps, p.rir) ?? 0, unit: 'kg' };
+  const sgn = (n: number): -1 | 0 | 1 => (n > 0 ? 1 : n < 0 ? -1 : 0);
+  let recordNow: Saisie['recordNow'] = null;
+  if (best) {
+    const b = measureOf(best);
+    const d = measureOf(draft);
+    const dec = b.unit === 'reps' ? 0 : 1;
+    recordNow = {
+      value: b.unit === 'reps' ? `${b.n}` : formatE1rm(b.n),
+      unit: b.unit,
+      sign: sgn(comparePerformance(draft, best)),
+      gap: b.unit === d.unit ? signed(d.n - b.n, dec) : '',
+    };
+  }
+  const vsRef: Saisie['vsRef'] =
+    refToBeat && gap ? { sign: sgn(comparePerformance(draft, refToBeat)), gap: gap.value, unit: gap.unit } : null;
+
   const { stepKg } = useReglages();
   const doneSides = unilateral ? sidesDoneAt(progress.sets, currentSetOrder(progress.sets)) : [];
 
@@ -161,6 +194,8 @@ export function useSaisieProto(exercise: SessionExercise, progress: ExerciseProg
     gap,
     live: perfReadout(weightKg, reps, rir),
     record,
+    vsRef,
+    recordNow,
     badges,
     draftKey,
   };

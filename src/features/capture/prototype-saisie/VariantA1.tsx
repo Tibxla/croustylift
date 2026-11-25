@@ -5,8 +5,10 @@
 // basse est vachement chargée comparée à la partie haute ». A1 garde les deux
 // zones de A et fait passer la méta du bas vers le haut :
 //   - HAUT (fond) : l'index, l'exo, « Série n sur N » et le plan, la bande des
-//     séries, puis le bloc « À battre » : la Référence en grand, et dessous
-//     l'e1RM du brouillon, son écart et le record. Tout ce qui se LIT.
+//     séries, puis le tableau de marque (contrainte du 25/11, « toujours mon PR,
+//     la série de la dernière fois et l'e1RM, et si je les bats ») : l'e1RM de la
+//     série en cours, la dernière fois et le Record côte à côte, chacun avec
+//     l'écart du brouillon en direct (`Indicator`). Tout ce qui se LIT.
 //   - BAS (fond levé) : seulement ce qui se RÈGLE, sans titre ni méta. Le poids
 //     (bloc « 140 kg » centré) et sa règle, puis Reps et RIR chacun sur UNE ligne
 //     (le mot à gauche, les chiffres à droite). La fourchette du plan se lit au
@@ -16,12 +18,85 @@
 //     plan, jamais de chiffre coupé au bord) ; elles défilent au doigt pour les
 //     autres valeurs et se recalent sur une case entière.
 import { useLayoutEffect, useRef } from 'react';
-import { IconButton } from '../../../ui';
+import { IconButton, Sign } from '../../../ui';
 import { ExerciseIndex } from '../ExerciseIndex';
 import { formatRange } from '../format';
 import { SetBand, UniSetBand } from '../SetBand';
 import type { VariantProps } from './ProtoSaisie';
 import { ProtoWeight, SideChoice, setText, WeightRuler } from './parts';
+
+/** `&vif=1` : le ▲ du brouillon passe au signal (voir `Indicator`). */
+const VIF = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('vif') === '1';
+
+/** L'écart du BROUILLON à un repère, en direct : signe + écart + mot.
+ *
+ *  ADR 0010 et draft-e1rm.ts : sur le brouillon, pas de verdict (« battue »,
+ *  « battrait ») ni de badge qui s'allume, sinon un RIR gonflé d'un cran suffit à
+ *  « battre » et l'auto-évaluation se fausse. On écrit donc une POSITION, pas un
+ *  exploit : « au-dessus », « à égalité », « en dessous », avec l'écart exact
+ *  dans la mesure du juge (e1RM, ou reps effectives à 0 kg). Le signe suit la
+ *  triade, mais en blanc cassé : le signal reste au verdict de la série faite,
+ *  dans la bande. `&vif=1` montre l'autre option (▲ au signal dès le réglage)
+ *  pour que l'utilisateur tranche. */
+function Indicator({ sign, gap }: { sign: -1 | 0 | 1; gap: string }) {
+  const word = sign > 0 ? 'au-dessus' : sign === 0 ? 'à égalité' : 'en dessous';
+  const tone = sign > 0 ? (VIF ? 'text-sig' : 'text-ink') : sign === 0 ? 'text-ink' : 'text-muted';
+  return (
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap text-[14px] ${tone}`}>
+      <Sign v={sign > 0 ? 'up' : sign === 0 ? 'eq' : 'down'} size={10} />
+      {sign !== 0 && gap && <span className="tnum font-medium">{gap}</span>}
+      {word}
+    </span>
+  );
+}
+
+/** Ta série (e1RM du brouillon), la dernière fois, le Record : toujours visibles. */
+function Score({ s }: { s: VariantProps['s'] }) {
+  const ref = s.refToBeat;
+  return (
+    <div>
+      <div className="flex min-h-7 items-center justify-between gap-3">
+        {/* Unilatéral : le côté choisi prend la place du mot (même ligne). */}
+        {s.unilateral && s.side ? (
+          <SideChoice side={s.side} done={s.doneSides} onChoose={s.chooseSide} className="-my-2 -ml-2.5" />
+        ) : (
+          <span className="text-[15px] text-muted">Cette série</span>
+        )}
+        <span className="tnum text-[20px] font-semibold tracking-[-0.01em] text-ink">
+          {s.live ? (
+            <>
+              <span className="text-[15px] font-normal text-muted">{s.live.label} </span>
+              {s.live.value}
+            </>
+          ) : (
+            '·'
+          )}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2">
+        <div className="min-w-0 pr-3">
+          <p className="text-[13px] text-muted">Dernière fois</p>
+          <p className="tnum mt-0.5 truncate text-[16px] font-medium text-ink">{ref ? setText(ref) : <span className="font-normal text-muted">{s.hasReference ? 'rien à cette série' : 'pas encore'}</span>}</p>
+          <p className="mt-0.5 h-5">{s.vsRef && <Indicator sign={s.vsRef.sign} gap={s.vsRef.gap} />}</p>
+        </div>
+        <div className="min-w-0 border-l border-line pl-3">
+          <p className="text-[13px] text-muted">Record</p>
+          <p className="tnum mt-0.5 truncate text-[16px] font-medium text-ink">
+            {s.recordNow ? (
+              <>
+                {s.recordNow.unit === 'reps' ? 'reps eff. ' : 'e1RM '}
+                {s.recordNow.value}
+              </>
+            ) : (
+              <span className="font-normal text-muted">aucun encore</span>
+            )}
+          </p>
+          <p className="mt-0.5 h-5">{s.recordNow && <Indicator sign={s.recordNow.sign} gap={s.recordNow.gap} />}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Air({ min, max = 24, grow = 1 }: { min: number; max?: number; grow?: number }) {
   return <div aria-hidden style={{ flex: `${grow} 0 0px`, minHeight: min, maxHeight: max }} />;
@@ -62,41 +137,12 @@ export function HautA({ s, exercise, progress, index, exoPos, compact, tight, on
         )}
       </div>
 
-      {/* À battre : la Référence en grand, ce que vaut le brouillon dessous. */}
+      {/* Le tableau de marque : l'e1RM de la série en cours, puis la dernière
+          fois et le Record, chacun avec l'écart du brouillon en direct. */}
       <Air min={tight ? 8 : 14} max={30} />
       <div data-zone="haut-fin" className={`mx-5 border-t border-line ${tight ? 'pt-2' : 'pt-3'}`}>
-        <p className="flex items-baseline justify-between gap-3">
-          <span className="text-[15px] text-muted">À battre</span>
-          <span className="tnum truncate text-[20px] font-semibold tracking-[-0.01em] text-ink">
-            {s.refToBeat ? setText(s.refToBeat) : <span className="text-[16px] font-normal text-muted">{s.hasReference ? 'rien à cette série' : 'pas encore de réf.'}</span>}
-          </span>
-        </p>
-        <p className="mt-1 flex items-baseline justify-between gap-3 text-[14px] text-muted">
-          <span>
-            {s.live && (
-              <>
-                {s.live.label} <span className="tnum font-medium text-ink">{s.live.value}</span>
-              </>
-            )}
-            {s.gap && (
-              <>
-                {' · '}écart <span className="tnum font-medium text-ink">{s.gap.value}</span>
-              </>
-            )}
-          </span>
-          {s.record && (
-            <span>
-              record <span className="tnum font-medium text-ink">{s.record.value}</span>
-            </span>
-          )}
-        </p>
+        <Score s={s} />
       </div>
-      {s.unilateral && s.side && (
-        <div className="flex items-center justify-between px-5">
-          <span className="text-[15px] text-muted">Côté</span>
-          <SideChoice side={s.side} done={s.doneSides} onChoose={s.chooseSide} className="-mr-2.5" />
-        </div>
-      )}
     </div>
   );
 }
@@ -193,7 +239,7 @@ export function BasAllege({ s, exercise, compact, tight }: VariantProps) {
   const rowH = tight ? 44 : 48;
   return (
     <div data-zone="bas" className={`flex flex-col bg-raise ${tight ? 'pt-2' : 'pt-3'} pb-1`}>
-      <ProtoWeight value={s.weightKg} onChange={s.setWeight} size={tight ? 52 : compact ? 64 : 72} unit="block" />
+      <ProtoWeight value={s.weightKg} onChange={s.setWeight} size={tight ? 52 : compact ? (s.unilateral ? 56 : 64) : 72} unit="block" />
       <div className={tight ? 'mt-1' : 'mt-2'}>
         <WeightRuler weightKg={s.weightKg} onChange={s.setWeight} stepKg={s.stepKg} height={tight ? 44 : compact ? 48 : 58} compact={compact} />
       </div>

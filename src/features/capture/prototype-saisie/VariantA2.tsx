@@ -1,18 +1,18 @@
 // PROTOTYPE JETABLE · tour 2 · Variante A2 « Reps et RIR côte à côte ».
 //
 // Le haut de A1 (tout ce qui se lit). En bas, le poids et sa règle restent le
-// centre, plus grands ; Reps et RIR deviennent deux réglages compacts côte à
+// centre, un peu plus grands ; Reps et RIR deviennent deux réglages compacts côte à
 // côte sur UNE rangée, − valeur +, séparés par un filet vertical. Le bas perd
 // une rangée entière de chiffres : la hauteur rendue va au poids et à l'air.
-// Sous la valeur, la Référence en petit (« réf. 8 ») tant qu'il y en a une ;
-// la fourchette du plan est déjà écrite en haut.
-// Boutons de 52 px, aucune animation (geste répété), valeur à largeur fixe pour
+// À côté du mot, la Référence en petit (« Reps · réf. 8 ») tant qu'il y en a
+// une ; la fourchette du plan est déjà écrite en haut.
+// Boutons de 48 px, aucune animation (geste répété), valeur à largeur fixe pour
 // que les boutons ne bougent pas sous le pouce.
 import type { VariantProps } from './ProtoSaisie';
 import { Air, HautA } from './VariantA1';
 import { ProtoWeight, WeightRuler } from './parts';
 
-const BTN = 'flex h-[52px] w-[52px] flex-none items-center justify-center rounded-block border border-muted text-[26px] leading-none text-ink active:bg-line disabled:border-line disabled:text-dim';
+const BTN = 'flex h-12 w-12 flex-none items-center justify-center rounded-block border border-muted text-[26px] leading-none text-ink active:bg-line disabled:border-line disabled:text-dim';
 
 function Mini({
   label,
@@ -31,19 +31,21 @@ function Mini({
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col items-center">
-      <span className="text-[15px] font-semibold text-ink">{label}</span>
-      <div className="mt-1.5 flex items-center gap-1.5">
+      <span className="text-[15px] font-semibold text-ink">
+        {label}
+        {refValue !== null && <span className="text-[13px] font-normal text-faint"> · réf. {refValue}</span>}
+      </span>
+      <div className="mt-1 flex items-center gap-1.5">
         <button type="button" aria-label={`${label} : moins`} disabled={value <= min} onClick={() => onChange(value - 1)} className={BTN}>
           −
         </button>
-        <output aria-live="polite" aria-label={label} className="tnum w-11 text-center text-[32px] font-semibold leading-none tracking-[-0.02em] text-ink">
+        <output aria-live="polite" aria-label={label} className="tnum w-11 text-center text-[30px] font-semibold leading-none tracking-[-0.02em] text-ink">
           {value}
         </output>
         <button type="button" aria-label={`${label} : plus`} disabled={value >= max} onClick={() => onChange(value + 1)} className={BTN}>
           +
         </button>
       </div>
-      <span className="mt-1 h-[18px] text-[13px] text-faint">{refValue !== null ? `réf. ${refValue}` : ''}</span>
     </div>
   );
 }
@@ -54,8 +56,8 @@ export function VariantA2(p: VariantProps) {
     <div className="flex flex-1 flex-col pt-1">
       <HautA {...p} />
       <Air min={tight ? 8 : 14} max={9999} />
-      <div data-zone="bas" className={`flex flex-col bg-raise ${tight || s.unilateral ? 'pt-2' : 'pt-4'} pb-2`}>
-        <ProtoWeight value={s.weightKg} onChange={s.setWeight} size={tight ? 56 : compact ? (s.unilateral ? 56 : 72) : 80} unit="block" />
+      <div data-zone="bas" className={`flex flex-col bg-raise ${tight || s.unilateral ? 'pt-2' : 'pt-3'} pb-2.5`}>
+        <ProtoWeight value={s.weightKg} onChange={s.setWeight} size={tight ? 52 : compact ? (s.unilateral ? 52 : 64) : 80} unit="block" />
         <div className={tight ? 'mt-1' : 'mt-2'}>
           <WeightRuler weightKg={s.weightKg} onChange={s.setWeight} stepKg={s.stepKg} height={tight ? 44 : compact ? 52 : 60} compact={compact} />
         </div>
