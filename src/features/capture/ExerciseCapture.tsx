@@ -485,7 +485,7 @@ export function ExerciseCapture({
                       aria-label={`${sd === 'left' ? 'Gauche' : 'Droite'}${done ? `, faite pour la série ${doneRank}` : ''}`}
                       onClick={() => chooseSide(sd)}
                       className={`h-11 flex-none px-2.5 text-[17px] ${
-                        sel ? 'font-semibold text-ink underline decoration-[3px] underline-offset-[8px]' : done ? 'text-faint' : 'text-muted active:text-ink'
+                        sel ? 'rounded-cell bg-surface font-semibold text-ink' : done ? 'text-faint' : 'text-muted active:text-ink'
                       }`}
                     >
                       {sd === 'left' ? 'Gauche' : 'Droite'}

@@ -80,8 +80,8 @@
       "status-done": {
         "role": "semantic",
         "displayName": "Fait",
-        "canonical": "var(--sig)",
-        "note": "Provisoire : le signal, en attendant le choix de l'utilisateur ; texte noir chaud dessus."
+        "canonical": "#f6d236",
+        "note": "Provisoire : vaut var(--sig), le signal (jaune par défaut), en attendant le choix de l'utilisateur ; texte noir chaud dessus."
       }
     },
     "typographyMeta": {

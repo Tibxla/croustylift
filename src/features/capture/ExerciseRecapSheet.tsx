@@ -67,7 +67,7 @@ export function ExerciseRecapSheet({
               {/* Côte à côte dès 360 px ; dessous, l'un sous l'autre plutôt
                   qu'un libellé coupé (base de 150 px chacun). */}
               <div className="flex flex-wrap gap-2">
-                <SecondaryButton onClick={onClose} ariaLabel="Continuer l’exercice" className="flex-1 basis-[150px]">
+                <SecondaryButton onClick={onClose} className="flex-1 basis-[150px]">
                   Continuer l’exo
                 </SecondaryButton>
                 <SecondaryButton onClick={onSommaire} ariaLabel="Revenir au Sommaire de la séance" className="flex-1 basis-[150px]">

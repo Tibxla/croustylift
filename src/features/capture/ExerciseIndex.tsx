@@ -42,8 +42,8 @@ export function ExerciseIndex({
             className="flex h-11 min-w-0 flex-col justify-center px-2"
           >
             <span className={`tnum flex h-5 items-center text-left text-[14px] ${active ? 'font-semibold' : ''}`}>
-              <span className={`[&>span]:leading-5 ${it.state === 'done' || it.state === 'partial' ? '-ml-2' : ''}`}>
-                <StatePill state={it.state} size={13}>
+              <span className={it.state === 'done' || it.state === 'partial' ? '-ml-2' : ''}>
+                <StatePill state={it.state} size={13} compact>
                   <span className={it.state === 'todo' && active ? 'text-ink' : ''}>{i + 1}</span>
                 </StatePill>
               </span>

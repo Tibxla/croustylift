@@ -268,7 +268,9 @@ export function NumberRow({
             >
               {n}
             </span>
-            {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
+            {/* Filet du plan en gris discret : sur le fond de groupe des plaques, le
+                gris repère tombait à 2,85:1. */}
+            {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-faint" />}
             {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
           </button>
         );

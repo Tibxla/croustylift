@@ -170,7 +170,18 @@ export function StateMark({
 /** Pastille d'état d'un exo (voir l'en-tête) : la marque et son mot dans une
  *  pastille arrondie (`rounded-cell`), pleine et colorée pour « fait », en
  *  contour pour « en cours » ; « à faire » et « passé » restent du texte gris. */
-export function StatePill({ state, children, size = 14 }: { state: ExoState; children: ReactNode; size?: number }) {
+export function StatePill({
+  state,
+  children,
+  size = 14,
+  compact = false,
+}: {
+  state: ExoState;
+  children: ReactNode;
+  size?: number;
+  /** Interligne de 20 px au lieu de 24 (index de l'instrument, ligne de 20 px). */
+  compact?: boolean;
+}) {
   const look =
     state === 'done'
       ? 'rounded-cell bg-status-done px-2 font-semibold text-bg'
@@ -180,7 +191,7 @@ export function StatePill({ state, children, size = 14 }: { state: ExoState; chi
           ? 'text-muted line-through decoration-1'
           : 'text-muted';
   return (
-    <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 leading-6 ${look}`}>
+    <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 ${compact ? 'leading-5' : 'leading-6'} ${look}`}>
       <StateIcon state={state} size={size} className={state === 'skipped' ? '' : 'flex-none'} />
       <span className="min-w-0">{children}</span>
     </span>

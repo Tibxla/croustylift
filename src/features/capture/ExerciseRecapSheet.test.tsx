@@ -46,7 +46,7 @@ function render(next: string | null) {
 
 describe('récap de fin d’exo', () => {
   it('propose l’exo suivant, puis continuer l’exo et revenir au Sommaire', () => {
-    expect(render('Tirage horizontal')).toEqual(['Exo suivantTirage horizontal', 'Continuer l’exercice', 'Revenir au Sommaire de la séance']);
+    expect(render('Tirage horizontal')).toEqual(['Exo suivantTirage horizontal', 'Continuer l’exo', 'Revenir au Sommaire de la séance']);
   });
 
   it('au dernier exo, le Sommaire devient l’action principale, sans doublon', () => {
