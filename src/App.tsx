@@ -32,6 +32,7 @@ import { RECOVERY_LINK_BLOCK, RECOVERY_SCREEN_BLOCK } from './pwa/recovery'
 import { ImportRequests, type SurfaceName } from './pwa/update'
 import { switchSurface } from './surface-switch'
 import { SurfaceNav } from './shell/SurfaceNav'
+import { blurFocusedField } from './shell/blur-focused-field'
 import { hasSurfaceIntent, SurfaceActiveContext, SurfaceNavigationContext } from './shell/navigation'
 import { guardSignOut, openMemory, surfaceKey, switchMemory, type SurfaceMemory } from './shell/surface-memory'
 import { syncLine } from './shell/sync-line'
@@ -133,23 +134,10 @@ setLazyChunkPreloader(() => {
 
 type Surface = SurfaceName
 
-/**
- * Avant d'afficher une autre surface, instantanément (le geste revient des
- * dizaines de fois par jour, aucune animation ne s'y justifie, DESIGN.md,
- * Mouvement) : un champ en cours de saisie perd d'abord le focus. Sinon il est
- * caché pendant que le clavier descend, ce qui sur iPhone peut laisser la
- * fenêtre d'affichage faussée et les barres du bas décrochées (registre R4).
- */
-function blurFocusedField(): void {
-  const focused = typeof document === 'undefined' ? null : document.activeElement
-  if (
-    focused instanceof HTMLInputElement ||
-    focused instanceof HTMLTextAreaElement ||
-    focused instanceof HTMLSelectElement
-  ) {
-    focused.blur()
-  }
-}
+// Avant d'afficher une autre surface, instantanément (le geste revient des
+// dizaines de fois par jour, aucune animation ne s'y justifie, DESIGN.md,
+// Mouvement), un champ en cours de saisie perd d'abord le focus
+// (shell/blur-focused-field.ts).
 
 // Une surface visitée reste montée (shell/surface-memory.ts). Affichée, son
 // enveloppe ne fait pas de boîte : ses enfants sont ceux de la colonne, comme

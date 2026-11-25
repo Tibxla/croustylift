@@ -107,6 +107,7 @@ import { exoCounts, exoState, logicalSetsDone, nextExerciseId, resumeWord } from
 import { formatWeight } from './format';
 import { EmptyState, List, PrimaryButton, Row, ScreenHeader, SecondaryButton, SyncBanner, TextLink } from '../../ui';
 import { useGoToSurface, useSurfaceReturn } from '../../shell/navigation';
+import { blurFocusedField } from '../../shell/blur-focused-field';
 import { syncLine } from '../../shell/sync-line';
 import { useSyncState } from '../../shell/useSyncState';
 import { refusedAction, useOpenRefusedWrites } from '../../shell/refused-context';
@@ -1559,9 +1560,17 @@ function CapturePanel({
   const detail = sommaireDetail(sync, done, total);
   const openRefused = useOpenRefusedWrites();
 
+  // Retour au Sommaire, par le bouton du pied, le récap d'exo ou le glissé :
+  // l'instrument se démonte, un champ au clavier (poids) perd d'abord le focus
+  // (shell/blur-focused-field.ts).
+  const backToSommaire = () => {
+    blurFocusedField();
+    dispatch({ type: 'back-to-picker' });
+  };
+
   return (
     // Glissé depuis le bord gauche : retour au Sommaire (EdgeSwipeBack.tsx).
-    <EdgeSwipeBack onBack={() => dispatch({ type: 'back-to-picker' })}>
+    <EdgeSwipeBack onBack={backToSommaire}>
       <SyncBanner line={alarm} action={refusedAction(sync.refused, openRefused)} />
       <ExerciseCapture
         exercise={exercise}
@@ -1572,7 +1581,7 @@ function CapturePanel({
         historyEpoch={historyEpoch}
         onPick={(id) => dispatch({ type: 'open-exercise', exerciseId: id })}
         onNext={() => next && dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
-        onSommaire={() => dispatch({ type: 'back-to-picker' })}
+        onSommaire={backToSommaire}
         onDraftChange={setDraft}
         onSaveDatedNote={onSaveDatedNote}
         onSaveExerciseNote={onSaveExerciseNote}
@@ -1621,7 +1630,7 @@ function CapturePanel({
         <div className="mb-1 grid h-11 grid-cols-[1fr_auto_1fr] items-center gap-1">
           <button
             type="button"
-            onClick={() => dispatch({ type: 'back-to-picker' })}
+            onClick={backToSommaire}
             aria-label={`Sommaire de la séance, ${done} exo${done > 1 ? 's' : ''} fait${done > 1 ? 's' : ''} sur ${total}${
               detail.alarm ? `, ${detail.text}` : ''
             }`}

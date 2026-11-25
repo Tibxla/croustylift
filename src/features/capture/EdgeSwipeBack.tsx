@@ -28,6 +28,7 @@
 import { useContext, useEffect, useRef, type ReactNode } from 'react';
 import { SheetSlotContext } from '../../ui';
 import { prefersReducedMotion } from '../../ui/motion';
+import { blurFocusedField } from '../../shell/blur-focused-field';
 import { EDGE_PX, edgeDown, edgeMove, edgeUp, type EdgeGesture } from './edge-swipe';
 
 const EASE_OUT = 'cubic-bezier(0.23, 1, 0.32, 1)';
@@ -70,6 +71,9 @@ export function EdgeSwipeBack({ onBack, children }: { onBack: () => void; childr
     if (!p) return;
     const reduced = prefersReducedMotion();
     if (back) {
+      // Le retour est engagé : un champ au clavier (poids) perd le focus tout
+      // de suite, avant les 200 ms où l'écran file (shell/blur-focused-field.ts).
+      blurFocusedField();
       if (reduced) {
         paint(0, 'none');
         onBack();
