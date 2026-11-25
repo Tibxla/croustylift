@@ -23,6 +23,10 @@
   --color-dim: #6b6761;     /* repères non textuels (graduations) */
   --color-line: #3a3733;    /* filets, aplat de pression */
   --color-on-ink: #4a463f;  /* texte secondaire posé sur le bouton principal */
+  /* PROTOTYPE arrondis : surface des groupes, bulles et plaques (faint 4,78:1),
+     et la même posée dans une feuille levée (faint 4,59:1). */
+  --color-group: #24211d;
+  --color-group-sheet: #28241f;
 
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
@@ -266,4 +270,357 @@ input:-webkit-autofill:active {
   .field::placeholder {
     color: var(--color-faint);
   }
+}
+
+/*
+  ============================================================================
+  PROTOTYPE JETABLE · ARRONDIS (`?arrondi=R1|R2|R3`, src/ui/arrondi.ts)
+  ============================================================================
+  Demande du 25/11 : « les listes, ça fait trop strict, trop carré ; il n'y a
+  pas assez d'arrondis ». Trois traitements, posés par `data-arrondi` sur <html>,
+  sans rien changer sans l'attribut. Tout passe par des variables et par les
+  classes d'accroche du kit, jamais écran par écran :
+    ui-list / ui-row / ui-row-hit  liste, ligne, zone touchable de la ligne
+    ui-section                     titre de section
+    ui-note (+ ui-bleed)           avis, erreur, compte rendu (bord à bord)
+    ui-choice / ui-choice-opt      choix en mots
+    ui-nav-word                    mot de la navigation
+    ui-num / ui-num-bar            case d'une rangée de numéros, trait du choisi
+    ui-plate                       plaque de réglage de la Salle (A4)
+    ui-band / ui-band-cell         bande des séries (A4)
+    ui-sheet-panel                 panneau d'une feuille basse
+    ui-knob / ui-check / ui-swatch rayons en dur qui suivent le bloc
+  Variables : --radius-block (boutons, champs), --radius-sheet (feuilles),
+  --r-group (groupe, bulle), --r-plate (plaques), --r-hl (pastille),
+  --list-inset (retrait latéral des listes), --list-gap (air entre bulles),
+  --surface (fond levé des groupes ; plus clair dans une feuille).
+  Règles hors couche : elles priment sur les utilitaires Tailwind.
+  Aucune ombre, aucun dégradé, aucun halo : la profondeur reste un palier de
+  fond. Le signal ne change pas de rôle.
+*/
+[data-arrondi] {
+  --surface: var(--color-group);
+  --list-inset: 0px;
+  --list-gap: 0px;
+}
+[data-arrondi] .ui-sheet-panel {
+  --surface: var(--color-group-sheet);
+}
+[data-arrondi] .ui-row {
+  position: relative;
+  isolation: isolate;
+}
+[data-arrondi] .ui-row-hit:active {
+  opacity: 1;
+}
+[data-arrondi] .ui-knob,
+[data-arrondi] .ui-swatch {
+  border-radius: max(3px, calc(var(--radius-block) - 3px));
+}
+[data-arrondi] .ui-check {
+  border-radius: calc(var(--radius-block) / 2);
+}
+[data-arrondi] .ui-num-bar {
+  border-radius: 2px;
+}
+
+/* --- R1 · Groupes arrondis ----------------------------------------------
+   À la façon d'iOS Réglages : chaque liste est UN bloc levé de grand rayon,
+   retiré de 16 px du bord ; ses lignes se séparent par des filets intérieurs
+   qui ne touchent aucun bord. Le choix en mots devient un sélecteur à segments
+   (le choisi est une pastille dans le bloc). Les plaques de la Salle et la
+   bande des séries sont des groupes, eux aussi. Feuilles : 16 px en haut. */
+[data-arrondi='R1'] {
+  --radius-block: 12px;
+  --radius-sheet: 16px;
+  --r-group: 18px;
+  --r-plate: 20px;
+  --r-hl: 9px;
+  --list-inset: 16px;
+}
+[data-arrondi='R1'] .ui-list {
+  margin-inline: var(--list-inset);
+  border-top-width: 0;
+  border-radius: var(--r-group);
+  background-color: var(--surface);
+  overflow: hidden;
+}
+[data-arrondi='R1'] .ui-list .ui-row {
+  border-bottom-width: 0;
+}
+/* Dans un groupe ou une bulle, une ligne qui porte sa marge la ramène à 16 px :
+   le retrait du bloc ne coûte pas de place au contenu (« Pas de la règle »
+   reste sur une ligne). */
+[data-arrondi='R1'] .ui-list > .ui-row.px-5,
+[data-arrondi='R2'] .ui-list > .ui-row.px-5 {
+  padding-inline: 16px;
+}
+[data-arrondi='R1'] .ui-list > .ui-stepper,
+[data-arrondi='R2'] .ui-list > .ui-stepper {
+  column-gap: 6px;
+}
+[data-arrondi='R1'] .ui-list > .ui-stepper > button,
+[data-arrondi='R2'] .ui-list > .ui-stepper > button {
+  width: 44px;
+  height: 44px;
+}
+[data-arrondi='R1'] .ui-list > .ui-row + .ui-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background-color: var(--color-line);
+}
+[data-arrondi='R1'] .ui-list > .ui-row:has(.ui-row-hit:active),
+[data-arrondi='R1'] .ui-list > .ui-row.ui-row-hit:active {
+  background-color: var(--color-line);
+}
+[data-arrondi='R1'] .ui-section {
+  padding-top: 28px;
+}
+[data-arrondi='R1'] .ui-note {
+  border-width: 0;
+  border-radius: 14px;
+  background-color: var(--surface);
+  padding-inline: 16px;
+}
+[data-arrondi='R1'] .ui-note.ui-bleed {
+  margin-inline: var(--list-inset);
+}
+[data-arrondi='R1'] .ui-choice {
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background-color: var(--surface);
+}
+[data-arrondi='R1'] .ui-choice-opt {
+  border-radius: var(--r-hl);
+  padding-inline: 10px;
+  text-decoration-line: none;
+}
+[data-arrondi='R1'] .ui-choice-opt[aria-checked='true'] {
+  background-color: var(--color-line);
+}
+[data-arrondi='R1'] .ui-plate {
+  margin-inline: 12px;
+  border-radius: var(--r-plate);
+  background-color: var(--surface);
+  overflow: hidden;
+}
+/* La bande des séries reste en traits (aucun pixel vertical à dépenser au-dessus
+   des plaques) ; ses traits prennent des bouts arrondis. */
+[data-arrondi='R1'] .ui-band-cell > span[aria-hidden] {
+  border-radius: 2px;
+}
+
+/* --- R2 · Bulles ----------------------------------------------------------
+   Chaque ligne est sa propre bulle (rayon 20), séparée des autres par 8 px de
+   fond : plus de filet du tout. Boutons et champs à 16 px. Ce qui est choisi
+   (mot de navigation, choix en mots, numéro de reps ou de RIR, série en cours)
+   devient une bulle pleine blanc cassé, texte noir : la sélection se voit de
+   loin sous les néons, sans le signal. La feuille basse flotte, détachée des
+   bords, arrondie aux quatre coins. */
+[data-arrondi='R2'] {
+  --radius-block: 16px;
+  --radius-sheet: 26px;
+  --r-group: 20px;
+  --r-plate: 24px;
+  --r-hl: 14px;
+  --list-inset: 16px;
+  --list-gap: 8px;
+}
+[data-arrondi='R2'] .ui-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--list-gap);
+  padding-inline: var(--list-inset);
+  border-top-width: 0;
+}
+[data-arrondi='R2'] .ui-list .ui-row {
+  border-bottom-width: 0;
+  border-radius: var(--r-group);
+  background-color: var(--surface);
+}
+[data-arrondi='R2'] .ui-list > .ui-row:has(.ui-row-hit:active),
+[data-arrondi='R2'] .ui-list > .ui-row.ui-row-hit:active {
+  background-color: var(--color-line);
+}
+/* Ligne courante : sa bulle prend un contour blanc cassé franc. */
+[data-arrondi='R2'] .ui-list > .ui-row:has(> .ui-row-hit[aria-current='true']) {
+  box-shadow: inset 0 0 0 1.5px var(--color-ink);
+}
+[data-arrondi='R2'] .ui-section {
+  padding-top: 30px;
+  padding-bottom: 10px;
+}
+[data-arrondi='R2'] .ui-note {
+  border-width: 0;
+  border-radius: var(--r-group);
+  background-color: var(--surface);
+  padding-inline: 18px;
+}
+[data-arrondi='R2'] .ui-note.ui-bleed {
+  margin-inline: var(--list-inset);
+}
+[data-arrondi='R2'] .ui-choice {
+  gap: 6px;
+}
+[data-arrondi='R2'] .ui-choice-opt {
+  border-radius: var(--r-hl);
+  padding-inline: 12px;
+  background-color: var(--surface);
+  text-decoration-line: none;
+}
+[data-arrondi='R2'] .ui-choice-opt[aria-checked='true'],
+[data-arrondi='R2'] .ui-nav-word[aria-current='page'] {
+  background-color: var(--color-ink);
+  color: var(--color-bg);
+  text-decoration-line: none;
+}
+[data-arrondi='R2'] .ui-nav-word {
+  border-radius: var(--r-hl);
+}
+[data-arrondi='R2'] .ui-num[aria-checked='true'] > span:first-child {
+  margin: 10px 4px 4px;
+  height: calc(100% - 14px);
+  border-radius: 12px;
+  background-color: var(--color-ink);
+  color: var(--color-bg);
+}
+[data-arrondi='R2'] .ui-num-bar {
+  display: none;
+}
+[data-arrondi='R2'] .ui-plate {
+  margin-inline: 12px;
+  border-radius: var(--r-plate);
+  background-color: var(--surface);
+  overflow: hidden;
+}
+[data-arrondi='R2'] .ui-band {
+  --band-pad: 16px;
+  padding-inline: 16px;
+}
+[data-arrondi='R2'] .ui-band-cell {
+  padding-right: 6px;
+}
+[data-arrondi='R2'] .ui-band-cell > :first-child {
+  border-radius: 12px;
+  background-color: var(--surface);
+  padding: 4px 8px;
+}
+[data-arrondi='R2'] .ui-band-cell[data-kind='now'] > :first-child {
+  box-shadow: inset 0 0 0 1.5px var(--color-ink);
+}
+[data-arrondi='R2'] .ui-band-cell[data-kind='todo'] > :first-child {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+[data-arrondi='R2'] .ui-band-cell > span[aria-hidden] {
+  display: none;
+}
+[data-arrondi='R2'] .ui-sheet-panel {
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  border-width: 0;
+  border-radius: var(--radius-sheet);
+}
+
+/* --- R3 · Doux --------------------------------------------------------------
+   Le rythme des listes reste (filets), mais les filets se retirent de 20 px des
+   deux bords et la ligne courante ou touchée prend une pastille arrondie
+   (rayon 12) posée derrière elle, sans rien déplacer. Rayons moyens partout :
+   10 px les boutons et champs, 12 px les plaques ; grand rayon en haut des
+   feuilles (22 px). Le choix en mots et le mot de navigation prennent la même
+   pastille, à la place du soulignement. */
+[data-arrondi='R3'] {
+  --radius-block: 10px;
+  --radius-sheet: 22px;
+  --r-group: 12px;
+  --r-plate: 12px;
+  --r-hl: 10px;
+  --surface: var(--color-raise);
+}
+[data-arrondi='R3'] .ui-sheet-panel {
+  --surface: var(--color-group-sheet);
+}
+[data-arrondi='R3'] .ui-list {
+  border-top-width: 0;
+}
+[data-arrondi='R3'] .ui-list .ui-row {
+  border-bottom-width: 0;
+}
+[data-arrondi='R3'] .ui-list > .ui-row + .ui-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 1px;
+  background-color: var(--color-line);
+}
+[data-arrondi='R3'] .ui-list > .ui-row::after {
+  content: '';
+  position: absolute;
+  inset: 3px 8px;
+  z-index: -1;
+  border-radius: 12px;
+  background-color: transparent;
+}
+[data-arrondi='R3'] .ui-list > .ui-row:has(> .ui-row-hit[aria-current='true'])::after {
+  background-color: var(--surface);
+}
+[data-arrondi='R3'] .ui-list > .ui-row:has(.ui-row-hit:active)::after,
+[data-arrondi='R3'] .ui-list > .ui-row.ui-row-hit:active::after {
+  background-color: var(--color-line);
+}
+/* Une pastille efface les filets qui la touchent. */
+[data-arrondi='R3'] .ui-list > .ui-row:has(> .ui-row-hit[aria-current='true'])::before,
+[data-arrondi='R3'] .ui-list > .ui-row:has(> .ui-row-hit[aria-current='true']) + .ui-row::before {
+  opacity: 0;
+}
+[data-arrondi='R3'] .ui-note {
+  border-width: 0;
+  border-radius: var(--r-group);
+  background-color: var(--surface);
+  padding-inline: 16px;
+}
+[data-arrondi='R3'] .ui-note.ui-bleed {
+  margin-inline: 8px;
+}
+[data-arrondi='R3'] .ui-choice-opt,
+[data-arrondi='R3'] .ui-nav-word {
+  border-radius: var(--r-hl);
+}
+[data-arrondi='R3'] .ui-choice-opt[aria-checked='true'],
+[data-arrondi='R3'] .ui-nav-word[aria-current='page'] {
+  background-color: var(--color-group);
+  text-decoration-line: none;
+}
+[data-arrondi='R3'] .ui-num[aria-checked='true'] > span:first-child {
+  margin: 10px 3px 4px;
+  height: calc(100% - 14px);
+  border-radius: var(--r-hl);
+  background-color: var(--color-line);
+}
+[data-arrondi='R3'] .ui-num-bar {
+  display: none;
+}
+[data-arrondi='R3'] .ui-plate {
+  margin-inline: 8px;
+  border-radius: var(--r-plate);
+  overflow: hidden;
+}
+[data-arrondi='R3'] .ui-band-cell[data-kind='now'] > :first-child {
+  margin-left: -8px;
+  padding-left: 8px;
+  border-radius: var(--r-hl);
+  background-color: var(--color-raise);
+}
+[data-arrondi='R3'] .ui-band-cell > span[aria-hidden] {
+  border-radius: 2px;
 }

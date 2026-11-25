@@ -71,7 +71,7 @@ export function ScreenHeader({
 /** Titre de section : phrase en casse normale, jamais de surtitre en majuscules. */
 export function SectionTitle({ children, aside, id }: { children: ReactNode; aside?: ReactNode; id?: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 px-5 pb-2 pt-6">
+    <div className="ui-section flex items-baseline justify-between gap-3 px-5 pb-2 pt-6">
       <h2 id={id} className="text-[17px] font-semibold text-ink">
         {children}
       </h2>
@@ -147,14 +147,14 @@ export function Row({
   const bare = !meta && value === undefined && valueMeta === undefined;
   const cls = `flex min-h-14 min-w-0 flex-1 ${bare ? 'items-center' : 'items-start'} gap-3 py-3 text-left`;
   return (
-    <li className="relative flex items-center gap-3 border-b border-line px-5">
+    <li className="ui-row relative flex items-center gap-3 border-b border-line px-5">
       {onClick ? (
         <button
           type="button"
           onClick={onClick}
           aria-label={ariaLabel}
           aria-current={current ? 'true' : undefined}
-          className={`${cls} active:opacity-70`}
+          className={`ui-row-hit ${cls} active:opacity-70`}
         >
           {body}
         </button>
@@ -169,7 +169,7 @@ export function Row({
 /** Liste de `Row`, filet en tête. */
 export function List({ children, label }: { children: ReactNode; label?: string }) {
   return (
-    <ul aria-label={label} className="border-t border-line">
+    <ul aria-label={label} className="ui-list border-t border-line">
       {children}
     </ul>
   );

@@ -18,7 +18,7 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className="flex min-h-14 w-full items-center gap-4 border-b border-line px-5 py-3 text-left"
+      className="ui-row ui-row-hit flex min-h-14 w-full items-center gap-4 border-b border-line px-5 py-3 text-left"
     >
       <span className="min-w-0 flex-1">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
@@ -28,7 +28,7 @@ export function Switch({
       </span>
       <span aria-hidden className={`relative h-7 w-12 flex-none rounded-block border ${checked ? 'border-ink bg-ink' : 'border-muted'}`}>
         <span
-          className={`absolute left-[3px] top-[3px] h-5 w-5 rounded-[3px] transition-transform duration-150 ease-out ${
+          className={`ui-knob absolute left-[3px] top-[3px] h-5 w-5 rounded-[3px] transition-transform duration-150 ease-out ${
             checked ? 'translate-x-5 bg-bg' : 'bg-muted'
           }`}
         />
@@ -69,7 +69,7 @@ export function Stepper({
   return (
     // Sous 350 px, le libellé prend sa ligne et les boutons passent dessous, à
     // droite : à côté d'eux, il ne lui restait que 70 px (« Pas de / la / règle »).
-    <div className="flex min-h-16 items-center gap-3 border-b border-line px-5 py-2 max-[349px]:flex-wrap max-[349px]:gap-y-2">
+    <div className="ui-row ui-stepper flex min-h-16 items-center gap-3 border-b border-line px-5 py-2 max-[349px]:flex-wrap max-[349px]:gap-y-2">
       <span className="min-w-0 flex-1 max-[349px]:basis-full">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
         {meta && <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>}
@@ -110,7 +110,7 @@ export function Choice<T extends string | number>({
   className?: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className={`flex gap-x-1 ${wrap ? 'flex-wrap' : 'flex-nowrap whitespace-nowrap'} ${className}`}>
+    <div role="radiogroup" aria-label={label} className={`ui-choice flex gap-x-1 ${wrap ? 'flex-wrap' : 'flex-nowrap whitespace-nowrap'} ${className}`}>
       {options.map((o) => {
         const sel = o.value === value;
         return (
@@ -120,7 +120,7 @@ export function Choice<T extends string | number>({
             role="radio"
             aria-checked={sel}
             onClick={() => onChange(o.value)}
-            className={`h-11 flex-none px-2.5 text-[16px] ${
+            className={`ui-choice-opt h-11 flex-none px-2.5 text-[16px] ${
               sel ? 'font-semibold text-ink underline decoration-2 underline-offset-[7px]' : 'text-muted active:text-ink'
             }`}
           >

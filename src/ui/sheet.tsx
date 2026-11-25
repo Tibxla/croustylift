@@ -125,7 +125,7 @@ export function Sheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby={id}
-        className="ui-sheet absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-sheet border-t border-line bg-raise"
+        className="ui-sheet ui-sheet-panel absolute inset-x-0 bottom-0 flex max-h-[min(80dvh,720px)] flex-col rounded-t-sheet border-t border-line bg-raise"
       >
         {/* Le titre passe à la ligne plutôt que d'être coupé (un nom d'exo long
             avec le côté, à 360 px) ; sa première ligne reste au niveau de

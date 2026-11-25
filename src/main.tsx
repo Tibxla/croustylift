@@ -10,12 +10,16 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { initServiceWorker, requestReload } from './pwa/register'
 import { watchRecoveryLink } from './pwa/recovery-watch'
 import { applyStoredReglages } from './settings/reglages'
+import { applyArrondi } from './ui/arrondi'
+import { ProtoBar } from './features/capture/prototype-saisie/ProtoGate'
 import { DiagPanel } from './viewport/DiagPanel'
 import { startViewportWatch } from './viewport/watch'
 
 // Couleur de signal et mouvement choisis (Réglages), posés sur :root avant le
 // premier rendu : aucun écran ne s'affiche d'abord dans les valeurs par défaut.
 applyStoredReglages()
+// PROTOTYPE JETABLE : traitement d'arrondi (`?arrondi=`), posé sur <html> lui aussi.
+applyArrondi()
 
 // Hors de l'arbre React : ces deux services vivent autant que la page et ne
 // doivent pas dépendre d'un écran monté (login, premier lancement, erreur).
@@ -44,5 +48,7 @@ createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
     {/* Hors de la frontière d'erreur : le relevé reste ouvrable sur un écran planté. */}
     <DiagPanel />
+    {/* PROTOTYPE JETABLE : barre de bascule, sur toutes les surfaces. */}
+    <ProtoBar />
   </StrictMode>,
 )

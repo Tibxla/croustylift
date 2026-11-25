@@ -140,7 +140,7 @@ export function ReorderRow({
   const btn =
     'ui-press h-11 flex-none rounded-block border-[1.5px] border-ink bg-raise px-3 text-[15px] font-semibold text-ink active:bg-line disabled:border-line disabled:bg-transparent disabled:text-faint';
   return (
-    <li className="relative flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
+    <li className="ui-row relative flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
       <span className="tnum w-6 flex-none text-[15px] text-faint">{rank}</span>
       <span className="min-w-0 flex-1">
         <span className={`block break-words text-[17px] leading-[1.25] text-ink ${moved ? 'font-semibold' : 'font-medium'}`}>{title}</span>
@@ -487,7 +487,7 @@ export interface PlanFlash {
 export function StatusLine({ flash, onUnarchive }: { flash: PlanFlash; onUnarchive?: () => Promise<void> }) {
   const write = useWrite();
   return (
-    <div role="status" className="mx-5 mb-4 flex flex-wrap items-center justify-between gap-x-4 border-y border-line py-1.5">
+    <div role="status" className="ui-note mx-5 mb-4 flex flex-wrap items-center justify-between gap-x-4 border-y border-line py-1.5">
       <p className="min-w-0 py-1.5 text-[15px] leading-[1.45] text-ink">{write.error ? `Erreur : ${write.error}` : flash.text}</p>
       {flash.unarchive && onUnarchive && (
         <TextLink

@@ -64,7 +64,7 @@ export function BlockComparisonPanel({ exerciseId }: { exerciseId: string }) {
   if (state.phase === 'offline') return <OfflineState surface="La comparaison des blocs" />;
   if (state.phase === 'error') {
     return (
-      <p role="alert" className="mx-5 mt-4 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+      <p role="alert" className="ui-note mx-5 mt-4 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
         <span className="font-semibold">Erreur : </span>Impossible de charger les blocs : {state.message}
       </p>
     );

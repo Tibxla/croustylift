@@ -30,7 +30,7 @@ export function Alert({
   className?: string;
 }) {
   return (
-    <p id={id} role={role} className={`break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink ${className}`}>
+    <p id={id} role={role} className={`ui-note break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink ${className}`}>
       {label && <span className="font-semibold">{label} : </span>}
       {children}
     </p>

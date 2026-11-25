@@ -125,13 +125,13 @@ function RefusedList() {
               {gone}
             </p>
           )}
-          <ul aria-label="Saisies refusées" className="border-t border-line">
+          <ul aria-label="Saisies refusées" className="ui-list border-t border-line">
             {entries.map((entry) => {
               const t = describeRefusal(entry, lookup);
               const taken = abandonWarning(entry);
               const when = fmtWhen(entry.at);
               return (
-                <li key={entry.refusalId} className="border-b border-line px-5 py-3">
+                <li key={entry.refusalId} className="ui-row border-b border-line px-5 py-3">
                   <p className="break-words text-[17px] font-medium leading-[1.3] text-ink">{t.what}</p>
                   {t.detail && <p className="mt-0.5 text-[14px] text-muted">{t.detail}</p>}
                   <p className="mt-0.5 text-[14px] text-faint">Refusée {when}</p>

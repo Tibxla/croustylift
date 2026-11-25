@@ -75,7 +75,7 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
             type="button"
             aria-current={active ? 'page' : undefined}
             onClick={() => onSelect(s.id)}
-            className={`h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
+            className={`ui-nav-word h-11 min-w-11 px-[9px] text-[15px] max-[349px]:px-1.5 max-[349px]:text-[14px] ${
               active ? 'font-semibold text-ink underline decoration-2 underline-offset-[7px]' : 'text-muted active:text-ink'
             }`}
           >

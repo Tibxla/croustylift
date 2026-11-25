@@ -134,7 +134,7 @@ export function HautA({ s, exercise, progress, index, exoPos, compact, tight, on
         </div>
       </header>
 
-      <Air min={tight ? 8 : 14} max={30} />
+      <Air min={tight ? 8 : compact ? 10 : 14} max={30} />
       <div>
         {bandSlot ?? (s.unilateral ? (
           <UniSetBand sets={progress.sets} setIds={progress.setIds} badges={s.badges} draft={draft} side={s.side ?? 'left'} plannedMax={s.plannedMax} onEdit={onEdit} />
@@ -145,7 +145,7 @@ export function HautA({ s, exercise, progress, index, exoPos, compact, tight, on
 
       {/* Le tableau de marque : l'e1RM de la série en cours, puis la dernière
           fois et le Record, chacun avec l'écart du brouillon en direct. */}
-      <Air min={tight ? 8 : 14} max={30} />
+      <Air min={tight ? 8 : compact ? 10 : 14} max={30} />
       <div data-zone="haut-fin" className={`mx-5 border-t border-line ${tight ? 'pt-2' : 'pt-3'}`}>
         <Score s={s} />
       </div>
@@ -224,12 +224,12 @@ export function PlanRow({
               role="radio"
               aria-checked={sel}
               onClick={() => n !== value && onPick(n)}
-              className="relative flex-none select-none"
+              className="ui-num relative flex-none select-none"
               style={{ flexBasis: `${100 / CELLS}%`, height, scrollSnapAlign: 'start' }}
             >
               <span className={`tnum flex h-full items-center justify-center text-[22px] tracking-[-0.01em] ${sel ? 'font-bold text-ink' : inPlan ? 'text-ink' : 'text-faint'}`}>{n}</span>
               {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
-              {sel && <span className="absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
+              {sel && <span className="ui-num-bar absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
               {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
             </button>
           );

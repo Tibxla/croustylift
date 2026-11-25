@@ -190,7 +190,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
 
       <section aria-labelledby="fin-mesures">
         <SectionTitle id="fin-mesures">Durée et cardio</SectionTitle>
-        <div className="border-t border-line">
+        <div className="ui-list border-t border-line">
           {durOpen ? (
             <>
               <Stepper
@@ -351,7 +351,7 @@ function ExoLine({ e, i }: { e: ExerciseRecap; i: number }) {
 /** Ligne de mesure repliée : libellé, méta, valeur, action à droite. */
 function MeasureLine({ label, meta, value, action }: { label: string; meta: string; value: ReactNode; action: ReactNode }) {
   return (
-    <div className="flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
+    <div className="ui-row flex min-h-16 items-center gap-3 border-b border-line px-5 py-2">
       <span className="min-w-0 flex-1">
         <span className="block text-[17px] font-medium text-ink">{label}</span>
         <span className="mt-0.5 block text-[14px] text-muted">{meta}</span>
@@ -425,7 +425,7 @@ function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week
         {context}
       </p>
       <Legend />
-      <ul aria-label="Séries par muscle, semaine" className="border-t border-line">
+      <ul aria-label="Séries par muscle, semaine" className="ui-list border-t border-line">
         {shown.map((r) => (
           <MuscleLine key={r.muscle} r={r} scale={scale} planKnown={week?.planned != null} />
         ))}
@@ -466,7 +466,7 @@ function MuscleLine({ r, scale, planKnown }: { r: WeekMuscleRow; scale: number; 
   const name = r.muscle.charAt(0).toUpperCase() + r.muscle.slice(1);
   return (
     <li
-      className="border-b border-line px-5 py-3"
+      className="ui-row border-b border-line px-5 py-3"
       aria-label={`${name} : ${tally(r.total)} séries cette semaine, dont ${tally(r.today)} aujourd’hui.${
         r.planned ? ` Prévu ${tally(r.planned.min)} à ${tally(r.planned.max)}, ${fit}.` : planKnown ? ' Hors du prévu de la routine.' : ''
       }`}
@@ -549,7 +549,7 @@ function SessionDone({
   return (
     <Screen bottom={<PrimaryButton onClick={onNewSession}>Nouvelle séance</PrimaryButton>}>
       <ScreenHeader title="Séance rangée" meta={`${recap.sessionName} · ${fmtDay(dateIso)}${span ? `, ${span}` : ''}`} />
-      <dl className="border-t border-line">
+      <dl className="ui-list border-t border-line">
         {values.durationMin !== undefined && <Fact label="Durée" value={fmtDur(values.durationMin)} />}
         <Fact
           label="Séries"
@@ -583,7 +583,7 @@ function SessionDone({
  *  au besoin, « nouveau record » dessous, la valeur à droite en signal. */
 function RecordFact({ r }: { r: RecapRecord }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+    <div className="ui-row flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
       <dt className="min-w-0">
         <span className="block break-words text-[16px] leading-[1.3] text-ink">
           {r.name}
@@ -600,7 +600,7 @@ function RecordFact({ r }: { r: RecapRecord }) {
 
 function Fact({ label, value, aside }: { label: string; value: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
+    <div className="ui-row flex min-h-12 items-center justify-between gap-4 border-b border-line px-5 py-2.5">
       <dt className="flex min-w-0 items-center gap-3">
         <span className="truncate text-[16px] text-muted">{label}</span>
         {aside && <span className="flex-none text-[14px]">{aside}</span>}

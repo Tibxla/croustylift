@@ -343,7 +343,7 @@ export function PastSessionEditor({
       bottom={
         <>
           {save.phase === 'error' && (
-            <p role="alert" className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+            <p role="alert" className="ui-note break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
               <span className="font-semibold">Erreur : </span>Corrections gardées sur l’appareil, pas encore en base : {save.message}
             </p>
           )}
@@ -359,7 +359,7 @@ export function PastSessionEditor({
       {metrics !== null && (
         <section aria-labelledby="corriger-mesures">
           <SectionTitle id="corriger-mesures">Durée et BPM</SectionTitle>
-          <div className="border-t border-line">
+          <div className="ui-list border-t border-line">
             <MeasureRuler
               label="Durée"
               noun="la durée"
@@ -459,7 +459,7 @@ export function PastSessionEditor({
             Elles quittent le journal, les courbes et les records. La suppression ne se défait pas.
           </p>
           {del.phase === 'error' && (
-            <p role="alert" className="mt-3 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+            <p role="alert" className="ui-note mt-3 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
               <span className="font-semibold">Erreur : </span>Suppression gardée sur l’appareil, pas encore en base : {del.message}
             </p>
           )}
@@ -521,7 +521,7 @@ function EditorFrame({ children, bottom }: { children: React.ReactNode; bottom?:
 
 function Alert({ children }: { children: React.ReactNode }) {
   return (
-    <p role="alert" className="mx-5 mt-2 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+    <p role="alert" className="ui-note mx-5 mt-2 break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
       <span className="font-semibold">Erreur : </span>{children}
     </p>
   );
@@ -565,7 +565,7 @@ function MeasureRuler({
 }) {
   if (!on) {
     return (
-      <div className="flex min-h-14 items-center gap-3 border-b border-line px-5 py-2">
+      <div className="ui-row flex min-h-14 items-center gap-3 border-b border-line px-5 py-2">
         <span className="min-w-0 flex-1">
           <span className="block text-[17px] font-medium text-ink">{label}</span>
           <span className="mt-0.5 block text-[14px] text-muted">{none}</span>
@@ -640,7 +640,7 @@ function ExerciseSets({
       <SectionTitle aside={removed > 0 ? `${removed} ligne${removed > 1 ? 's' : ''} retirée${removed > 1 ? 's' : ''}` : undefined}>
         {exercise.name}
       </SectionTitle>
-      <ul aria-label={`Séries de ${exercise.name}`} className="border-t border-line">
+      <ul aria-label={`Séries de ${exercise.name}`} className="ui-list border-t border-line">
         {logicalSets.map((logical, index) => (
           <LogicalSetRows
             key={logical.both?.id ?? `${logical.left?.id ?? 'l'}-${logical.right?.id ?? 'r'}`}
@@ -659,7 +659,7 @@ function ExerciseSets({
             }
           />
         ))}
-        <li className="border-b border-line">
+        <li className="ui-row border-b border-line">
           <button type="button" onClick={onAddSet} className="flex min-h-14 w-full items-center gap-3 px-5 text-left text-[16px] text-ink active:opacity-70">
             <Icon name="plus" />
             Ajouter une série
@@ -689,7 +689,7 @@ function LogicalSetRows({
         const tag = change(set);
         const meta = [side, tag].filter(Boolean).join(' · ');
         return (
-          <li key={set.id} className="border-b border-line px-5">
+          <li key={set.id} className="ui-row border-b border-line px-5">
             <button
               type="button"
               onClick={() => onOpen(set)}

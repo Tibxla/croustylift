@@ -104,7 +104,7 @@ export function ExercisePage({
       />
 
       {!lead || !point || !selCurve ? (
-        <p className="mx-5 border-y border-line py-10 text-[17px] leading-[1.45] text-muted">
+        <p className="ui-note mx-5 border-y border-line py-10 text-[17px] leading-[1.45] text-muted">
           Aucune courbe : toutes les 1ʳᵉˢ séries sont à 0 kg. La courbe partira de la première série chargée.
         </p>
       ) : (
@@ -318,15 +318,15 @@ function PointSets({
         Séries du {date}
       </SectionTitle>
       {phase === 'loading' ? (
-        <p role="status" className="border-t border-line px-5 py-3 text-[15px] text-muted">
+        <p role="status" className="ui-note ui-bleed border-t border-line px-5 py-3 text-[15px] text-muted">
           Chargement des séries…
         </p>
       ) : phase === 'offline' ? (
-        <p role="status" className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+        <p role="status" className="ui-note ui-bleed border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
           Les séries se lisent avec le réseau. La courbe, elle, est là.
         </p>
       ) : !exec ? (
-        <p className="border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
+        <p className="ui-note ui-bleed border-t border-line px-5 py-3 text-[15px] leading-[1.45] text-muted">
           Séries indisponibles pour l’instant.
         </p>
       ) : (

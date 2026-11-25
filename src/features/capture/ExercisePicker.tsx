@@ -153,7 +153,7 @@ export function ExercisePicker({
           // Entre deux filets, sans trait latéral (plancher : aucune barre sur
           // un seul côté d'un bloc) : le filet haut ici, le bas est celui qui
           // ouvre la liste juste dessous (un seul trait, pas deux).
-          <div role="status" className="mx-5 border-t border-line pb-4 pt-3">
+          <div role="status" className="ui-note mx-5 border-t border-line pb-4 pt-3">
             <p className="text-[15px] leading-[1.45] text-ink">Cette séance date d’{staleSince} et n’a pas été terminée.</p>
             <p className="mt-1 text-[14px] leading-[1.45] text-muted">
               {canFinish
@@ -505,7 +505,7 @@ function CatalogList({
       )}
       {loadError ? (
         <div role="alert" className="px-5 py-4">
-          <p className="break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
+          <p className="ui-note break-words border-y border-line py-3 text-[15px] leading-[1.45] text-ink">
             <span className="font-semibold">Erreur : </span>
             {loadError}
           </p>

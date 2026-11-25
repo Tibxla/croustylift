@@ -67,14 +67,17 @@ function LineBand({ s, progress, onEdit }: Pick<VariantProps, 's' | 'progress' |
     // Calée sur une case entière : la série d'avant-hier, d'hier, puis l'en cours.
     const first = el?.children[Math.max(0, nowIndex - 2)] as HTMLElement | undefined;
     if (!el || !first) return;
-    el.scrollLeft = first.offsetLeft - 20;
+    // Mesuré depuis la première case : vrai quelle que soit la marge que
+    // l'arrondi donne à la bande (`?arrondi=`, index.css).
+    const start = el.children[0] as HTMLElement;
+    el.scrollLeft = first.offsetLeft - start.offsetLeft;
   }, [nowIndex, cells.length]);
 
   return (
     <ol
       ref={band}
-      className="flex overflow-x-auto px-5"
-      style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollPaddingLeft: 20 }}
+      className="ui-band relative flex overflow-x-auto px-5"
+      style={{ scrollbarWidth: 'none', scrollSnapType: 'x mandatory', scrollPaddingLeft: 'var(--band-pad, 20px)' }}
       aria-label="Séries de cet exo"
     >
       {cells.map((c) => {
@@ -106,7 +109,7 @@ function LineBand({ s, progress, onEdit }: Pick<VariantProps, 's' | 'progress' |
         );
         const underline = c.kind === 'now' ? 'h-[3px] bg-ink' : c.kind === 'done' ? 'h-px bg-muted' : 'h-px bg-line';
         return (
-          <li key={c.key} className="relative min-w-0" style={{ flex: `0 0 ${100 / perView}%`, scrollSnapAlign: 'start' }}>
+          <li key={c.key} data-kind={c.kind} className="ui-band-cell relative min-w-0" style={{ flex: `0 0 ${100 / perView}%`, scrollSnapAlign: 'start' }}>
             {c.kind === 'done' && c.id ? (
               <button
                 type="button"
@@ -136,13 +139,13 @@ function BasAere({ s, exercise, compact, tight }: VariantProps) {
   const gap = tight ? 8 : compact ? 10 : 14;
   return (
     <div data-zone="bas" className="flex flex-col" style={{ gap }}>
-      <div data-plate="poids" className={`bg-raise ${tight ? 'pt-2' : 'pt-3'} pb-1.5`}>
+      <div data-plate="poids" className={`ui-plate bg-raise ${tight ? 'pt-2' : 'pt-3'} pb-1.5`}>
         <ProtoWeight value={s.weightKg} onChange={s.setWeight} size={tight ? 52 : compact ? (s.unilateral ? 56 : 64) : 72} unit="block" />
         <div className={tight ? 'mt-1' : 'mt-2'}>
           <WeightRuler weightKg={s.weightKg} onChange={s.setWeight} stepKg={s.stepKg} height={tight ? 44 : compact ? 48 : 58} compact={compact} />
         </div>
       </div>
-      <div data-plate="reps" className="bg-raise py-1">
+      <div data-plate="reps" className="ui-plate bg-raise py-1">
         <PlanRow
           key={`reps-${s.draftKey}`}
           label="Reps"
@@ -155,7 +158,7 @@ function BasAere({ s, exercise, compact, tight }: VariantProps) {
           height={rowH}
         />
       </div>
-      <div data-plate="rir" className="bg-raise py-1">
+      <div data-plate="rir" className="ui-plate bg-raise py-1">
         <PlanRow
           key={`rir-${s.draftKey}`}
           label="RIR"
@@ -176,9 +179,12 @@ export function VariantA4(p: VariantProps) {
   return (
     <div className="flex flex-1 flex-col pt-1">
       <HautA {...p} bandSlot={<LineBand s={p.s} progress={p.progress} onEdit={p.onEdit} />} />
-      <Air min={p.tight ? 8 : 14} max={9999} />
+      {/* Écran bas (≤ 800 px) : airs minimaux de 10 et 4 px. À 393 × 793 avec
+          l'écart de navigation de l'app installée (14 px), 14 et 8 faisaient
+          défiler l'instrument de 13 px (mesuré au tour des arrondis, 25/11). */}
+      <Air min={p.tight ? 8 : p.compact ? 10 : 14} max={9999} />
       <BasAere {...p} />
-      <Air min={p.tight ? 4 : 8} max={12} />
+      <Air min={p.tight || p.compact ? 4 : 8} max={12} />
     </div>
   );
 }

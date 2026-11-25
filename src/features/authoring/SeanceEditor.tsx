@@ -782,7 +782,7 @@ export function SeanceEditorView({
         />
       ) : (
         <>
-          <ul aria-label="Exos de la séance" className="border-t border-line">
+          <ul aria-label="Exos de la séance" className="ui-list border-t border-line">
             {rows.map((row, i) => {
               if (reorder) {
                 return (
@@ -925,12 +925,12 @@ function ItemBlock({
   const name = row.exerciseName;
   const hasNote = !isBlankNote(note);
   return (
-    <li id={`exo-${row.rowId}`} className="relative scroll-mt-[calc(var(--safe-top)+0.5rem)] border-b border-line">
+    <li id={`exo-${row.rowId}`} className="ui-row relative scroll-mt-[calc(var(--safe-top)+0.5rem)] border-b border-line">
       <button
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex min-h-16 w-full items-start gap-3 px-5 py-3 text-left active:opacity-70"
+        className="ui-row-hit flex min-h-16 w-full items-start gap-3 px-5 py-3 text-left active:opacity-70"
       >
         <span className="tnum w-6 flex-none pt-px text-[15px] text-faint">{rank}</span>
         <span className="min-w-0 flex-1">
@@ -1032,7 +1032,7 @@ function CountSection({ rows, savedRows, dirty }: { rows: EditorRow[]; savedRows
     <section aria-label="Décompte des séries prévues">
       <SectionTitle aside={dirty && total !== totalBefore ? `${total} au total · avant ${totalBefore}` : `${total} au total`}>Séries prévues</SectionTitle>
       {muscles.length === 0 ? (
-        <p className="border-t border-line px-5 pt-2.5 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
+        <p className="ui-note ui-bleed border-t border-line px-5 pt-2.5 text-[14px] text-muted">Aucun muscle principal renseigné sur ces exos.</p>
       ) : (
         <dl className="grid grid-cols-2 border-t border-line">
           {muscles.map((m, i) => {
@@ -1131,7 +1131,7 @@ function CatalogSheet({
         />
       </div>
       {shown.length === 0 ? (
-        <p className="border-t border-line px-5 py-6 text-[15px] text-muted">
+        <p className="ui-note ui-bleed border-t border-line px-5 py-6 text-[15px] text-muted">
           Aucun exo ne correspond{q.trim() ? ` à « ${q.trim()} »` : ''}
           {muscle !== ALL ? ` dans ${muscleLabel(muscle)}` : ''}.
         </p>

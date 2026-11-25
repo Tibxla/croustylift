@@ -484,7 +484,7 @@ function Catalogue({
           {personal.length ? (
             <List label="Tes exos">{personal.map(row)}</List>
           ) : (
-            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">
+            <p className="ui-note ui-bleed border-t border-line px-5 py-3 text-[15px] text-muted">
               {filtered ? 'Aucun de tes exos ne correspond.' : 'Pas encore d’exo perso. Le bouton du bas en crée un.'}
             </p>
           )}
@@ -492,7 +492,7 @@ function Catalogue({
           {base.length ? (
             <List label="Catalogue commun">{base.map(row)}</List>
           ) : (
-            <p className="border-t border-line px-5 py-3 text-[15px] text-muted">Aucun exo de base ne correspond.</p>
+            <p className="ui-note ui-bleed border-t border-line px-5 py-3 text-[15px] text-muted">Aucun exo de base ne correspond.</p>
           )}
           <p className="px-5 pt-3 text-[14px] leading-[1.45] text-faint">
             Un exo de base se personnalise pour toi seul : le catalogue commun ne change pas pour les autres.
@@ -611,7 +611,7 @@ function Fiche({
 
       {flash && <Flash>{flash}</Flash>}
 
-      <div className="border-t border-line">
+      <div className="ui-list border-t border-line">
         <Line label="Muscles">{musclesOf(exo).map((m) => keepTogether(capitalize(m))).join(', ') || 'aucun'}</Line>
         <Line label="Mouvement" sub={exo.unilateral ? 'un côté à la fois, gauche et droite saisis à part' : undefined}>
           {exo.unilateral ? 'unilatéral' : 'bilatéral'}
@@ -695,7 +695,7 @@ function Fiche({
               <p className="mt-1 text-muted">Ton nom, tes muscles et ton réglage du mouvement sont retirés. Ta note et ton historique restent.</p>
             </Confirm>
           ) : guard === 'delete' && usedIn.length > 0 ? (
-            <div role="alert" className="mx-5 border-y border-line py-3">
+            <div role="alert" className="ui-note mx-5 border-y border-line py-3">
               <p className="text-[15px] leading-[1.45] text-ink">
                 Il figure dans {usedIn.join(', ')} : retire-le d’abord de {usedIn.length > 1 ? 'ces séances' : 'cette séance'}.
               </p>
@@ -750,7 +750,7 @@ function Page({ children, bottom }: { children: ReactNode; bottom?: ReactNode })
 /** Ligne de la fiche : libellé gris à gauche, valeur à droite. */
 function Line({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="flex min-h-12 items-baseline justify-between gap-4 border-b border-line px-5 py-3">
+    <div className="ui-row flex min-h-12 items-baseline justify-between gap-4 border-b border-line px-5 py-3">
       <span className="flex-none text-[16px] text-muted">{label}</span>
       <span className="min-w-0 text-right">
         <span className="block text-[16px] text-ink first-letter:uppercase">{children}</span>

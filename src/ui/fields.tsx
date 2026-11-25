@@ -43,7 +43,7 @@ export function Notice({
   className?: string;
 }) {
   return (
-    <div role={role} className={`border-y border-line py-3 ${className}`}>
+    <div role={role} className={`ui-note border-y border-line py-3 ${className}`}>
       {title && <p className="text-[16px] font-semibold leading-[1.35] text-ink">{title}</p>}
       {children && <div className={`${title ? 'mt-1' : ''} text-[15px] leading-[1.45] text-muted`}>{children}</div>}
       {actions && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">{actions}</div>}
@@ -248,7 +248,7 @@ export function CheckBox({ checked }: { checked: boolean }) {
   return (
     <span
       aria-hidden
-      className={`flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[4px] border ${
+      className={`ui-check flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[4px] border ${
         checked ? 'border-ink bg-ink text-bg' : 'border-muted'
       }`}
     >

@@ -203,7 +203,7 @@ export function NumberRow({
                 pickedHere.current = true;
                 onPick(n);
               }}
-              className={`relative flex-none select-none ${compact ? 'h-11' : 'h-12'}`}
+              className={`ui-num relative flex-none select-none ${compact ? 'h-11' : 'h-12'}`}
               // 1/8 de la largeur de la rangée (le pourcentage se lit sur la boîte
               // de contenu, marges d'écran de 20 px déduites).
               style={{ flexBasis: 'calc((100% + 40px) / 8)', minWidth: 44, scrollSnapAlign: 'center' }}
@@ -216,7 +216,7 @@ export function NumberRow({
                 {n}
               </span>
               {inPlan && <span className="absolute inset-x-0 bottom-0 h-px bg-dim" />}
-              {sel && <span className="absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
+              {sel && <span className="ui-num-bar absolute inset-x-2 bottom-0 h-[4px] bg-ink" />}
               {refValue === n && <span className="absolute left-1/2 top-1 h-[5px] w-[5px] -translate-x-1/2 bg-muted" />}
             </button>
           );

@@ -137,7 +137,7 @@ export function ExerciseForm({
       />
 
       <div
-        className="mt-2 flex min-h-14 flex-wrap items-center justify-between gap-x-3 border-b border-line py-1.5 pl-5 pr-2.5"
+        className="ui-row mt-2 flex min-h-14 flex-wrap items-center justify-between gap-x-3 border-b border-line py-1.5 pl-5 pr-2.5"
       >
         <span className="min-w-0">
           <span className="block text-[15px] font-semibold text-ink">Mouvement</span>

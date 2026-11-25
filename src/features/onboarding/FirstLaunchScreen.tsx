@@ -113,7 +113,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
           />
 
           <SectionTitle id="depart-titre">Point de départ</SectionTitle>
-          <div role="radiogroup" aria-labelledby="depart-titre" className="border-t border-line">
+          <div role="radiogroup" aria-labelledby="depart-titre" className="ui-list border-t border-line">
             <StartOption
               selected={withTemplate}
               title="Modèle de départ"
@@ -121,7 +121,7 @@ export function FirstLaunchView({ onCreate }: FirstLaunchViewProps) {
               onSelect={() => setWithTemplate(true)}
             />
             {withTemplate && (
-              <div className="border-b border-line">
+              <div className="ui-row border-b border-line">
                 <ol aria-label="Exercices du modèle" className="py-1.5 pl-[62px] pr-5">
                   {STARTER_TEMPLATE.exercises.map(({ name, prescription: p }) => (
                     <li key={name} className="flex items-baseline justify-between gap-3 py-1 text-[15px] leading-[1.3]">
@@ -191,7 +191,7 @@ function StartOption({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className="flex min-h-16 w-full items-start gap-4 border-b border-line px-5 py-3.5 text-left active:bg-line"
+      className="ui-row ui-row-hit flex min-h-16 w-full items-start gap-4 border-b border-line px-5 py-3.5 text-left active:bg-line"
     >
       <span className="pt-0.5">
         <RadioMark checked={selected} />

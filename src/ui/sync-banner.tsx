@@ -27,13 +27,13 @@ export function SyncBanner({
   );
   if (!action) {
     return (
-      <div role="status" className="flex items-baseline gap-2 whitespace-nowrap border-y border-line px-5 py-2 text-[14px]">
+      <div role="status" className="ui-note ui-bleed flex items-baseline gap-2 whitespace-nowrap border-y border-line px-5 py-2 text-[14px]">
         {content}
       </div>
     );
   }
   return (
-    <div role="status" className="border-y border-line">
+    <div role="status" className="ui-note ui-bleed overflow-hidden border-y border-line">
       <button
         type="button"
         onClick={action.onClick}
