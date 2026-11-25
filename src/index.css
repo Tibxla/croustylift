@@ -50,9 +50,12 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* Hauteur de la ligne des cinq surfaces, en haut de l'écran (shell, App.tsx). */
-  /* Marge haute de la ligne de navigation sous une encoche (SurfaceNav) : hors
-     du flou que iOS 26 pose sous la barre d'état. Nulle sans encoche. */
-  --nav-gap: min(var(--safe-top), 14px);
+  /* Marge haute de la ligne de navigation (SurfaceNav) dans l'app installée :
+     hors du flou que iOS 26 pose en haut de la webview. Elle ne dépend PAS de
+     l'encoche : depuis iOS 26.1, l'app installée peut s'ouvrir SOUS la barre
+     d'état avec safe-top à 0 (WebKit 301994), et le flou reste là. Nulle dans
+     un onglet de navigateur. */
+  --nav-gap: 0px;
   --nav-height: calc(3rem + var(--nav-gap));
 }
 
@@ -139,6 +142,11 @@ body {
   pointer-events: none;
 }
 
+@media (display-mode: standalone) {
+  :root {
+    --nav-gap: 14px;
+  }
+}
 .pt-safe-nav {
   height: var(--nav-height);
   padding-top: var(--nav-gap);

@@ -20,9 +20,10 @@
 // HAUT DE L'ÉCRAN (iPhone, iOS 26) : en app installée, iOS floute le haut de la
 // webview sur une bande qui dépasse la barre d'état d'une quinzaine de points
 // (effet de bord de défilement du système, pas notre bande `.safe-top-scrim`).
-// Collés sous l'encoche, les mots tombaient dans ce flou. Sous une encoche, la
-// ligne prend donc `--nav-gap` de plus en haut (`.pt-safe-nav`, index.css) ;
-// sans encoche, rien ne change.
+// Collés en haut, les mots tombaient dans ce flou. Dans l'app installée, la
+// ligne prend donc `--nav-gap` de plus en haut (`.pt-safe-nav`, index.css),
+// encoche ou non (iOS 26.1 peut ouvrir la webview sous la barre d'état, safe-top
+// à 0) ; dans un onglet de navigateur, rien ne change.
 //
 // DIAGNOSTIC : un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage
 // (registre R4, src/viewport/). C'est le seul geste disponible sur tous les
