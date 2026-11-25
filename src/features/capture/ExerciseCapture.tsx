@@ -8,6 +8,14 @@
 // l'écart à la Référence et le record, puis reps et RIR en un tap. La barre du
 // bas (Sommaire, Annuler, Exo suivant, Logger) vit dans CaptureScreen.
 //
+// RYTHME VERTICAL (retour du 25/11, « tout est serré ») : cinq groupes, les
+// repères de l'exo, la Référence avec le poids et la règle, les mesures, Reps,
+// RIR. L'instrument est une colonne qui remplit la hauteur au-dessus de la barre
+// du pouce, et la hauteur libre se répartit à parts égales ENTRE les groupes
+// (`Air`), plafonnée ; à l'intérieur d'un groupe, les écarts restent fixes. Sur un
+// écran bas, il n'y a rien à répartir : les planchers sont les écarts d'avant,
+// et la rangée RIR reste au-dessus de la barre sans défiler.
+//
 // Toucher une case loggée de la bande ouvre la feuille de correction de CETTE
 // série (SetEditSheet) ; ses gestes (corriger, supprimer) remontent au parent,
 // qui les écrit. La feuille est rendue hors de la zone de saisie : ses
@@ -369,13 +377,20 @@ export function ExerciseCapture({
   const doneSides = unilateral ? sidesDoneAt(progress.sets, currentOrder) : [];
   const doneRank = slotOfOrder(progress.sets, currentOrder) + 1;
 
+  // Air entre les groupes (cf. `Air`) : les planchers sont les écarts des paliers
+  // bas, qui tiennent la rangée RIR au-dessus de la barre du pouce.
+  const groupGap = compact ? 4 : 8;
+
   return (
-    <div className="pt-1">
+    // Colonne qui prend toute la hauteur au-dessus de la barre du pouce : la
+    // hauteur libre se répartit entre les groupes (`Air`) au lieu de s'entasser
+    // sous la rangée RIR. Écran très bas : sans marge haute (2 × 4 px rendus).
+    <div className={`flex flex-1 flex-col ${tight ? '' : 'pt-1'}`}>
       <ExerciseIndex items={index} activeId={exercise.exerciseId} onPick={onPick} />
 
       {/* Nom et UNE ligne : le plan, puis le bilan dès le minimum de séries (il
           rouvre le récap). Notes à droite, sans hauteur en plus. */}
-      <div className="relative px-5 pt-1">
+      <div className={`relative px-5 ${tight ? '' : 'pt-1'}`}>
         {/* Un nom long descend d'un cran plutôt que de pousser l'instrument sous la
             barre ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
@@ -444,7 +459,9 @@ export function ExerciseCapture({
         </div>
       </div>
 
-      <div className={compact ? 'mt-1' : 'mt-2'}>
+      {/* Repères de l'exo : l'index, le nom, puis la bande, un peu détachée. */}
+      <Air min={groupGap} max={16} grow={0.5} />
+      <div>
         {unilateral ? (
           <UniSetBand
             sets={progress.sets}
@@ -460,9 +477,15 @@ export function ExerciseCapture({
         )}
       </div>
 
+      {/* Unilatéral : le choix du côté suit la bande sans plancher (ses 44 px de
+          cible font déjà l'écart). */}
+      <Air min={unilateral ? 0 : groupGap} max={AIR_MAX} />
+
       {/* Toute interaction dans la zone de saisie marque le brouillon touché,
-          AVANT qu'une valeur soit validée (événements pris en capture). */}
-      <div onPointerDownCapture={touchDraft} onKeyDownCapture={touchDraft} onFocusCapture={touchDraft} onInputCapture={touchDraft}>
+          AVANT qu'une valeur soit validée (événements pris en capture). La zone
+          ne fait pas de boîte (`contents`) : ses groupes et l'air entre eux
+          restent des enfants de la colonne. */}
+      <div className="contents" onPointerDownCapture={touchDraft} onKeyDownCapture={touchDraft} onFocusCapture={touchDraft} onInputCapture={touchDraft}>
         {unilateral && currentSide ? (
           <div className="flex min-h-11 items-center justify-between gap-2 px-5">
             <div role="radiogroup" aria-label="Côté à logger" className="-ml-2.5 flex flex-none">
@@ -490,7 +513,7 @@ export function ExerciseCapture({
             <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} compact />
           </div>
         ) : (
-          <div className={`px-5 ${compact ? 'mt-1' : 'mt-2'}`}>
+          <div className="px-5">
             <RefValue rank={rank} refSet={refToBeat} hasReference={reference != null} />
           </div>
         )}
@@ -516,15 +539,14 @@ export function ExerciseCapture({
           />
         </div>
 
+        {/* Mesures : détachées des étiquettes de la règle dès qu'il y a la place. */}
+        <Air min={compact && !tight ? 2 : 0} max={AIR_MAX} />
+
         {/* Écran bas : libellé et chiffre sur une même ligne, en plus petit. */}
         {/* Écran bas : une ligne, sans « kg » (le libellé nomme la mesure) ; le
             milieu prend la place que les deux bords laissent, pour que « Écart
             e1RM » et son chiffre ne touchent pas « Record » (360 px). */}
-        <dl
-          className={`grid gap-3 px-5 ${
-            compact ? `grid-cols-[auto_minmax(0,1fr)_auto] ${tight ? '' : 'pt-0.5'}` : 'grid-cols-3'
-          }`}
-        >
+        <dl className={`grid gap-3 px-5 ${compact ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-3'}`}>
           <Measure
             compact={compact}
             label={livePerf?.label ?? 'e1RM'}
@@ -564,34 +586,39 @@ export function ExerciseCapture({
           </Measure>
         </dl>
 
-        <div className={`flex flex-col gap-0.5 ${compact ? 'mt-1' : 'mt-2'}`}>
-          {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
-          <NumberRow
-            key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
-            label="Reps"
-            min={1}
-            max={Math.max(REPS_ROW_MAX, reps, prescription.reps.max)}
-            value={reps}
-            presc={[prescription.reps.min, prescription.reps.max]}
-            refValue={refToBeat?.reps ?? null}
-            onPick={setReps}
-            compact={compact}
-          />
-          <NumberRow
-            key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
-            label="RIR"
-            min={0}
-            max={Math.max(RIR_ROW_MAX, rir, prescription.rir.max)}
-            value={rir}
-            presc={[prescription.rir.min, prescription.rir.max]}
-            refValue={refToBeat?.rir ?? null}
-            onPick={setRir}
-            compact={compact}
-            onLabel={openWords}
-            labelHint="RIR, ce que ça veut dire"
-          />
-        </div>
+        <Air min={groupGap} max={AIR_MAX} />
+
+        {/* Remontées à chaque exo, série et côté : elles repartent calées. */}
+        <NumberRow
+          key={`reps-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
+          label="Reps"
+          min={1}
+          max={Math.max(REPS_ROW_MAX, reps, prescription.reps.max)}
+          value={reps}
+          presc={[prescription.reps.min, prescription.reps.max]}
+          refValue={refToBeat?.reps ?? null}
+          onPick={setReps}
+          compact={compact}
+        />
+        <Air min={2} max={AIR_MAX} />
+        <NumberRow
+          key={`rir-${exercise.exerciseId}-${loggedCount}-${currentSide ?? ''}`}
+          label="RIR"
+          min={0}
+          max={Math.max(RIR_ROW_MAX, rir, prescription.rir.max)}
+          value={rir}
+          presc={[prescription.rir.min, prescription.rir.max]}
+          refValue={refToBeat?.rir ?? null}
+          onPick={setRir}
+          compact={compact}
+          onLabel={openWords}
+          labelHint="RIR, ce que ça veut dire"
+        />
       </div>
+
+      {/* Le reste de la hauteur, au-dessus de la barre du pouce : RIR s'en
+          détache autant que les groupes entre eux, sans plafond. */}
+      <Air min={0} />
 
       {editId !== null && progress.setIds.includes(editId) && (
         <SetEditSheet
@@ -641,6 +668,21 @@ export function ExerciseCapture({
       />
     </div>
   );
+}
+
+/** Plafond de l'air entre deux groupes : au-delà (grand écran, ordinateur), le
+ *  surplus reste au-dessus de la barre du pouce. */
+const AIR_MAX = 40;
+
+/** Air entre deux groupes de l'instrument : un plancher (l'écart des paliers bas,
+ *  qui tient la rangée RIR au-dessus de la barre du pouce sans défiler), puis une
+ *  part de la hauteur libre, plafonnée. Les parts sont égales (`grow` 1) : dès
+ *  qu'il y a de la place, les groupes s'espacent d'un même pas. Un écart
+ *  INTÉRIEUR à un groupe prend une demi-part et un plafond bas, pour rester
+ *  sous l'écart entre groupes. Aucune animation : la répartition suit la hauteur
+ *  de l'écran, pas les gestes. */
+function Air({ min, max, grow = 1 }: { min: number; max?: number; grow?: number }) {
+  return <div aria-hidden style={{ flex: `${grow} 0 0px`, minHeight: min, maxHeight: max }} />;
 }
 
 /** Une mesure sous la règle : son nom, puis le chiffre (sur la même ligne en
