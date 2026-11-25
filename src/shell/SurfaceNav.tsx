@@ -17,6 +17,13 @@
 // mot garde 44 px de large au moins (« Exos »). À partir de 380 px, la ligne
 // prend 11 px de marge : le premier mot commence à 20 px, comme les titres.
 //
+// HAUT DE L'ÉCRAN (iPhone, iOS 26) : en app installée, iOS floute le haut de la
+// webview sur une bande qui dépasse la barre d'état d'une quinzaine de points
+// (effet de bord de défilement du système, pas notre bande `.safe-top-scrim`).
+// Collés sous l'encoche, les mots tombaient dans ce flou. Sous une encoche, la
+// ligne prend donc `--nav-gap` de plus en haut (`.pt-safe-nav`, index.css) ;
+// sans encoche, rien ne change.
+//
 // DIAGNOSTIC : un appui long de 1,5 s sur la ligne ouvre le relevé d'affichage
 // (registre R4, src/viewport/). C'est le seul geste disponible sur tous les
 // écrans de l'app installée, qui n'a pas de barre d'adresse pour `?diag=1`. Le
@@ -38,7 +45,7 @@ export function SurfaceNav({ current, onSelect }: { current: SurfaceName; onSele
   return (
     <nav
       aria-label="Surfaces"
-      className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2 min-[380px]:px-[11px]"
+      className="mx-auto flex h-12 w-full max-w-md flex-none select-none items-center justify-between px-2 pt-safe-nav min-[380px]:px-[11px]"
       style={{ WebkitTouchCallout: 'none' }}
       onPointerDown={() => {
         longPressed.current = false;

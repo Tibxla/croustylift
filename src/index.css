@@ -50,7 +50,10 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* Hauteur de la ligne des cinq surfaces, en haut de l'écran (shell, App.tsx). */
-  --nav-height: 3rem;
+  /* Marge haute de la ligne de navigation sous une encoche (SurfaceNav) : hors
+     du flou que iOS 26 pose sous la barre d'état. Nulle sans encoche. */
+  --nav-gap: min(var(--safe-top), 14px);
+  --nav-height: calc(3rem + var(--nav-gap));
 }
 
 html,
@@ -134,6 +137,11 @@ body {
      ouverte assombrit aussi la bande, sans bande plus claire sous l'heure. */
   z-index: 25;
   pointer-events: none;
+}
+
+.pt-safe-nav {
+  box-sizing: content-box;
+  padding-top: var(--nav-gap);
 }
 
 /* Surfaces du navigateur dessinées aux couleurs de E. */
