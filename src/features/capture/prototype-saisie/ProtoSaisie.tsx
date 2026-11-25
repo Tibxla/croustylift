@@ -1,8 +1,9 @@
-// PROTOTYPE JETABLE · plan : quatre variantes de l'écran de saisie de la Salle
-// (A Sections, B Tableau, C Étapes, D Trois cadrans), sur l'instrument réel et
-// les vraies données du compte, choisies par `?variant=A|B|C|D` et la barre de
+// PROTOTYPE JETABLE · plan (tour 2, 25/11) : A d'origine et trois déclinaisons
+// de A (A1 Allégée, A2 Côte à côte, A3 Pied léger), sur l'instrument réel et les
+// vraies données du compte, choisies par `?variant=A|A1|A2|A3` et la barre de
 // bascule ; sans paramètre, l'écran actuel ; glissé depuis le bord gauche vers
-// le Sommaire commun à toutes ; AUCUNE écriture en base (bouchons).
+// le Sommaire commun à toutes ; AUCUNE écriture en base (bouchons). Le tour 1
+// (B Tableau, C Étapes, D Trois cadrans) est au commit a4b83b8.
 //
 // Ce composant remplace `CapturePanel` quand une variante est choisie : il porte
 // le brouillon commun (`useSaisieProto`), la barre du pouce (copie de celle de
@@ -25,9 +26,8 @@ import { setText } from './parts';
 import { useSaisieProto, type Saisie } from './useSaisieProto';
 import { protoSay, type VariantKey } from './variant';
 import { VariantA } from './VariantA';
-import { VariantB } from './VariantB';
-import { VariantC } from './VariantC';
-import { VariantD } from './VariantD';
+import { VariantA1 } from './VariantA1';
+import { VariantA2 } from './VariantA2';
 
 export interface VariantProps {
   s: Saisie;
@@ -139,11 +139,57 @@ export function ProtoSaisie({
   return (
     <EdgeSwipeBack onBack={() => dispatch({ type: 'back-to-picker' })}>
       {variant === 'A' && <VariantA {...vp} />}
-      {variant === 'B' && <VariantB {...vp} />}
-      {variant === 'C' && <VariantC {...vp} />}
-      {variant === 'D' && <VariantD {...vp} />}
+      {variant === 'A1' && <VariantA1 {...vp} />}
+      {variant === 'A2' && <VariantA2 {...vp} />}
+      {/* A3 : le corps de A1, seul le pied change (plus bas). */}
+      {variant === 'A3' && <VariantA1 {...vp} />}
 
-      <div className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
+      <div data-zone="pied" className="sticky bottom-0 z-10 mt-auto bg-bg px-5 pb-[calc(0.75rem+var(--safe-bottom))] pt-1 [@media(max-height:700px)]:pb-[calc(0.5rem+var(--safe-bottom))]">
+        {variant === 'A3' ? (
+          // Pied léger : deux liens soulignés à place fixe (cibles de 44 px),
+          // Annuler au milieu ; seul Logger reste un bloc plein.
+          <div className="mb-1 grid h-11 grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'back-to-picker' })}
+              aria-label={`Sommaire de la séance, ${done} sur ${total} faits`}
+              className="-ml-2 flex h-11 min-w-0 items-baseline justify-self-start whitespace-nowrap px-2 text-[16px] text-ink active:opacity-70"
+              style={{ alignItems: 'center' }}
+            >
+              <span className="underline decoration-1 underline-offset-4">‹ Sommaire</span>
+              <span className="tnum ml-1.5 text-[14px] text-muted">
+                {done}/{total}
+              </span>
+            </button>
+            {lastSet ? (
+              <button type="button" onClick={undo} aria-label="Annuler la dernière série" className="flex h-11 items-center px-2 text-[15px] text-muted underline decoration-1 underline-offset-4 active:opacity-70">
+                Annuler
+              </button>
+            ) : (
+              <span aria-hidden />
+            )}
+            {next ? (
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'open-exercise', exerciseId: next.exerciseId })}
+                aria-label={`Exo suivant, ${next.name}`}
+                className="-mr-2 flex h-11 items-center justify-self-end whitespace-nowrap px-2 text-[16px] text-ink underline decoration-1 underline-offset-4 active:opacity-70"
+              >
+                Exo suivant ›
+              </button>
+            ) : canFinish ? (
+              <button
+                type="button"
+                onClick={() => protoSay('Bouchon · Terminer ouvrirait la fin de séance (rien n’est enregistré ici).')}
+                className="-mr-2 flex h-11 items-center justify-self-end px-2 text-[16px] text-ink underline decoration-1 underline-offset-4"
+              >
+                Terminer ›
+              </button>
+            ) : (
+              <span aria-hidden />
+            )}
+          </div>
+        ) : (
         <div className={BAR_GRID}>
           <button type="button" onClick={() => dispatch({ type: 'back-to-picker' })} aria-label={`Sommaire de la séance, ${done} sur ${total} faits`} className={BAR_BTN}>
             <span className={BAR_TITLE}>Sommaire</span>
@@ -173,6 +219,7 @@ export function ProtoSaisie({
             <span aria-hidden />
           )}
         </div>
+        )}
         <PrimaryButton over={label} ariaLabel={`${label}, ${values}`} press={false} onClick={log} className="w-full [@media(max-height:800px)]:h-12">
           <span className="tnum">{values}</span>
         </PrimaryButton>

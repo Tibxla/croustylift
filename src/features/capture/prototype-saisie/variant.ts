@@ -7,10 +7,10 @@ export const PROTO = import.meta.env.VITE_PROTOTYPE === '1';
 
 export const VARIANTS = [
   { key: 'actuel', name: 'Écran actuel' },
-  { key: 'A', name: 'Sections' },
-  { key: 'B', name: 'Tableau' },
-  { key: 'C', name: 'Étapes' },
-  { key: 'D', name: 'Trois cadrans' },
+  { key: 'A', name: 'Sections (tour 1)' },
+  { key: 'A1', name: 'Allégée' },
+  { key: 'A2', name: 'Côte à côte' },
+  { key: 'A3', name: 'Pied léger' },
 ] as const;
 export type VariantKey = (typeof VARIANTS)[number]['key'];
 

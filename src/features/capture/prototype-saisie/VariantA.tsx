@@ -75,7 +75,7 @@ export function VariantA({ s, exercise, progress, index, exoPos, compact, tight,
       </header>
 
       <Air min={tight ? 6 : 10} />
-      <section className={`border-t border-line ${sectionGap}`}>
+      <section data-zone="haut-fin" className={`border-t border-line ${sectionGap}`}>
         <Head
           title="Séries"
           aside={
@@ -101,7 +101,7 @@ export function VariantA({ s, exercise, progress, index, exoPos, compact, tight,
       <Air min={tight ? 6 : 10} max={9999} />
 
       {/* Zone RÉGLER : fond levé bord à bord, trois sections. */}
-      <div className="flex flex-col bg-raise pb-1">
+      <div data-zone="bas" className="flex flex-col bg-raise pb-1">
         {s.unilateral && s.side && (
           <div className="flex items-center justify-between border-b border-line px-5">
             <span className="text-[15px] font-semibold text-ink">Côté</span>
