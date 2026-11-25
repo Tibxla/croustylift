@@ -57,4 +57,16 @@ describe('SetBand', () => {
       'Série 2, droite, à faire',
     ]);
   });
+
+  it('une valeur trop longue (reps à trois chiffres, RIR à deux) est rognée dans sa case, sans déborder sur la voisine', () => {
+    const html = render([{ order: 1, weightKg: 126.25, reps: 120, rir: 10 }], false, null, 4);
+    // La forme validée reste la même : « 126×120 », puis le RIR après une espace fine.
+    expect(html).toMatch(/126×120<span[^>]*>\u2009R10</);
+    // La ligne de valeur ne se coupe pas et ne déborde pas : elle se rogne en « … ».
+    const valueLine = /<span aria-hidden="true" class="([^"]*)"><span class="underline/.exec(html)?.[1] ?? '';
+    expect(valueLine.split(' ')).toEqual(expect.arrayContaining(['whitespace-nowrap', 'overflow-hidden', 'text-ellipsis']));
+    // Le filet souligné (4 px sous la ligne) n'est pas rogné : la boîte rognée
+    // descend de 2 px sans changer la hauteur de la bande.
+    expect(valueLine.split(' ')).toEqual(expect.arrayContaining(['pb-0.5', '-mb-0.5']));
+  });
 });

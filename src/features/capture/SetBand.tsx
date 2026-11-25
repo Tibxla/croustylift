@@ -12,6 +12,13 @@
 // la série d'avant entière : « 2 G » et « 2 D » restent ensemble). Recadrage
 // instantané (aucune animation : il suit chaque log).
 //
+// Une valeur plus large que sa case (reps à trois chiffres, RIR de 10 ou plus)
+// se rogne en « … » dans la case au lieu de déborder sur la voisine ; la valeur
+// exacte reste dans le nom lu. La boîte rognée mord de 4 px sur la marge droite
+// de la case (« 126×12 R4 » fait 74 px pour 74 utiles à 360 px : sans ce jeu, un
+// rendu à peine plus large l'aurait rognée) et descend de 2 px (compensés, la
+// bande garde sa hauteur) pour ne pas couper le filet souligné.
+//
 // Case en cours : le brouillon en gris, dans une pastille arrondie (fond de
 // groupe, `rounded-cell` ; la sélection du traitement « Doux » retenue le 25/11)
 // et soulignée d'un trait épais. La pastille déborde de 8 px à gauche, sans
@@ -80,7 +87,7 @@ export function SetBand({
             </span>
             <span
               aria-hidden
-              className={`tnum mt-0.5 block whitespace-nowrap text-[14px] font-medium leading-5 tracking-[-0.01em] [@media(max-width:359px)]:text-[15px] ${
+              className={`tnum -mb-0.5 -mr-1 mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[14px] font-medium leading-5 tracking-[-0.01em] [@media(max-width:359px)]:text-[15px] ${
                 c.state === 'logged' ? 'text-ink' : c.state === 'current' ? 'text-muted' : 'text-faint'
               }`}
             >
