@@ -1,8 +1,10 @@
 // Bande des séries de l'exo affiché (variante A4 de la Salle, 25/11) : une case
 // par série prévue, une par CÔTÉ en unilatéral (« 2 G », « 2 D »), modèle pur
 // dans set-band.ts. Sous le numéro et son statut (▲ record, ▲ battue, ▬ égalée),
-// UNE ligne : « 171×8 · R1 », poids tronqué à l'entier, reps, RIR. La valeur
-// exacte est dans le nom lu et dans la feuille de correction.
+// UNE ligne : « 171×8 R1 », poids tronqué à l'entier, reps, et le RIR en gris.
+// La valeur exacte est dans le nom lu et dans la feuille de correction. En
+// unilatéral, l'en-tête « 6 G » ne garde que le signe du statut (le mot ne tient
+// pas à 375 px) : le mot est dans le nom lu, comme dans l'ancienne bande.
 //
 // Quatre cases entières dès 360 px d'écran, trois en dessous : jamais de case
 // coupée au repos. Au-delà, la bande défile, se cale sur une case entière et
@@ -19,7 +21,7 @@ import { useLayoutEffect, useRef } from 'react';
 import type { PerformedSet } from '../../domain/types';
 import { Sign, TONE } from '../../ui';
 import { badgeStatus, type SetBadge } from './set-badges';
-import { bandCellName, bandValue, type BandCell } from './set-band';
+import { bandCellName, bandParts, type BandCell } from './set-band';
 
 type Draft = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
@@ -58,7 +60,8 @@ export function SetBand({
       {cells.map((c) => {
         const st = c.state === 'logged' ? badgeStatus(badges[c.index] ?? null) : null;
         const name = bandCellName(c, badges, draft);
-        const value = c.set ? bandValue(c.set) : c.state === 'current' ? bandValue(draft) : '·';
+        const values = c.set ?? (c.state === 'current' ? draft : null);
+        const parts = values ? bandParts(values) : null;
         const body = (
           <>
             <span aria-hidden className="flex h-[18px] items-center gap-1 overflow-hidden whitespace-nowrap text-[13px] leading-[18px]">
@@ -66,7 +69,7 @@ export function SetBand({
               {st && (
                 <span className={`inline-flex items-center gap-0.5 ${TONE[st.v]}`}>
                   <Sign v={st.v} size={9} />
-                  {st.short}
+                  {!unilateral && st.short}
                 </span>
               )}
             </span>
@@ -76,7 +79,14 @@ export function SetBand({
                 c.state === 'logged' ? 'text-ink' : c.state === 'current' ? 'text-muted' : 'text-faint'
               }`}
             >
-              <span className={c.id ? 'underline decoration-dim decoration-1 underline-offset-[4px]' : ''}>{value}</span>
+              {parts ? (
+                <span className={c.id ? 'underline decoration-dim decoration-1 underline-offset-[4px]' : ''}>
+                  {parts.load}
+                  <span className={`font-normal ${c.state === 'logged' ? 'text-muted' : ''}`}>{'\u2009'}{parts.rir}</span>
+                </span>
+              ) : (
+                '·'
+              )}
             </span>
           </>
         );

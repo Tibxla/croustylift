@@ -2,10 +2,15 @@
 //
 // UNE LIGNE SOUS CHAQUE NUMÉRO (demande de l'utilisateur du 25/11 : « enlève ce
 // qu'il y a après la virgule, pour pouvoir quand même mettre le RIR »). Sous le
-// numéro, « 171×8 · R1 » : le poids SANS décimales, tronqué (171,25 donne 171,
-// 82,5 donne 82, jamais arrondi vers le haut), puis « ×reps », puis « R » et le
-// RIR. La valeur exacte reste dans le nom lu (« 171,25 kilos, 8 reps, RIR 1 ») et
-// dans la feuille de correction, qui s'ouvre au toucher de la case.
+// numéro, « 171×8 R1 » : le poids SANS décimales, tronqué (171,25 donne 171,
+// 82,5 donne 82, jamais arrondi vers le haut), puis « ×reps », une espace fine,
+// puis « R » et le RIR, en gris. La valeur exacte reste dans le nom lu
+// (« 171,25 kilos, 8 reps, RIR 1 ») et dans la feuille de correction, qui
+// s'ouvre au toucher de la case.
+//   Mesuré le 25/11 dans la case rendue : « 126×12 R4 » fait 73 px à 14 px, la
+//   case en laisse 74 à 360 px d'écran (quatre cases), 78 à 375, 82 à 393 ; à
+//   320 px (trois cases, 15 px), 78 pour 87. « 126×12 · R4 » (82 px) débordait
+//   dès 375 px.
 //
 // LES CASES. Bilatéral : une case par série prévue (borne haute du plan), plus la
 // série en cours si on la dépasse. Unilatéral : une case par CÔTÉ (« 2 G »,
@@ -36,9 +41,16 @@ export interface BandCell {
 
 type Values = Pick<PerformedSet, 'weightKg' | 'reps' | 'rir'>;
 
-/** « 171×8 · R1 » : poids tronqué à l'entier, reps, RIR. */
-export function bandValue({ weightKg, reps, rir }: Values): string {
-  return `${Math.trunc(weightKg)}×${reps} · R${rir}`;
+/** Les deux parts de la ligne : la charge (« 171×8 », poids tronqué à l'entier)
+ *  et le RIR (« R1 »), que la case écrit en gris. */
+export function bandParts({ weightKg, reps, rir }: Values): { load: string; rir: string } {
+  return { load: `${Math.trunc(weightKg)}×${reps}`, rir: `R${rir}` };
+}
+
+/** La ligne entière, « 171×8 R1 » (espace fine). */
+export function bandValue(values: Values): string {
+  const { load, rir } = bandParts(values);
+  return `${load}\u2009${rir}`;
 }
 
 /** La valeur exacte, pour le nom lu : « 171,25 kilos, 8 reps, RIR 1 ». */

@@ -2,19 +2,25 @@
 // ordre, et ce qui s'écrit sous chaque numéro (une ligne, poids tronqué, RIR).
 import { describe, expect, it } from 'vitest';
 import type { PerformedSet } from '../../domain/types';
-import { bandCells, bandName, bandValue } from './set-band';
+import { bandCells, bandName, bandParts, bandValue } from './set-band';
 
 describe('bandValue : une ligne sous le numéro', () => {
-  it('le poids sans ses décimales, tronqué, puis les reps et le RIR', () => {
-    expect(bandValue({ weightKg: 171.25, reps: 8, rir: 1 })).toBe('171×8 · R1');
-    expect(bandValue({ weightKg: 82.5, reps: 10, rir: 2 })).toBe('82×10 · R2');
-    expect(bandValue({ weightKg: 126.75, reps: 12, rir: 4 })).toBe('126×12 · R4');
+  it('le poids sans ses décimales, tronqué, puis les reps, une espace fine et le RIR', () => {
+    expect(bandValue({ weightKg: 171.25, reps: 8, rir: 1 })).toBe('171×8\u2009R1');
+    expect(bandValue({ weightKg: 82.5, reps: 10, rir: 2 })).toBe('82×10\u2009R2');
+    expect(bandValue({ weightKg: 126.75, reps: 12, rir: 4 })).toBe('126×12\u2009R4');
   });
 
   it('tronqué, jamais arrondi vers le haut ; un poids entier reste tel quel', () => {
-    expect(bandValue({ weightKg: 99.9, reps: 5, rir: 0 })).toBe('99×5 · R0');
-    expect(bandValue({ weightKg: 100, reps: 5, rir: 0 })).toBe('100×5 · R0');
-    expect(bandValue({ weightKg: 0, reps: 15, rir: 3 })).toBe('0×15 · R3');
+    expect(bandValue({ weightKg: 99.9, reps: 5, rir: 0 })).toBe('99×5\u2009R0');
+    expect(bandValue({ weightKg: 100, reps: 5, rir: 0 })).toBe('100×5\u2009R0');
+    expect(bandValue({ weightKg: 0, reps: 15, rir: 3 })).toBe('0×15\u2009R3');
+  });
+});
+
+describe('bandParts : la charge et le RIR, écrits en deux teintes', () => {
+  it('« 126×12 » puis « R4 »', () => {
+    expect(bandParts({ weightKg: 126.25, reps: 12, rir: 4 })).toEqual({ load: '126×12', rir: 'R4' });
   });
 });
 

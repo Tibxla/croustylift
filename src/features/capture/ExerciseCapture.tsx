@@ -371,18 +371,24 @@ export function ExerciseCapture({
   // cran sur écran bas, de deux sur écran très bas. L'air a ses planchers.
   const weightSize = tight ? 48 : compact ? (unilateral ? 56 : 64) : 72;
   const rulerHeight = tight ? 44 : compact ? 48 : 58;
-  const airMin = tight ? 8 : 14;
+  // Air : 14 px au moins entre les groupes, 10 sur écran bas, 6 très bas (les
+  // 14 px du prototype ne tiennent pas avec la marge de navigation de l'app
+  // installée, 14 px de plus en haut).
+  const airMin = tight ? 6 : compact ? 10 : 14;
   const plannedTotal = Math.max(prescription.sets.max, rank);
 
   return (
     // Colonne qui prend toute la hauteur au-dessus du pied : l'air du haut se
     // répartit (plafonné), le surplus va entre le haut et les plaques.
     <div className="flex flex-1 flex-col pt-1">
-      <ExerciseIndex items={index} activeId={exercise.exerciseId} onPick={onPick} />
+      {/* Écran très bas (≤ 700 px, iPhone SE en écran d'accueil) : pas d'index,
+          sinon les plaques passent sous le pied. Le Sommaire et « Exo suivant »
+          restent à un toucher. */}
+      {!tight && <ExerciseIndex items={index} activeId={exercise.exerciseId} onPick={onPick} />}
 
       {/* Nom et UNE ligne : « Série n sur N » et le plan, puis le bilan dès le
           minimum de séries (il rouvre le récap). Notes à droite, sans hauteur en plus. */}
-      <header className={`relative px-5 ${tight ? 'pt-1' : 'pt-2'}`}>
+      <header className={`relative px-5 ${tight ? '' : compact ? 'pt-1' : 'pt-2'}`}>
         {/* Un nom long descend d'un cran plutôt que de pousser les plaques sous le
             pied ; il reste entier dans le Sommaire et dans le nom accessible. */}
         <h2
@@ -463,7 +469,7 @@ export function ExerciseCapture({
           ne fait pas de boîte (`contents`) : ses groupes et l'air entre eux
           restent des enfants de la colonne. */}
       <div className="contents" onPointerDownCapture={touchDraft} onKeyDownCapture={touchDraft} onFocusCapture={touchDraft} onInputCapture={touchDraft}>
-        <section aria-label="Cette série" className={`mx-5 border-t border-line ${tight ? 'pt-2' : 'pt-3'}`}>
+        <section aria-label="Cette série" className={`mx-5 border-t border-line ${tight ? 'pt-1.5' : compact ? 'pt-2' : 'pt-3'}`}>
           <div className="flex min-h-7 items-center justify-between gap-3">
             {unilateral && currentSide ? (
               <div role="radiogroup" aria-label="Côté à logger" className="-my-2 -ml-2.5 flex flex-none">
