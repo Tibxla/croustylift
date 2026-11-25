@@ -230,3 +230,11 @@ base, le tranche : si c'était un tableau, l'éditeur s'ouvrirait sur une séanc
 Alléger index.js (84,7 ko gzip le 2026-11-25, budget relevé à 89 000 à la fusion du
 registre d'écritures), d'abord en retirant la reprise de l'ancien format après le
 2026-12-31 (cf. l'en-tête des clés `LEGACY_*` de `capture/outbox.ts`).
+
+### Relecture de la fusion registre et intégration (2026-11-25), trois constats moyens
+
+Même cause : `ackedInMeta` part en fin de passe (`sync.ts`), alors que le registre écrit l'acquittement plus tôt. Entre les deux, l'exécution n'est plus dans la file et pas encore dans `salle-acquittees`.
+
+- Deux onglets : l'onglet qui montre « Quelle séance ? » peut recalculer sur l'événement `storage` du registre et afficher un instant la date d'une séance supprimée dans l'autre onglet, jusqu'au prochain changement de file. Piste : faire écouter aussi `salle-acquittees` et `ackgen` à `onQueueChanged`, ou poser `ackedInMeta` au moment de l'acquittement.
+- Rechargement en pleine passe : le `settled` est perdu, la ligne garde l'ancienne date hors ligne jusqu'à la première relecture en ligne. Les séries ne sont pas touchées.
+- Sélecteur monté en pleine passe : la date est fausse le temps de la passe, la fin de passe la corrige.
