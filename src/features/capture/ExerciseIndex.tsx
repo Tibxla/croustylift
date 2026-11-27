@@ -7,7 +7,9 @@
 //
 // La pastille tient dans sa colonne (retour du 27/11 : à 9 exos sur 393 px, la
 // colonne fait 41 px et les pastilles se chevauchaient). Version serrée (jeu de
-// 6 px, 4 à partir de 10 exos ; marque de 11). Quand la colonne ne loge pas la
+// 6 px, 4 à partir de 10 exos ; marque de 11). Pastille ou simple numéro, le
+// contenu est centré au-dessus de sa jauge (retour du 27/11 : calés à gauche, les
+// numéros d'un exo fait ou en cours sautaient à droite). Quand la colonne ne loge pas la
 // marque avec 4 px d'écart (`iconFits`, bouton en conteneur), la marque tombe :
 // la couleur et la jauge disent encore l'état, le mot reste dans le nom
 // accessible.
@@ -59,8 +61,8 @@ export function ExerciseIndex({
             onClick={() => onPick(it.exerciseId)}
             className="@container flex h-11 min-w-0 flex-col justify-center px-2"
           >
-            <span className={`tnum flex h-5 items-center text-left text-[14px] ${active ? 'font-semibold' : ''}`}>
-              <span className={it.state === 'done' || it.state === 'partial' ? (many ? '-ml-1' : '-ml-1.5') : ''}>
+            <span className={`tnum flex h-5 items-center justify-center text-[14px] ${active ? 'font-semibold' : ''}`}>
+              <span>
                 <StatePill
                   state={it.state}
                   size={11}
