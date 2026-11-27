@@ -25,7 +25,7 @@
 //
 // La durée : `null` (chrono non mesuré) n'est rien écrit tant que l'utilisateur
 // n'y touche pas ; corrigée, elle remplace la durée du chrono.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { errorMessage } from '../../lib/error-message';
 import type { PerformedExercise } from '../../domain/set-count';
 import { weekStartIso } from '../../domain/week';
@@ -148,6 +148,14 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
       setSaving(false);
     }
   }
+
+  // La page s'ouvre en haut, sur la durée et le BPM à saisir, puis sur « Séance
+  // rangée » (retour du 27/11 : ouverte depuis le bas du Sommaire, elle gardait
+  // son défilement et arrivait au milieu du récap).
+  const done = saved !== null;
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [done]);
 
   if (saved) return <SessionDone recap={recap} dateIso={dateIso} startedAt={startedAt} values={saved} onNewSession={onNewSession} />;
 
