@@ -136,7 +136,8 @@ export function verdictWords(counts: VerdictCounts, record: 'record' | 'record c
  *
  * Bilatéral : « record », « n records », « n battues », « n égalées ».
  * Unilatéral : chaque côté prend le meilleur badge de ses séries ; deux côtés au
- * même niveau se disent ensemble (« record des deux côtés »), sinon on nomme le
+ * même niveau se disent ensemble (« record G et D », court pour tenir à côté de
+ * la pastille ; « des deux côtés » passait à la ligne), sinon on nomme le
  * meilleur (« battu à droite »). `badges` est aligné par index sur `sets` ; une
  * ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`.
  */
@@ -151,7 +152,7 @@ export function headlineVerdict(sets: readonly PerformedSet[], badges: readonly 
   if (!top) return null;
   const word =
     top === 3 ? recordWord(l === r ? badges : badges.filter((_, i) => onRight(i) === r > l)) : top === 2 ? 'battu' : 'égalé';
-  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${l === r ? 'des deux côtés' : l > r ? 'à gauche' : 'à droite'}` };
+  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${l === r ? 'G et D' : l > r ? 'à gauche' : 'à droite'}` };
 }
 
 /**

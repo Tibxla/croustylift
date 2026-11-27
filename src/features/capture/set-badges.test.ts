@@ -306,12 +306,12 @@ describe('headlineVerdict : la mention unique d’un exo dans le Sommaire', () =
     expect(headlineVerdict(sets, [null, null, null], false)).toBeNull();
   });
 
-  it('unilatéral : par côté, le meilleur de ses séries ; les deux côtés au même niveau se disent ensemble', () => {
+  it('unilatéral : par côté, le meilleur de ses séries ; les deux côtés au même niveau se disent ensemble (« G et D »)', () => {
     // Cas du 27/11 : 2 séries, records à la 1re des deux côtés, puis D battue et G égalée.
     const sets = [set(10, 12, 2, 1, 'left'), set(10, 12, 2, 1, 'right'), set(10, 12, 2, 2, 'left'), set(10, 12, 2, 2, 'right')];
-    expect(headlineVerdict(sets, [rec(), rec(), eg, bat], true)).toEqual({ v: 'up', word: 'record des deux côtés' });
-    expect(headlineVerdict(sets.slice(0, 2), [bat, bat], true)).toEqual({ v: 'up', word: 'battu des deux côtés' });
-    expect(headlineVerdict(sets.slice(0, 2), [eg, eg], true)).toEqual({ v: 'eq', word: 'égalé des deux côtés' });
+    expect(headlineVerdict(sets, [rec(), rec(), eg, bat], true)).toEqual({ v: 'up', word: 'record G et D' });
+    expect(headlineVerdict(sets.slice(0, 2), [bat, bat], true)).toEqual({ v: 'up', word: 'battu G et D' });
+    expect(headlineVerdict(sets.slice(0, 2), [eg, eg], true)).toEqual({ v: 'eq', word: 'égalé G et D' });
   });
 
   it('unilatéral : un côté au-dessus de l’autre, on nomme le meilleur', () => {
