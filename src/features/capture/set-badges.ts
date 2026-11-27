@@ -128,6 +128,34 @@ export function verdictWords(counts: VerdictCounts, record: 'record' | 'record c
 }
 
 /**
+ * LA mention d'un exo dans le Sommaire (retour du 27/11 : la ligne « ▲ 2 côtés
+ * en record ▲ 1 côté battu ▬ 1 côté égalé » était chargée, et en unilatéral on
+ * ne savait pas si « 2 côtés » voulait dire les deux bras ou deux fois le même).
+ * Une seule, la meilleure (record > battues > égalées) ; le détail reste dans le
+ * récap de l'exo (`verdictWords`).
+ *
+ * Bilatéral : « record », « n records », « n battues », « n égalées ».
+ * Unilatéral : chaque côté prend le meilleur badge de ses séries ; deux côtés au
+ * même niveau se disent ensemble (« record G et D », court pour tenir à côté de
+ * la pastille ; « des deux côtés » passait à la ligne), sinon on nomme le
+ * meilleur (« battu à droite »). `badges` est aligné par index sur `sets` ; une
+ * ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`.
+ */
+export function headlineVerdict(sets: readonly PerformedSet[], badges: readonly SetBadge[], unilateral: boolean): VerdictWord | null {
+  if (!unilateral) return verdictWords(summarizeBadges([...sets], [...badges]).total, recordWord(badges), false)[0] ?? null;
+  const rank = (b: SetBadge) => (!b ? 0 : b.axis === 'record' ? 3 : b.verdict === 'battu' ? 2 : 1);
+  const onRight = (i: number) => sets[i]?.side === 'right';
+  const best = (right: boolean) => Math.max(0, ...badges.map((b, i) => (onRight(i) === right ? rank(b) : 0)));
+  const l = best(false);
+  const r = best(true);
+  const top = Math.max(l, r);
+  if (!top) return null;
+  const word =
+    top === 3 ? recordWord(l === r ? badges : badges.filter((_, i) => onRight(i) === r > l)) : top === 2 ? 'battu' : 'égalé';
+  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${l === r ? 'G et D' : l > r ? 'à gauche' : 'à droite'}` };
+}
+
+/**
  * Le mot d'un record selon son type : « record charge » pour un record de charge
  * seule (`weight-reps`), « record » pour un record d'e1RM (seul ou avec la
  * charge). La case « Record » de l'instrument montre le record d'e1RM : un

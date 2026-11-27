@@ -9,6 +9,7 @@ import {
   badgeStatus,
   computeSetBadges,
   computeSetBadgesBySide,
+  headlineVerdict,
   recordWord,
   referenceVerdict,
   summarizeBadges,
@@ -287,5 +288,38 @@ describe('verdictWords : les statuts d’un exo en mots, record > battues > éga
       { v: 'eq', word: '2 côtés égalés' },
     ]);
     expect(verdictWords({ battu: 0, egalise: 0, record: 1 }, 'record', true)).toEqual([{ v: 'up', word: '1 côté en record' }]);
+  });
+});
+
+describe('headlineVerdict : la mention unique d’un exo dans le Sommaire', () => {
+  const rec = (record: 'e1rm' | 'weight-reps' | 'both' = 'e1rm') => ({ axis: 'record', record }) as const;
+  const bat = { axis: 'reference', verdict: 'battu' } as const;
+  const eg = { axis: 'reference', verdict: 'egalise' } as const;
+
+  it('bilatéral : seulement la meilleure, record > battues > égalées', () => {
+    const sets = [set(100, 5, 2, 1), set(100, 5, 2, 2), set(100, 5, 2, 3)];
+    expect(headlineVerdict(sets, [rec(), bat, eg], false)).toEqual({ v: 'up', word: 'record' });
+    expect(headlineVerdict(sets, [rec(), rec(), eg], false)).toEqual({ v: 'up', word: '2 records' });
+    expect(headlineVerdict(sets, [rec('weight-reps'), null, null], false)).toEqual({ v: 'up', word: 'record charge' });
+    expect(headlineVerdict(sets, [bat, bat, eg], false)).toEqual({ v: 'up', word: '2 battues' });
+    expect(headlineVerdict(sets, [null, eg, null], false)).toEqual({ v: 'eq', word: '1 égalée' });
+    expect(headlineVerdict(sets, [null, null, null], false)).toBeNull();
+  });
+
+  it('unilatéral : par côté, le meilleur de ses séries ; les deux côtés au même niveau se disent ensemble (« G et D »)', () => {
+    // Cas du 27/11 : 2 séries, records à la 1re des deux côtés, puis D battue et G égalée.
+    const sets = [set(10, 12, 2, 1, 'left'), set(10, 12, 2, 1, 'right'), set(10, 12, 2, 2, 'left'), set(10, 12, 2, 2, 'right')];
+    expect(headlineVerdict(sets, [rec(), rec(), eg, bat], true)).toEqual({ v: 'up', word: 'record G et D' });
+    expect(headlineVerdict(sets.slice(0, 2), [bat, bat], true)).toEqual({ v: 'up', word: 'battu G et D' });
+    expect(headlineVerdict(sets.slice(0, 2), [eg, eg], true)).toEqual({ v: 'eq', word: 'égalé G et D' });
+  });
+
+  it('unilatéral : un côté au-dessus de l’autre, on nomme le meilleur', () => {
+    const sets = [set(10, 12, 2, 1, 'left'), set(10, 12, 2, 1, 'right'), set(10, 12, 2, 2, 'left'), set(10, 12, 2, 2, 'right')];
+    expect(headlineVerdict(sets, [rec(), bat, eg, bat], true)).toEqual({ v: 'up', word: 'record à gauche' });
+    expect(headlineVerdict(sets, [eg, null, null, bat], true)).toEqual({ v: 'up', word: 'battu à droite' });
+    expect(headlineVerdict(sets, [null, eg, null, null], true)).toEqual({ v: 'eq', word: 'égalé à droite' });
+    expect(headlineVerdict(sets, [rec('weight-reps'), null, null, null], true)).toEqual({ v: 'up', word: 'record charge à gauche' });
+    expect(headlineVerdict(sets, [null, null, null, null], true)).toBeNull();
   });
 });
