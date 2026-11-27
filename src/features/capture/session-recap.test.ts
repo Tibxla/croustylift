@@ -4,10 +4,9 @@
 import { describe, expect, it } from 'vitest';
 import { estimateE1rm } from '../../domain/e1rm';
 import { liftedKg } from '../../domain/lifted';
-import { weekStartIso } from '../../domain/week';
 import type { PerformedSet } from '../../domain/types';
 import type { Session, SessionExercise } from './fixtures';
-import { buildSessionRecap, exerciseStatus, nudgeDuration, weekSetsByMuscle } from './session-recap';
+import { buildSessionRecap, exerciseStatus, nudgeDuration, plannedToday, setsByMuscle } from './session-recap';
 import { initialState, type CaptureState } from './state';
 import { SESSION_DURATION_MAX_MIN } from './summary';
 
@@ -347,88 +346,78 @@ describe('buildSessionRecap : records typés (axe, unité, côté)', () => {
   });
 });
 
-describe('weekStartIso (semaine civile, du lundi au dimanche)', () => {
-  it('rend le lundi de la semaine, en date locale', () => {
-    expect(weekStartIso('2026-11-25')).toBe('2026-11-23'); // mercredi
-    expect(weekStartIso('2026-11-23')).toBe('2026-11-23'); // lundi
-    expect(weekStartIso('2026-11-29')).toBe('2026-11-23'); // dimanche
-  });
-
-  it('traverse les mois et les années', () => {
-    expect(weekStartIso('2026-12-01')).toBe('2026-11-30');
-    expect(weekStartIso('2027-01-01')).toBe('2026-12-28');
-  });
-});
-
-describe('weekSetsByMuscle (séries de la semaine par muscle, contre le prévu)', () => {
+describe('setsByMuscle (séries de la séance par muscle, contre son propre prévu)', () => {
   const full = (n: number, reps = 8) => Array.from({ length: n }, (_, i) => ps(80, reps, 2, i + 1));
-  const rows = weekSetsByMuscle({
-    // Avant aujourd'hui, cette semaine : 4 séries de pectoraux, 3 de dos.
-    before: [
-      { unilateral: false, primaryMuscles: ['pectoraux'], sets: full(4) },
-      { unilateral: false, primaryMuscles: ['dos'], sets: full(3) },
-    ],
-    // Aujourd'hui : 3 séries pectoraux et triceps, 2 de mollets (hors plan).
-    today: [
+  const rows = setsByMuscle({
+    // Aujourd'hui : 3 séries pectoraux et triceps, 2 de mollets (hors prévu).
+    done: [
       { unilateral: false, primaryMuscles: ['pectoraux', 'triceps'], sets: full(3) },
       { unilateral: false, primaryMuscles: ['mollets'], sets: full(2) },
     ],
-    // Prévu de la routine sur la semaine : pectoraux 6 à 8, dos 6 à 6, triceps 2 à 3, épaules 3 à 3.
+    // Prévu de la séance : pectoraux 3 à 4, triceps 4 à 4, épaules 3 à 3.
     planned: [
-      { unilateral: false, primaryMuscles: ['pectoraux'], sets: r(6, 8), reps: r(8, 12) },
-      { unilateral: false, primaryMuscles: ['dos'], sets: r(6, 6), reps: r(8, 12) },
-      { unilateral: false, primaryMuscles: ['triceps'], sets: r(2, 3), reps: r(8, 12) },
+      { unilateral: false, primaryMuscles: ['pectoraux'], sets: r(3, 4), reps: r(8, 12) },
+      { unilateral: false, primaryMuscles: ['triceps'], sets: r(4, 4), reps: r(8, 12) },
       { unilateral: false, primaryMuscles: ['épaules'], sets: r(3, 3), reps: r(8, 12) },
     ],
   });
   const of = (muscle: string) => rows.find((row) => row.muscle === muscle)!;
 
-  it('avant aujourd’hui, aujourd’hui et total, par muscle', () => {
-    expect(of('pectoraux')).toMatchObject({ before: 4, today: 3, total: 7 });
-    expect(of('dos')).toMatchObject({ before: 3, today: 0, total: 3 });
-    expect(of('triceps')).toMatchObject({ before: 0, today: 3, total: 3 });
+  it('contre le prévu de la séance : dans, sous', () => {
+    expect(of('pectoraux')).toMatchObject({ done: 3, planned: { min: 3, max: 4 }, fit: 'dans' });
+    expect(of('triceps')).toMatchObject({ done: 3, planned: { min: 4, max: 4 }, fit: 'sous' });
   });
 
-  it('contre le prévu : sous, dans, au-delà', () => {
-    expect(of('pectoraux')).toMatchObject({ planned: { min: 6, max: 8 }, fit: 'dans' });
-    expect(of('dos')).toMatchObject({ planned: { min: 6, max: 6 }, fit: 'sous' });
-    expect(of('triceps')).toMatchObject({ planned: { min: 2, max: 3 }, fit: 'dans' });
+  it('muscle prévu mais pas travaillé (exo passé) : présent, à zéro, sous le prévu', () => {
+    expect(of('épaules')).toMatchObject({ done: 0, fit: 'sous' });
   });
 
-  it('muscle prévu mais pas encore travaillé : présent, à zéro, sous le prévu', () => {
-    expect(of('épaules')).toMatchObject({ before: 0, today: 0, total: 0, fit: 'sous' });
-  });
-
-  it('muscle travaillé hors du prévu de la routine : présent, sans fourchette ni verdict', () => {
-    expect(of('mollets')).toMatchObject({ total: 2, planned: null, fit: null });
+  it('muscle travaillé hors du prévu : présent, sans fourchette ni verdict', () => {
+    expect(of('mollets')).toMatchObject({ done: 2, planned: null, fit: null });
   });
 
   it('au-delà du prévu', () => {
-    const over = weekSetsByMuscle({
-      before: [{ unilateral: false, primaryMuscles: ['dos'], sets: full(5) }],
-      today: [{ unilateral: false, primaryMuscles: ['dos'], sets: full(4) }],
-      planned: [{ unilateral: false, primaryMuscles: ['dos'], sets: r(6, 8), reps: r(8, 12) }],
+    const over = setsByMuscle({
+      done: [{ unilateral: false, primaryMuscles: ['dos'], sets: full(4) }],
+      planned: [{ unilateral: false, primaryMuscles: ['dos'], sets: r(2, 3), reps: r(8, 12) }],
     });
-    expect(over[0]).toMatchObject({ total: 9, fit: 'au-dela' });
+    expect(over[0]).toMatchObject({ done: 4, fit: 'au-dela' });
   });
 
   it('les décomptes sont pondérés par les reps, comme partout (ADR 0006)', () => {
-    const light = weekSetsByMuscle({
-      before: [],
-      today: [{ unilateral: false, primaryMuscles: ['dos'], sets: [ps(100, 3, 1, 1)] }],
-      planned: [],
-    });
-    expect(light[0]?.today).toBeCloseTo(0.6);
+    const light = setsByMuscle({ done: [{ unilateral: false, primaryMuscles: ['dos'], sets: [ps(100, 3, 1, 1)] }], planned: [] });
+    expect(light[0]?.done).toBeCloseTo(0.6);
   });
 
-  it('ordre canonique des muscles, les muscles hors vocabulaire en fin', () => {
-    expect(rows.map((row) => row.muscle).at(-1)).toBeDefined();
+  it('ordre canonique des muscles', () => {
     const known = rows.map((row) => row.muscle);
     expect(known.indexOf('pectoraux')).toBeLessThan(known.indexOf('triceps'));
   });
 
-  it('rien cette semaine, rien de prévu : aucune ligne', () => {
-    expect(weekSetsByMuscle({ before: [], today: [], planned: [] })).toEqual([]);
+  it('rien de fait, rien de prévu : aucune ligne', () => {
+    expect(setsByMuscle({ done: [], planned: [] })).toEqual([]);
+  });
+});
+
+describe('plannedToday : le prévu de la séance du jour, sans règle de semaine', () => {
+  it('séance suivie à la lettre : dans le prévu, même faite deux fois dans la semaine (retour du 27/11)', () => {
+    const session = {
+      id: 'fb',
+      name: 'FB',
+      exercises: [
+        {
+          exerciseId: 'dev',
+          name: 'Développé',
+          primaryMuscles: ['pectoraux'],
+          prescription: { sets: r(1, 1), reps: r(8, 12), rir: r(1, 2) },
+        },
+      ],
+    } as unknown as Parameters<typeof plannedToday>[0];
+    const rows = setsByMuscle({
+      done: [{ unilateral: false, primaryMuscles: ['pectoraux'], sets: [ps(80, 10, 2, 1)] }],
+      planned: plannedToday(session),
+    });
+    expect(rows).toEqual([{ muscle: 'pectoraux', done: 1, planned: { min: 1, max: 1 }, fit: 'dans' }]);
   });
 });
 

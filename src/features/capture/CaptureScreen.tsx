@@ -117,8 +117,7 @@ import { sommaireDetail } from './sommaire-detail';
 import { isDoubleTap, type LogStamp } from './log-guard';
 import { onQueueChanged } from './queue-changes';
 import { mergePendingExecutions, peekSeancesMeta, readAckedExecutions, seanceMetaLine } from './seance-meta';
-import { buildSessionRecap, performedToday } from './session-recap';
-import { loadWeekMuscles, type WeekMusclesInput } from './week-muscles';
+import { buildSessionRecap, performedToday, plannedToday } from './session-recap';
 import { formatRelativeDay } from './format';
 import { errorMessage } from '../../lib/error-message';
 import { applySetGesture as applyGesture } from './apply-set-gesture';
@@ -1276,20 +1275,10 @@ function CaptureBoard({
   // `phase`/`durationMin` sont déclarés plus haut (avant handleNewSession/openFinish).
   // La confirmation « Séance terminée » est gérée à l'intérieur de SessionEnd. La
   // durée est figée à l'ouverture du flux de fin (lancement -> clôture).
-  // La semaine (séries par muscle contre le prévu) se lit à l'ouverture de la
-  // fin, sans bloquer « Ranger la séance » : `null` tant qu'elle court.
-  const [week, setWeek] = useState<WeekMusclesInput | null>(null);
   const openFinish = useCallback(() => {
     setDurationMin(elapsedMinutesSince(state.startedAt));
     setPhase('finishing');
-    setWeek(null);
-    void loadWeekMuscles({
-      seanceId: session.id,
-      dateIso: date,
-      currentExecutionId: state.executionId,
-      currentStartedAt: state.startedAt,
-    }).then(setWeek);
-  }, [state.startedAt, state.executionId, session.id, date]);
+  }, [state.startedAt]);
 
   // « Au moins une série loggée » : condition d'accès au flux de fin (cf. produit).
   const loggedAny = session.exercises.some(
@@ -1360,7 +1349,7 @@ function CaptureBoard({
         <SessionEnd
           recap={recap}
           today={today}
-          week={week}
+          planned={plannedToday(session)}
           dateIso={date}
           startedAt={state.startedAt}
           durationMin={durationMin}

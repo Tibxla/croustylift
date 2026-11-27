@@ -7,8 +7,8 @@
 //      de clavier). Puis le récap de l'exécution (`buildSessionRecap`,
 //      session-recap.ts) : séries, battues, kg soulevés, nouveaux records ; les
 //      exos un par un, y compris en cours, passés ou pas faits ; les séries par
-//      muscle de la SEMAINE civile contre le prévu de la routine
-//      (`weekSetsByMuscle`, lu par week-muscles.ts).
+//      muscle de la séance contre son PROPRE prévu (`setsByMuscle`,
+//      `plannedToday`). Aucune règle de semaine (décision du 27/11).
 //   2. Après : « Séance rangée », le récap court, le lien « Voir au
 //      Journal » et « Nouvelle séance ». La Clôture est transitoire (ADR
 //      0009) : remontée, la page ne revient pas. Le lien ouvre l'Analyse sur
@@ -20,15 +20,13 @@
 // nouveaux records, chacun dans son axe, son unité et son côté (`RecapRecord` :
 // à 0 kg, des reps effectives). Les barres par muscle n'ont ni signe ni couleur de statut :
 // un mot (sous, dans, au-dessus du prévu) et la barre contre le crochet du prévu.
-// Le chargement de la semaine ne bloque jamais « Ranger la séance » : pendant
-// qu'il court, une ligne le dit ; hors ligne, une ligne dit ce qui manque.
+// Rien n'est lu en réseau : le décompte vient de l'état de capture, hors ligne aussi.
 //
 // La durée : `null` (chrono non mesuré) n'est rien écrit tant que l'utilisateur
 // n'y touche pas ; corrigée, elle remplace la durée du chrono.
 import { useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { errorMessage } from '../../lib/error-message';
-import type { PerformedExercise } from '../../domain/set-count';
-import { weekStartIso } from '../../domain/week';
+import type { PerformedExercise, PlannedExercise } from '../../domain/set-count';
 import { useSyncState } from '../../shell/useSyncState';
 import { setSurfaceIntent, useGoToSurface } from '../../shell/navigation';
 import {
@@ -53,16 +51,15 @@ import {
 import { formatCount, formatE1rm, formatWeight } from './format';
 import {
   nudgeDuration,
-  weekSetsByMuscle,
+  setsByMuscle,
+  type MuscleRow,
   type ExerciseRecap,
   type ExerciseStatus,
   type PlanFit,
   type RecapRecord,
   type SessionRecap,
-  type WeekMuscleRow,
 } from './session-recap';
 import { SESSION_DURATION_MAX_MIN } from './summary';
-import type { WeekMusclesInput } from './week-muscles';
 
 /** Ce que la fin de séance remonte au parent pour persistance (champ omis = non saisi). */
 export interface SessionEndValues {
@@ -73,10 +70,10 @@ export interface SessionEndValues {
 
 interface SessionEndProps {
   recap: SessionRecap;
-  /** Les exos de la séance du jour, pour le décompte de la semaine. */
+  /** Les exos de la séance du jour, pour le décompte par muscle. */
   today: PerformedExercise[];
-  /** La semaine et le prévu ; `null` pendant le chargement. */
-  week: WeekMusclesInput | null;
+  /** Le prévu de la séance du jour (`plannedToday`). */
+  planned: PlannedExercise[];
   /** Date adoptée de la séance (jour ISO). */
   dateIso: string;
   /** Lancement de la séance (ms, ADR 0011) : la plage horaire de « Séance rangée ». */
@@ -108,7 +105,6 @@ const localDate = (iso: string) => {
   return new Date(y ?? 0, (m ?? 1) - 1, d ?? 1);
 };
 const fmtDay = (iso: string) => localDate(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-const weekday = (iso: string) => localDate(iso).toLocaleDateString('fr-FR', { weekday: 'short' });
 
 const sideWord = (side: 'left' | 'right') => (side === 'left' ? 'gauche' : 'droite');
 
@@ -127,7 +123,7 @@ const recordNoun = (r: RecapRecord) => (r.axis === 'charge' ? 'record charge' : 
 const STATUS_WORD: Record<ExerciseStatus, string> = { fait: 'fait', 'en-cours': 'en cours', passe: 'passé', 'pas-fait': 'pas fait' };
 const STATUS_MARK: Record<ExerciseStatus, ExoState> = { fait: 'done', 'en-cours': 'partial', passe: 'skipped', 'pas-fait': 'todo' };
 
-export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin, onSave, onBack, onNewSession }: SessionEndProps) {
+export function SessionEnd({ recap, today, planned, dateIso, startedAt, durationMin, onSave, onBack, onNewSession }: SessionEndProps) {
   const [duration, setDuration] = useState<number | null>(durationMin);
   const [durOpen, setDurOpen] = useState(false);
   const [bpmOn, setBpmOn] = useState(false);
@@ -272,7 +268,7 @@ export function SessionEnd({ recap, today, week, dateIso, startedAt, durationMin
         </List>
       </section>
 
-      <MuscleWeek today={today} week={week} dateIso={dateIso} />
+      <MuscleSession today={today} planned={planned} seanceName={recap.sessionName} />
 
       {error && (
         <Alert label="Échec de l’enregistrement" className="mx-4 mt-4">
@@ -381,78 +377,40 @@ function MeasureLine({ label, meta, value, action }: { label: string; meta: stri
   );
 }
 
-// --- Séries par muscle, semaine ----------------------------------------------
+// --- Séries par muscle, séance ------------------------------------------------
 
 /** Un mot, sans signe ni couleur : ▲ ▬ ▼ disent « par rapport à la dernière fois ». */
 const FIT: Record<PlanFit, string> = { sous: 'sous le prévu', dans: 'dans le prévu', 'au-dela': 'au-dessus du prévu' };
 const fmtPlan = (r: { min: number; max: number }) => (tally(r.min) === tally(r.max) ? tally(r.min) : `${tally(r.min)}-${tally(r.max)}`);
 
-/** Les séances faites plus tôt dans la semaine, regroupées par séance et par
- *  jour : « Upper A (lun.), Lower A (mar., 2 fois) ». */
-function seancesLine(seances: { name: string; performedOn: string }[]): string {
-  const groups: { name: string; day: string; n: number }[] = [];
-  for (const s of seances) {
-    const day = weekday(s.performedOn);
-    const last = groups[groups.length - 1];
-    if (last && last.name === s.name && last.day === day) last.n += 1;
-    else groups.push({ name: s.name, day, n: 1 });
-  }
-  return groups.map((g) => `${g.name} (${g.day}${g.n > 1 ? `, ${g.n} fois` : ''})`).join(', ');
-}
-
-function MuscleWeek({ today, week, dateIso }: { today: PerformedExercise[]; week: WeekMusclesInput | null; dateIso: string }) {
+function MuscleSession({ today, planned, seanceName }: { today: PerformedExercise[]; planned: PlannedExercise[]; seanceName: string }) {
   const [all, setAll] = useState(false);
-  const rows = useMemo(
-    () => weekSetsByMuscle({ before: week?.before ?? [], today, planned: week?.planned?.exercises ?? [] }),
-    [today, week],
-  );
+  const rows = useMemo(() => setsByMuscle({ done: today, planned }), [today, planned]);
   const scale = useMemo(() => {
-    const top = Math.max(1, ...rows.map((r) => Math.max(r.total, r.planned?.max ?? 0)));
+    const top = Math.max(1, ...rows.map((r) => Math.max(r.done, r.planned?.max ?? 0)));
     return Math.ceil(top / 5) * 5;
   }, [rows]);
   if (rows.length === 0) return null;
-  const worked = rows.filter((r) => r.today > 0);
-  const others = rows.filter((r) => r.today === 0);
+  const worked = rows.filter((r) => r.done > 0);
+  const others = rows.filter((r) => r.done === 0);
   const shown = all ? [...worked, ...others] : worked;
-
-  const seances = week?.seancesBefore ?? [];
-  const context =
-    week === null
-      ? 'Lecture de la semaine…'
-      : [
-          week.before === null
-            ? 'Hors ligne : les séances précédentes de la semaine ne sont pas comptées.'
-            : seances.length > 0
-              ? `Avant : ${seancesLine(seances)}.`
-              : 'Première de la semaine.',
-          week.planned === null
-            ? 'Prévu de la routine indisponible.'
-            : week.routineName !== null
-              ? `Prévu : ${week.routineName}, ${plural(week.planned.seanceCount, 'séance')}.`
-              : week.planned.seanceCount > 1
-                ? `Prévu : les ${week.planned.seanceCount} séances de la routine.`
-                : 'Prévu : la séance de la routine.',
-          'Sous 5 reps, une série compte en partie.',
-        ].join(' ');
 
   return (
     <section aria-labelledby="fin-muscles">
-      <SectionTitle id="fin-muscles" aside={`semaine du ${fmtDay(weekStartIso(dateIso))}`}>
-        Séries par muscle
-      </SectionTitle>
-      <p role="status" className="px-5 text-[14px] leading-[1.45] text-muted">
-        {context}
+      <SectionTitle id="fin-muscles">Séries par muscle</SectionTitle>
+      <p className="px-5 text-[14px] leading-[1.45] text-muted">
+        Prévu : la séance {seanceName}. Sous 5 reps, une série compte en partie.
       </p>
       <Legend />
-      <ul aria-label="Séries par muscle, semaine" className={GROUP}>
+      <ul aria-label="Séries par muscle" className={GROUP}>
         {shown.map((r) => (
-          <MuscleLine key={r.muscle} r={r} scale={scale} planKnown={week?.planned != null} />
+          <MuscleLine key={r.muscle} r={r} scale={scale} />
         ))}
       </ul>
       {others.length > 0 && (
         <div className="px-5 pt-1">
           <TextLink tone="muted" onClick={() => setAll((v) => !v)}>
-            {all ? 'Seulement les muscles du jour' : others.length > 1 ? `Voir les ${others.length} autres muscles` : 'Voir l’autre muscle'}
+            {all ? 'Seulement les muscles travaillés' : others.length > 1 ? `Voir les ${others.length} autres muscles` : 'Voir l’autre muscle'}
           </TextLink>
         </div>
       )}
@@ -465,11 +423,7 @@ function Legend() {
     <div aria-hidden className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 pb-2 pt-3 text-[13px] text-faint">
       <span className="inline-flex items-center gap-1.5">
         <span className="inline-block h-[4px] w-4 bg-ink" />
-        aujourd’hui
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="inline-block h-[4px] w-4 bg-muted" />
-        plus tôt
+        fait
       </span>
       <span className="inline-flex items-center gap-1.5">
         <span className="inline-block h-[10px] w-4 border-x-2 border-b-2 border-faint" />
@@ -479,32 +433,28 @@ function Legend() {
   );
 }
 
-function MuscleLine({ r, scale, planKnown }: { r: WeekMuscleRow; scale: number; planKnown: boolean }) {
+function MuscleLine({ r, scale }: { r: MuscleRow; scale: number }) {
   const fit = r.fit ? FIT[r.fit] : null;
   const pct = (v: number) => `${(Math.min(v, scale) / scale) * 100}%`;
   const name = r.muscle.charAt(0).toUpperCase() + r.muscle.slice(1);
   return (
     <li
       className={`${GROUP_ROW} px-4 py-3`}
-      aria-label={`${name} : ${tally(r.total)} séries cette semaine, dont ${tally(r.today)} aujourd’hui.${
-        r.planned ? ` Prévu ${tally(r.planned.min)} à ${tally(r.planned.max)}, ${fit}.` : planKnown ? ' Hors du prévu de la routine.' : ''
+      aria-label={`${name} : ${tally(r.done)} séries.${
+        r.planned ? ` Prévu ${tally(r.planned.min)} à ${tally(r.planned.max)}, ${fit}.` : ' Hors du prévu de la séance.'
       }`}
     >
       <div aria-hidden className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 truncate text-[16px] font-medium text-ink">{name}</span>
         <span className="flex-none text-[16px] font-medium text-ink">
-          <span className="tnum">{tally(r.total)}</span>
-          {(r.planned || planKnown) && (
-            <span className="ml-1.5 text-[14px] font-normal text-muted">{r.planned ? `prévu ${fmtPlan(r.planned)}` : 'pas au prévu'}</span>
-          )}
+          <span className="tnum">{tally(r.done)}</span>
+          <span className="ml-1.5 text-[14px] font-normal text-muted">{r.planned ? `prévu ${fmtPlan(r.planned)}` : 'pas au prévu'}</span>
         </span>
       </div>
-      {/* Piste pleine : « plus tôt » en gris, « aujourd'hui » en blanc cassé, le
-          prévu en crochet sous la piste. */}
+      {/* Piste pleine : le fait en blanc cassé, le prévu en crochet sous la piste. */}
       <div aria-hidden className="relative mt-2 h-[15px]">
         <span className="absolute inset-x-0 top-[3px] h-[6px] bg-line" />
-        <span className="absolute left-0 top-[3px] h-[6px] bg-muted" style={{ width: pct(r.before) }} />
-        <span className="absolute top-[3px] h-[6px] bg-ink" style={{ left: pct(r.before), width: `calc(${pct(r.total)} - ${pct(r.before)})` }} />
+        <span className="absolute left-0 top-[3px] h-[6px] bg-ink" style={{ width: pct(r.done) }} />
         {r.planned && (
           <span
             className="absolute inset-y-0 border-x-2 border-b-2 border-faint"
@@ -512,9 +462,8 @@ function MuscleLine({ r, scale, planKnown }: { r: WeekMuscleRow; scale: number; 
           />
         )}
       </div>
-      <div aria-hidden className="mt-1.5 flex items-baseline justify-between gap-3 text-[13px]">
-        {fit ? <span className="text-muted">{fit}</span> : <span className="text-faint">{planKnown ? 'aucune séance du plan ne le travaille' : ''}</span>}
-        <span className="tnum text-faint">{r.today > 0 ? `+${tally(r.today)} aujourd’hui` : 'rien aujourd’hui'}</span>
+      <div aria-hidden className="mt-1.5 text-[13px]">
+        {fit ? <span className="text-muted">{fit}</span> : <span className="text-faint">aucun exo de la séance ne le travaille</span>}
       </div>
     </li>
   );

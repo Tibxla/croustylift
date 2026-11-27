@@ -11,11 +11,10 @@
 //     son mouvement et ses muscles, pour le décompte par muscle ;
 //   - `exerciseStatus(exo, réalisé)` : 'fait', 'en-cours', 'passe', 'pas-fait'.
 //     Un seul mot pour un exo commencé, partout : « en cours » ;
-//   - `weekSetsByMuscle({ before, today, planned })` : séries de la semaine par
-//     muscle (avant aujourd'hui, aujourd'hui, total) contre le prévu de la
-//     routine. L'appelant fournit les exécutions de la semaine (bornée par
-//     `weekStartIso`, domain/week.ts : semaine civile, lundi au dimanche) et les
-//     prescriptions de toutes les séances de la routine ;
+//   - `setsByMuscle({ done, planned })` : séries de la séance par muscle contre
+//     son PROPRE prévu (`plannedToday` : les prescriptions de ses exos, ajoutés
+//     et remplacés compris). Aucune règle de semaine (décision du 27/11 : une
+//     routine faite deux fois dans la semaine se lisait « au-dessus du prévu ») ;
 //   - `nudgeDuration(minutes, sens)` : la durée corrigée d'un cran de 5 min.
 //
 // Les décomptes par muscle sont ceux du domaine (`countPerformedSets`,
@@ -270,54 +269,50 @@ export function performedToday(session: Session, state: CaptureState): Performed
   }));
 }
 
-// --- Séries de la semaine par muscle, contre le prévu -------------------------
+// --- Séries de la séance par muscle, contre son prévu ------------------------
 
-/** Où en est un muscle face au prévu de la routine. */
+/** Où en est un muscle face au prévu de la séance. */
 export type PlanFit = 'sous' | 'dans' | 'au-dela';
 
-/** Un muscle dans le décompte de la semaine. Valeurs fractionnaires (ADR 0006). */
-export interface WeekMuscleRow {
+/** Un muscle dans le décompte de la séance. Valeurs fractionnaires (ADR 0006). */
+export interface MuscleRow {
   muscle: string;
-  /** Séries de la semaine faites AVANT la séance du jour. */
-  before: number;
   /** Séries de la séance du jour. */
-  today: number;
-  total: number;
-  /** Fourchette prévue par la routine sur la semaine, `null` si le muscle n'y est pas. */
+  done: number;
+  /** Fourchette prévue par la séance, `null` si aucun de ses exos ne le travaille. */
   planned: CountRange | null;
-  /** Le total contre la fourchette, `null` sans fourchette. */
+  /** Le fait contre la fourchette, `null` sans fourchette. */
   fit: PlanFit | null;
 }
 
+/** Le prévu de la séance du jour : les prescriptions de ses exos, tels qu'ils
+ *  sont ce jour-là (ajoutés et remplacés compris, passés aussi). */
+export function plannedToday(session: Session): PlannedExercise[] {
+  return session.exercises.map((ex) => ({
+    unilateral: ex.unilateral ?? false,
+    primaryMuscles: ex.primaryMuscles ?? [],
+    sets: ex.prescription.sets,
+    reps: ex.prescription.reps,
+  }));
+}
+
 /**
- * Décompte de séries par muscle sur la semaine : ce qui était fait avant la
- * séance du jour, ce que la séance ajoute, et le prévu de la routine. Un muscle
- * prévu et pas encore travaillé figure à zéro ; un muscle travaillé hors du
- * prévu figure sans fourchette. Ordre canonique des muscles (GLOSSARY.md).
- *
- * `planned` : les prescriptions de TOUTES les séances de la routine, chacune
- * comptée une fois (une routine se déroule sur la semaine).
+ * Décompte de séries par muscle de la séance contre son prévu. Un muscle prévu
+ * et pas travaillé (exo passé) figure à zéro ; un muscle travaillé hors du prévu
+ * figure sans fourchette. Ordre canonique des muscles (GLOSSARY.md).
  */
-export function weekSetsByMuscle(input: {
-  before: PerformedExercise[];
-  today: PerformedExercise[];
-  planned: PlannedExercise[];
-}): WeekMuscleRow[] {
-  const before = countPerformedSets(input.before).byMuscle;
-  const today = countPerformedSets(input.today).byMuscle;
+export function setsByMuscle(input: { done: PerformedExercise[]; planned: PlannedExercise[] }): MuscleRow[] {
+  const done = countPerformedSets(input.done).byMuscle;
   const planned = countPlannedSets(input.planned).byMuscle;
-  const muscles = orderMusclesCanonical([
-    ...new Set([...Object.keys(planned), ...Object.keys(before), ...Object.keys(today)]),
-  ]);
+  const muscles = orderMusclesCanonical([...new Set([...Object.keys(planned), ...Object.keys(done)])]);
   return muscles.map((muscle) => {
-    const done = { before: before[muscle] ?? 0, today: today[muscle] ?? 0 };
-    const total = done.before + done.today;
+    const value = done[muscle] ?? 0;
     const range = planned[muscle] ?? null;
     // Tolérance : les décomptes sont des sommes de fractions (0,2 par rep).
     const eps = 1e-9;
     const fit: PlanFit | null =
-      range === null ? null : total < range.min - eps ? 'sous' : total > range.max + eps ? 'au-dela' : 'dans';
-    return { muscle, ...done, total, planned: range, fit };
+      range === null ? null : value < range.min - eps ? 'sous' : value > range.max + eps ? 'au-dela' : 'dans';
+    return { muscle, done: value, planned: range, fit };
   });
 }
 

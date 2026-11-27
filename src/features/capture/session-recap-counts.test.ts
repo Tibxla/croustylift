@@ -2,13 +2,13 @@
 // chaque exo (fait, passé) et séries par muscle. Reportés de l'ancien récap
 // (`buildSummary`) sur le récap actuel (`buildSessionRecap`) et sur l'entrée du
 // décompte par muscle (`performedToday`, puis `countPerformedSets` et
-// `weekSetsByMuscle`). Le domaine pur est testé à part (set-count.test.ts) : ici
+// `setsByMuscle`). Le domaine pur est testé à part (set-count.test.ts) : ici
 // on vérifie le BRANCHEMENT des séries de l'état et des champs d'exo.
 import { describe, expect, it } from 'vitest';
 import { countPerformedSets } from '../../domain/set-count';
 import type { PerformedSet } from '../../domain/types';
 import { upperA, type Session } from './fixtures';
-import { buildSessionRecap, performedToday, weekSetsByMuscle } from './session-recap';
+import { buildSessionRecap, performedToday, setsByMuscle } from './session-recap';
 import { captureReducer, initialState, type CaptureState } from './state';
 
 const r = (min: number, max: number) => ({ min, max });
@@ -24,8 +24,8 @@ function log(state: CaptureState, exerciseId: string, setId: string, set = set1)
 
 /** Les séries du jour par muscle, telles que les lit la fin de séance. */
 function todayByMuscle(session: Session, state: CaptureState): Record<string, number> {
-  const rows = weekSetsByMuscle({ before: [], today: performedToday(session, state), planned: [] });
-  return Object.fromEntries(rows.map((row) => [row.muscle, row.today]));
+  const rows = setsByMuscle({ done: performedToday(session, state), planned: [] });
+  return Object.fromEntries(rows.map((row) => [row.muscle, row.done]));
 }
 
 const totalToday = (session: Session, state: CaptureState) => countPerformedSets(performedToday(session, state)).total;
