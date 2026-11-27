@@ -4,6 +4,13 @@
 // la colonne est trop étroite pour lui. Le numéro et sa marque prennent la
 // pastille d'état du Sommaire (`StatePill`, kit) : vert sauge pour un exo fait,
 // bleu ardoise pour un exo entamé ; la ligne garde sa hauteur.
+//
+// La pastille tient dans sa colonne (retour du 27/11 : à 9 exos sur 393 px, la
+// colonne fait 41 px et les pastilles se chevauchaient). Version serrée (jeu de
+// 6 px, 4 à partir de 10 exos ; marque de 11). Quand la colonne ne loge pas la
+// marque avec 4 px d'écart (`iconFits`, bouton en conteneur), la marque tombe :
+// la couleur et la jauge disent encore l'état, le mot reste dans le nom
+// accessible.
 import { StatePill, type ExoState } from '../../ui';
 import { EXO_STATE_WORD } from './salle-progress';
 
@@ -15,6 +22,15 @@ export interface IndexItem {
   fill: number;
 }
 
+/** Classe qui montre la marque seulement si sa pastille tient dans la colonne
+ *  avec 4 px d'écart. Seuils sur le contenu du bouton (colonne moins 16 px) :
+ *  pastille = jeu × 2 + marque 11 + écart 4 + chiffres (8,5 px chacun). Les
+ *  classes restent littérales pour Tailwind. */
+function iconFits(many: boolean, twoDigits: boolean): string {
+  if (!many) return 'hidden @min-[24px]:block'; // 12 + 11 + 4 + 8,5 = 35,5
+  return twoDigits ? 'hidden @min-[28px]:block' : 'hidden @min-[20px]:block'; // 8 + 15 + 17 ou 8,5
+}
+
 export function ExerciseIndex({
   items,
   activeId,
@@ -24,6 +40,8 @@ export function ExerciseIndex({
   activeId: string;
   onPick: (exerciseId: string) => void;
 }) {
+  // À partir de 10 exos, les numéros à deux chiffres demandent le jeu le plus court.
+  const many = items.length >= 10;
   return (
     <div
       className="grid px-3"
@@ -39,11 +57,17 @@ export function ExerciseIndex({
             aria-current={active ? 'true' : undefined}
             aria-label={`Exo ${i + 1}, ${it.name}, ${EXO_STATE_WORD[it.state]}`}
             onClick={() => onPick(it.exerciseId)}
-            className="flex h-11 min-w-0 flex-col justify-center px-2"
+            className="@container flex h-11 min-w-0 flex-col justify-center px-2"
           >
             <span className={`tnum flex h-5 items-center text-left text-[14px] ${active ? 'font-semibold' : ''}`}>
-              <span className={it.state === 'done' || it.state === 'partial' ? '-ml-2' : ''}>
-                <StatePill state={it.state} size={13} compact>
+              <span className={it.state === 'done' || it.state === 'partial' ? (many ? '-ml-1' : '-ml-1.5') : ''}>
+                <StatePill
+                  state={it.state}
+                  size={11}
+                  compact
+                  dense={many ? 'sm' : 'md'}
+                  iconClassName={iconFits(many, i + 1 >= 10)}
+                >
                   <span className={it.state === 'todo' && active ? 'text-ink' : ''}>{i + 1}</span>
                 </StatePill>
               </span>
