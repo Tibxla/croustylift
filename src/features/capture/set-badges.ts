@@ -128,6 +128,46 @@ export function verdictWords(counts: VerdictCounts, record: 'record' | 'record c
 }
 
 /**
+ * LA mention d'un exo dans le Sommaire (retour du 27/11 : la ligne « ▲ 2 côtés
+ * en record ▲ 1 côté battu ▬ 1 côté égalé » était chargée, et en unilatéral on
+ * ne savait pas si « 2 côtés » voulait dire les deux bras ou deux fois le même).
+ * Une seule, la meilleure (record > battues > égalées) ; le détail reste dans le
+ * récap de l'exo (`verdictWords`).
+ *
+ * Bilatéral : « record », « n records », « n battues », « n égalées ».
+ * Unilatéral : chaque côté prend le meilleur badge de ses séries ; deux côtés au
+ * même niveau se disent ensemble (« record des deux côtés »), sinon on nomme le
+ * meilleur (« battu à droite »). `badges` est aligné par index sur `sets` ; une
+ * ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`.
+ */
+export function headlineVerdict(sets: readonly PerformedSet[], badges: readonly SetBadge[], unilateral: boolean): VerdictWord | null {
+  if (!unilateral) {
+    const counts = summarizeBadges([...sets], [...badges]).total;
+    return verdictWords(counts, recordWord(badges), false)[0] ?? null;
+  }
+  const rank = (b: SetBadge): number => (!b ? 0 : b.axis === 'record' ? 3 : b.verdict === 'battu' ? 2 : 1);
+  const best = { left: 0, right: 0 };
+  const sideBadges: Record<Side, SetBadge[]> = { left: [], right: [] };
+  sets.forEach((set, i) => {
+    const side: Side = set.side === 'right' ? 'right' : 'left';
+    const badge = badges[i] ?? null;
+    sideBadges[side].push(badge);
+    best[side] = Math.max(best[side], rank(badge));
+  });
+  const top = Math.max(best.left, best.right);
+  if (top === 0) return null;
+  const both = best.left === best.right;
+  const where = both ? 'des deux côtés' : best.left > best.right ? 'à gauche' : 'à droite';
+  const word =
+    top === 3
+      ? recordWord(both ? badges : sideBadges[best.left > best.right ? 'left' : 'right'])
+      : top === 2
+        ? 'battu'
+        : 'égalé';
+  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${where}` };
+}
+
+/**
  * Le mot d'un record selon son type : « record charge » pour un record de charge
  * seule (`weight-reps`), « record » pour un record d'e1RM (seul ou avec la
  * charge). La case « Record » de l'instrument montre le record d'e1RM : un

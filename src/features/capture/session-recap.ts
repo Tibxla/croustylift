@@ -63,6 +63,7 @@ import {
   computeSetBadges,
   computeSetBadgesBySide,
   dayRecords,
+  headlineVerdict,
   recordWord,
   summarizeBadges,
   verdictWords,
@@ -128,6 +129,9 @@ export interface ExerciseRecap {
   /** Ses statuts en mots, ceux du récap d'exo (`verdictWords`) : record, puis
    *  battues, puis égalées ; en côtés pour un exo unilatéral. */
   statuses: VerdictWord[];
+  /** LA mention de l'exo dans le Sommaire (`headlineVerdict`) : la meilleure,
+   *  par côté en unilatéral ; `null` sans rien de mieux ni d'égal. */
+  headline: VerdictWord | null;
   /** Les nouveaux records du jour de cet exo, par axe et par côté (cf. en-tête). */
   newRecords: RecapRecord[];
   /** kg soulevés sur cet exo. */
@@ -226,6 +230,7 @@ function recapExercise(exercise: SessionExercise, progress: ExerciseProgress): E
     matched: verdicts.egalise,
     verdicts,
     statuses: verdictWords(verdicts, recordWord(badges), unilateral),
+    headline: headlineVerdict(progress.sets, badges, unilateral),
     newRecords,
     liftedKg: liftedKg(progress.sets),
     openSide,

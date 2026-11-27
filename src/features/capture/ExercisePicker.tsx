@@ -196,7 +196,7 @@ export function ExercisePicker({
                       plan={plan}
                       origin={deviation === 'added' ? 'ajouté' : deviation === 'swapped' ? 'remplacé' : null}
                       openSide={recapById.get(ex.exerciseId)?.openSide ?? null}
-                      statuses={recapById.get(ex.exerciseId)?.statuses ?? []}
+                      headline={recapById.get(ex.exerciseId)?.headline ?? null}
                     />
                   }
                   trailing={
@@ -330,7 +330,7 @@ function SommaireMeta({
   plan,
   origin,
   openSide,
-  statuses,
+  headline,
 }: {
   state: ExoState;
   count: number;
@@ -338,9 +338,9 @@ function SommaireMeta({
   plan: string;
   origin: string | null;
   openSide: Side | null;
-  /** Les statuts de l'exo, ceux du récap d'exo (`verdictWords`) : record, puis
-   *  battues, puis égalées ; en côtés pour un exo unilatéral. */
-  statuses: VerdictWord[];
+  /** La mention unique de l'exo (`headlineVerdict`) : la meilleure, par côté en
+   *  unilatéral. Le détail est dans le récap de l'exo. */
+  headline: VerdictWord | null;
 }) {
   const series = (n: number) => `${n} série${n > 1 ? 's' : ''}`;
   const side = openSide ? `${openSide === 'left' ? 'gauche' : 'droite'} faite` : null;
@@ -364,9 +364,7 @@ function SommaireMeta({
           {tail}
         </>
       )}
-      {statuses.map((st) => (
-        <Status key={st.word} v={st.v} word={st.word} />
-      ))}
+      {headline && <Status v={headline.v} word={headline.word} />}
     </span>
   );
 }
