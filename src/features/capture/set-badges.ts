@@ -141,30 +141,17 @@ export function verdictWords(counts: VerdictCounts, record: 'record' | 'record c
  * ligne sans côté compte à gauche, comme `computeRecordFlagsBySide`.
  */
 export function headlineVerdict(sets: readonly PerformedSet[], badges: readonly SetBadge[], unilateral: boolean): VerdictWord | null {
-  if (!unilateral) {
-    const counts = summarizeBadges([...sets], [...badges]).total;
-    return verdictWords(counts, recordWord(badges), false)[0] ?? null;
-  }
-  const rank = (b: SetBadge): number => (!b ? 0 : b.axis === 'record' ? 3 : b.verdict === 'battu' ? 2 : 1);
-  const best = { left: 0, right: 0 };
-  const sideBadges: Record<Side, SetBadge[]> = { left: [], right: [] };
-  sets.forEach((set, i) => {
-    const side: Side = set.side === 'right' ? 'right' : 'left';
-    const badge = badges[i] ?? null;
-    sideBadges[side].push(badge);
-    best[side] = Math.max(best[side], rank(badge));
-  });
-  const top = Math.max(best.left, best.right);
-  if (top === 0) return null;
-  const both = best.left === best.right;
-  const where = both ? 'des deux côtés' : best.left > best.right ? 'à gauche' : 'à droite';
+  if (!unilateral) return verdictWords(summarizeBadges([...sets], [...badges]).total, recordWord(badges), false)[0] ?? null;
+  const rank = (b: SetBadge) => (!b ? 0 : b.axis === 'record' ? 3 : b.verdict === 'battu' ? 2 : 1);
+  const onRight = (i: number) => sets[i]?.side === 'right';
+  const best = (right: boolean) => Math.max(0, ...badges.map((b, i) => (onRight(i) === right ? rank(b) : 0)));
+  const l = best(false);
+  const r = best(true);
+  const top = Math.max(l, r);
+  if (!top) return null;
   const word =
-    top === 3
-      ? recordWord(both ? badges : sideBadges[best.left > best.right ? 'left' : 'right'])
-      : top === 2
-        ? 'battu'
-        : 'égalé';
-  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${where}` };
+    top === 3 ? recordWord(l === r ? badges : badges.filter((_, i) => onRight(i) === r > l)) : top === 2 ? 'battu' : 'égalé';
+  return { v: top === 1 ? 'eq' : 'up', word: `${word} ${l === r ? 'des deux côtés' : l > r ? 'à gauche' : 'à droite'}` };
 }
 
 /**
