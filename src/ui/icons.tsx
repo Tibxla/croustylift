@@ -174,24 +174,32 @@ export function StatePill({
   children,
   size = 14,
   compact = false,
+  dense = false,
+  iconClassName = '',
 }: {
   state: ExoState;
   children: ReactNode;
   size?: number;
   /** Interligne de 20 px au lieu de 24 (index de l'instrument, ligne de 20 px). */
   compact?: boolean;
+  /** Colonnes étroites de l'index : jeu de 6 px (`md`) ou 4 (`sm`) au lieu de 8,
+   *  écart de 4 au lieu de 6 entre la marque et le texte. */
+  dense?: false | 'md' | 'sm';
+  /** Classes de la marque (l'index la masque quand sa colonne est trop étroite). */
+  iconClassName?: string;
 }) {
+  const pad = dense === 'sm' ? 'px-1' : dense === 'md' ? 'px-1.5' : 'px-2';
   const look =
     state === 'done'
-      ? 'rounded-cell bg-status-done px-2 font-semibold text-bg'
+      ? `rounded-cell bg-status-done ${pad} font-semibold text-bg`
       : state === 'partial'
-        ? 'rounded-cell bg-status-current px-2 font-semibold text-bg'
+        ? `rounded-cell bg-status-current ${pad} font-semibold text-bg`
         : state === 'skipped'
           ? 'text-muted line-through decoration-1'
           : 'text-muted';
   return (
-    <span data-state={state} className={`inline-flex min-w-0 items-center gap-1.5 ${compact ? 'leading-5' : 'leading-6'} ${look}`}>
-      <StateIcon state={state} size={size} className={state === 'skipped' ? '' : 'flex-none'} />
+    <span data-state={state} className={`inline-flex min-w-0 items-center ${dense ? 'gap-1' : 'gap-1.5'} ${compact ? 'leading-5' : 'leading-6'} ${look}`}>
+      <StateIcon state={state} size={size} className={`${state === 'skipped' ? '' : 'flex-none'} ${iconClassName}`} />
       <span className="min-w-0">{children}</span>
     </span>
   );
